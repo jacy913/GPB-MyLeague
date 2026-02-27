@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&family=Oswald:wght@400;500;700&display=swap');
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Oswald", "Outfit", sans-serif;
+  
+  --color-prestige: #a79b00;
+  --color-platinum: #17b690;
+  --color-dark-bg: #181818;
+  --color-card-bg: #323232;
+}
+
+body {
+  background-color: var(--color-dark-bg);
+  color: #ffffff;
+}
