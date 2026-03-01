@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
-import { CalendarDays, ChevronRight, Loader2, Play, RotateCcw } from 'lucide-react';
+import { CalendarDays, ChevronRight, ChevronsRight, Loader2, Play, RotateCcw } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Game, Team } from '../types';
+import { isRegularSeasonGame } from '../logic/playoffs';
+import { SeasonCalendarStrip } from './SeasonCalendarStrip';
 
 interface ControlsProps {
   games: Game[];
@@ -12,6 +14,7 @@ interface ControlsProps {
   onSelectDate: (date: string) => void;
   onSelectTeamId: (teamId: string) => void;
   onSimulateToSelectedDate: () => void;
+  onSimulateToEndOfRegularSeason: () => void;
   onSimulateDay: () => void;
   onSimulateWeek: () => void;
   onSimulateMonth: () => void;
@@ -23,11 +26,6 @@ interface ControlsProps {
   seasonComplete: boolean;
 }
 
-const formatDateLabel = (isoDate: string): string => {
-  const date = new Date(`${isoDate}T00:00:00Z`);
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-};
-
 export const Controls: React.FC<ControlsProps> = ({
   games,
   teams,
@@ -37,6 +35,7 @@ export const Controls: React.FC<ControlsProps> = ({
   onSelectDate,
   onSelectTeamId,
   onSimulateToSelectedDate,
+  onSimulateToEndOfRegularSeason,
   onSimulateDay,
   onSimulateWeek,
   onSimulateMonth,
@@ -51,21 +50,17 @@ export const Controls: React.FC<ControlsProps> = ({
     () => Array.from(new Set(games.map((game) => game.date))).sort((a, b) => a.localeCompare(b)),
     [games],
   );
-
   const activeDate = selectedDate || uniqueDates[0] || currentDate;
-  const gameCountByDate = useMemo(() => {
-    const counts = new Map<string, { scheduled: number; completed: number }>();
-    games.forEach((game) => {
-      const current = counts.get(game.date) ?? { scheduled: 0, completed: 0 };
-      if (game.status === 'completed') {
-        current.completed += 1;
-      } else {
-        current.scheduled += 1;
-      }
-      counts.set(game.date, current);
-    });
-    return counts;
-  }, [games]);
+  const regularSeasonComplete = useMemo(
+    () => games.filter((game) => isRegularSeasonGame(game)).every((game) => game.status === 'completed'),
+    [games],
+  );
+
+  const completedGames = useMemo(() => games.filter((game) => game.status === 'completed').length, [games]);
+  const totalGames = games.length;
+  const remainingGames = Math.max(totalGames - completedGames, 0);
+  const currentDayIndex = Math.max(uniqueDates.indexOf(currentDate), 0);
+  const seasonDayTotal = uniqueDates.length;
 
   return (
     <div className="flex flex-col gap-4 bg-gradient-to-r from-[#212121] via-[#2a2a2a] to-[#212121] p-4 rounded-2xl border border-white/15 shadow-2xl shadow-black/40 relative overflow-hidden">
@@ -74,18 +69,39 @@ export const Controls: React.FC<ControlsProps> = ({
         <div className="absolute inset-y-0 right-[-6rem] w-48 bg-gradient-to-r from-platinum/0 via-platinum/30 to-platinum/0 skew-x-[-20deg]" />
       </div>
 
-      <div className="flex-1">
-        <div className="flex justify-between text-xs uppercase tracking-wider text-zinc-400 mb-2">
-          <span>Season Progress</span>
-          <span className="font-mono text-white">{Math.round(progress)}%</span>
+      <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+        <div className="flex flex-wrap items-end justify-between gap-2 mb-2">
+          <div>
+            <p className="text-xs uppercase tracking-wider text-zinc-400">Season Progress</p>
+            <p className="font-display text-2xl uppercase tracking-wide text-white leading-none mt-1">
+              {Math.round(progress)}% Complete
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-right min-w-[240px]">
+            <div>
+              <p className="text-[10px] uppercase text-zinc-500 font-mono">Played</p>
+              <p className="text-sm font-mono text-zinc-100">{completedGames}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-zinc-500 font-mono">Remaining</p>
+              <p className="text-sm font-mono text-zinc-100">{remainingGames}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase text-zinc-500 font-mono">Season Day</p>
+              <p className="text-sm font-mono text-zinc-100">
+                {seasonDayTotal > 0 ? `${currentDayIndex + 1}/${seasonDayTotal}` : '0/0'}
+              </p>
+            </div>
+          </div>
         </div>
-        <div className="h-2.5 bg-black/45 rounded-full overflow-hidden border border-white/10">
-          <motion.div 
-            className="h-full bg-gradient-to-r from-prestige via-zinc-200 to-platinum"
+        <div className="h-3 bg-black/50 rounded-full overflow-hidden border border-white/10 relative">
+          <motion.div
+            className="h-full bg-[linear-gradient(90deg,#a79b00_0%,#f0f0f0_50%,#17b690_100%)] shadow-[0_0_16px_rgba(23,182,144,0.35)]"
             initial={{ width: 0 }}
             animate={{ width: `${progress}%` }}
             transition={{ type: 'tween', ease: 'linear' }}
           />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.16),transparent_60%)]" />
         </div>
       </div>
 
@@ -107,6 +123,15 @@ export const Controls: React.FC<ControlsProps> = ({
                 Simulate to Today
               </>
             )}
+          </button>
+
+          <button
+            onClick={onSimulateToEndOfRegularSeason}
+            disabled={isSimulating || regularSeasonComplete}
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-[#2e2e2e] hover:bg-[#3a3a3a] disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-display font-bold uppercase tracking-wide rounded-xl transition-colors"
+          >
+            <ChevronsRight className="w-4 h-4" />
+            Sim To End Of Regular Season
           </button>
 
           <button
@@ -185,41 +210,12 @@ export const Controls: React.FC<ControlsProps> = ({
         </div>
       </div>
 
-      <div className="bg-black/30 border border-white/10 rounded-xl p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="font-display uppercase tracking-widest text-zinc-300">Season Calendar</h4>
-          <span className="font-mono text-xs text-zinc-500">
-            Current Sim Date: {currentDate || activeDate}
-          </span>
-        </div>
-
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          {uniqueDates.map((date) => {
-            const dayCounts = gameCountByDate.get(date) ?? { scheduled: 0, completed: 0 };
-            const isActive = date === activeDate;
-            const isCurrent = date === currentDate;
-
-            return (
-              <button
-                key={date}
-                onClick={() => onSelectDate(date)}
-                className={`min-w-[92px] px-2 py-2 rounded-lg border text-left transition-colors ${
-                  isActive
-                    ? 'border-platinum bg-platinum/15'
-                    : isCurrent
-                      ? 'border-prestige/70 bg-prestige/10'
-                      : 'border-white/10 bg-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="font-mono text-xs text-zinc-200">{formatDateLabel(date)}</div>
-                <div className="font-mono text-[10px] text-zinc-400">
-                  F {dayCounts.completed} | S {dayCounts.scheduled}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <SeasonCalendarStrip
+        games={games}
+        currentDate={currentDate}
+        selectedDate={selectedDate}
+        onSelectDate={onSelectDate}
+      />
     </div>
   );
 };

@@ -95,6 +95,8 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
         setAvailableLogoPaths((data ?? []).map((item) => item.name));
       } catch (error) {
         console.error('Failed to list existing team logos:', error);
+        const reason = error instanceof Error ? error.message : 'Unknown storage error';
+        setLogoStatusMessage(`Unable to load existing logos from bucket "teamlogos": ${reason}`);
       }
     };
 
@@ -129,6 +131,28 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
 
     try {
       const path = getLogoPath(team.id);
+      const { data: existingObjects, error: listError } = await supabase.storage
+        .from('teamlogos')
+        .list('', { limit: 500, offset: 0, search: path });
+
+      if (listError) {
+        throw listError;
+      }
+
+      const existingNames = (existingObjects ?? [])
+        .map((item) => item.name)
+        .filter((name) => name === path || name.startsWith(`${path}.`));
+
+      if (existingNames.length > 0) {
+        const { error: removeError } = await supabase.storage
+          .from('teamlogos')
+          .remove(existingNames);
+
+        if (removeError) {
+          throw removeError;
+        }
+      }
+
       const { error } = await supabase.storage
         .from('teamlogos')
         .upload(path, file, { upsert: true, contentType: file.type || 'image/png', cacheControl: '3600' });
@@ -137,18 +161,25 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
         throw error;
       }
 
+      const refreshStamp = Date.now();
       setLogoRefreshKeyByTeamId((prev) => ({
         ...prev,
-        [team.id]: Date.now(),
+        [team.id]: refreshStamp,
       }));
+      localStorage.setItem(`teamlogo_refresh_${team.id}`, String(refreshStamp));
+      window.dispatchEvent(
+        new CustomEvent('teamlogo-updated', { detail: { teamId: team.id, version: refreshStamp } }),
+      );
       setAvailableLogoPaths((prev) => {
         const nextPath = getLogoPath(team.id);
-        return prev.includes(nextPath) ? prev : [...prev, nextPath];
+        const filtered = prev.filter((name) => !(name === nextPath || name.startsWith(`${nextPath}.`)));
+        return [...filtered, nextPath];
       });
-      setLogoStatusMessage(`Uploaded logo for ${team.name} (${team.id.toUpperCase()}) to bucket "teamlogos".`);
+      setLogoStatusMessage(`Replaced logo for ${team.name} (${team.id.toUpperCase()}) in bucket "teamlogos".`);
     } catch (error) {
       console.error('Failed to upload team logo:', error);
-      setLogoStatusMessage(`Failed to upload logo for ${team.name}.`);
+      const reason = error instanceof Error ? error.message : 'Unknown upload error';
+      setLogoStatusMessage(`Failed to upload logo for ${team.name}: ${reason}`);
     } finally {
       setUploadingTeamId(null);
     }

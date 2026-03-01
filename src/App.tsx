@@ -10,13 +10,17 @@ import { Team, Game, SimulationSettings, SimulationTarget } from './types';
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
+import { GPBBook } from './components/GPBBook';
+import { PlayoffsBracket } from './components/PlayoffsBracket';
+import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
 import { Controls } from './components/Controls';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, Bell, CalendarDays, Settings, Table2 } from 'lucide-react';
+import { Activity, Bell, BookOpen, CalendarDays, Settings, Table2, Trophy } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
 import { SimulationManager } from './logic/simulationManager';
+import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
   clearSupabaseSeasonHistory,
@@ -99,7 +103,8 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'games_schedule' | 'league_standings' | 'notifications' | 'settings'>('games_schedule');
+  const [view, setView] = useState<'games_schedule' | 'league_standings' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings'>('games_schedule');
+  const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [currentDate, setCurrentDate] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -363,6 +368,10 @@ function App() {
     runSimulationTarget({ scope: 'day' });
   }, [runSimulationTarget]);
 
+  const simulateToEndOfRegularSeason = useCallback(() => {
+    runSimulationTarget({ scope: 'regular_season' });
+  }, [runSimulationTarget]);
+
   const simulateWeek = useCallback(() => {
     runSimulationTarget({ scope: 'week' });
   }, [runSimulationTarget]);
@@ -391,7 +400,6 @@ function App() {
     return teams.filter(t => t.league === league);
   };
 
-  const seasonYear = new Date().getFullYear();
   const activeDate = selectedDate || games[0]?.date || currentDate;
 
   const gamesForActiveDate = useMemo(
@@ -403,6 +411,66 @@ function App() {
   );
 
   const teamLookup = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const pregameRecordByGameId = useMemo(() => {
+    const orderedGames = [...games].sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
+    const currentRecords = new Map<string, { wins: number; losses: number }>(
+      teams.map((team) => [team.id, { wins: 0, losses: 0 }]),
+    );
+    const snapshots = new Map<string, {
+      awayWins: number;
+      awayLosses: number;
+      homeWins: number;
+      homeLosses: number;
+    }>();
+
+    orderedGames.forEach((game) => {
+      const awayRecord = currentRecords.get(game.awayTeam) ?? { wins: 0, losses: 0 };
+      const homeRecord = currentRecords.get(game.homeTeam) ?? { wins: 0, losses: 0 };
+      snapshots.set(game.gameId, {
+        awayWins: awayRecord.wins,
+        awayLosses: awayRecord.losses,
+        homeWins: homeRecord.wins,
+        homeLosses: homeRecord.losses,
+      });
+
+      if (game.status !== 'completed' || !isRegularSeasonGame(game)) {
+        return;
+      }
+
+      if (game.score.away > game.score.home) {
+        awayRecord.wins += 1;
+        homeRecord.losses += 1;
+      } else {
+        homeRecord.wins += 1;
+        awayRecord.losses += 1;
+      }
+
+      currentRecords.set(game.awayTeam, awayRecord);
+      currentRecords.set(game.homeTeam, homeRecord);
+    });
+
+    return snapshots;
+  }, [games, teams]);
+
+  const getStatNumber = (game: Game, key: string): number => {
+    const value = game.stats[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  };
+
+  const hashKey = (input: string): number => {
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      hash = (hash * 31 + input.charCodeAt(i)) % 2147483647;
+    }
+    return hash;
+  };
+
+  const getFallbackHits = (game: Game, side: 'away' | 'home'): number => {
+    const runs = side === 'away' ? game.score.away : game.score.home;
+    return runs + 3 + (hashKey(`${game.gameId}:${side}:h`) % 5);
+  };
+
+  const activeDateHasPlayoffs = useMemo(() => gamesForActiveDate.some((game) => isPlayoffGame(game)), [gamesForActiveDate]);
 
   if (isBootstrapping) {
     return (
@@ -435,7 +503,7 @@ function App() {
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
               <Activity className="w-4 h-4 text-prestige" />
-              <span className="font-mono">SEASON {seasonYear}</span>
+              <span className="font-mono">{formatHeaderDate(currentDate || activeDate)}</span>
             </div>
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
               <span className={`w-2 h-2 rounded-full ${dataSource === 'supabase' ? 'bg-platinum' : 'bg-prestige'}`} />
@@ -475,6 +543,20 @@ function App() {
               <span className="font-display text-lg uppercase tracking-wide">League Standings</span>
             </button>
             <button
+              onClick={() => setView('playoffs')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Trophy className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Playoffs</span>
+            </button>
+            <button
+              onClick={() => setView('gpb_book')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <BookOpen className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">GPB Book</span>
+            </button>
+            <button
               onClick={() => setView('notifications')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'notifications' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
@@ -492,9 +574,11 @@ function App() {
         </aside>
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
-          <div className="lg:hidden grid grid-cols-2 gap-2 mb-6">
+          <div className="lg:hidden grid grid-cols-3 gap-2 mb-6">
             <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Games</button>
             <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
+            <button onClick={() => setView('playoffs')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Playoffs</button>
+            <button onClick={() => setView('gpb_book')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Book</button>
             <button onClick={() => setView('notifications')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'notifications' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Notices</button>
             <button onClick={() => setView('settings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'settings' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Settings</button>
           </div>
@@ -518,6 +602,7 @@ function App() {
                     onSelectDate={setSelectedDate}
                     onSelectTeamId={setSelectedTeamId}
                     onSimulateToSelectedDate={simulateToSelectedDate}
+                    onSimulateToEndOfRegularSeason={simulateToEndOfRegularSeason}
                     onSimulateDay={simulateDay}
                     onSimulateWeek={simulateWeek}
                     onSimulateMonth={simulateMonth}
@@ -534,9 +619,16 @@ function App() {
                       <h2 className="font-display text-3xl uppercase tracking-widest text-white">
                         Game Schedule
                       </h2>
-                      <span className="font-mono text-xs text-zinc-400">
-                        {activeDate} | {gamesForActiveDate.length} games
-                      </span>
+                      <div className="text-right">
+                        {activeDateHasPlayoffs && (
+                          <span className="inline-flex items-center rounded-md border border-zinc-200/20 bg-zinc-200/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-zinc-200 mb-1">
+                            Playoff Window
+                          </span>
+                        )}
+                        <div className="font-mono text-xs text-zinc-400">
+                          {activeDate} | {gamesForActiveDate.length} games
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-4">
@@ -548,62 +640,120 @@ function App() {
                         gamesForActiveDate.map((game) => {
                           const awayTeam = teamLookup.get(game.awayTeam);
                           const homeTeam = teamLookup.get(game.homeTeam);
+                          const pregame = pregameRecordByGameId.get(game.gameId) ?? {
+                            awayWins: 0,
+                            awayLosses: 0,
+                            homeWins: 0,
+                            homeLosses: 0,
+                          };
+
+                          const awayRuns = game.status === 'completed' ? game.score.away : 0;
+                          const homeRuns = game.status === 'completed' ? game.score.home : 0;
+                          const awayHitsRaw = getStatNumber(game, 'awayHits');
+                          const homeHitsRaw = getStatNumber(game, 'homeHits');
+                          const awayErrorsRaw = getStatNumber(game, 'awayErrors');
+                          const homeErrorsRaw = getStatNumber(game, 'homeErrors');
+                          const awayHits = game.status === 'completed' ? (awayHitsRaw > 0 ? awayHitsRaw : getFallbackHits(game, 'away')) : 0;
+                          const homeHits = game.status === 'completed' ? (homeHitsRaw > 0 ? homeHitsRaw : getFallbackHits(game, 'home')) : 0;
+                          const awayErrors = game.status === 'completed' ? awayErrorsRaw : 0;
+                          const homeErrors = game.status === 'completed' ? homeErrorsRaw : 0;
+                          const playoffLabel = game.playoff ? `${game.playoff.seriesLabel} • Game ${game.playoff.gameNumber}` : null;
+
                           return (
                             <article key={game.gameId} className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5">
                               <div className="flex items-center justify-between mb-4">
-                                <span className={`font-mono text-[11px] uppercase ${game.status === 'completed' ? 'text-platinum' : 'text-zinc-500'}`}>
-                                  {game.status === 'completed' ? 'Final' : 'Scheduled'}
-                                </span>
+                                <div>
+                                  <span className={`font-mono text-[11px] uppercase ${game.status === 'completed' ? 'text-platinum' : 'text-zinc-500'}`}>
+                                    {game.status === 'completed' ? 'Final' : 'Scheduled'}
+                                  </span>
+                                  {playoffLabel && (
+                                    <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-500 mt-1">
+                                      {playoffLabel}
+                                    </div>
+                                  )}
+                                </div>
                                 <span className="font-mono text-[11px] text-zinc-500">{game.gameId.toUpperCase()}</span>
                               </div>
 
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-4">
-                                  <div className="flex items-center gap-4">
-                                    {awayTeam ? (
-                                      <TeamLogo team={awayTeam} sizeClass="w-16 h-16" />
-                                    ) : (
-                                      <div className="w-16 h-16 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-xs text-zinc-500 uppercase">
-                                        {game.awayTeam}
-                                      </div>
-                                    )}
-                                    <div>
-                                      <p className="font-display text-3xl uppercase tracking-wide text-zinc-100 leading-none">
-                                        {awayTeam ? awayTeam.city : game.awayTeam.toUpperCase()}
-                                      </p>
-                                      <p className="font-display text-xl uppercase tracking-wide text-zinc-400 leading-none mt-1">
-                                        {awayTeam ? awayTeam.name : 'Unknown'}
-                                      </p>
+                              <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-5 items-center">
+                                <div className="flex items-center gap-4 min-w-0 justify-self-start">
+                                  {awayTeam ? (
+                                    <TeamLogo team={awayTeam} sizeClass="w-20 h-20" />
+                                  ) : (
+                                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-sm text-zinc-500 uppercase">
+                                      {game.awayTeam}
                                     </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="font-display text-4xl uppercase tracking-wide text-zinc-100 leading-none truncate">
+                                      {awayTeam ? awayTeam.city : game.awayTeam.toUpperCase()}
+                                    </p>
+                                    <p className="font-display text-2xl uppercase tracking-wide text-zinc-400 leading-none mt-1 truncate">
+                                      {awayTeam ? awayTeam.name : 'Unknown'}
+                                    </p>
+                                    <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-2">
+                                      {pregame.awayWins}-{pregame.awayLosses}
+                                    </p>
                                   </div>
-                                  <span className="font-mono text-3xl text-zinc-200 min-w-10 text-right">
-                                    {game.status === 'completed' ? game.score.away : '-'}
-                                  </span>
+                                </div>
+                                <div className="flex flex-col items-center justify-center">
+                                  <div className="font-mono text-4xl md:text-5xl text-zinc-100 leading-none">
+                                    {awayRuns}-{homeRuns}
+                                  </div>
+                                  <div className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-1">
+                                    {playoffLabel ?? `${awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase()} vs ${homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase()}`}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-4 min-w-0 justify-self-end">
+                                  <div className="min-w-0 text-right">
+                                    <p className="font-display text-4xl uppercase tracking-wide text-zinc-100 leading-none truncate">
+                                      {homeTeam ? homeTeam.city : game.homeTeam.toUpperCase()}
+                                    </p>
+                                    <p className="font-display text-2xl uppercase tracking-wide text-zinc-400 leading-none mt-1 truncate">
+                                      {homeTeam ? homeTeam.name : 'Unknown'}
+                                    </p>
+                                    <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-2">
+                                      {pregame.homeWins}-{pregame.homeLosses}
+                                    </p>
+                                  </div>
+                                  {homeTeam ? (
+                                    <TeamLogo team={homeTeam} sizeClass="w-20 h-20" />
+                                  ) : (
+                                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-sm text-zinc-500 uppercase">
+                                      {game.homeTeam}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="h-px bg-gradient-to-r from-transparent via-white/15 to-transparent my-4" />
+
+                              <div className="rounded-xl border border-white/10 bg-[#121212] px-4 py-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500">Box Score (R/H/E)</p>
+                                  <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500">
+                                    {game.status === 'completed' ? 'Final' : 'Scheduled'}
+                                  </p>
                                 </div>
 
-                                <div className="h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+                                <div className="grid grid-cols-[52px_minmax(0,1fr)_48px_48px_48px] gap-x-2 text-sm font-mono items-center">
+                                  <span className="text-zinc-500"></span>
+                                  <span className="text-zinc-500 uppercase">Team</span>
+                                  <span className="text-zinc-500 text-right">R</span>
+                                  <span className="text-zinc-500 text-right">H</span>
+                                  <span className="text-zinc-500 text-right">E</span>
 
-                                <div className="flex items-center justify-between gap-4">
-                                  <div className="flex items-center gap-4">
-                                    {homeTeam ? (
-                                      <TeamLogo team={homeTeam} sizeClass="w-16 h-16" />
-                                    ) : (
-                                      <div className="w-16 h-16 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-xs text-zinc-500 uppercase">
-                                        {game.homeTeam}
-                                      </div>
-                                    )}
-                                    <div>
-                                      <p className="font-display text-3xl uppercase tracking-wide text-zinc-100 leading-none">
-                                        {homeTeam ? homeTeam.city : game.homeTeam.toUpperCase()}
-                                      </p>
-                                      <p className="font-display text-xl uppercase tracking-wide text-zinc-400 leading-none mt-1">
-                                        {homeTeam ? homeTeam.name : 'Unknown'}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  <span className="font-mono text-3xl text-zinc-200 min-w-10 text-right">
-                                    {game.status === 'completed' ? game.score.home : '-'}
-                                  </span>
+                                  <span className="text-zinc-500 uppercase">AWAY</span>
+                                  <span className="text-zinc-100 truncate">{awayTeam ? `${awayTeam.city} ${awayTeam.name}` : game.awayTeam.toUpperCase()}</span>
+                                  <span className="text-zinc-100 text-right">{awayRuns}</span>
+                                  <span className="text-zinc-100 text-right">{awayHits}</span>
+                                  <span className="text-zinc-100 text-right">{awayErrors}</span>
+
+                                  <span className="text-zinc-500 uppercase">HOME</span>
+                                  <span className="text-zinc-100 truncate">{homeTeam ? `${homeTeam.city} ${homeTeam.name}` : game.homeTeam.toUpperCase()}</span>
+                                  <span className="text-zinc-100 text-right">{homeRuns}</span>
+                                  <span className="text-zinc-100 text-right">{homeHits}</span>
+                                  <span className="text-zinc-100 text-right">{homeErrors}</span>
                                 </div>
                               </div>
                             </article>
@@ -617,34 +767,61 @@ function App() {
 
               {view === 'league_standings' && (
                 <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
-                  <div className="xl:col-span-3 space-y-10">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-6">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h2 className="font-display text-2xl uppercase text-prestige tracking-widest">Prestige</h2>
-                          <div className="h-px flex-1 bg-gradient-to-r from-prestige/60 to-transparent" />
-                        </div>
-                        <StandingsTable divisionName="North" teams={getDivisionTeams('Prestige', 'North')} headerColor="text-prestige" />
-                        <StandingsTable divisionName="South" teams={getDivisionTeams('Prestige', 'South')} headerColor="text-prestige" />
-                        <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" />
-                        <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" />
+                  <div className="xl:col-span-3 space-y-8">
+                    <section className="bg-gradient-to-r from-[#1f1f1f] via-[#262626] to-[#1f1f1f] rounded-2xl border border-white/10 p-3">
+                      <div className="inline-flex rounded-xl border border-white/10 bg-black/30 p-1">
+                        <button
+                          onClick={() => setStandingsMode('divisional')}
+                          className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
+                            standingsMode === 'divisional'
+                              ? 'bg-white text-black'
+                              : 'text-zinc-300 hover:text-white'
+                          }`}
+                        >
+                          Divisional View
+                        </button>
+                        <button
+                          onClick={() => setStandingsMode('league')}
+                          className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
+                            standingsMode === 'league'
+                              ? 'bg-white text-black'
+                              : 'text-zinc-300 hover:text-white'
+                          }`}
+                        >
+                          League View
+                        </button>
                       </div>
-                      <div className="space-y-6">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h2 className="font-display text-2xl uppercase text-platinum tracking-widest">Platinum</h2>
-                          <div className="h-px flex-1 bg-gradient-to-r from-platinum/60 to-transparent" />
-                        </div>
-                        <StandingsTable divisionName="North" teams={getDivisionTeams('Platinum', 'North')} headerColor="text-platinum" />
-                        <StandingsTable divisionName="South" teams={getDivisionTeams('Platinum', 'South')} headerColor="text-platinum" />
-                        <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" />
-                        <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" />
-                      </div>
-                    </div>
+                    </section>
 
-                    <div className="space-y-12">
-                      <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" />
-                      <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" />
-                    </div>
+                    {standingsMode === 'divisional' ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h2 className="font-display text-2xl uppercase text-prestige tracking-widest">Prestige</h2>
+                            <div className="h-px flex-1 bg-gradient-to-r from-prestige/60 to-transparent" />
+                          </div>
+                          <StandingsTable divisionName="North" teams={getDivisionTeams('Prestige', 'North')} headerColor="text-prestige" />
+                          <StandingsTable divisionName="South" teams={getDivisionTeams('Prestige', 'South')} headerColor="text-prestige" />
+                          <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" />
+                          <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" />
+                        </div>
+                        <div className="space-y-6">
+                          <div className="flex items-center gap-3 mb-2">
+                            <h2 className="font-display text-2xl uppercase text-platinum tracking-widest">Platinum</h2>
+                            <div className="h-px flex-1 bg-gradient-to-r from-platinum/60 to-transparent" />
+                          </div>
+                          <StandingsTable divisionName="North" teams={getDivisionTeams('Platinum', 'North')} headerColor="text-platinum" />
+                          <StandingsTable divisionName="South" teams={getDivisionTeams('Platinum', 'South')} headerColor="text-platinum" />
+                          <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" />
+                          <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" />
+                        <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" />
+                      </div>
+                    )}
                   </div>
 
                   <aside className="xl:col-span-1">
@@ -666,6 +843,27 @@ function App() {
                     </div>
                   </aside>
                 </div>
+              )}
+
+              {view === 'gpb_book' && (
+                <GPBBook
+                  teams={teams}
+                  games={games}
+                  settings={settings}
+                  currentDate={currentDate}
+                  dataSource={dataSource}
+                />
+              )}
+
+              {view === 'playoffs' && (
+                <PlayoffsBracket
+                  teams={teams}
+                  games={games}
+                  seasonComplete={seasonComplete}
+                  currentDate={currentDate}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                />
               )}
 
               {view === 'notifications' && (

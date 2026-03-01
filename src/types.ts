@@ -15,10 +15,22 @@ export interface Team {
 }
 
 export type GameStatus = 'scheduled' | 'completed';
+export type GamePhase = 'regular_season' | 'playoffs';
+export type PlayoffRoundKey = 'wild_card' | 'divisional' | 'league_series' | 'world_series';
+export type PlayoffLeague = Team['league'] | 'GPB';
 
 export interface GameScore {
   home: number;
   away: number;
+}
+
+export interface PlayoffGameDetails {
+  round: PlayoffRoundKey;
+  league: PlayoffLeague;
+  seriesId: string;
+  seriesLabel: string;
+  gameNumber: number;
+  bestOf: number;
 }
 
 export interface Game {
@@ -26,8 +38,10 @@ export interface Game {
   date: string; // YYYY-MM-DD
   homeTeam: string; // Team ID
   awayTeam: string; // Team ID
+  phase: GamePhase;
   status: GameStatus;
   score: GameScore;
+  playoff?: PlayoffGameDetails | null;
   stats: Record<string, number | string | boolean | null>;
 }
 
@@ -38,7 +52,7 @@ export interface SimulationSettings {
   gameLuckFactor: number; // Noise factor (e.g., 0-1)
 }
 
-export type SimulationScope = 'next_game' | 'day' | 'week' | 'month' | 'to_date' | 'season';
+export type SimulationScope = 'next_game' | 'day' | 'week' | 'month' | 'to_date' | 'regular_season' | 'season';
 
 export interface SimulationTarget {
   scope: SimulationScope;

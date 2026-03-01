@@ -314,8 +314,10 @@ export const generateSchedule = (teams: Team[], options: ScheduleOptions = {}): 
             date,
             homeTeam: template.homeTeam,
             awayTeam: template.awayTeam,
+            phase: 'regular_season',
             status: 'scheduled',
             score: { home: 0, away: 0 },
+            playoff: null,
             stats: {},
           });
           gameCounter++;
