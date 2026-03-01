@@ -1,19 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Kaushan+Script&family=Outfit:wght@300;400;500;600;700&family=Oswald:wght@400;500;700&display=swap');
 @import "tailwindcss";
-
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700&family=Oswald:wght@400;500;700&display=swap');
 
 @theme {
   --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
   --font-display: "Oswald", "Outfit", sans-serif;
+  --font-logo: "Kaushan Script", "Brush Script MT", cursive;
   
   --color-prestige: #a79b00;
   --color-platinum: #17b690;
-  --color-dark-bg: #181818;
-  --color-card-bg: #323232;
+  --color-dark-bg: #141414;
+  --color-card-bg: #2a2a2a;
 }
 
 body {
-  background-color: var(--color-dark-bg);
+  background:
+    radial-gradient(circle at 8% 12%, rgba(255, 255, 255, 0.06), transparent 36%),
+    radial-gradient(circle at 90% 18%, rgba(255, 255, 255, 0.05), transparent 32%),
+    var(--color-dark-bg);
   color: #ffffff;
 }

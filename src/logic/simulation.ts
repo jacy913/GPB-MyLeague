@@ -2,13 +2,15 @@ import { Team, Game, SimulationSettings } from '../types';
 
 // Constants (Defaults)
 export const DEFAULT_SETTINGS: SimulationSettings = {
-  continuityWeight: 0.7,
-  winLossVariance: 10,
-  homeFieldAdvantage: 0.035,
-  gameLuckFactor: 0.1,
+  continuityWeight: 0.6,
+  winLossVariance: 4,
+  homeFieldAdvantage: 0.025,
+  gameLuckFactor: 0.08,
 };
 
 const GAMES_PER_SEASON = 154;
+const MEAN_WINS = GAMES_PER_SEASON / 2;
+const MAX_WINS_FROM_MEAN = 18; // Hard cap to avoid extreme team ratings.
 
 // Helper to generate normal distribution random number
 const randomNormal = (mean: number, stdDev: number): number => {
@@ -21,38 +23,30 @@ const randomNormal = (mean: number, stdDev: number): number => {
 // Recalculate team ratings based on settings
 export const recalculateTeamRatings = (teams: Team[], settings: SimulationSettings): Team[] => {
   return teams.map(team => {
-    // Calculate target wins for the season
-    // Mix of previous baseline and fresh random performance
-    const freshPerformance = randomNormal(81, settings.winLossVariance); // 81 is .500 in 162 games, roughly .526 in 154? No, 154/2 = 77.
-    // Let's use 77 as the mean for 154 games.
-    const meanWins = GAMES_PER_SEASON / 2;
-    
-    const randomWins = randomNormal(meanWins, settings.winLossVariance);
-    
-    // Continuity blend
-    // If continuity is 1.0, we use previousBaselineWins exactly.
-    // If 0.0, we use randomWins.
-    const targetWins = (team.previousBaselineWins * settings.continuityWeight) + 
-                       (randomWins * (1 - settings.continuityWeight));
-    
-    // Convert target wins to a 0-100 rating
-    // Assuming ~40 wins is rating 0, ~114 wins is rating 100.
-    // Range is roughly 74 wins.
-    // Rating = (Wins - 40) / 0.74
-    let newRating = (targetWins - 40) / 0.74;
-    newRating = Math.max(5, Math.min(95, newRating)); // Clamp to reasonable bounds
-    
+    // Blend historical baseline and random performance.
+    const randomWins = randomNormal(MEAN_WINS, settings.winLossVariance);
+    const targetWins =
+      (team.previousBaselineWins * settings.continuityWeight) +
+      (randomWins * (1 - settings.continuityWeight));
+
+    // Keep baseline power spread realistic so 100-win teams stay rare.
+    const boundedWins = Math.max(MEAN_WINS - MAX_WINS_FROM_MEAN, Math.min(MEAN_WINS + MAX_WINS_FROM_MEAN, targetWins));
+    const winsDelta = boundedWins - MEAN_WINS;
+
+    // Map to a compact strength range to avoid runaway win probabilities.
+    const newRating = Math.max(35, Math.min(65, 50 + (winsDelta * 1.2)));
+
     return { ...team, rating: newRating };
   });
 };
 
-const getElo = (rating: number) => rating * 15 + 1000;
+const getElo = (rating: number) => rating * 8 + 1200;
 
 const calculateWinProbability = (homeRating: number, awayRating: number, hfa: number): number => {
   const homeElo = getElo(homeRating);
   const awayElo = getElo(awayRating);
   
-  const exponent = (awayElo - homeElo) / 400;
+  const exponent = (awayElo - homeElo) / 500;
   let prob = 1 / (1 + Math.pow(10, exponent));
   
   // Apply HFA
@@ -68,7 +62,7 @@ const calculateRuns = (teamRating: number, oppRating: number, isHome: boolean, l
   // Luck factor adds noise to the lambda
   const noise = (Math.random() - 0.5) * 2 * luckFactor; // -luck to +luck
   
-  const lambda = baseRuns + (ratingDiff * 0.05) + (isHome ? 0.2 : -0.2) + noise;
+  const lambda = baseRuns + (ratingDiff * 0.03) + (isHome ? 0.12 : -0.12) + noise;
   
   const L = Math.exp(-Math.max(0.5, lambda));
   let k = 0;
@@ -89,7 +83,7 @@ export const simulateGame = (homeTeam: Team, awayTeam: Team, settings: Simulatio
   // We can adjust the probability slightly by the luck factor?
   // Or just use the luck factor in the run generation (done above).
   // Let's also add some noise to the win prob itself.
-  const probNoise = (Math.random() - 0.5) * settings.gameLuckFactor * 0.2; // Small variance to win prob
+  const probNoise = (Math.random() - 0.5) * settings.gameLuckFactor * 0.08;
   const finalProb = Math.max(0.01, Math.min(0.99, winProb + probNoise));
 
   const roll = Math.random();
@@ -115,32 +109,63 @@ export const simulateGame = (homeTeam: Team, awayTeam: Team, settings: Simulatio
 export const generateSchedule = (teams: Team[]): Game[] => {
   const games: Game[] = [];
   let gameIdCounter = 1;
-  
-  for (let round = 0; round < 77; round++) {
-    const shuffled = [...teams].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < shuffled.length; i += 2) {
-      const home = shuffled[i];
-      const away = shuffled[i+1];
-      
-      games.push({
-        id: `g-${gameIdCounter++}`,
-        homeTeamId: home.id,
-        awayTeamId: away.id,
-        homeScore: 0,
-        awayScore: 0,
-        played: false
-      });
-      
-      games.push({
-        id: `g-${gameIdCounter++}`,
-        homeTeamId: away.id,
-        awayTeamId: home.id,
-        homeScore: 0,
-        awayScore: 0,
-        played: false
+  const teamIds = teams.map((team) => team.id);
+  const teamCount = teamIds.length;
+
+  if (teamCount < 2 || teamCount % 2 !== 0) {
+    return games;
+  }
+
+  // Circle method round-robin: every team faces every other team once per cycle.
+  const rotating = [...teamIds];
+  const rounds: Array<Array<{ home: string; away: string }>> = [];
+
+  for (let round = 0; round < teamCount - 1; round++) {
+    const roundGames: Array<{ home: string; away: string }> = [];
+
+    for (let i = 0; i < teamCount / 2; i++) {
+      const first = rotating[i];
+      const second = rotating[teamCount - 1 - i];
+      const shouldSwap = (round + i) % 2 === 0;
+
+      roundGames.push({
+        home: shouldSwap ? first : second,
+        away: shouldSwap ? second : first,
       });
     }
+
+    rounds.push(roundGames);
+
+    const moved = rotating.pop();
+    if (!moved) {
+      break;
+    }
+    rotating.splice(1, 0, moved);
   }
-  
-  return games.sort(() => Math.random() - 0.5);
+
+  const cycles = 5; // 31 * 5 = 155 games/team
+
+  for (let cycle = 0; cycle < cycles; cycle++) {
+    // Drop one full round in final cycle so each team plays 154 games.
+    const roundsToPlay = cycle === cycles - 1 ? rounds.slice(0, rounds.length - 1) : rounds;
+
+    roundsToPlay.forEach((roundGames, roundIndex) => {
+      roundGames.forEach((matchup, matchupIndex) => {
+        const flipHomeAway = (cycle + roundIndex + matchupIndex) % 2 === 1;
+        const homeTeamId = flipHomeAway ? matchup.away : matchup.home;
+        const awayTeamId = flipHomeAway ? matchup.home : matchup.away;
+
+        games.push({
+          id: `g-${gameIdCounter++}`,
+          homeTeamId,
+          awayTeamId,
+          homeScore: 0,
+          awayScore: 0,
+          played: false,
+        });
+      });
+    });
+  }
+
+  return games;
 };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Team } from '../types';
-import { Trophy, TrendingUp, TrendingDown } from 'lucide-react';
+import { Trophy } from 'lucide-react';
+import { TeamLogo } from './TeamLogo';
 
 interface StandingsTableProps {
   divisionName: string;
@@ -9,6 +10,11 @@ interface StandingsTableProps {
 }
 
 export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, teams, headerColor = 'text-slate-200' }) => {
+  const accentTextClass =
+    headerColor.includes('prestige') ? 'text-prestige' : headerColor.includes('platinum') ? 'text-platinum' : headerColor;
+  const accentBgClass =
+    headerColor.includes('prestige') ? 'bg-prestige' : headerColor.includes('platinum') ? 'bg-platinum' : 'bg-white';
+
   // Sort by Win PCT, then Wins
   const sortedTeams = [...teams].sort((a, b) => {
     const pctA = a.wins + a.losses > 0 ? a.wins / (a.wins + a.losses) : 0;
@@ -20,12 +26,12 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
   const leader = sortedTeams[0];
 
   return (
-    <div className="bg-[#323232] rounded-lg border border-white/10 overflow-hidden shadow-lg">
-      <div className="bg-black/20 px-4 py-2 border-b border-white/10 flex justify-between items-center">
-        <h3 className={`font-display text-lg tracking-wide uppercase ${headerColor}`}>{divisionName}</h3>
+    <div className="bg-gradient-to-br from-[#242424] to-[#313131] rounded-xl border border-white/10 overflow-hidden shadow-xl shadow-black/35">
+      <div className="bg-gradient-to-r from-black/45 to-black/20 px-4 py-2 border-b border-white/10 flex justify-between items-center">
+        <h3 className={`font-display text-lg tracking-wide uppercase ${headerColor} drop-shadow`}>{divisionName}</h3>
       </div>
       <table className="w-full text-sm">
-        <thead className="bg-black/40 text-slate-400 font-mono text-xs uppercase">
+        <thead className="bg-black/45 text-zinc-400 font-mono text-xs uppercase tracking-wider">
           <tr>
             <th className="px-3 py-2 text-left font-medium">Team</th>
             <th className="px-2 py-2 text-center font-medium w-12">W</th>
@@ -42,24 +48,22 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
             const diff = team.runsScored - team.runsAllowed;
             
             // GB Calculation
-            const leaderGames = leader.wins + leader.losses;
-            const teamGames = team.wins + team.losses;
             const gb = index === 0 ? '-' : (
               ((leader.wins - team.wins) + (team.losses - leader.losses)) / 2
             ).toFixed(1);
 
             return (
-              <tr key={team.id} className="hover:bg-white/5 transition-colors group">
+              <tr key={team.id} className="hover:bg-white/8 transition-colors group odd:bg-white/[0.02]">
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
-                    {index === 0 && gamesPlayed > 0 && (
-                      <div className={`w-1 h-full absolute left-0 ${headerColor.replace('text-', 'bg-')}/50`} />
-                    )}
+                    <span className="w-5 text-center text-[10px] font-mono text-zinc-500">{index + 1}</span>
+                    <span className={`w-1.5 h-7 rounded-full ${accentBgClass} ${index === 0 ? 'opacity-100' : 'opacity-45'}`} />
+                    <TeamLogo team={team} sizeClass="w-8 h-8" />
                     <div className="flex flex-col">
-                      <span className="font-display font-bold text-white text-base leading-none tracking-wide">
-                        {team.city}
+                      <span className={`font-display font-bold text-base leading-none tracking-wide ${accentTextClass}`}>
+                        {team.city.toUpperCase()}
                       </span>
-                      <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                      <span className="text-xs text-zinc-400 font-medium uppercase tracking-wider">
                         {team.name}
                       </span>
                     </div>
@@ -68,11 +72,11 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
                     )}
                   </div>
                 </td>
-                <td className="px-2 py-2 text-center font-mono text-slate-200">{team.wins}</td>
-                <td className="px-2 py-2 text-center font-mono text-slate-400">{team.losses}</td>
-                <td className="px-2 py-2 text-center font-mono text-slate-300">{pct}</td>
-                <td className="px-2 py-2 text-center font-mono text-slate-500 text-xs">{gb}</td>
-                <td className={`px-2 py-2 text-center font-mono text-xs font-bold ${diff > 0 ? 'text-emerald-400' : diff < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                <td className="px-2 py-2 text-center font-mono text-zinc-100">{team.wins}</td>
+                <td className="px-2 py-2 text-center font-mono text-zinc-300">{team.losses}</td>
+                <td className="px-2 py-2 text-center font-mono text-zinc-200">{pct}</td>
+                <td className="px-2 py-2 text-center font-mono text-zinc-500 text-xs">{gb}</td>
+                <td className={`px-2 py-2 text-center font-mono text-xs font-bold ${diff >= 0 ? accentTextClass : 'text-zinc-400'}`}>
                   {diff > 0 ? '+' : ''}{diff}
                 </td>
               </tr>

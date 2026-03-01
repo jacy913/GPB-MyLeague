@@ -1,20 +1,37 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Grand League Baseball Simulator
 
-# Run and deploy your AI Studio app
+React + TypeScript simulator for a 32-team MyLeague-style baseball universe.
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/1d866de8-ff94-45fe-accb-ce911d8304ec
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+## Local Development
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+   ```bash
+   npm install
+   ```
+2. Create `.env.local` and set:
+   ```env
+   VITE_SUPABASE_URL="https://YOUR_PROJECT_ID.supabase.co"
+   VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
+   ```
 3. Run the app:
-   `npm run dev`
+   ```bash
+   npm run dev
+   ```
+
+If Supabase env vars are missing, the app falls back to local storage.
+
+## Supabase Setup
+
+1. Create a new Supabase project.
+2. Open `SQL Editor` in Supabase.
+3. Run the schema from [`supabase/schema.sql`](supabase/schema.sql).
+4. Copy your Project URL + anon public key into `.env.local`.
+
+The app will auto-seed initial league data on first run, then persist:
+- `teams` and `league_settings` as the current universe state
+- `season_runs` and `season_games` after each completed simulation
+
+## Notes
+
+- Current RLS policies in `supabase/schema.sql` allow anon read/write for quick setup.
+- For production, move to authenticated users and tighten policies per user/league.
