@@ -3,18 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
-import { generateSchedule, simulateGame, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
-import { Team, Game, SimulationSettings } from './types';
+import { generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
+import { Team, Game, SimulationSettings, SimulationTarget } from './types';
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
+import { TeamLogo } from './components/TeamLogo';
 import { Controls } from './components/Controls';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, Settings, Bell, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, Bell, CalendarDays, Settings, Table2 } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
+import { SimulationManager } from './logic/simulationManager';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
   clearSupabaseSeasonHistory,
@@ -97,12 +99,14 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'league_standings' | 'settings'>('dashboard');
+  const [view, setView] = useState<'games_schedule' | 'league_standings' | 'notifications' | 'settings'>('games_schedule');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
+  const [currentDate, setCurrentDate] = useState<string>('');
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [selectedTeamId, setSelectedTeamId] = useState<string>(INITIAL_TEAMS[0]?.id ?? '');
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [dataSource, setDataSource] = useState<'supabase' | 'local'>('local');
   const [isClearingHistory, setIsClearingHistory] = useState(false);
-  const [isNoticeBarOpen, setIsNoticeBarOpen] = useState(false);
   const [commissionerNotices, setCommissionerNotices] = useState<CommissionerNotice[]>([]);
 
   const pushNotice = useCallback((message: string, level: NoticeLevel = 'info') => {
@@ -116,6 +120,31 @@ function App() {
       },
       ...prev,
     ].slice(0, 30));
+  }, []);
+
+  const getProgressFromGames = useCallback((seasonGames: Game[]): number => {
+    if (seasonGames.length === 0) {
+      return 0;
+    }
+    const completed = seasonGames.filter((game) => game.status === 'completed').length;
+    return (completed / seasonGames.length) * 100;
+  }, []);
+
+  const buildFreshSeasonTeams = useCallback((teamsToReset: Team[], settingsToUse: SimulationSettings): Team[] => {
+    const zeroedTeams = teamsToReset.map((team) => ({
+      ...team,
+      wins: 0,
+      losses: 0,
+      runsScored: 0,
+      runsAllowed: 0,
+    }));
+
+    return recalculateTeamRatings(zeroedTeams, settingsToUse);
+  }, []);
+
+  const createMasterSchedule = useCallback((seasonTeams: Team[]): Game[] => {
+    const seasonStartDate = getDefaultSeasonStartDate(new Date().getFullYear());
+    return generateSchedule(seasonTeams, { seasonStartDate, seasonDays: 180 });
   }, []);
 
   const persistLeagueState = useCallback(async (nextTeams: Team[], nextSettings: SimulationSettings) => {
@@ -192,27 +221,47 @@ function App() {
   // Initialize schedule on mount (or when teams change structure, but we handle that in save)
   useEffect(() => {
     if (!isBootstrapping && games.length === 0) {
-      const schedule = generateSchedule(teams);
+      const schedule = createMasterSchedule(teams);
       setGames(schedule);
+      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+      setCurrentDate(firstDate);
+      setSelectedDate(firstDate);
+      setSeasonComplete(false);
+      setProgress(0);
     }
-  }, [teams, games.length, isBootstrapping]);
+  }, [teams, games.length, isBootstrapping, createMasterSchedule]);
+
+  useEffect(() => {
+    if (teams.length === 0) {
+      return;
+    }
+
+    if (!teams.some((team) => team.id === selectedTeamId)) {
+      setSelectedTeamId(teams[0].id);
+    }
+  }, [teams, selectedTeamId]);
 
   const resetSeason = useCallback((teamsToReset = teams, settingsToUse = settings) => {
-    const resetTeams = teamsToReset.map(t => ({...t, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0}));
-    setTeams(resetTeams);
-    setGames(generateSchedule(resetTeams));
+    const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
+    const schedule = createMasterSchedule(freshTeams);
+    const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+
+    setTeams(freshTeams);
+    setGames(schedule);
+    setCurrentDate(firstDate);
+    setSelectedDate(firstDate);
     setProgress(0);
     setSeasonComplete(false);
 
     void (async () => {
       try {
-        await persistLeagueState(resetTeams, settingsToUse);
+        await persistLeagueState(freshTeams, settingsToUse);
       } catch (error) {
         console.error('Failed to persist reset season state:', error);
         pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
       }
     })();
-  }, [teams, settings, persistLeagueState, pushNotice]);
+  }, [teams, settings, buildFreshSeasonTeams, createMasterSchedule, persistLeagueState, pushNotice]);
 
   const handleSaveSettings = (newTeams: Team[], newSettings: SimulationSettings) => {
     setSettings(newSettings);
@@ -221,7 +270,7 @@ function App() {
       isSupabaseConfigured ? 'League settings updated and season reset.' : 'League settings updated locally.',
       'success',
     );
-    setView('dashboard');
+    setView('games_schedule');
   };
 
   const handleClearHistoricalData = useCallback(async () => {
@@ -246,88 +295,93 @@ function App() {
     }
   }, [pushNotice]);
 
-  const runSimulation = useCallback(async () => {
+  const runSimulationTarget = useCallback((target: SimulationTarget) => {
+    if (isSimulating || games.length === 0) {
+      return;
+    }
+
     setIsSimulating(true);
-    setSeasonComplete(false);
-    
-    // 1. Recalculate Ratings based on Settings (Continuity, Variance)
-    // This represents the "New Season" baseline generation
-    const ratedTeams = recalculateTeamRatings(teams, settings);
-    
-    // Reset stats
-    const currentTeams = ratedTeams.map(t => ({...t, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0}));
-    const currentGames = generateSchedule(currentTeams); 
-    
-    const batchSize = 50;
-    const totalGames = currentGames.length;
-    let gamesPlayed = 0;
 
-    const processBatch = () => {
-      const batchEnd = Math.min(gamesPlayed + batchSize, totalGames);
-      
-      for (let i = gamesPlayed; i < batchEnd; i++) {
-        const game = currentGames[i];
-        const homeTeam = currentTeams.find(t => t.id === game.homeTeamId)!;
-        const awayTeam = currentTeams.find(t => t.id === game.awayTeamId)!;
-        
-        // Pass settings to simulateGame for HFA and Luck
-        const result = simulateGame(homeTeam, awayTeam, settings);
-        
-        game.homeScore = result.homeScore;
-        game.awayScore = result.awayScore;
-        game.played = true;
-        
-        homeTeam.runsScored += result.homeScore;
-        homeTeam.runsAllowed += result.awayScore;
-        awayTeam.runsScored += result.awayScore;
-        awayTeam.runsAllowed += result.homeScore;
-        
-        if (result.homeScore > result.awayScore) {
-          homeTeam.wins++;
-          awayTeam.losses++;
-        } else {
-          awayTeam.wins++;
-          homeTeam.losses++;
-        }
-      }
-      
-      gamesPlayed = batchEnd;
-      setTeams([...currentTeams]); 
-      setProgress((gamesPlayed / totalGames) * 100);
+    requestAnimationFrame(() => {
+      const manager = new SimulationManager({
+        teams,
+        games,
+        settings,
+        currentDate: currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
+      });
 
-      if (gamesPlayed < totalGames) {
-        requestAnimationFrame(processBatch);
-      } else {
-        const finalizedTeams = currentTeams.map((team) => ({
-          ...team,
-          previousBaselineWins: team.wins,
-        }));
+      const result = manager.run(target);
+      const complete = result.games.every((game) => game.status === 'completed');
+      const finalizedTeams = complete
+        ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
+        : result.teams;
 
-        setTeams(finalizedTeams);
-        setGames([...currentGames]);
-        setIsSimulating(false);
-        setSeasonComplete(true);
+      setTeams(finalizedTeams);
+      setGames(result.games);
+      setCurrentDate(result.currentDate);
+      setSelectedDate(result.currentDate);
+      setProgress(getProgressFromGames(result.games));
+      setSeasonComplete(complete);
+      setIsSimulating(false);
 
-        void (async () => {
-          try {
-            await persistLeagueState(finalizedTeams, settings);
+      void (async () => {
+        try {
+          await persistLeagueState(finalizedTeams, settings);
+
+          if (complete && result.simulatedGameCount > 0) {
             if (isSupabaseConfigured) {
-              const seasonLabel = `Season ${new Date().getFullYear()}`;
-              await saveSupabaseSeasonRun(finalizedTeams, currentGames, settings, seasonLabel);
-              pushNotice('Season simulation saved to Supabase.', 'success');
+              const seasonLabel = `Season ${new Date(`${result.currentDate}T00:00:00Z`).getUTCFullYear()}`;
+              await saveSupabaseSeasonRun(finalizedTeams, result.games, settings, seasonLabel);
+              pushNotice('Season simulation completed and saved to Supabase.', 'success');
             } else {
-              pushNotice('Season simulation saved locally.', 'info');
+              pushNotice('Season simulation completed and saved locally.', 'info');
             }
-          } catch (error) {
-            console.error('Failed to persist simulation results:', error);
-            pushNotice('Season completed, but Supabase sync failed. Local copy is still available.', 'warning');
+            return;
           }
-        })();
-      }
-    };
 
-    requestAnimationFrame(processBatch);
-  }, [teams, settings, persistLeagueState, pushNotice]);
+          if (result.simulatedGameCount === 0) {
+            pushNotice('No scheduled games matched the selected simulation scope.', 'info');
+          } else {
+            pushNotice(`Simulated ${result.simulatedGameCount} games through ${result.currentDate}.`, 'info');
+          }
+        } catch (error) {
+          console.error('Failed to persist simulation results:', error);
+          pushNotice('Simulation ran, but saving to Supabase failed. Local state is still updated.', 'warning');
+        }
+      })();
+    });
+  }, [isSimulating, games, teams, settings, currentDate, getProgressFromGames, persistLeagueState, pushNotice]);
+
+  const simulateToSelectedDate = useCallback(() => {
+    if (!selectedDate) {
+      return;
+    }
+    runSimulationTarget({ scope: 'to_date', targetDate: selectedDate });
+  }, [selectedDate, runSimulationTarget]);
+
+  const simulateDay = useCallback(() => {
+    runSimulationTarget({ scope: 'day' });
+  }, [runSimulationTarget]);
+
+  const simulateWeek = useCallback(() => {
+    runSimulationTarget({ scope: 'week' });
+  }, [runSimulationTarget]);
+
+  const simulateMonth = useCallback(() => {
+    runSimulationTarget({ scope: 'month' });
+  }, [runSimulationTarget]);
+
+  const simulateNextTeamGame = useCallback(() => {
+    if (!selectedTeamId) {
+      pushNotice('Select a team before running "Simulate Next Game".', 'warning');
+      return;
+    }
+    runSimulationTarget({ scope: 'next_game', teamId: selectedTeamId });
+  }, [selectedTeamId, runSimulationTarget, pushNotice]);
+
+  const quickSimSeason = useCallback(() => {
+    runSimulationTarget({ scope: 'season' });
+  }, [runSimulationTarget]);
 
   const getDivisionTeams = (league: string, division: string) => {
     return teams.filter(t => t.league === league && t.division === division);
@@ -338,6 +392,17 @@ function App() {
   };
 
   const seasonYear = new Date().getFullYear();
+  const activeDate = selectedDate || games[0]?.date || currentDate;
+
+  const gamesForActiveDate = useMemo(
+    () =>
+      games
+        .filter((game) => game.date === activeDate)
+        .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
+    [games, activeDate],
+  );
+
+  const teamLookup = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
 
   if (isBootstrapping) {
     return (
@@ -358,164 +423,202 @@ function App() {
         <div className="absolute bottom-0 left-[32%] w-[520px] h-[240px] bg-gradient-to-r from-transparent via-white/5 to-transparent blur-2xl" />
       </div>
 
-      {/* Header */}
       <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-[84px] flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('dashboard')}>
+        <div className="px-4 sm:px-6 lg:px-8 h-[88px] flex items-center justify-between">
+          <button className="flex items-center gap-3" onClick={() => setView('games_schedule')}>
             <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
             <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
               My League
             </span>
-          </div>
-          
+          </button>
+
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
               <Activity className="w-4 h-4 text-prestige" />
               <span className="font-mono">SEASON {seasonYear}</span>
             </div>
-
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
               <span className={`w-2 h-2 rounded-full ${dataSource === 'supabase' ? 'bg-platinum' : 'bg-prestige'}`} />
               <span className="font-mono">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
             </div>
-            
-            <div className="flex bg-[#242424] rounded-lg p-1 border border-white/10 shadow-inner shadow-black/40">
-              <button 
-                onClick={() => setView('dashboard')}
-                className={`px-4 py-1.5 text-xs font-display uppercase tracking-wider rounded-md transition-all ${view === 'dashboard' ? 'bg-prestige text-black shadow-sm' : 'text-zinc-400 hover:text-prestige'}`}
-              >
-                Division
-              </button>
-              <button 
-                onClick={() => setView('league_standings')}
-                className={`px-4 py-1.5 text-xs font-display uppercase tracking-wider rounded-md transition-all ${view === 'league_standings' ? 'bg-platinum text-black shadow-sm' : 'text-zinc-400 hover:text-platinum'}`}
-              >
-                League
-              </button>
-            </div>
-
-            <button 
-              onClick={() => setIsNoticeBarOpen((prev) => !prev)}
-              className={`relative flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                isNoticeBarOpen ? 'bg-white/10 text-white' : 'hover:bg-[#323232] text-zinc-400'
-              }`}
+            <button
+              onClick={() => setView('notifications')}
+              className={`relative p-2 rounded-lg transition-colors ${view === 'notifications' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-[#323232]'}`}
               title="Commissioner Notifications"
             >
               <Bell className="w-5 h-5" />
-              <span className="text-xs font-display uppercase tracking-wider hidden md:inline">Notices</span>
-              {isNoticeBarOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               {commissionerNotices.length > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-platinum text-black text-[10px] font-mono flex items-center justify-center">
                   {commissionerNotices.length > 9 ? '9+' : commissionerNotices.length}
                 </span>
               )}
             </button>
-
-            <button 
-              onClick={() => setView(view === 'settings' ? 'dashboard' : 'settings')}
-              className={`p-2 rounded-lg transition-colors ${view === 'settings' ? 'bg-white/10 text-white' : 'hover:bg-[#323232] text-zinc-400'}`}
-              title="Commissioner Settings"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
           </div>
         </div>
-
-        <AnimatePresence initial={false}>
-          {isNoticeBarOpen && (
-            <motion.div
-              key="commissioner-notices"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="border-t border-white/10 overflow-hidden"
-            >
-              <div className="max-w-7xl mx-auto px-4 py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-display text-xs uppercase tracking-widest text-zinc-400">Commissioner Notifications</h3>
-                  <button
-                    onClick={() => setCommissionerNotices([])}
-                    disabled={commissionerNotices.length === 0}
-                    className="text-xs font-mono text-zinc-500 hover:text-white disabled:text-zinc-700 transition-colors"
-                  >
-                    Clear Feed
-                  </button>
-                </div>
-
-                {commissionerNotices.length === 0 ? (
-                  <p className="text-xs font-mono text-zinc-500">No notifications yet.</p>
-                ) : (
-                  <ul className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {commissionerNotices.map((notice) => (
-                      <li key={notice.id} className="bg-[#323232] border border-white/10 rounded-lg px-3 py-2 flex items-start justify-between gap-3">
-                        <span className={`text-xs font-mono ${NOTICE_LEVEL_CLASS[notice.level]}`}>{notice.message}</span>
-                        <span className="text-[10px] font-mono text-zinc-500 shrink-0">{notice.createdAt}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-8 relative z-10">
-        <AnimatePresence mode="wait">
-          {view === 'settings' ? (
-            <motion.div
-              key="settings"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3 }}
+      <div className="relative z-10 flex">
+        <aside className="hidden lg:block w-64 border-r border-white/10 bg-[#161616]/80 backdrop-blur sticky top-[88px] h-[calc(100vh-88px)]">
+          <div className="p-4 space-y-2">
+            <button
+              onClick={() => setView('games_schedule')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
-              <CommissionerSettings 
-                teams={teams} 
-                settings={settings} 
-                onSave={handleSaveSettings}
-                onCancel={() => setView('dashboard')}
-                onClearHistoricalData={handleClearHistoricalData}
-                isClearingHistoricalData={isClearingHistory}
-                isSupabaseEnabled={isSupabaseConfigured}
-              />
-            </motion.div>
-          ) : (
+              <CalendarDays className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Games & Schedule</span>
+            </button>
+            <button
+              onClick={() => setView('league_standings')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Table2 className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">League Standings</span>
+            </button>
+            <button
+              onClick={() => setView('notifications')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'notifications' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Bell className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Notifications</span>
+            </button>
+            <button
+              onClick={() => setView('settings')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'settings' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Settings className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Settings</span>
+            </button>
+          </div>
+        </aside>
+
+        <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
+          <div className="lg:hidden grid grid-cols-2 gap-2 mb-6">
+            <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Games</button>
+            <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
+            <button onClick={() => setView('notifications')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'notifications' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Notices</button>
+            <button onClick={() => setView('settings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'settings' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Settings</button>
+          </div>
+
+          <AnimatePresence mode="wait">
             <motion.div
               key={view}
-              initial={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, x: 12 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.3 }}
+              exit={{ opacity: 0, x: -12 }}
+              transition={{ duration: 0.24 }}
             >
-              {/* Controls Section */}
-              <motion.section 
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="mb-8"
-              >
-                <Controls 
-                  onSimulate={runSimulation} 
-                  onReset={() => resetSeason()}
-                  isSimulating={isSimulating}
-                  progress={progress}
-                  seasonComplete={seasonComplete}
-                />
-              </motion.section>
+              {view === 'games_schedule' && (
+                <div className="space-y-6">
+                  <Controls
+                    games={games}
+                    teams={teams}
+                    currentDate={currentDate}
+                    selectedDate={selectedDate}
+                    selectedTeamId={selectedTeamId}
+                    onSelectDate={setSelectedDate}
+                    onSelectTeamId={setSelectedTeamId}
+                    onSimulateToSelectedDate={simulateToSelectedDate}
+                    onSimulateDay={simulateDay}
+                    onSimulateWeek={simulateWeek}
+                    onSimulateMonth={simulateMonth}
+                    onSimulateNextGame={simulateNextTeamGame}
+                    onQuickSimSeason={quickSimSeason}
+                    onReset={() => resetSeason()}
+                    isSimulating={isSimulating}
+                    progress={progress}
+                    seasonComplete={seasonComplete}
+                  />
 
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                {/* Main Content Area (3 cols) */}
-                <div className="lg:col-span-3">
-                  {view === 'dashboard' ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.4 }}
-                      className="grid grid-cols-1 md:grid-cols-2 gap-8"
-                    >
-                      {/* Prestige League Column */}
+                  <section className="bg-gradient-to-br from-[#1f1f1f] via-[#242424] to-[#1f1f1f] rounded-2xl border border-white/10 p-4 md:p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="font-display text-3xl uppercase tracking-widest text-white">
+                        Game Schedule
+                      </h2>
+                      <span className="font-mono text-xs text-zinc-400">
+                        {activeDate} | {gamesForActiveDate.length} games
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {gamesForActiveDate.length === 0 ? (
+                        <div className="rounded-xl border border-white/10 bg-[#181818] px-4 py-8 text-center text-zinc-500 font-mono">
+                          No games scheduled for this date.
+                        </div>
+                      ) : (
+                        gamesForActiveDate.map((game) => {
+                          const awayTeam = teamLookup.get(game.awayTeam);
+                          const homeTeam = teamLookup.get(game.homeTeam);
+                          return (
+                            <article key={game.gameId} className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5">
+                              <div className="flex items-center justify-between mb-4">
+                                <span className={`font-mono text-[11px] uppercase ${game.status === 'completed' ? 'text-platinum' : 'text-zinc-500'}`}>
+                                  {game.status === 'completed' ? 'Final' : 'Scheduled'}
+                                </span>
+                                <span className="font-mono text-[11px] text-zinc-500">{game.gameId.toUpperCase()}</span>
+                              </div>
+
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="flex items-center gap-4">
+                                    {awayTeam ? (
+                                      <TeamLogo team={awayTeam} sizeClass="w-16 h-16" />
+                                    ) : (
+                                      <div className="w-16 h-16 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-xs text-zinc-500 uppercase">
+                                        {game.awayTeam}
+                                      </div>
+                                    )}
+                                    <div>
+                                      <p className="font-display text-3xl uppercase tracking-wide text-zinc-100 leading-none">
+                                        {awayTeam ? awayTeam.city : game.awayTeam.toUpperCase()}
+                                      </p>
+                                      <p className="font-display text-xl uppercase tracking-wide text-zinc-400 leading-none mt-1">
+                                        {awayTeam ? awayTeam.name : 'Unknown'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-3xl text-zinc-200 min-w-10 text-right">
+                                    {game.status === 'completed' ? game.score.away : '-'}
+                                  </span>
+                                </div>
+
+                                <div className="h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="flex items-center gap-4">
+                                    {homeTeam ? (
+                                      <TeamLogo team={homeTeam} sizeClass="w-16 h-16" />
+                                    ) : (
+                                      <div className="w-16 h-16 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-xs text-zinc-500 uppercase">
+                                        {game.homeTeam}
+                                      </div>
+                                    )}
+                                    <div>
+                                      <p className="font-display text-3xl uppercase tracking-wide text-zinc-100 leading-none">
+                                        {homeTeam ? homeTeam.city : game.homeTeam.toUpperCase()}
+                                      </p>
+                                      <p className="font-display text-xl uppercase tracking-wide text-zinc-400 leading-none mt-1">
+                                        {homeTeam ? homeTeam.name : 'Unknown'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-3xl text-zinc-200 min-w-10 text-right">
+                                    {game.status === 'completed' ? game.score.home : '-'}
+                                  </span>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+                  </section>
+                </div>
+              )}
+
+              {view === 'league_standings' && (
+                <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
+                  <div className="xl:col-span-3 space-y-10">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                           <h2 className="font-display text-2xl uppercase text-prestige tracking-widest">Prestige</h2>
@@ -526,8 +629,6 @@ function App() {
                         <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" />
                         <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" />
                       </div>
-
-                      {/* Platinum League Column */}
                       <div className="space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                           <h2 className="font-display text-2xl uppercase text-platinum tracking-widest">Platinum</h2>
@@ -538,48 +639,82 @@ function App() {
                         <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" />
                         <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" />
                       </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.4 }}
-                      className="space-y-12"
-                    >
+                    </div>
+
+                    <div className="space-y-12">
                       <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" />
                       <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" />
-                    </motion.div>
-                  )}
-                </div>
+                    </div>
+                  </div>
 
-                {/* Sidebar (1 col) */}
-                <aside className="lg:col-span-1">
-                  <div className="sticky top-24">
-                    <Leaderboard teams={teams} />
-                    
-                    {/* Additional Stats / Info */}
-                    <div className="mt-8 p-4 bg-[#323232] rounded-lg border border-white/10">
-                      <h4 className="font-display text-xs uppercase tracking-widest text-zinc-500 mb-2">Simulation Logic</h4>
-                      <div className="space-y-2 text-xs text-zinc-400 font-mono">
-                        <div className="flex justify-between">
-                          <span>Continuity:</span>
-                          <span className="text-prestige">{(settings.continuityWeight * 100).toFixed(0)}%</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Variance:</span>
-                          <span className="text-platinum">{settings.winLossVariance}</span>
+                  <aside className="xl:col-span-1">
+                    <div className="sticky top-24">
+                      <Leaderboard teams={teams} />
+                      <div className="mt-8 p-4 bg-[#323232] rounded-lg border border-white/10">
+                        <h4 className="font-display text-xs uppercase tracking-widest text-zinc-500 mb-2">Simulation Logic</h4>
+                        <div className="space-y-2 text-xs text-zinc-400 font-mono">
+                          <div className="flex justify-between">
+                            <span>Continuity:</span>
+                            <span className="text-prestige">{(settings.continuityWeight * 100).toFixed(0)}%</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Variance:</span>
+                            <span className="text-platinum">{settings.winLossVariance}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
+                  </aside>
+                </div>
+              )}
+
+              {view === 'notifications' && (
+                <section className="max-w-4xl space-y-4">
+                  <div className="bg-[#1f1f1f] rounded-2xl border border-white/10 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="font-display text-3xl uppercase tracking-widest text-white">Commissioner Notifications</h2>
+                      <button
+                        onClick={() => setCommissionerNotices([])}
+                        disabled={commissionerNotices.length === 0}
+                        className="text-xs font-mono text-zinc-500 hover:text-white disabled:text-zinc-700 transition-colors"
+                      >
+                        Clear Feed
+                      </button>
+                    </div>
+                    {commissionerNotices.length === 0 ? (
+                      <p className="text-sm font-mono text-zinc-500">No notifications yet.</p>
+                    ) : (
+                      <ul className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                        {commissionerNotices.map((notice) => (
+                          <li key={notice.id} className="bg-[#2b2b2b] border border-white/10 rounded-xl px-4 py-3 flex items-start justify-between gap-3">
+                            <span className={`text-sm font-mono ${NOTICE_LEVEL_CLASS[notice.level]}`}>{notice.message}</span>
+                            <span className="text-[11px] font-mono text-zinc-500 shrink-0">{notice.createdAt}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
-                </aside>
-              </div>
+                </section>
+              )}
+
+              {view === 'settings' && (
+                <CommissionerSettings
+                  teams={teams}
+                  settings={settings}
+                  onSave={handleSaveSettings}
+                  onCancel={() => setView('games_schedule')}
+                  onClearHistoricalData={handleClearHistoricalData}
+                  isClearingHistoricalData={isClearingHistory}
+                  isSupabaseEnabled={isSupabaseConfigured}
+                />
+              )}
             </motion.div>
-          )}
-        </AnimatePresence>
-      </main>
+          </AnimatePresence>
+        </main>
+      </div>
     </div>
   );
 }
 
 export default App;
+

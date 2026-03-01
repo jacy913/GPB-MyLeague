@@ -14,13 +14,21 @@ export interface Team {
   runsAllowed: number;
 }
 
+export type GameStatus = 'scheduled' | 'completed';
+
+export interface GameScore {
+  home: number;
+  away: number;
+}
+
 export interface Game {
-  id: string;
-  homeTeamId: string;
-  awayTeamId: string;
-  homeScore: number;
-  awayScore: number;
-  played: boolean;
+  gameId: string;
+  date: string; // YYYY-MM-DD
+  homeTeam: string; // Team ID
+  awayTeam: string; // Team ID
+  status: GameStatus;
+  score: GameScore;
+  stats: Record<string, number | string | boolean | null>;
 }
 
 export interface SimulationSettings {
@@ -30,9 +38,18 @@ export interface SimulationSettings {
   gameLuckFactor: number; // Noise factor (e.g., 0-1)
 }
 
+export type SimulationScope = 'next_game' | 'day' | 'week' | 'month' | 'to_date' | 'season';
+
+export interface SimulationTarget {
+  scope: SimulationScope;
+  targetDate?: string;
+  teamId?: string;
+}
+
 export interface SeasonState {
   teams: Team[];
   games: Game[];
+  currentDate: string;
   isSimulated: boolean;
   progress: number;
 }

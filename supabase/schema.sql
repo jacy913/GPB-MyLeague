@@ -52,9 +52,21 @@ create table if not exists public.season_games (
   home_score integer not null,
   away_score integer not null,
   played boolean not null,
+  game_date date,
+  status text check (status in ('scheduled', 'completed')),
+  stats jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   primary key (season_run_id, game_id)
 );
+
+alter table public.season_games
+  add column if not exists game_date date;
+
+alter table public.season_games
+  add column if not exists status text check (status in ('scheduled', 'completed'));
+
+alter table public.season_games
+  add column if not exists stats jsonb not null default '{}'::jsonb;
 
 create index if not exists season_runs_league_id_idx on public.season_runs(league_id);
 create index if not exists season_games_season_run_id_idx on public.season_games(season_run_id);

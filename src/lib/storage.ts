@@ -268,12 +268,15 @@ export const saveSupabaseSeasonRun = async (
 
   const gameRows = games.map((game) => ({
     season_run_id: seasonRun.id,
-    game_id: game.id,
-    home_team_id: game.homeTeamId,
-    away_team_id: game.awayTeamId,
-    home_score: game.homeScore,
-    away_score: game.awayScore,
-    played: game.played,
+    game_id: game.gameId,
+    home_team_id: game.homeTeam,
+    away_team_id: game.awayTeam,
+    home_score: game.score.home,
+    away_score: game.score.away,
+    played: game.status === 'completed',
+    game_date: game.date,
+    status: game.status,
+    stats: game.stats,
   }));
 
   const chunkSize = 500;
