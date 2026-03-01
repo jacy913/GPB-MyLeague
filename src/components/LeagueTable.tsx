@@ -62,7 +62,7 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({ leagueName, teams, hea
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className={`w-1.5 h-7 rounded-full ${accentBgClass} ${index === 0 ? 'opacity-100' : 'opacity-45'}`} />
-                    <TeamLogo team={team} sizeClass="w-8 h-8" />
+                    <TeamLogo team={team} sizeClass="w-10 h-10" />
                     <div className="flex flex-col">
                       <span className={`font-display font-bold text-base leading-none tracking-wide ${accentTextClass}`}>
                         {team.city.toUpperCase()}

@@ -19,7 +19,7 @@ const getTeamLogoUrl = (teamId: string): string | null => {
   return `${data.publicUrl}?v=${LOGO_CACHE_BUSTER}`;
 };
 
-export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-8 h-8' }) => {
+export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10' }) => {
   const [logoFailed, setLogoFailed] = useState(false);
   const logoUrl = useMemo(() => getTeamLogoUrl(team.id), [team.id]);
 
@@ -28,12 +28,12 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-8 h-8' 
   }, [team.id]);
 
   return (
-    <div className={`${sizeClass} rounded-md border border-white/10 bg-[#1a1a1a] overflow-hidden shrink-0 flex items-center justify-center`}>
+    <div className={`${sizeClass} rounded-md bg-transparent overflow-hidden shrink-0 flex items-center justify-center`}>
       {logoUrl && !logoFailed ? (
         <img
           src={logoUrl}
           alt={`${team.name} logo`}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-contain"
           onError={() => setLogoFailed(true)}
         />
       ) : (

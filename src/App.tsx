@@ -337,11 +337,13 @@ function App() {
     return teams.filter(t => t.league === league);
   };
 
+  const seasonYear = new Date().getFullYear();
+
   if (isBootstrapping) {
     return (
       <div className="min-h-screen bg-[#181818] text-white font-sans flex items-center justify-center">
         <div className="text-center space-y-2">
-          <img src={gpbLogo} alt="GPB" className="mx-auto h-16 w-auto object-contain" />
+          <img src={gpbLogo} alt="GPB" className="mx-auto h-24 w-24 object-contain drop-shadow-[0_4px_8px_rgba(0,0,0,0.45)]" />
           <p className="text-slate-400 font-mono text-sm">Loading league data...</p>
         </div>
       </div>
@@ -358,10 +360,10 @@ function App() {
 
       {/* Header */}
       <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 h-[84px] flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setView('dashboard')}>
-            <img src={gpbLogo} alt="GPB home" className="h-10 w-auto object-contain" />
-            <span className="font-logo text-xl sm:text-2xl leading-none tracking-wide text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+            <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
+            <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
               My League
             </span>
           </div>
@@ -369,7 +371,7 @@ function App() {
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
               <Activity className="w-4 h-4 text-prestige" />
-              <span className="font-mono">SEASON 2026</span>
+              <span className="font-mono">SEASON {seasonYear}</span>
             </div>
 
             <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
@@ -581,5 +583,3 @@ function App() {
 }
 
 export default App;
-
-

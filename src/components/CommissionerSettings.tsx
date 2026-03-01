@@ -231,10 +231,10 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="space-y-8">
         
-        {/* Column 1: Team Management (2 cols wide) */}
-        <div className="lg:col-span-2 bg-[#323232] rounded-xl border border-white/10 p-6">
+        {/* Team Management */}
+        <div className="bg-[#323232] rounded-xl border border-white/10 p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="font-display text-xl uppercase text-white tracking-wide">Team Management</h3>
             <div className="relative">
@@ -248,8 +248,13 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
               />
             </div>
           </div>
+          {!isSupabaseEnabled && (
+            <p className="text-[11px] text-amber-300 font-mono mb-4">
+              Logo uploads require Supabase storage configuration.
+            </p>
+          )}
 
-          <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-4 max-h-[680px] lg:max-h-[74vh] overflow-y-auto pr-2 custom-scrollbar">
             {filteredTeams.map((team, index) => {
               const previousTeam = filteredTeams[index - 1];
               const startsNewGroup =
@@ -338,25 +343,31 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
                     <div>
                       <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Logo</label>
                       <div className="flex items-center gap-2">
-                        <div className="w-10 h-10 rounded-lg border border-white/10 bg-[#2a2a2a] flex items-center justify-center overflow-hidden">
+                        <div className="w-16 h-16 rounded-lg border border-white/15 p-1.5 flex items-center justify-center overflow-hidden shrink-0">
                           {logoUrl ? (
                             <img
                               src={logoUrl}
                               alt={`${team.name} logo`}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-contain scale-110"
                             />
                           ) : (
-                            <ImageIcon className="w-4 h-4 text-zinc-500" />
+                              <ImageIcon className="w-4 h-4 text-zinc-500" />
                           )}
                         </div>
                         <label className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 text-xs font-mono text-zinc-300 hover:text-white hover:border-white/25 transition-colors cursor-pointer">
                           <Upload className="w-3 h-3" />
-                          <span>{uploadingTeamId === team.id ? 'Uploading...' : 'Upload'}</span>
+                          <span>
+                            {uploadingTeamId === team.id
+                              ? 'Uploading...'
+                              : isSupabaseEnabled
+                                ? 'Upload'
+                                : 'Upload*'}
+                          </span>
                           <input
                             type="file"
                             accept="image/*"
                             className="hidden"
-                            disabled={!isSupabaseEnabled || uploadingTeamId === team.id}
+                            disabled={uploadingTeamId === team.id}
                             onChange={(e) => {
                               const nextFile = e.target.files?.[0] ?? null;
                               void handleLogoUpload(team, nextFile);
@@ -376,9 +387,9 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
           </div>
         </div>
 
-        {/* Column 2: Simulation Tuning (1 col wide) */}
+        {/* Simulation Tuning (moved below Team Management) */}
         <div className="space-y-6">
-          <div className="bg-[#323232] rounded-xl border border-white/10 p-6 sticky top-24">
+          <div className="bg-[#323232] rounded-xl border border-white/10 p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="font-display text-xl uppercase text-white tracking-wide">Sim Engine</h3>
               <button 
@@ -390,7 +401,7 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
               </button>
             </div>
 
-            <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Continuity Weight */}
               <div className="space-y-3">
                 <div className="flex justify-between items-end">
@@ -472,7 +483,7 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
               </div>
 
               {/* History Cleanup */}
-              <div className="pt-4 border-t border-white/10">
+              <div className="pt-4 border-t border-white/10 lg:col-span-2">
                 <div className="space-y-3">
                   <label className="font-display text-sm text-rose-300 uppercase tracking-wide">Danger Zone</label>
                   <p className="text-xs text-slate-500 leading-relaxed">

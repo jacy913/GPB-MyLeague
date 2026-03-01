@@ -58,7 +58,7 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
                   <div className="flex items-center gap-2">
                     <span className="w-5 text-center text-[10px] font-mono text-zinc-500">{index + 1}</span>
                     <span className={`w-1.5 h-7 rounded-full ${accentBgClass} ${index === 0 ? 'opacity-100' : 'opacity-45'}`} />
-                    <TeamLogo team={team} sizeClass="w-8 h-8" />
+                    <TeamLogo team={team} sizeClass="w-10 h-10" />
                     <div className="flex flex-col">
                       <span className={`font-display font-bold text-base leading-none tracking-wide ${accentTextClass}`}>
                         {team.city.toUpperCase()}
