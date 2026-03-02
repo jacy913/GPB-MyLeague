@@ -7,9 +7,15 @@ interface LeagueTableProps {
   leagueName: string;
   teams: Team[];
   headerColor?: string;
+  onSelectTeam?: (teamId: string) => void;
 }
 
-export const LeagueTable: React.FC<LeagueTableProps> = ({ leagueName, teams, headerColor = 'text-slate-200' }) => {
+export const LeagueTable: React.FC<LeagueTableProps> = ({
+  leagueName,
+  teams,
+  headerColor = 'text-slate-200',
+  onSelectTeam,
+}) => {
   const accentTextClass =
     headerColor.includes('prestige') ? 'text-prestige' : headerColor.includes('platinum') ? 'text-platinum' : headerColor;
   const accentBgClass =
@@ -60,7 +66,11 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({ leagueName, teams, hea
               <tr key={team.id} className="hover:bg-white/8 transition-colors group odd:bg-white/[0.02]">
                 <td className="px-3 py-2 text-center font-mono text-zinc-500">{index + 1}</td>
                 <td className="px-3 py-2">
-                  <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onSelectTeam?.(team.id)}
+                    className="flex w-full items-center gap-2 text-left"
+                  >
                     <span className={`w-1.5 h-7 rounded-full ${accentBgClass} ${index === 0 ? 'opacity-100' : 'opacity-45'}`} />
                     <TeamLogo team={team} sizeClass="w-10 h-10" />
                     <div className="flex flex-col">
@@ -74,7 +84,7 @@ export const LeagueTable: React.FC<LeagueTableProps> = ({ leagueName, teams, hea
                     {index === 0 && gamesPlayed > 10 && (
                       <Trophy className={`w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 transition-opacity ${headerColor}`} />
                     )}
-                  </div>
+                  </button>
                 </td>
                 <td className="px-3 py-2 text-center font-mono text-zinc-400 text-xs">{team.division.substring(0, 1)}</td>
                 <td className="px-3 py-2 text-center font-mono text-zinc-100">{team.wins}</td>

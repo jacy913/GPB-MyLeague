@@ -6,28 +6,42 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
 import { generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
-import { Team, Game, SimulationSettings, SimulationTarget } from './types';
+import { LeaguePlayerState, Team, Game, SimulationSettings, SimulationTarget } from './types';
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
 import { GPBBook } from './components/GPBBook';
 import { PlayoffsBracket } from './components/PlayoffsBracket';
+import { TeamCalendar } from './components/TeamCalendar';
+import { TeamsHub } from './components/TeamsHub';
+import { PlayersHub } from './components/PlayersHub';
+import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
 import { Controls } from './components/Controls';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, Bell, BookOpen, CalendarDays, Settings, Table2, Trophy } from 'lucide-react';
+import { Activity, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
 import { SimulationManager } from './logic/simulationManager';
+import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
+import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from './logic/gameTimes';
+import { generatePlayerPool } from './logic/playerGenerator';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
+  clearLocalPlayerState,
+  clearSupabasePlayerState,
   clearSupabaseSeasonHistory,
   loadLocalLeagueState,
+  loadLocalPlayerState,
+  replaceSupabaseTeamsFromSource,
   loadSupabaseLeagueState,
+  loadSupabasePlayerState,
   saveLocalLeagueState,
+  saveLocalPlayerState,
   saveSupabaseLeagueState,
+  saveSupabasePlayerState,
   saveSupabaseSeasonRun,
   seedSupabaseLeagueState,
 } from './lib/storage';
@@ -49,6 +63,8 @@ const NOTICE_LEVEL_CLASS: Record<NoticeLevel, string> = {
 };
 
 const EXPECTED_TEAM_COUNT = 32;
+const SUPABASE_TEAM_SOURCE_SYNC_KEY = 'gpb_supabase_team_source_sync_v1';
+const SUPABASE_TEAM_SOURCE_SYNC_VERSION = '2026-03-02-teams-ts';
 
 const isValidTeamShape = (value: unknown): value is Team => {
   if (!value || typeof value !== 'object') {
@@ -97,21 +113,71 @@ const isValidSettingsShape = (value: unknown): value is SimulationSettings => {
   );
 };
 
+const isValidGameShape = (value: unknown): value is Game => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const game = value as Partial<Game>;
+  return (
+    typeof game.gameId === 'string' &&
+    typeof game.date === 'string' &&
+    typeof game.homeTeam === 'string' &&
+    typeof game.awayTeam === 'string' &&
+    (game.phase === 'regular_season' || game.phase === 'playoffs') &&
+    (game.status === 'scheduled' || game.status === 'completed') &&
+    Boolean(game.score) &&
+    typeof game.score?.home === 'number' &&
+    typeof game.score?.away === 'number' &&
+    Boolean(game.stats) &&
+    typeof game.stats === 'object'
+  );
+};
+
+const sanitizeGames = (value: unknown): Game[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  return value.every(isValidGameShape) ? (value as Game[]) : null;
+};
+
+const EMPTY_PLAYER_STATE: LeaguePlayerState = {
+  players: [],
+  battingStats: [],
+  pitchingStats: [],
+  battingRatings: [],
+  pitchingRatings: [],
+  rosterSlots: [],
+  transactions: [],
+};
+
+const resolveSeasonYear = (currentDate: string | null | undefined, seasonGames: Game[] = []): number => {
+  const sourceDate = currentDate || seasonGames[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+  const year = Number(sourceDate?.slice(0, 4));
+  return Number.isFinite(year) && year > 0 ? year : new Date().getFullYear();
+};
+
 function App() {
   const [teams, setTeams] = useState<Team[]>(INITIAL_TEAMS);
   const [games, setGames] = useState<Game[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'games_schedule' | 'league_standings' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings'>('games_schedule');
+  const [view, setView] = useState<'games_schedule' | 'team_calendar' | 'league_standings' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('games_schedule');
   const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
+  const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const [currentDate, setCurrentDate] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>(INITIAL_TEAMS[0]?.id ?? '');
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [dataSource, setDataSource] = useState<'supabase' | 'local'>('local');
   const [isClearingHistory, setIsClearingHistory] = useState(false);
+  const [isWipingPlayers, setIsWipingPlayers] = useState(false);
+  const [isGeneratingPlayers, setIsGeneratingPlayers] = useState(false);
+  const [playerGenerationPreview, setPlayerGenerationPreview] = useState<LeaguePlayerState | null>(null);
   const [commissionerNotices, setCommissionerNotices] = useState<CommissionerNotice[]>([]);
 
   const pushNotice = useCallback((message: string, level: NoticeLevel = 'info') => {
@@ -152,14 +218,28 @@ function App() {
     return generateSchedule(seasonTeams, { seasonStartDate, seasonDays: 180 });
   }, []);
 
-  const persistLeagueState = useCallback(async (nextTeams: Team[], nextSettings: SimulationSettings) => {
-    saveLocalLeagueState(nextTeams, nextSettings);
+  const persistLeagueState = useCallback(async (
+    nextTeams: Team[],
+    nextSettings: SimulationSettings,
+    nextGames: Game[],
+    nextCurrentDate: string,
+    nextProgress: number,
+    nextSeasonComplete: boolean,
+  ) => {
+    saveLocalLeagueState(nextTeams, nextSettings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
 
     if (!isSupabaseConfigured) {
       return;
     }
 
-    await saveSupabaseLeagueState(nextTeams, nextSettings);
+    await saveSupabaseLeagueState(
+      nextTeams,
+      nextSettings,
+      nextGames,
+      nextCurrentDate,
+      nextProgress,
+      nextSeasonComplete,
+    );
     setDataSource('supabase');
   }, []);
 
@@ -171,9 +251,21 @@ function App() {
       try {
         if (isSupabaseConfigured) {
           await seedSupabaseLeagueState(INITIAL_TEAMS, DEFAULT_SETTINGS);
-          const remoteState = await loadSupabaseLeagueState();
+          const hasSyncedTeamSource = localStorage.getItem(SUPABASE_TEAM_SOURCE_SYNC_KEY) === SUPABASE_TEAM_SOURCE_SYNC_VERSION;
+          if (!hasSyncedTeamSource) {
+            await replaceSupabaseTeamsFromSource(INITIAL_TEAMS);
+            localStorage.setItem(SUPABASE_TEAM_SOURCE_SYNC_KEY, SUPABASE_TEAM_SOURCE_SYNC_VERSION);
+          }
+          const [remoteState, remotePlayerState] = await Promise.all([
+            loadSupabaseLeagueState(),
+            loadSupabasePlayerState(),
+          ]);
           const validRemoteTeams = sanitizeTeams(remoteState.teams);
           const validRemoteSettings = isValidSettingsShape(remoteState.settings) ? remoteState.settings : null;
+          const validRemoteGames = sanitizeGames(remoteState.games);
+
+          setPlayerState(remotePlayerState);
+          saveLocalPlayerState(remotePlayerState);
 
           if (validRemoteTeams) {
             setTeams(validRemoteTeams);
@@ -181,9 +273,24 @@ function App() {
           if (validRemoteSettings) {
             setSettings(validRemoteSettings);
           }
+          if (validRemoteGames) {
+            setGames(validRemoteGames);
+            const remoteCurrentDate = remoteState.currentDate || validRemoteGames[0]?.date || '';
+            setCurrentDate(remoteCurrentDate);
+            setSelectedDate(remoteCurrentDate);
+            setProgress(typeof remoteState.progress === 'number' ? remoteState.progress : getProgressFromGames(validRemoteGames));
+            setSeasonComplete(typeof remoteState.seasonComplete === 'boolean' ? remoteState.seasonComplete : validRemoteGames.every((game) => game.status === 'completed'));
+          }
 
           if (validRemoteTeams && validRemoteSettings) {
-            saveLocalLeagueState(validRemoteTeams, validRemoteSettings);
+            saveLocalLeagueState(
+              validRemoteTeams,
+              validRemoteSettings,
+              validRemoteGames ?? [],
+              remoteState.currentDate || validRemoteGames?.[0]?.date || '',
+              typeof remoteState.progress === 'number' ? remoteState.progress : getProgressFromGames(validRemoteGames ?? []),
+              typeof remoteState.seasonComplete === 'boolean' ? remoteState.seasonComplete : (validRemoteGames ?? []).every((game) => game.status === 'completed'),
+            );
           }
 
           setDataSource('supabase');
@@ -191,27 +298,49 @@ function App() {
         }
 
         const localState = loadLocalLeagueState();
+        const localPlayerState = loadLocalPlayerState();
         const validLocalTeams = sanitizeTeams(localState.teams);
         const validLocalSettings = isValidSettingsShape(localState.settings) ? localState.settings : null;
+        const validLocalGames = sanitizeGames(localState.games);
+        setPlayerState(localPlayerState);
 
         if (validLocalTeams) {
           setTeams(validLocalTeams);
         }
         if (validLocalSettings) {
           setSettings(validLocalSettings);
+        }
+        if (validLocalGames) {
+          setGames(validLocalGames);
+          const localCurrentDate = localState.currentDate || validLocalGames[0]?.date || '';
+          setCurrentDate(localCurrentDate);
+          setSelectedDate(localCurrentDate);
+          setProgress(typeof localState.progress === 'number' ? localState.progress : getProgressFromGames(validLocalGames));
+          setSeasonComplete(typeof localState.seasonComplete === 'boolean' ? localState.seasonComplete : validLocalGames.every((game) => game.status === 'completed'));
         }
         setDataSource('local');
       } catch (error) {
         console.error('Failed to load Supabase state, falling back to local storage:', error);
         const localState = loadLocalLeagueState();
+        const localPlayerState = loadLocalPlayerState();
         const validLocalTeams = sanitizeTeams(localState.teams);
         const validLocalSettings = isValidSettingsShape(localState.settings) ? localState.settings : null;
+        const validLocalGames = sanitizeGames(localState.games);
+        setPlayerState(localPlayerState);
 
         if (validLocalTeams) {
           setTeams(validLocalTeams);
         }
         if (validLocalSettings) {
           setSettings(validLocalSettings);
+        }
+        if (validLocalGames) {
+          setGames(validLocalGames);
+          const localCurrentDate = localState.currentDate || validLocalGames[0]?.date || '';
+          setCurrentDate(localCurrentDate);
+          setSelectedDate(localCurrentDate);
+          setProgress(typeof localState.progress === 'number' ? localState.progress : getProgressFromGames(validLocalGames));
+          setSeasonComplete(typeof localState.seasonComplete === 'boolean' ? localState.seasonComplete : validLocalGames.every((game) => game.status === 'completed'));
         }
         setDataSource('local');
         pushNotice('Supabase sync failed. Using local storage fallback.', 'warning');
@@ -221,20 +350,28 @@ function App() {
     };
 
     void bootstrap();
-  }, [pushNotice]);
+  }, [getProgressFromGames, pushNotice]);
 
   // Initialize schedule on mount (or when teams change structure, but we handle that in save)
   useEffect(() => {
     if (!isBootstrapping && games.length === 0) {
       const schedule = createMasterSchedule(teams);
-      setGames(schedule);
       const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+      setGames(schedule);
       setCurrentDate(firstDate);
       setSelectedDate(firstDate);
       setSeasonComplete(false);
       setProgress(0);
+
+      void (async () => {
+        try {
+          await persistLeagueState(teams, settings, schedule, firstDate, 0, false);
+        } catch (error) {
+          console.error('Failed to persist initialized schedule:', error);
+        }
+      })();
     }
-  }, [teams, games.length, isBootstrapping, createMasterSchedule]);
+  }, [teams, settings, games.length, isBootstrapping, createMasterSchedule, persistLeagueState]);
 
   useEffect(() => {
     if (teams.length === 0) {
@@ -258,14 +395,14 @@ function App() {
     setProgress(0);
     setSeasonComplete(false);
 
-    void (async () => {
-      try {
-        await persistLeagueState(freshTeams, settingsToUse);
-      } catch (error) {
-        console.error('Failed to persist reset season state:', error);
-        pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
-      }
-    })();
+      void (async () => {
+        try {
+          await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false);
+        } catch (error) {
+          console.error('Failed to persist reset season state:', error);
+          pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
+        }
+      })();
   }, [teams, settings, buildFreshSeasonTeams, createMasterSchedule, persistLeagueState, pushNotice]);
 
   const handleSaveSettings = (newTeams: Team[], newSettings: SimulationSettings) => {
@@ -300,6 +437,71 @@ function App() {
     }
   }, [pushNotice]);
 
+  const handleHardWipePlayers = useCallback(async () => {
+    setIsWipingPlayers(true);
+
+    try {
+      clearLocalPlayerState();
+      setPlayerState(EMPTY_PLAYER_STATE);
+
+      if (isSupabaseConfigured) {
+        const deletedPlayers = await clearSupabasePlayerState();
+        pushNotice(
+          deletedPlayers > 0
+            ? `Hard-wiped ${deletedPlayers} players from Supabase.`
+            : 'No player rows were found in Supabase.',
+          'success',
+        );
+        setDataSource('supabase');
+      } else {
+        pushNotice('Supabase is not configured. Cleared local player data only.', 'warning');
+      }
+    } catch (error) {
+      console.error('Failed to hard-wipe player data:', error);
+      pushNotice('Failed to hard-wipe player data.', 'error');
+    } finally {
+      setIsWipingPlayers(false);
+    }
+  }, [pushNotice]);
+
+  const handlePreviewGeneratePlayers = useCallback(() => {
+    const seasonYear = resolveSeasonYear(currentDate, games);
+    const generatedPlayerState = generatePlayerPool(teams, seasonYear);
+    setPlayerGenerationPreview(generatedPlayerState);
+  }, [currentDate, games, teams]);
+
+  const handleDismissPlayerPreview = useCallback(() => {
+    setPlayerGenerationPreview(null);
+  }, []);
+
+  const handleGeneratePlayers = useCallback(async () => {
+    setIsGeneratingPlayers(true);
+
+    try {
+      const generatedPlayerState = playerGenerationPreview ?? generatePlayerPool(teams, resolveSeasonYear(currentDate, games));
+
+      clearLocalPlayerState();
+      saveLocalPlayerState(generatedPlayerState);
+      setPlayerState(generatedPlayerState);
+
+      if (isSupabaseConfigured) {
+        await clearSupabasePlayerState();
+        await saveSupabasePlayerState(generatedPlayerState);
+        setDataSource('supabase');
+        pushNotice(`Generated ${generatedPlayerState.players.length} players and uploaded them to Supabase.`, 'success');
+      } else {
+        pushNotice(`Generated ${generatedPlayerState.players.length} players locally. Supabase is not configured.`, 'warning');
+      }
+
+      setPlayerGenerationPreview(null);
+    } catch (error) {
+      console.error('Failed to generate player data:', error);
+      pushNotice('Failed to generate player data.', 'error');
+    } finally {
+      setIsGeneratingPlayers(false);
+    }
+  }, [currentDate, games, playerGenerationPreview, pushNotice, teams]);
+
   const runSimulationTarget = useCallback((target: SimulationTarget) => {
     if (isSimulating || games.length === 0) {
       return;
@@ -331,7 +533,14 @@ function App() {
 
       void (async () => {
         try {
-          await persistLeagueState(finalizedTeams, settings);
+          await persistLeagueState(
+            finalizedTeams,
+            settings,
+            result.games,
+            result.currentDate,
+            getProgressFromGames(result.games),
+            complete,
+          );
 
           if (complete && result.simulatedGameCount > 0) {
             if (isSupabaseConfigured) {
@@ -392,6 +601,119 @@ function App() {
     runSimulationTarget({ scope: 'season' });
   }, [runSimulationTarget]);
 
+  const applyCompletedGameResults = useCallback(async (completedResults: Game[]) => {
+    if (completedResults.length === 0) {
+      return;
+    }
+
+    const orderedResults = [...completedResults].sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
+    const nextTeamsMap = new Map(teams.map((team) => [team.id, { ...team }]));
+    const nextGamesMap = new Map(
+      games.map((game) => [
+        game.gameId,
+        {
+          ...game,
+          score: { ...game.score },
+          stats: { ...game.stats },
+          playoff: game.playoff ? { ...game.playoff } : null,
+        },
+      ]),
+    );
+
+    orderedResults.forEach((resolvedGame) => {
+      const existing = nextGamesMap.get(resolvedGame.gameId);
+      if (!existing) {
+        return;
+      }
+
+      if (existing.status !== 'completed' && isRegularSeasonGame(existing)) {
+        const homeTeam = nextTeamsMap.get(existing.homeTeam);
+        const awayTeam = nextTeamsMap.get(existing.awayTeam);
+        if (homeTeam && awayTeam) {
+          homeTeam.runsScored += resolvedGame.score.home;
+          homeTeam.runsAllowed += resolvedGame.score.away;
+          awayTeam.runsScored += resolvedGame.score.away;
+          awayTeam.runsAllowed += resolvedGame.score.home;
+
+          if (resolvedGame.score.home > resolvedGame.score.away) {
+            homeTeam.wins += 1;
+            awayTeam.losses += 1;
+          } else {
+            awayTeam.wins += 1;
+            homeTeam.losses += 1;
+          }
+        }
+      }
+
+      nextGamesMap.set(resolvedGame.gameId, {
+        ...resolvedGame,
+        score: { ...resolvedGame.score },
+        stats: { ...resolvedGame.stats },
+        playoff: resolvedGame.playoff ? { ...resolvedGame.playoff } : null,
+      });
+    });
+
+    const nextGames = Array.from(nextGamesMap.values()).sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
+    const nextSeasonComplete = nextGames.every((game) => game.status === 'completed');
+    const nextTeams = Array.from(nextTeamsMap.values()).map((team) =>
+      nextSeasonComplete ? { ...team, previousBaselineWins: team.wins } : team,
+    );
+    const latestCompletedDate = orderedResults[orderedResults.length - 1]?.date ?? currentDate;
+    const nextCurrentDate = latestCompletedDate > currentDate ? latestCompletedDate : currentDate;
+    const nextProgress = getProgressFromGames(nextGames);
+
+    setTeams(nextTeams);
+    setGames(nextGames);
+    setCurrentDate(nextCurrentDate);
+    setSelectedDate(orderedResults[orderedResults.length - 1]?.date ?? selectedDate);
+    setProgress(nextProgress);
+    setSeasonComplete(nextSeasonComplete);
+
+    try {
+      await persistLeagueState(nextTeams, settings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
+    } catch (error) {
+      console.error('Failed to persist interactive game results:', error);
+      pushNotice('Game simulation completed, but saving failed.', 'warning');
+      return;
+    }
+
+    pushNotice(
+      orderedResults.length === 1
+        ? `Simulated ${orderedResults[0].awayTeam.toUpperCase()} @ ${orderedResults[0].homeTeam.toUpperCase()}.`
+        : `Simulated ${orderedResults.length} earlier games and updated the slate.`,
+      'info',
+    );
+  }, [teams, games, currentDate, selectedDate, getProgressFromGames, persistLeagueState, settings, pushNotice]);
+
+  const openGameScreen = useCallback((gameId: string) => {
+    const targetGame = games.find((game) => game.gameId === gameId);
+    if (!targetGame) {
+      return;
+    }
+
+    setSelectedGameId(gameId);
+    setSelectedDate(targetGame.date);
+    setView('game_screen');
+  }, [games]);
+
+  const openRandomTeamPage = useCallback(() => {
+    if (teams.length === 0) {
+      setView('teams');
+      return;
+    }
+
+    const eligibleTeams = teams.length > 1 ? teams.filter((team) => team.id !== selectedTeamId) : teams;
+    const randomIndex = Math.floor(Math.random() * eligibleTeams.length);
+    const nextTeam = eligibleTeams[randomIndex] ?? teams[0];
+    setSelectedTeamId(nextTeam.id);
+    setView('teams');
+  }, [teams, selectedTeamId]);
+
+  const openTeamPage = useCallback((teamId: string) => {
+    setSelectedTeamId(teamId);
+    setView('teams');
+  }, []);
+
   const getDivisionTeams = (league: string, division: string) => {
     return teams.filter(t => t.league === league && t.division === division);
   };
@@ -401,6 +723,32 @@ function App() {
   };
 
   const activeDate = selectedDate || games[0]?.date || currentDate;
+  const currentTimelineDate = currentDate || activeDate;
+  const allScheduleDates = useMemo(
+    () => Array.from(new Set(games.map((game) => game.date))).sort((a, b) => a.localeCompare(b)),
+    [games],
+  );
+  const bannerDate = useMemo(() => {
+    const timelineDate = currentTimelineDate;
+    if (!timelineDate || allScheduleDates.length === 0) {
+      return '';
+    }
+
+    const currentIndex = allScheduleDates.indexOf(timelineDate);
+    if (currentIndex <= 0) {
+      return timelineDate;
+    }
+
+    return allScheduleDates[currentIndex - 1];
+  }, [allScheduleDates, currentTimelineDate]);
+
+  const gamesForBannerDate = useMemo(
+    () =>
+      games
+        .filter((game) => game.date === bannerDate)
+        .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
+    [games, bannerDate],
+  );
 
   const gamesForActiveDate = useMemo(
     () =>
@@ -457,20 +805,228 @@ function App() {
     return typeof value === 'number' && Number.isFinite(value) ? value : 0;
   };
 
-  const hashKey = (input: string): number => {
+  const hashKey = useCallback((input: string): number => {
     let hash = 0;
     for (let i = 0; i < input.length; i++) {
       hash = (hash * 31 + input.charCodeAt(i)) % 2147483647;
     }
     return hash;
-  };
+  }, []);
 
-  const getFallbackHits = (game: Game, side: 'away' | 'home'): number => {
+  const getFallbackHits = useCallback((game: Game, side: 'away' | 'home'): number => {
     const runs = side === 'away' ? game.score.away : game.score.home;
     return runs + 3 + (hashKey(`${game.gameId}:${side}:h`) % 5);
-  };
+  }, [hashKey]);
+
+  const buildBroadcastSummary = useCallback((game: Game) => {
+    const awayTeam = teamLookup.get(game.awayTeam);
+    const homeTeam = teamLookup.get(game.homeTeam);
+    const awayHitsRaw = getStatNumber(game, 'awayHits');
+    const homeHitsRaw = getStatNumber(game, 'homeHits');
+    const awayHits = awayHitsRaw > 0 ? awayHitsRaw : getFallbackHits(game, 'away');
+    const homeHits = homeHitsRaw > 0 ? homeHitsRaw : getFallbackHits(game, 'home');
+    const awayWon = game.score.away > game.score.home;
+    const winnerTeam = awayWon ? awayTeam : homeTeam;
+    const loserTeam = awayWon ? homeTeam : awayTeam;
+    const winnerName = winnerTeam?.name ?? (awayWon ? game.awayTeam.toUpperCase() : game.homeTeam.toUpperCase());
+    const winnerCity = winnerTeam?.city ?? (awayWon ? game.awayTeam.toUpperCase() : game.homeTeam.toUpperCase());
+    const loserName = loserTeam?.name ?? (awayWon ? game.homeTeam.toUpperCase() : game.awayTeam.toUpperCase());
+    const loserCity = loserTeam?.city ?? (awayWon ? game.homeTeam.toUpperCase() : game.awayTeam.toUpperCase());
+    const winnerRuns = awayWon ? game.score.away : game.score.home;
+    const loserRuns = awayWon ? game.score.home : game.score.away;
+    const loserHits = awayWon ? homeHits : awayHits;
+    const margin = Math.abs(game.score.away - game.score.home);
+    const totalRuns = game.score.away + game.score.home;
+    const totalHits = awayHits + homeHits;
+    const winnerLeague = winnerTeam?.league ?? null;
+    const loserLeague = loserTeam?.league ?? null;
+    const homeVenue = homeTeam?.city ?? game.homeTeam.toUpperCase();
+    const styleSeed = hashKey(`${game.gameId}:broadcast`) % 3;
+
+    const winnerPrimary = styleSeed === 0 ? winnerName : winnerCity;
+    const loserPrimary = styleSeed === 1 ? loserCity : loserName;
+
+    if (loserRuns === 0 && loserHits <= 1) {
+      return `${winnerPrimary} put ${loserPrimary} in total silence with a ${winnerRuns}-${loserRuns} masterpiece in ${homeVenue}.`;
+    }
+
+    if (loserRuns === 0) {
+      return `${winnerPrimary} deliver a baseball masterclass, blanking ${loserPrimary} ${winnerRuns}-${loserRuns} in ${homeVenue}.`;
+    }
+
+    if (totalRuns <= 2) {
+      return `${winnerPrimary} outlast ${loserPrimary} ${winnerRuns}-${loserRuns} in a pure pitching duel at ${homeVenue}.`;
+    }
+
+    if (margin >= 10) {
+      return `${winnerPrimary} turn ${homeVenue} into a demolition derby, crushing ${loserPrimary} ${winnerRuns}-${loserRuns}.`;
+    }
+
+    if (winnerRuns >= 15) {
+      return `${winnerPrimary} light up the scoreboard for ${winnerRuns} runs, leaving ${loserPrimary} chasing shadows in ${homeVenue}.`;
+    }
+
+    if (winnerRuns >= 8 && loserRuns >= 8) {
+      return `${winnerPrimary} survive a full barnburner, beating ${loserPrimary} ${winnerRuns}-${loserRuns} after an all-night slugfest.`;
+    }
+
+    if (totalHits >= 25) {
+      return `${winnerPrimary} win the track meet ${winnerRuns}-${loserRuns} as the bats stay loud all night against ${loserPrimary}.`;
+    }
+
+    if (margin === 1) {
+      return `${winnerPrimary} sneak past ${loserPrimary} ${winnerRuns}-${loserRuns} in a one-run finish at ${homeVenue}.`;
+    }
+
+    if (winnerLeague && loserLeague && winnerLeague !== loserLeague) {
+      return `${winnerPrimary} claim interleague bragging rights with a ${winnerRuns}-${loserRuns} result over ${loserPrimary}.`;
+    }
+
+    if (game.playoff) {
+      return `${winnerPrimary} take a playoff step forward, handling ${loserPrimary} ${winnerRuns}-${loserRuns} in the ${game.playoff.seriesLabel}.`;
+    }
+
+    if (margin >= 5) {
+      return `${winnerPrimary} make a statement in ${homeVenue}, taking down ${loserPrimary} ${winnerRuns}-${loserRuns}.`;
+    }
+
+    return `${winnerPrimary} defeat ${loserPrimary} ${winnerRuns}-${loserRuns} in ${homeVenue}.`;
+  }, [getFallbackHits, teamLookup]);
 
   const activeDateHasPlayoffs = useMemo(() => gamesForActiveDate.some((game) => isPlayoffGame(game)), [gamesForActiveDate]);
+  const currentTimelineTimeLabel = useMemo(
+    () => getCurrentSimTimeLabel(games, currentTimelineDate),
+    [games, currentTimelineDate],
+  );
+  const broadcastFlairDate = useMemo(() => {
+    if (!currentTimelineDate || allScheduleDates.length === 0) {
+      return '';
+    }
+
+    const todaysCompleted = games.some((game) => game.date === currentTimelineDate && game.status === 'completed');
+    if (todaysCompleted) {
+      return currentTimelineDate;
+    }
+
+    const currentIndex = allScheduleDates.indexOf(currentTimelineDate);
+    for (let index = currentIndex - 1; index >= 0; index -= 1) {
+      const candidateDate = allScheduleDates[index];
+      if (games.some((game) => game.date === candidateDate && game.status === 'completed')) {
+        return candidateDate;
+      }
+    }
+
+    return currentTimelineDate;
+  }, [allScheduleDates, currentTimelineDate, games]);
+  const flairGames = useMemo(
+    () =>
+      games
+        .filter((game) => game.date === broadcastFlairDate && game.status === 'completed')
+        .sort((a, b) => a.gameId.localeCompare(b.gameId)),
+    [broadcastFlairDate, games],
+  );
+  const flairLabel = broadcastFlairDate === currentTimelineDate ? 'Today' : 'Yesterday';
+  const flairSummaries = useMemo(
+    () => flairGames.map((game) => ({ gameId: game.gameId, summary: buildBroadcastSummary(game) })),
+    [buildBroadcastSummary, flairGames],
+  );
+  const flairSignature = useMemo(
+    () => flairSummaries.map((item) => `${item.gameId}:${item.summary}`).join('|'),
+    [flairSummaries],
+  );
+  const [flairIndex, setFlairIndex] = useState(0);
+  const [isFlairVisible, setIsFlairVisible] = useState(true);
+  const activeFlairItem = flairSummaries[flairIndex] ?? null;
+  const shouldMarqueeFlair = (activeFlairItem?.summary.length ?? 0) > 92;
+  const broadcastHighlightTokens = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          teams.flatMap((team) => [team.name, team.city]).filter((value) => value && value.trim().length > 0),
+        ),
+      ).sort((left, right) => right.length - left.length),
+    [teams],
+  );
+
+  const renderBroadcastText = useCallback((summary: string) => {
+    const escapedTokens = broadcastHighlightTokens
+      .map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .filter(Boolean);
+
+    if (escapedTokens.length === 0) {
+      return summary;
+    }
+
+    const pattern = new RegExp(`(${escapedTokens.join('|')})`, 'g');
+    return summary.split(pattern).filter(Boolean).map((part, index) => {
+      const isHighlight = broadcastHighlightTokens.includes(part);
+      return (
+        <span key={`${part}-${index}`} className={isHighlight ? 'font-semibold text-white' : undefined}>
+          {part}
+        </span>
+      );
+    });
+  }, [broadcastHighlightTokens]);
+
+  useEffect(() => {
+    setFlairIndex(0);
+    setIsFlairVisible(true);
+  }, [flairSignature]);
+
+  useEffect(() => {
+    if (flairSummaries.length <= 1) {
+      return;
+    }
+
+    const holdTimer = window.setTimeout(() => {
+      setIsFlairVisible(false);
+    }, 7000);
+
+    const swapTimer = window.setTimeout(() => {
+      setFlairIndex((previous) => (previous + 1) % flairSummaries.length);
+      setIsFlairVisible(true);
+    }, 7450);
+
+    return () => {
+      window.clearTimeout(holdTimer);
+      window.clearTimeout(swapTimer);
+    };
+  }, [flairIndex, flairSummaries]);
+  const selectedGame = useMemo(
+    () => (selectedGameId ? games.find((game) => game.gameId === selectedGameId) ?? null : null),
+    [games, selectedGameId],
+  );
+  const blockingGamesForSelected = useMemo(() => {
+    if (!selectedGame || selectedGame.status === 'completed') {
+      return [];
+    }
+
+    return games
+      .filter((game) => game.date === selectedGame.date && game.status === 'scheduled' && game.gameId.localeCompare(selectedGame.gameId) < 0)
+      .sort((a, b) => a.gameId.localeCompare(b.gameId));
+  }, [games, selectedGame]);
+
+  const simulateBlockingGamesForSelected = useCallback(async () => {
+    if (!selectedGame || blockingGamesForSelected.length === 0) {
+      return;
+    }
+
+    const teamMap = new Map(teams.map((team) => [team.id, team]));
+    const resolvedGames = blockingGamesForSelected
+      .map((blockingGame) => {
+        const awayTeam = teamMap.get(blockingGame.awayTeam);
+        const homeTeam = teamMap.get(blockingGame.homeTeam);
+        if (!awayTeam || !homeTeam) {
+          return null;
+        }
+
+        const session = simulateGameToFinal(createGameSession(blockingGame), awayTeam, homeTeam, settings);
+        return buildCompletedGameFromSession(blockingGame, session);
+      })
+      .filter((game): game is Game => Boolean(game));
+
+    await applyCompletedGameResults(resolvedGames);
+  }, [selectedGame, blockingGamesForSelected, teams, settings, applyCompletedGameResults]);
 
   if (isBootstrapping) {
     return (
@@ -484,63 +1040,153 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#141414] text-white font-sans selection:bg-white/20 relative overflow-x-hidden">
+    <div className="min-h-screen bg-[#141414] text-white font-sans selection:bg-white/20 relative overflow-x-hidden pb-20">
       <div className="pointer-events-none absolute inset-0 opacity-40">
         <div className="absolute -top-40 -left-24 w-[420px] h-[420px] rounded-full bg-prestige/15 blur-3xl" />
         <div className="absolute top-[28%] -right-20 w-[360px] h-[360px] rounded-full bg-platinum/15 blur-3xl" />
         <div className="absolute bottom-0 left-[32%] w-[520px] h-[240px] bg-gradient-to-r from-transparent via-white/5 to-transparent blur-2xl" />
       </div>
 
-      <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10 sticky top-0 z-50">
-        <div className="px-4 sm:px-6 lg:px-8 h-[88px] flex items-center justify-between">
-          <button className="flex items-center gap-3" onClick={() => setView('games_schedule')}>
-            <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
-            <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
-              My League
-            </span>
-          </button>
+      <div className="sticky top-0 z-50">
+        <div className="border-b border-white/10 bg-[#111111]/96 backdrop-blur">
+          <div className="flex items-center gap-3 px-3 sm:px-5 lg:px-8 py-2">
+            <div className="hidden md:flex min-w-[170px] items-center gap-2 border-r border-white/10 pr-4">
+              <div className="h-2 w-2 rounded-full bg-platinum" />
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Yesterday</p>
+                <p className="font-mono text-xs text-zinc-200">{formatHeaderDate(bannerDate || currentTimelineDate)}</p>
+              </div>
+            </div>
 
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
-              <Activity className="w-4 h-4 text-prestige" />
-              <span className="font-mono">{formatHeaderDate(currentDate || activeDate)}</span>
+            <div className="flex-1 overflow-x-auto scrollbar-subtle">
+              <div className="flex min-w-max gap-2">
+                {gamesForBannerDate.length === 0 ? (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    No games on previous sim date
+                  </div>
+                ) : (
+                  gamesForBannerDate.map((game) => {
+                    const awayTeam = teamLookup.get(game.awayTeam);
+                    const homeTeam = teamLookup.get(game.homeTeam);
+                    const awayRuns = game.status === 'completed' ? game.score.away : 0;
+                    const homeRuns = game.status === 'completed' ? game.score.home : 0;
+                    const isPlayoffBannerGame = isPlayoffGame(game);
+
+                    return (
+                      <button
+                        key={`banner-${game.gameId}`}
+                        onClick={() => openGameScreen(game.gameId)}
+                        className={`min-w-[196px] rounded-xl border px-3 py-2 text-left transition-colors hover:border-white/25 ${
+                          isPlayoffBannerGame
+                            ? 'border-zinc-200/20 bg-zinc-100/[0.06]'
+                            : 'border-white/10 bg-white/[0.04]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`font-mono text-[10px] uppercase tracking-[0.16em] ${
+                            game.status === 'completed' ? 'text-zinc-200' : 'text-zinc-500'
+                          }`}>
+                            {game.status === 'completed' ? 'Final' : 'Scheduled'}
+                          </span>
+                          {isPlayoffBannerGame && (
+                            <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-300">PL</span>
+                          )}
+                        </div>
+
+                        <div className="mt-2 space-y-2">
+                          <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
+                            {awayTeam ? <TeamLogo team={awayTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
+                            <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
+                              {awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase()}
+                            </span>
+                            <span className="font-mono text-right text-sm text-white">{awayRuns}</span>
+                          </div>
+                          <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
+                            {homeTeam ? <TeamLogo team={homeTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
+                            <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
+                              {homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase()}
+                            </span>
+                            <span className="font-mono text-right text-sm text-white">{homeRuns}</span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
-              <span className={`w-2 h-2 rounded-full ${dataSource === 'supabase' ? 'bg-platinum' : 'bg-prestige'}`} />
-              <span className="font-mono">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
-            </div>
-            <button
-              onClick={() => setView('notifications')}
-              className={`relative p-2 rounded-lg transition-colors ${view === 'notifications' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-[#323232]'}`}
-              title="Commissioner Notifications"
-            >
-              <Bell className="w-5 h-5" />
-              {commissionerNotices.length > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-platinum text-black text-[10px] font-mono flex items-center justify-center">
-                  {commissionerNotices.length > 9 ? '9+' : commissionerNotices.length}
-                </span>
-              )}
-            </button>
           </div>
         </div>
-      </header>
+
+        <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10">
+          <div className="px-4 sm:px-6 lg:px-8 h-[88px] flex items-center justify-between">
+            <button className="flex items-center gap-3" onClick={() => setView('games_schedule')}>
+              <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
+              <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+                My League
+              </span>
+            </button>
+
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
+                <Activity className="w-4 h-4 text-prestige" />
+                <span className="font-mono">{formatHeaderDate(currentTimelineDate)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
+                <Clock3 className="w-4 h-4 text-platinum" />
+                <span className="font-mono">{currentTimelineTimeLabel}</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
+                <span className={`w-2 h-2 rounded-full ${dataSource === 'supabase' ? 'bg-platinum' : 'bg-prestige'}`} />
+                <span className="font-mono">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
+              </div>
+              <button
+                onClick={() => setView('notifications')}
+                className={`relative p-2 rounded-lg transition-colors ${view === 'notifications' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-[#323232]'}`}
+                title="Commissioner Notifications"
+              >
+                <Bell className="w-5 h-5" />
+                {commissionerNotices.length > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-platinum text-black text-[10px] font-mono flex items-center justify-center">
+                    {commissionerNotices.length > 9 ? '9+' : commissionerNotices.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </header>
+      </div>
 
       <div className="relative z-10 flex">
-        <aside className="hidden lg:block w-64 border-r border-white/10 bg-[#161616]/80 backdrop-blur sticky top-[88px] h-[calc(100vh-88px)]">
+        <aside className="hidden lg:block w-64 border-r border-white/10 bg-[#161616]/80 backdrop-blur sticky top-[136px] h-[calc(100vh-136px)]">
           <div className="p-4 space-y-2">
             <button
               onClick={() => setView('games_schedule')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
               <CalendarDays className="w-5 h-5" />
-              <span className="font-display text-lg uppercase tracking-wide">Games & Schedule</span>
+              <span className="font-display text-lg uppercase tracking-wide">Scores</span>
+            </button>
+            <button
+              onClick={() => setView('team_calendar')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'team_calendar' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <CalendarRange className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Calendar</span>
             </button>
             <button
               onClick={() => setView('league_standings')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
               <Table2 className="w-5 h-5" />
-              <span className="font-display text-lg uppercase tracking-wide">League Standings</span>
+              <span className="font-display text-lg uppercase tracking-wide">Standings</span>
+            </button>
+            <button
+              onClick={openRandomTeamPage}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'teams' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Users className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Teams</span>
             </button>
             <button
               onClick={() => setView('playoffs')}
@@ -550,11 +1196,18 @@ function App() {
               <span className="font-display text-lg uppercase tracking-wide">Playoffs</span>
             </button>
             <button
+              onClick={() => setView('players')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'players' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <UserRound className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Rosters</span>
+            </button>
+            <button
               onClick={() => setView('gpb_book')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
               <BookOpen className="w-5 h-5" />
-              <span className="font-display text-lg uppercase tracking-wide">GPB Book</span>
+              <span className="font-display text-lg uppercase tracking-wide">GPB Engine</span>
             </button>
             <button
               onClick={() => setView('notifications')}
@@ -574,11 +1227,14 @@ function App() {
         </aside>
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
-          <div className="lg:hidden grid grid-cols-3 gap-2 mb-6">
-            <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Games</button>
+          <div className="lg:hidden grid grid-cols-2 gap-2 mb-6">
+            <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Scores</button>
+            <button onClick={() => setView('team_calendar')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'team_calendar' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Calendar</button>
             <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
+            <button onClick={openRandomTeamPage} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'teams' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Teams</button>
             <button onClick={() => setView('playoffs')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Playoffs</button>
-            <button onClick={() => setView('gpb_book')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Book</button>
+            <button onClick={() => setView('players')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'players' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Rosters</button>
+            <button onClick={() => setView('gpb_book')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Engine</button>
             <button onClick={() => setView('notifications')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'notifications' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Notices</button>
             <button onClick={() => setView('settings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'settings' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Settings</button>
           </div>
@@ -657,15 +1313,39 @@ function App() {
                           const homeHits = game.status === 'completed' ? (homeHitsRaw > 0 ? homeHitsRaw : getFallbackHits(game, 'home')) : 0;
                           const awayErrors = game.status === 'completed' ? awayErrorsRaw : 0;
                           const homeErrors = game.status === 'completed' ? homeErrorsRaw : 0;
-                          const playoffLabel = game.playoff ? `${game.playoff.seriesLabel} • Game ${game.playoff.gameNumber}` : null;
+                          const playoffLabel = game.playoff ? `${game.playoff.seriesLabel} | Game ${game.playoff.gameNumber}` : null;
+                          const scheduledTimeLabel = getScheduledGameTimeLabel(game, games);
+                          const gameWindowStatus = getGameWindowStatus(game, games, currentDate);
+                          const cardStatusLabel =
+                            gameWindowStatus === 'final'
+                              ? 'Final'
+                              : gameWindowStatus === 'live_window'
+                                ? 'Live Window'
+                                : 'Scheduled';
 
                           return (
-                            <article key={game.gameId} className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5">
+                            <article
+                              key={game.gameId}
+                              onClick={() => openGameScreen(game.gameId)}
+                              className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5 cursor-pointer transition-colors hover:border-white/20"
+                            >
                               <div className="flex items-center justify-between mb-4">
                                 <div>
-                                  <span className={`font-mono text-[11px] uppercase ${game.status === 'completed' ? 'text-platinum' : 'text-zinc-500'}`}>
-                                    {game.status === 'completed' ? 'Final' : 'Scheduled'}
+                                  <span
+                                    className={`font-mono text-[11px] uppercase ${
+                                      gameWindowStatus === 'final'
+                                        ? 'text-platinum'
+                                        : gameWindowStatus === 'live_window'
+                                          ? 'text-prestige'
+                                          : 'text-zinc-500'
+                                    }`}
+                                  >
+                                    {cardStatusLabel}
                                   </span>
+                                  <div className="mt-1 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wide text-zinc-500">
+                                    <Clock3 className="h-3 w-3" />
+                                    {scheduledTimeLabel}
+                                  </div>
                                   {playoffLabel && (
                                     <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-500 mt-1">
                                       {playoffLabel}
@@ -765,6 +1445,62 @@ function App() {
                 </div>
               )}
 
+              {view === 'team_calendar' && (
+                <TeamCalendar
+                  teams={teams}
+                  games={games}
+                  currentDate={currentDate}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                  onOpenGame={openGameScreen}
+                />
+              )}
+
+              {view === 'teams' && (
+                <TeamsHub
+                  teams={teams}
+                  games={games}
+                  players={playerState.players}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
+                  rosterSlots={playerState.rosterSlots}
+                  currentDate={currentDate}
+                  selectedTeamId={selectedTeamId}
+                  onSelectTeamId={setSelectedTeamId}
+                  onOpenGame={openGameScreen}
+                />
+              )}
+
+              {view === 'players' && (
+                <PlayersHub
+                  teams={teams}
+                  players={playerState.players}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
+                  rosterSlots={playerState.rosterSlots}
+                />
+              )}
+
+              {view === 'game_screen' && selectedGame && (
+                <GameScreen
+                  game={selectedGame}
+                  games={games}
+                  teams={teams}
+                  settings={settings}
+                  currentDate={currentDate}
+                  blockingGames={blockingGamesForSelected}
+                  onBack={() => setView('games_schedule')}
+                  onSimulateBlockingGames={simulateBlockingGamesForSelected}
+                  onCompleteGame={(completedGame) => {
+                    void applyCompletedGameResults([completedGame]);
+                  }}
+                />
+              )}
+
               {view === 'league_standings' && (
                 <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
                   <div className="xl:col-span-3 space-y-8">
@@ -800,26 +1536,26 @@ function App() {
                             <h2 className="font-display text-2xl uppercase text-prestige tracking-widest">Prestige</h2>
                             <div className="h-px flex-1 bg-gradient-to-r from-prestige/60 to-transparent" />
                           </div>
-                          <StandingsTable divisionName="North" teams={getDivisionTeams('Prestige', 'North')} headerColor="text-prestige" />
-                          <StandingsTable divisionName="South" teams={getDivisionTeams('Prestige', 'South')} headerColor="text-prestige" />
-                          <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" />
-                          <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" />
+                          <StandingsTable divisionName="North" teams={getDivisionTeams('Prestige', 'North')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="South" teams={getDivisionTeams('Prestige', 'South')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
                         </div>
                         <div className="space-y-6">
                           <div className="flex items-center gap-3 mb-2">
                             <h2 className="font-display text-2xl uppercase text-platinum tracking-widest">Platinum</h2>
                             <div className="h-px flex-1 bg-gradient-to-r from-platinum/60 to-transparent" />
                           </div>
-                          <StandingsTable divisionName="North" teams={getDivisionTeams('Platinum', 'North')} headerColor="text-platinum" />
-                          <StandingsTable divisionName="South" teams={getDivisionTeams('Platinum', 'South')} headerColor="text-platinum" />
-                          <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" />
-                          <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" />
+                          <StandingsTable divisionName="North" teams={getDivisionTeams('Platinum', 'North')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="South" teams={getDivisionTeams('Platinum', 'South')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
+                          <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
                         </div>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" />
-                        <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" />
+                        <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
+                        <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
                       </div>
                     )}
                   </div>
@@ -902,7 +1638,14 @@ function App() {
                   onSave={handleSaveSettings}
                   onCancel={() => setView('games_schedule')}
                   onClearHistoricalData={handleClearHistoricalData}
+                  onPreviewGeneratePlayers={handlePreviewGeneratePlayers}
+                  onGeneratePlayers={handleGeneratePlayers}
+                  onHardWipePlayers={handleHardWipePlayers}
+                  onDismissPlayerPreview={handleDismissPlayerPreview}
+                  playerGenerationPreview={playerGenerationPreview}
                   isClearingHistoricalData={isClearingHistory}
+                  isGeneratingPlayers={isGeneratingPlayers}
+                  isWipingPlayers={isWipingPlayers}
                   isSupabaseEnabled={isSupabaseConfigured}
                 />
               )}
@@ -910,9 +1653,50 @@ function App() {
           </AnimatePresence>
         </main>
       </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0f0f0f]/95 backdrop-blur">
+        <div className="flex items-center gap-4 px-4 sm:px-6 lg:px-8 py-3">
+          <div className="hidden md:flex min-w-[132px] items-center gap-3 border-r border-white/10 pr-4">
+            <div className="h-2 w-2 rounded-full bg-prestige" />
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{flairLabel}</p>
+              <p className="font-mono text-xs text-zinc-200">
+                {broadcastFlairDate ? formatHeaderDate(broadcastFlairDate) : 'No Results'}
+              </p>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            {activeFlairItem ? (
+              <button
+                key={`flair-active-${activeFlairItem.gameId}-${flairIndex}`}
+                onClick={() => openGameScreen(activeFlairItem.gameId)}
+                className={`block w-full overflow-hidden text-left transition-opacity duration-300 ${
+                  isFlairVisible ? 'opacity-100' : 'opacity-0'
+                }`}
+              >
+                {shouldMarqueeFlair ? (
+                  <div className="broadcast-marquee">
+                    <div className="broadcast-marquee__track">
+                      <span className="text-base md:text-lg text-zinc-100">{renderBroadcastText(activeFlairItem.summary)}</span>
+                      <span className="broadcast-marquee__gap" aria-hidden="true">|</span>
+                      <span className="text-base md:text-lg text-zinc-100" aria-hidden="true">{renderBroadcastText(activeFlairItem.summary)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-base md:text-lg text-zinc-100 truncate">{renderBroadcastText(activeFlairItem.summary)}</p>
+                )}              </button>
+            ) : (
+              <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                No completed games to report yet.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 export default App;
+
 

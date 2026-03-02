@@ -68,7 +68,7 @@ export const INITIAL_TEAMS: Team[] = [
   createTeam('der', 'Derackdran', 'Electrics', 'Prestige', 'West', 90, 111),
   createTeam('rei', 'Reinland', 'Rogues', 'Prestige', 'West', 40, 66),
   createTeam('fey', 'Feyford', 'Diesels', 'Prestige', 'West', 65, 85),
-  createTeam('cal', 'Calukan', 'Corsairs', 'Prestige', 'West', 40, 66),
+  createTeam('cal', 'Calukan', 'Agents', 'Prestige', 'West', 40, 66),
 
   // East
   createTeam('sta', 'Stantral', 'Demons', 'Prestige', 'East', 92, 115),

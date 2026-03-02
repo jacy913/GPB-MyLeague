@@ -7,9 +7,15 @@ interface StandingsTableProps {
   divisionName: string;
   teams: Team[];
   headerColor?: string;
+  onSelectTeam?: (teamId: string) => void;
 }
 
-export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, teams, headerColor = 'text-slate-200' }) => {
+export const StandingsTable: React.FC<StandingsTableProps> = ({
+  divisionName,
+  teams,
+  headerColor = 'text-slate-200',
+  onSelectTeam,
+}) => {
   const accentTextClass =
     headerColor.includes('prestige') ? 'text-prestige' : headerColor.includes('platinum') ? 'text-platinum' : headerColor;
   const accentBgClass =
@@ -55,7 +61,11 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
             return (
               <tr key={team.id} className="hover:bg-white/8 transition-colors group odd:bg-white/[0.02]">
                 <td className="px-3 py-2">
-                  <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onSelectTeam?.(team.id)}
+                    className="flex w-full items-center gap-2 text-left"
+                  >
                     <span className="w-5 text-center text-[10px] font-mono text-zinc-500">{index + 1}</span>
                     <span className={`w-1.5 h-7 rounded-full ${accentBgClass} ${index === 0 ? 'opacity-100' : 'opacity-45'}`} />
                     <TeamLogo team={team} sizeClass="w-10 h-10" />
@@ -70,7 +80,7 @@ export const StandingsTable: React.FC<StandingsTableProps> = ({ divisionName, te
                     {index === 0 && gamesPlayed > 10 && (
                       <Trophy className={`w-3 h-3 ml-auto opacity-0 group-hover:opacity-100 transition-opacity ${headerColor}`} />
                     )}
-                  </div>
+                  </button>
                 </td>
                 <td className="px-2 py-2 text-center font-mono text-zinc-100">{team.wins}</td>
                 <td className="px-2 py-2 text-center font-mono text-zinc-300">{team.losses}</td>
