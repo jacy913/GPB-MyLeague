@@ -12,6 +12,7 @@ import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
 import { GPBBook } from './components/GPBBook';
 import { PlayoffsBracket } from './components/PlayoffsBracket';
+import { HomeDashboard } from './components/HomeDashboard';
 import { TeamCalendar } from './components/TeamCalendar';
 import { TeamsHub } from './components/TeamsHub';
 import { PlayersHub } from './components/PlayersHub';
@@ -19,7 +20,7 @@ import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
+import { Activity, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, LayoutDashboard, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
 import { SimulationManager } from './logic/simulationManager';
@@ -257,7 +258,7 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'games_schedule' | 'team_calendar' | 'league_standings' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('games_schedule');
+  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'league_standings' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
   const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
@@ -700,6 +701,104 @@ function App() {
   const quickSimSeason = useCallback(() => {
     runSimulationTarget({ scope: 'season' });
   }, [runSimulationTarget]);
+
+  const simulateToDate = useCallback((targetDate: string) => {
+    if (!targetDate) {
+      return;
+    }
+
+    setSelectedDate(targetDate);
+    runSimulationTarget({ scope: 'to_date', targetDate });
+  }, [runSimulationTarget]);
+
+  const handleTradeProposal = useCallback(async (
+    trade: { fromTeamId: string; toTeamId: string; fromPlayerId: string; toPlayerId: string },
+  ) => {
+    if (
+      !trade.fromTeamId ||
+      !trade.toTeamId ||
+      !trade.fromPlayerId ||
+      !trade.toPlayerId ||
+      trade.fromTeamId === trade.toTeamId ||
+      trade.fromPlayerId === trade.toPlayerId
+    ) {
+      pushNotice('Select two different teams and two different players for a trade.', 'warning');
+      return;
+    }
+
+    const fromPlayer = playerState.players.find((player) => player.playerId === trade.fromPlayerId) ?? null;
+    const toPlayer = playerState.players.find((player) => player.playerId === trade.toPlayerId) ?? null;
+    if (!fromPlayer || !toPlayer) {
+      pushNotice('Trade proposal could not find both selected players.', 'error');
+      return;
+    }
+
+    const effectiveDate = currentDate || selectedDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    const nextPlayers = playerState.players.map((player) => {
+      if (player.playerId === trade.fromPlayerId) {
+        return { ...player, teamId: trade.toTeamId, status: 'active' as const };
+      }
+      if (player.playerId === trade.toPlayerId) {
+        return { ...player, teamId: trade.fromTeamId, status: 'active' as const };
+      }
+      return { ...player };
+    });
+
+    const nextRosterSlots = playerState.rosterSlots.map((slot) => {
+      if (slot.playerId === trade.fromPlayerId) {
+        return { ...slot, playerId: trade.toPlayerId };
+      }
+      if (slot.playerId === trade.toPlayerId) {
+        return { ...slot, playerId: trade.fromPlayerId };
+      }
+      return { ...slot };
+    });
+
+    const nextPlayerState: LeaguePlayerState = {
+      ...playerState,
+      players: nextPlayers,
+      battingStats: playerState.battingStats.map((stat) => ({ ...stat })),
+      pitchingStats: playerState.pitchingStats.map((stat) => ({ ...stat })),
+      battingRatings: playerState.battingRatings.map((rating) => ({ ...rating })),
+      pitchingRatings: playerState.pitchingRatings.map((rating) => ({ ...rating })),
+      rosterSlots: nextRosterSlots,
+      transactions: [
+        {
+          playerId: trade.fromPlayerId,
+          eventType: 'traded',
+          fromTeamId: trade.fromTeamId,
+          toTeamId: trade.toTeamId,
+          effectiveDate,
+          notes: `Swap return: ${toPlayer.firstName} ${toPlayer.lastName}`,
+        },
+        {
+          playerId: trade.toPlayerId,
+          eventType: 'traded',
+          fromTeamId: trade.toTeamId,
+          toTeamId: trade.fromTeamId,
+          effectiveDate,
+          notes: `Swap return: ${fromPlayer.firstName} ${fromPlayer.lastName}`,
+        },
+        ...playerState.transactions.map((transaction) => ({ ...transaction })),
+      ],
+    };
+
+    setPlayerState(nextPlayerState);
+    saveLocalPlayerState(nextPlayerState);
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(nextPlayerState);
+      }
+      pushNotice(
+        `Trade approved: ${fromPlayer.firstName} ${fromPlayer.lastName} for ${toPlayer.firstName} ${toPlayer.lastName}.`,
+        'success',
+      );
+    } catch (error) {
+      console.error('Failed to persist trade proposal:', error);
+      pushNotice('Trade completed locally, but syncing player data failed.', 'warning');
+    }
+  }, [currentDate, games, playerState, pushNotice, selectedDate]);
 
   const applyCompletedGameResults = useCallback(async (completedResults: CompletedGameResult[]) => {
     if (completedResults.length === 0) {
@@ -1264,7 +1363,7 @@ function App() {
 
         <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10">
           <div className="px-4 sm:px-6 lg:px-8 h-[88px] flex items-center justify-between">
-            <button className="flex items-center gap-3" onClick={() => setView('games_schedule')}>
+            <button className="flex items-center gap-3" onClick={() => setView('dashboard')}>
               <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
               <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
                 My League
@@ -1304,6 +1403,13 @@ function App() {
       <div className="relative z-10 flex">
         <aside className="hidden lg:block w-64 border-r border-white/10 bg-[#161616]/80 backdrop-blur sticky top-[136px] h-[calc(100vh-136px)]">
           <div className="p-4 space-y-2">
+            <button
+              onClick={() => setView('dashboard')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'dashboard' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <LayoutDashboard className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Home</span>
+            </button>
             <button
               onClick={() => setView('games_schedule')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
@@ -1372,6 +1478,7 @@ function App() {
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
           <div className="lg:hidden grid grid-cols-2 gap-2 mb-6">
+            <button onClick={() => setView('dashboard')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'dashboard' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Home</button>
             <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Scores</button>
             <button onClick={() => setView('team_calendar')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'team_calendar' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Calendar</button>
             <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
@@ -1699,6 +1806,38 @@ function App() {
                 </div>
               )}
 
+              {view === 'dashboard' && (
+                <HomeDashboard
+                  teams={teams}
+                  games={games}
+                  players={playerState.players}
+                  battingStats={playerState.battingStats}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  transactions={playerState.transactions}
+                  currentDate={currentDate}
+                  selectedDate={selectedDate}
+                  selectedTeamId={selectedTeamId}
+                  isSimulating={isSimulating}
+                  onSelectDate={setSelectedDate}
+                  onSelectTeamId={setSelectedTeamId}
+                  onOpenGame={openGameScreen}
+                  onOpenTeams={() => setView('teams')}
+                  onOpenPlayers={() => setView('players')}
+                  onOpenStandings={() => setView('league_standings')}
+                  onSimulateToSelectedDate={simulateToSelectedDate}
+                  onSimulateToEndOfRegularSeason={simulateToEndOfRegularSeason}
+                  onSimulateDay={simulateDay}
+                  onSimulateWeek={simulateWeek}
+                  onSimulateMonth={simulateMonth}
+                  onSimulateNextGame={simulateNextTeamGame}
+                  onQuickSimSeason={quickSimSeason}
+                  onResetSeason={() => resetSeason()}
+                  onSimulateToDate={simulateToDate}
+                  onProposeTrade={handleTradeProposal}
+                />
+              )}
+
               {view === 'team_calendar' && (
                 <TeamCalendar
                   teams={teams}
@@ -1748,7 +1887,7 @@ function App() {
                   settings={settings}
                   currentDate={currentDate}
                   blockingGames={blockingGamesForSelected}
-                  onBack={() => setView('games_schedule')}
+                  onBack={() => setView('dashboard')}
                   onSimulateBlockingGames={simulateBlockingGamesForSelected}
                   onCompleteGame={(completedResult) => {
                     void applyCompletedGameResults([completedResult]);
