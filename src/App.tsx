@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
 import { generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
-import { LeaguePlayerState, Team, Game, SimulationSettings, SimulationTarget } from './types';
+import { CompletedGameResult, LeaguePlayerState, Team, Game, SimulationSettings, SimulationTarget } from './types';
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
@@ -18,15 +18,16 @@ import { PlayersHub } from './components/PlayersHub';
 import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
-import { Controls } from './components/Controls';
 import { CommissionerSettings } from './components/CommissionerSettings';
 import { Activity, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
 import { SimulationManager } from './logic/simulationManager';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
+import { buildGameParticipants } from './logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from './logic/gameTimes';
 import { generatePlayerPool } from './logic/playerGenerator';
+import { applyPlayerGameStatDelta } from './logic/playerStats';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -156,6 +157,98 @@ const resolveSeasonYear = (currentDate: string | null | undefined, seasonGames: 
   const sourceDate = currentDate || seasonGames[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
   const year = Number(sourceDate?.slice(0, 4));
   return Number.isFinite(year) && year > 0 ? year : new Date().getFullYear();
+};
+
+const PLAYOFF_ROUND_LIMITS = [
+  { round: 'wild_card', seriesCount: 4, bestOf: 3 },
+  { round: 'divisional', seriesCount: 4, bestOf: 5 },
+  { round: 'league_series', seriesCount: 2, bestOf: 7 },
+  { round: 'world_series', seriesCount: 1, bestOf: 7 },
+] as const;
+
+const getProjectedSeasonSummary = (seasonGames: Game[]) => {
+  if (seasonGames.length === 0) {
+    return {
+      completedGames: 0,
+      totalGames: 0,
+      remainingGames: 0,
+      progress: 0,
+    };
+  }
+
+  const completedGames = seasonGames.filter((game) => game.status === 'completed').length;
+  const regularSeasonGames = seasonGames.filter((game) => !isPlayoffGame(game)).length;
+  const playoffGames = seasonGames.filter(isPlayoffGame);
+  const playoffSeriesMap = new Map<string, Game[]>();
+  const roundSeriesCounts = new Map<string, Set<string>>();
+
+  PLAYOFF_ROUND_LIMITS.forEach(({ round }) => {
+    roundSeriesCounts.set(round, new Set<string>());
+  });
+
+  playoffGames.forEach((game) => {
+    const seriesId = game.playoff?.seriesId;
+    const round = game.playoff?.round;
+    if (!seriesId || !round) {
+      return;
+    }
+
+    const existing = playoffSeriesMap.get(seriesId) ?? [];
+    existing.push(game);
+    playoffSeriesMap.set(seriesId, existing);
+    roundSeriesCounts.get(round)?.add(seriesId);
+  });
+
+  let projectedPlayoffGames = 0;
+  playoffSeriesMap.forEach((seriesGames) => {
+    const orderedGames = [...seriesGames].sort((left, right) =>
+      left.date === right.date ? left.gameId.localeCompare(right.gameId) : left.date.localeCompare(right.date),
+    );
+    const sample = orderedGames[0];
+    const playoff = sample.playoff;
+    if (!playoff) {
+      return;
+    }
+
+    const completedSeriesGames = orderedGames.filter((game) => game.status === 'completed');
+    const winsNeeded = Math.floor(playoff.bestOf / 2) + 1;
+    const topSeedTeamId = typeof sample.stats.topSeedTeamId === 'string' ? sample.stats.topSeedTeamId : '';
+    const bottomSeedTeamId = typeof sample.stats.bottomSeedTeamId === 'string' ? sample.stats.bottomSeedTeamId : '';
+    let topWins = 0;
+    let bottomWins = 0;
+
+    completedSeriesGames.forEach((game) => {
+      const winnerTeamId = game.score.home > game.score.away ? game.homeTeam : game.awayTeam;
+      if (winnerTeamId === topSeedTeamId) {
+        topWins += 1;
+      } else if (winnerTeamId === bottomSeedTeamId) {
+        bottomWins += 1;
+      }
+    });
+
+    const clinched = topWins >= winsNeeded || bottomWins >= winsNeeded;
+    projectedPlayoffGames += orderedGames.length;
+
+    if (!clinched) {
+      projectedPlayoffGames += Math.max(playoff.bestOf - orderedGames.length, 0);
+    }
+  });
+
+  PLAYOFF_ROUND_LIMITS.forEach(({ round, seriesCount, bestOf }) => {
+    const existingSeriesCount = roundSeriesCounts.get(round)?.size ?? 0;
+    projectedPlayoffGames += Math.max(seriesCount - existingSeriesCount, 0) * bestOf;
+  });
+
+  const totalGames = regularSeasonGames + projectedPlayoffGames;
+  const remainingGames = Math.max(totalGames - completedGames, 0);
+  const progress = totalGames > 0 ? (completedGames / totalGames) * 100 : 0;
+
+  return {
+    completedGames,
+    totalGames,
+    remainingGames,
+    progress,
+  };
 };
 
 function App() {
@@ -513,6 +606,7 @@ function App() {
       const manager = new SimulationManager({
         teams,
         games,
+        playerState,
         settings,
         currentDate: currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
       });
@@ -525,11 +619,13 @@ function App() {
 
       setTeams(finalizedTeams);
       setGames(result.games);
+      setPlayerState(result.playerState);
       setCurrentDate(result.currentDate);
       setSelectedDate(result.currentDate);
       setProgress(getProgressFromGames(result.games));
       setSeasonComplete(complete);
       setIsSimulating(false);
+      saveLocalPlayerState(result.playerState);
 
       void (async () => {
         try {
@@ -541,6 +637,10 @@ function App() {
             getProgressFromGames(result.games),
             complete,
           );
+
+          if (isSupabaseConfigured) {
+            await saveSupabasePlayerState(result.playerState);
+          }
 
           if (complete && result.simulatedGameCount > 0) {
             if (isSupabaseConfigured) {
@@ -564,7 +664,7 @@ function App() {
         }
       })();
     });
-  }, [isSimulating, games, teams, settings, currentDate, getProgressFromGames, persistLeagueState, pushNotice]);
+  }, [isSimulating, games, teams, playerState, settings, currentDate, getProgressFromGames, persistLeagueState, pushNotice]);
 
   const simulateToSelectedDate = useCallback(() => {
     if (!selectedDate) {
@@ -601,14 +701,18 @@ function App() {
     runSimulationTarget({ scope: 'season' });
   }, [runSimulationTarget]);
 
-  const applyCompletedGameResults = useCallback(async (completedResults: Game[]) => {
+  const applyCompletedGameResults = useCallback(async (completedResults: CompletedGameResult[]) => {
     if (completedResults.length === 0) {
       return;
     }
 
-    const orderedResults = [...completedResults].sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
-    const nextTeamsMap = new Map(teams.map((team) => [team.id, { ...team }]));
-    const nextGamesMap = new Map(
+    const orderedResults = [...completedResults].sort((left, right) =>
+      left.game.date === right.game.date
+        ? left.game.gameId.localeCompare(right.game.gameId)
+        : left.game.date.localeCompare(right.game.date),
+    );
+    const nextTeamsMap = new Map<string, Team>(teams.map((team) => [team.id, { ...team }]));
+    const nextGamesMap = new Map<string, Game>(
       games.map((game) => [
         game.gameId,
         {
@@ -619,8 +723,10 @@ function App() {
         },
       ]),
     );
+    let nextPlayerState = playerState;
 
-    orderedResults.forEach((resolvedGame) => {
+    orderedResults.forEach((resolvedResult) => {
+      const resolvedGame = resolvedResult.game;
       const existing = nextGamesMap.get(resolvedGame.gameId);
       if (!existing) {
         return;
@@ -651,6 +757,13 @@ function App() {
         stats: { ...resolvedGame.stats },
         playoff: resolvedGame.playoff ? { ...resolvedGame.playoff } : null,
       });
+
+      nextPlayerState = applyPlayerGameStatDelta(
+        nextPlayerState,
+        resolvedResult.playerStatDelta,
+        resolveSeasonYear(resolvedGame.date, games),
+        resolvedGame.phase,
+      );
     });
 
     const nextGames = Array.from(nextGamesMap.values()).sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
@@ -658,19 +771,24 @@ function App() {
     const nextTeams = Array.from(nextTeamsMap.values()).map((team) =>
       nextSeasonComplete ? { ...team, previousBaselineWins: team.wins } : team,
     );
-    const latestCompletedDate = orderedResults[orderedResults.length - 1]?.date ?? currentDate;
+    const latestCompletedDate = orderedResults[orderedResults.length - 1]?.game.date ?? currentDate;
     const nextCurrentDate = latestCompletedDate > currentDate ? latestCompletedDate : currentDate;
     const nextProgress = getProgressFromGames(nextGames);
 
     setTeams(nextTeams);
     setGames(nextGames);
+    setPlayerState(nextPlayerState);
     setCurrentDate(nextCurrentDate);
-    setSelectedDate(orderedResults[orderedResults.length - 1]?.date ?? selectedDate);
+    setSelectedDate(orderedResults[orderedResults.length - 1]?.game.date ?? selectedDate);
     setProgress(nextProgress);
     setSeasonComplete(nextSeasonComplete);
+    saveLocalPlayerState(nextPlayerState);
 
     try {
       await persistLeagueState(nextTeams, settings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(nextPlayerState);
+      }
     } catch (error) {
       console.error('Failed to persist interactive game results:', error);
       pushNotice('Game simulation completed, but saving failed.', 'warning');
@@ -679,11 +797,11 @@ function App() {
 
     pushNotice(
       orderedResults.length === 1
-        ? `Simulated ${orderedResults[0].awayTeam.toUpperCase()} @ ${orderedResults[0].homeTeam.toUpperCase()}.`
+        ? `Simulated ${orderedResults[0].game.awayTeam.toUpperCase()} @ ${orderedResults[0].game.homeTeam.toUpperCase()}.`
         : `Simulated ${orderedResults.length} earlier games and updated the slate.`,
       'info',
     );
-  }, [teams, games, currentDate, selectedDate, getProgressFromGames, persistLeagueState, settings, pushNotice]);
+  }, [teams, games, playerState, currentDate, selectedDate, getProgressFromGames, persistLeagueState, settings, pushNotice]);
 
   const openGameScreen = useCallback((gameId: string) => {
     const targetGame = games.find((game) => game.gameId === gameId);
@@ -725,7 +843,7 @@ function App() {
   const activeDate = selectedDate || games[0]?.date || currentDate;
   const currentTimelineDate = currentDate || activeDate;
   const allScheduleDates = useMemo(
-    () => Array.from(new Set(games.map((game) => game.date))).sort((a, b) => a.localeCompare(b)),
+    () => Array.from(new Set<string>(games.map((game) => game.date))).sort((a, b) => a.localeCompare(b)),
     [games],
   );
   const bannerDate = useMemo(() => {
@@ -757,6 +875,31 @@ function App() {
         .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
     [games, activeDate],
   );
+  const seasonProgressSummary = useMemo(() => getProjectedSeasonSummary(games), [games]);
+  const calendarSummaryByDate = useMemo(() => {
+    const summary = new Map<string, { total: number; completed: number; scheduled: number; playoff: number }>();
+    games.forEach((game) => {
+      const current = summary.get(game.date) ?? { total: 0, completed: 0, scheduled: 0, playoff: 0 };
+      current.total += 1;
+      if (game.status === 'completed') {
+        current.completed += 1;
+      } else {
+        current.scheduled += 1;
+      }
+      if (isPlayoffGame(game)) {
+        current.playoff += 1;
+      }
+      summary.set(game.date, current);
+    });
+    return summary;
+  }, [games]);
+  const lastRegularSeasonDate = useMemo(() => {
+    const regularSeasonDates = games
+      .filter(isRegularSeasonGame)
+      .map((game) => game.date)
+      .sort((left, right) => left.localeCompare(right));
+    return regularSeasonDates[regularSeasonDates.length - 1] ?? '';
+  }, [games]);
 
   const teamLookup = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const pregameRecordByGameId = useMemo(() => {
@@ -941,7 +1084,7 @@ function App() {
   const broadcastHighlightTokens = useMemo(
     () =>
       Array.from(
-        new Set(
+        new Set<string>(
           teams.flatMap((team) => [team.name, team.city]).filter((value) => value && value.trim().length > 0),
         ),
       ).sort((left, right) => right.length - left.length),
@@ -1011,22 +1154,23 @@ function App() {
       return;
     }
 
-    const teamMap = new Map(teams.map((team) => [team.id, team]));
+    const teamMap = new Map<string, Team>(teams.map((team) => [team.id, team]));
     const resolvedGames = blockingGamesForSelected
-      .map((blockingGame) => {
+      .map((blockingGame: Game) => {
         const awayTeam = teamMap.get(blockingGame.awayTeam);
         const homeTeam = teamMap.get(blockingGame.homeTeam);
         if (!awayTeam || !homeTeam) {
           return null;
         }
 
-        const session = simulateGameToFinal(createGameSession(blockingGame), awayTeam, homeTeam, settings);
+        const participants = buildGameParticipants(blockingGame, games, playerState);
+        const session = simulateGameToFinal(createGameSession(blockingGame, participants), awayTeam, homeTeam, settings);
         return buildCompletedGameFromSession(blockingGame, session);
       })
-      .filter((game): game is Game => Boolean(game));
+      .filter((game): game is CompletedGameResult => Boolean(game));
 
     await applyCompletedGameResults(resolvedGames);
-  }, [selectedGame, blockingGamesForSelected, teams, settings, applyCompletedGameResults]);
+  }, [selectedGame, blockingGamesForSelected, teams, games, playerState, settings, applyCompletedGameResults]);
 
   if (isBootstrapping) {
     return (
@@ -1249,26 +1393,136 @@ function App() {
             >
               {view === 'games_schedule' && (
                 <div className="space-y-6">
-                  <Controls
-                    games={games}
-                    teams={teams}
-                    currentDate={currentDate}
-                    selectedDate={selectedDate}
-                    selectedTeamId={selectedTeamId}
-                    onSelectDate={setSelectedDate}
-                    onSelectTeamId={setSelectedTeamId}
-                    onSimulateToSelectedDate={simulateToSelectedDate}
-                    onSimulateToEndOfRegularSeason={simulateToEndOfRegularSeason}
-                    onSimulateDay={simulateDay}
-                    onSimulateWeek={simulateWeek}
-                    onSimulateMonth={simulateMonth}
-                    onSimulateNextGame={simulateNextTeamGame}
-                    onQuickSimSeason={quickSimSeason}
-                    onReset={() => resetSeason()}
-                    isSimulating={isSimulating}
-                    progress={progress}
-                    seasonComplete={seasonComplete}
-                  />
+                  <section className="overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(167,155,0,0.12),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(23,182,144,0.12),transparent_28%),linear-gradient(135deg,#1c1c1c,#252525 42%,#171717)] p-4 md:p-6">
+                    <div className="flex flex-col gap-5">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+                        <div className="min-w-0">
+                          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">Season Progress</p>
+                          <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
+                            <p className="font-display text-4xl uppercase tracking-[0.08em] text-white md:text-5xl">
+                              {Math.round(seasonProgressSummary.progress)}% Complete
+                            </p>
+                            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+                              {seasonComplete ? 'Season complete' : activeDateHasPlayoffs ? 'Playoff race live' : 'Regular season in progress'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:min-w-[520px]">
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Played</p>
+                            <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.completedGames}</p>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Remaining</p>
+                            <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.remainingGames}</p>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Season Scope</p>
+                            <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.totalGames}</p>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Sim Date</p>
+                            <p className="mt-2 font-display text-lg uppercase text-white">{formatHeaderDate(currentDate || activeDate)}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="relative h-4 overflow-hidden rounded-full border border-white/10 bg-black/35">
+                        <div
+                          className="h-full rounded-full bg-[linear-gradient(90deg,#a79b00_0%,#f3f0e2_48%,#17b690_100%)] shadow-[0_0_22px_rgba(23,182,144,0.35)] transition-[width] duration-500"
+                          style={{ width: `${seasonProgressSummary.progress}%` }}
+                        />
+                        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_62%)]" />
+                      </div>
+
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                        <div>
+                          <p className="font-display text-2xl uppercase tracking-[0.12em] text-white">Season Calendar</p>
+                          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                            Select a day to change the scoreboard slate
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Selected Slate</p>
+                            <p className="mt-2 font-display text-lg uppercase text-white">{formatHeaderDate(activeDate)}</p>
+                          </div>
+                          <label className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Jump To Date</span>
+                            <input
+                              type="date"
+                              value={activeDate}
+                              min={allScheduleDates[0]}
+                              max={allScheduleDates[allScheduleDates.length - 1]}
+                              onChange={(event) => setSelectedDate(event.target.value)}
+                              className="mt-2 block bg-transparent font-mono text-sm text-white focus:outline-none"
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto pb-2 scrollbar-subtle">
+                        <div className="flex min-w-max gap-3">
+                          {allScheduleDates.map((date) => {
+                            const daySummary = calendarSummaryByDate.get(date) ?? { total: 0, completed: 0, scheduled: 0, playoff: 0 };
+                            const isSelected = date === activeDate;
+                            const isCurrent = date === currentDate;
+                            const isPlayoffDate = daySummary.playoff > 0;
+
+                            return (
+                              <button
+                                key={date}
+                                onClick={() => setSelectedDate(date)}
+                                className={`group min-w-[150px] rounded-2xl border px-4 py-4 text-left transition-all ${
+                                  isSelected
+                                    ? isPlayoffDate
+                                      ? 'border-zinc-200/60 bg-zinc-100/10 shadow-[0_18px_40px_rgba(255,255,255,0.06)]'
+                                      : 'border-prestige/55 bg-prestige/14 shadow-[0_18px_40px_rgba(23,182,144,0.1)]'
+                                    : isCurrent
+                                      ? 'border-platinum/40 bg-platinum/10'
+                                      : 'border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/[0.06]'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="font-display text-xl uppercase tracking-[0.08em] text-white">
+                                      {new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                    </p>
+                                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                                      {isPlayoffDate ? 'Playoff slate' : 'Regular season'}
+                                    </p>
+                                  </div>
+                                  {isPlayoffDate ? (
+                                    <span className="rounded-full border border-zinc-200/20 bg-zinc-100/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-200">
+                                      PL
+                                    </span>
+                                  ) : isCurrent ? (
+                                    <span className="rounded-full border border-prestige/30 bg-prestige/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-prestige">
+                                      Today
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <div className="mt-5">
+                                  <p className="font-display text-lg uppercase tracking-[0.08em] text-zinc-100">
+                                    {daySummary.total} {daySummary.total === 1 ? 'Game' : 'Games'} Today
+                                  </p>
+                                  <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                                    {daySummary.completed} final{daySummary.completed === 1 ? '' : 's'} / {daySummary.scheduled} upcoming
+                                  </p>
+                                  {date === lastRegularSeasonDate && (
+                                    <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-platinum">Regular season finale</p>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </section>
 
                   <section className="bg-gradient-to-br from-[#1f1f1f] via-[#242424] to-[#1f1f1f] rounded-2xl border border-white/10 p-4 md:p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -1287,9 +1541,9 @@ function App() {
                       </div>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       {gamesForActiveDate.length === 0 ? (
-                        <div className="rounded-xl border border-white/10 bg-[#181818] px-4 py-8 text-center text-zinc-500 font-mono">
+                        <div className="xl:col-span-2 rounded-xl border border-white/10 bg-[#181818] px-4 py-8 text-center text-zinc-500 font-mono">
                           No games scheduled for this date.
                         </div>
                       ) : (
@@ -1490,13 +1744,14 @@ function App() {
                   game={selectedGame}
                   games={games}
                   teams={teams}
+                  playerState={playerState}
                   settings={settings}
                   currentDate={currentDate}
                   blockingGames={blockingGamesForSelected}
                   onBack={() => setView('games_schedule')}
                   onSimulateBlockingGames={simulateBlockingGamesForSelected}
-                  onCompleteGame={(completedGame) => {
-                    void applyCompletedGameResults([completedGame]);
+                  onCompleteGame={(completedResult) => {
+                    void applyCompletedGameResults([completedResult]);
                   }}
                 />
               )}

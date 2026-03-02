@@ -148,7 +148,7 @@ create table if not exists public.player_batting_ratings (
   updated_at timestamptz not null default now(),
   unique (player_id, season_year)
 );
-
+ 
 create table if not exists public.player_pitching_ratings (
   rating_id bigint generated always as identity primary key,
   player_id uuid not null references public.players(player_id) on delete cascade,

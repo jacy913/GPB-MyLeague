@@ -1,5 +1,8 @@
-import { Game, PlayoffGameDetails, PlayoffLeague, PlayoffRoundKey, SimulationSettings, SimulationTarget, Team } from '../types';
-import { addDaysToISODate, simulateGame } from './simulation';
+import { Game, LeaguePlayerState, PlayoffGameDetails, PlayoffLeague, PlayoffRoundKey, SimulationSettings, SimulationTarget, Team } from '../types';
+import { addDaysToISODate } from './simulation';
+import { buildCompletedGameFromSession, createGameSession, simulateGameToFinal } from './gameEngine';
+import { buildGameParticipants } from './gameParticipants';
+import { applyPlayerGameStatDelta } from './playerStats';
 import {
   SeededPlayoffTeam,
   compareSeededTeams,
@@ -12,6 +15,7 @@ import {
 export interface SimulationManagerInput {
   teams: Team[];
   games: Game[];
+  playerState: LeaguePlayerState;
   settings: SimulationSettings;
   currentDate: string;
 }
@@ -19,6 +23,7 @@ export interface SimulationManagerInput {
 export interface SimulationManagerResult {
   teams: Team[];
   games: Game[];
+  playerState: LeaguePlayerState;
   currentDate: string;
   simulatedGameCount: number;
   progress: number;
@@ -49,22 +54,6 @@ const compareGameOrder = (a: Game, b: Game): number => {
     return a.date.localeCompare(b.date);
   }
   return a.gameId.localeCompare(b.gameId);
-};
-
-const randomInt = (min: number, max: number): number => {
-  if (max <= min) {
-    return min;
-  }
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-};
-
-const generateHitsAndErrors = (runs: number): { hits: number; errors: number } => {
-  const hitsFloor = Math.max(runs + 2, 3);
-  const hitsCeiling = Math.max(hitsFloor + 5, runs + 7);
-  const hits = randomInt(hitsFloor, hitsCeiling);
-  const errorRoll = Math.random();
-  const errors = errorRoll < 0.62 ? 0 : errorRoll < 0.88 ? 1 : errorRoll < 0.98 ? 2 : 3;
-  return { hits, errors };
 };
 
 const getRegularSeasonEndDate = (games: Game[], fallbackDate: string): string => {
@@ -102,6 +91,7 @@ export class SimulationManager {
   private readonly teamOrder: string[];
   private readonly teamsById: Map<string, Team>;
   private games: Game[];
+  private playerState: LeaguePlayerState;
   private readonly seasonStartDate: string;
   private readonly regularSeasonEndDate: string;
   private currentDate: string;
@@ -119,6 +109,15 @@ export class SimulationManager {
         stats: { ...game.stats },
       }))
       .sort(compareGameOrder);
+    this.playerState = {
+      players: input.playerState.players.map((player) => ({ ...player })),
+      battingStats: input.playerState.battingStats.map((stat) => ({ ...stat })),
+      pitchingStats: input.playerState.pitchingStats.map((stat) => ({ ...stat })),
+      battingRatings: input.playerState.battingRatings.map((rating) => ({ ...rating })),
+      pitchingRatings: input.playerState.pitchingRatings.map((rating) => ({ ...rating })),
+      rosterSlots: input.playerState.rosterSlots.map((slot) => ({ ...slot })),
+      transactions: input.playerState.transactions.map((transaction) => ({ ...transaction })),
+    };
 
     this.seasonStartDate = this.games[0]?.date ?? input.currentDate;
     this.regularSeasonEndDate = getRegularSeasonEndDate(this.games, input.currentDate);
@@ -396,8 +395,28 @@ export class SimulationManager {
         playoff.round,
         playoff.league,
         playoff.seriesId,
-        { team: topSeedTeam, seed: metadata.topSeed, isDivisionWinner: false },
-        { team: bottomSeedTeam, seed: metadata.bottomSeed, isDivisionWinner: false },
+        {
+          team: topSeedTeam,
+          seed: metadata.topSeed,
+          clinchType: 'wildcard',
+          wins: topSeedTeam.wins,
+          losses: topSeedTeam.losses,
+          runDiff: topSeedTeam.runsScored - topSeedTeam.runsAllowed,
+          homeWins: 0,
+          homeLosses: 0,
+          homePct: 0,
+        },
+        {
+          team: bottomSeedTeam,
+          seed: metadata.bottomSeed,
+          clinchType: 'wildcard',
+          wins: bottomSeedTeam.wins,
+          losses: bottomSeedTeam.losses,
+          runDiff: bottomSeedTeam.runsScored - bottomSeedTeam.runsAllowed,
+          homeWins: 0,
+          homeLosses: 0,
+          homePct: 0,
+        },
         startDate,
         playoff.seriesLabel,
       );
@@ -545,28 +564,29 @@ export class SimulationManager {
       return;
     }
 
-    const result = simulateGame(homeTeam, awayTeam, this.settings);
-    const homeBox = generateHitsAndErrors(result.homeScore);
-    const awayBox = generateHitsAndErrors(result.awayScore);
-    game.status = 'completed';
-    game.score = { home: result.homeScore, away: result.awayScore };
-    game.stats = {
-      ...game.stats,
-      winProbHome: Number(result.winProbHome.toFixed(4)),
-      homeHits: homeBox.hits,
-      awayHits: awayBox.hits,
-      homeErrors: homeBox.errors,
-      awayErrors: awayBox.errors,
-      simulatedAt: new Date().toISOString(),
-    };
+    const participants = buildGameParticipants(game, this.games, this.playerState);
+    const session = simulateGameToFinal(createGameSession(game, participants), awayTeam, homeTeam, this.settings);
+    const completed = buildCompletedGameFromSession(game, session);
+    const completedGame = completed.game;
+
+    game.status = completedGame.status;
+    game.score = { ...completedGame.score };
+    game.stats = { ...completedGame.stats };
+
+    this.playerState = applyPlayerGameStatDelta(
+      this.playerState,
+      completed.playerStatDelta,
+      Number(game.date.slice(0, 4)),
+      game.phase,
+    );
 
     if (isRegularSeasonGame(game)) {
-      homeTeam.runsScored += result.homeScore;
-      homeTeam.runsAllowed += result.awayScore;
-      awayTeam.runsScored += result.awayScore;
-      awayTeam.runsAllowed += result.homeScore;
+      homeTeam.runsScored += completedGame.score.home;
+      homeTeam.runsAllowed += completedGame.score.away;
+      awayTeam.runsScored += completedGame.score.away;
+      awayTeam.runsAllowed += completedGame.score.home;
 
-      if (result.homeScore > result.awayScore) {
+      if (completedGame.score.home > completedGame.score.away) {
         homeTeam.wins += 1;
         awayTeam.losses += 1;
       } else {
@@ -663,6 +683,15 @@ export class SimulationManager {
         score: { ...game.score },
         stats: { ...game.stats },
       })),
+      playerState: {
+        players: this.playerState.players.map((player) => ({ ...player })),
+        battingStats: this.playerState.battingStats.map((stat) => ({ ...stat })),
+        pitchingStats: this.playerState.pitchingStats.map((stat) => ({ ...stat })),
+        battingRatings: this.playerState.battingRatings.map((rating) => ({ ...rating })),
+        pitchingRatings: this.playerState.pitchingRatings.map((rating) => ({ ...rating })),
+        rosterSlots: this.playerState.rosterSlots.map((slot) => ({ ...slot })),
+        transactions: this.playerState.transactions.map((transaction) => ({ ...transaction })),
+      },
       currentDate: this.currentDate,
       simulatedGameCount,
       progress,

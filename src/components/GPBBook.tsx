@@ -56,12 +56,12 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
     {
       title: 'Single Game Engine',
       icon: PlayCircle,
-      detail: 'Future dedicated game screen will resolve plate appearances inning by inning, update live R/H/E, and emit play-by-play state.',
+      detail: 'Interactive games should resolve batter-vs-pitcher matchups, track named runners on base, and emit player-attributed play-by-play.',
     },
     {
       title: 'Player Lifecycle Engine',
       icon: Users,
-      detail: 'Future player model will track roster ownership, role groups, seasonal stats, draft intake, free agency, and retirement state.',
+      detail: 'Player state already covers roster ownership, ratings, and seasonal records; the next step is wiring those players directly into game resolution.',
     },
   ];
 
@@ -110,34 +110,49 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
     },
     {
       step: '3. Pregame Screen',
-      detail: 'Show matchup header, team logos, records entering game, probable game slot order, and a "Start Simulation" control.',
+      detail: 'Build a frozen participant snapshot: away lineup, home lineup, batting-order indexes, starting pitchers, and bullpen availability.',
     },
     {
       step: '4. Live Game Loop',
-      detail: 'Once started, the game screen advances through top/bottom halves, updates inning state, bases, outs, score, hits, and errors after every plate appearance.',
+      detail: 'Resolve each plate appearance through batter-vs-pitcher logic, update named runners on base, and credit every hit, walk, strikeout, run, and error to players.',
     },
     {
       step: '5. Finalize + Persist',
-      detail: 'At game end, commit final R/H/E, mark the game completed, update standings context if regular season, and return the user to the schedule with a completed result.',
+      detail: 'At game end, commit the completed game, apply per-player stat deltas, update standings context, and persist both team and player state together.',
     },
   ];
 
   const atBatOutcomes = [
-    'OUT: increments outs only',
-    'BB: forces runners when needed and can score a run with bases loaded',
-    '1B: credits a hit, advances runners with simple runner-advance logic',
-    '2B: credits a hit, clears some runners and may score the runner from first',
-    '3B: credits a hit, clears all runners, places batter on third',
-    'HR: credits a hit, clears bases, scores batter plus all runners',
-    'ERR: advances like a single, charges an error to the defense instead of a hit',
+    'SO: derived from batter avoidStrikeout against pitcher stuff and command',
+    'BB: derived from batter plateDiscipline against pitcher control and command',
+    'BIP OUT: fielded out after contact, with defense and pitcher fielding shaping the result',
+    '1B / 2B / 3B: hit quality derived from contact, power, movement, and runner speed',
+    'HR: power outcome driven by batter power against pitcher movement and stuff',
+    'ERR: charged to a defender, not to the pitcher as a hit allowed',
   ];
 
   const gameScreenDataContract = [
-    'GameSessionState: gameId, date, slotIndex, inning, half, outs, bases, status',
-    'ScoreState: awayRuns, homeRuns, awayHits, homeHits, awayErrors, homeErrors',
-    'PlayEvent: seq, inning, half, battingTeamId, result, runsScored, basesBefore, basesAfter, outsBefore, outsAfter',
+    'GameParticipantsSnapshot: awayLineup[], homeLineup[], awayStarterId, homeStarterId, awayBullpen[], homeBullpen[]',
+    'GameSessionState: gameId, date, inning, half, outs, basesWithRunnerIds, status, awayBatterIndex, homeBatterIndex, currentAwayPitcherId, currentHomePitcherId',
+    'PlayEvent: seq, inning, half, battingTeamId, batterId, pitcherId, defenderId?, outcome, runsScored, rbi, basesBefore, basesAfter, outsBefore, outsAfter',
     'InningLine: inningNumber, awayRuns, homeRuns',
+    'PlayerGameStatDelta: batting[playerId], pitching[playerId], fielding[playerId], winningPitcherId?, losingPitcherId?, savePitcherId?',
     'PendingGameGuard: gameId, blockingGameIds[], warningType',
+  ];
+
+  const playerGameIntegrationBlueprint = [
+    'GameScreen should receive playerState inputs alongside game, teams, and settings so lineups and active pitchers come from real roster slots.',
+    'The game session should store runner identity on each base instead of boolean occupancy, so runs and advancements can be credited correctly.',
+    'Completed interactive games should return both a completed Game and a player stat delta package; team-only completion is no longer enough.',
+    'App-level completion logic should merge those deltas into battingStats and pitchingStats before persisting local or Supabase state.',
+  ];
+
+  const playerDrivenUiBlueprint = [
+    'Top ribbon: current batter, current pitcher, handedness, fatigue or stamina state, and live matchup context.',
+    'Lineup cards: both batting orders with the active hitter highlighted and the next few hitters visible.',
+    'Basepaths: runner identities on first, second, and third instead of anonymous occupied bases.',
+    'Play log: named events such as "Mateo Garcia doubles off Akira Sato, scoring Luis Cruz."',
+    'Postgame box: team line score plus batting and pitching tables attributed to individual players.',
   ];
 
   const playerDesignCorrections = [
@@ -252,6 +267,7 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
     'PlayerSeasonPitching: playerId, seasonYear, wins, losses, saves, games, gamesStarted, inningsPitched, hitsAllowed, earnedRuns, walks, strikeouts, era, whip',
     'RosterSlotAssignment: leagueId, seasonYear, teamId, slotCode, playerId',
     'PlayerTransaction: playerId, eventType, fromTeamId, toTeamId, effectiveDate, notes',
+    'GameParticipantsSnapshot + PlayerGameStatDelta: the bridge between roster data and interactive game resolution',
   ];
 
 
@@ -380,13 +396,13 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           <h3 className="font-display text-3xl uppercase tracking-widest text-white">Game Screen Module Blueprint (Draft)</h3>
         </div>
         <p className="font-mono text-xs text-zinc-500 mb-4">
-          Design-first logic for a dedicated game simulation screen. Based on the current weighted plate appearance engine in `sim_game.py`.
+          Design-first logic for turning the current interactive game screen into a player-driven engine with real lineups, pitchers, runner identity, and stat attribution.
         </p>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
             <p className="font-mono text-[10px] uppercase text-zinc-500">Core Engine</p>
-            <p className="font-mono text-lg text-zinc-100 mt-1">At-Bat Weighted</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">Player Matchups</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
             <p className="font-mono text-[10px] uppercase text-zinc-500">Default Length</p>
@@ -394,7 +410,7 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           </div>
           <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
             <p className="font-mono text-[10px] uppercase text-zinc-500">Live Stats</p>
-            <p className="font-mono text-lg text-zinc-100 mt-1">R / H / E</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">R / H / E + Box</p>
           </div>
           <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
             <p className="font-mono text-[10px] uppercase text-zinc-500">Game Access Rule</p>
@@ -418,9 +434,9 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
             <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">At-Bat Outcome Model</h4>
             <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
-              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Current Python Logic</p>
-              <p className="font-mono text-xs text-zinc-300">Outcome pool: `OUT`, `BB`, `1B`, `2B`, `3B`, `HR`, `ERR`</p>
-              <p className="font-mono text-xs text-zinc-300 mt-1">Relative weights: `680 / 90 / 150 / 40 / 5 / 30 / 5`</p>
+              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Target Resolution Model</p>
+              <p className="font-mono text-xs text-zinc-300">Base outcome should start with batter-vs-pitcher ratings, then apply runner advancement and defensive attribution.</p>
+              <p className="font-mono text-xs text-zinc-300 mt-1">First-pass inputs: contact, power, discipline, avoid K, speed, baserunning vs stuff, command, control, movement, stamina, hold runners, and fielding.</p>
               <div className="space-y-1.5 mt-3">
                 {atBatOutcomes.map((item) => (
                   <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
@@ -435,10 +451,10 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
             <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Dedicated Game Screen UI</h4>
             <div className="space-y-2 text-sm text-zinc-300">
               <p>Header: away @ home, team logos, current inning/half, live status.</p>
-              <p>Center ribbon: inning-by-inning line score with highlighted active half-inning.</p>
-              <p>Field state panel: bases occupied, outs, batting team, and current score.</p>
-              <p>Live box: runs, hits, errors update on every plate appearance.</p>
-              <p>Play log: latest event stream such as walk, single, double, error, or home run.</p>
+              <p>Center ribbon: inning-by-inning line score with highlighted active half-inning and current batter/pitcher matchup.</p>
+              <p>Field state panel: named runners on base, outs, batting team, current score, and active pitcher.</p>
+              <p>Live box: runs, hits, errors, batting order progress, and pitcher stamina update on every plate appearance.</p>
+              <p>Play log: named event stream with batter, pitcher, defender, and runners credited directly.</p>
               <p>Controls: step plate appearance, step half inning, simulate inning, simulate to final.</p>
             </div>
           </section>
@@ -458,6 +474,28 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
         </div>
 
         <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Player Integration Rules</h4>
+          <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+            <div className="space-y-1.5">
+              {playerGameIntegrationBlueprint.map((item) => (
+                <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Player-Driven UI Additions</h4>
+          <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+            <div className="space-y-1.5">
+              {playerDrivenUiBlueprint.map((item) => (
+                <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
           <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Logic Bay Data Contract</h4>
           <div className="bg-[#111] border border-white/10 rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto">
             {gameScreenDataContract.map((item) => (
@@ -465,7 +503,7 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
             ))}
           </div>
           <p className="font-mono text-[11px] text-zinc-500 mt-2">
-            Implementation target: keep the existing season simulator for bulk flows, and add a separate single-game session engine for interactive inning-level simulation.
+            Implementation target: keep the current bulk season simulator for fast flows, but make the interactive game session return a player-aware stat delta alongside the completed game result.
           </p>
         </section>
       </article>

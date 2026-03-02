@@ -513,23 +513,25 @@ const roundTitles: Record<PlayoffRoundKey, string> = {
 };
 
 const pipsForSeries = (wins: number, bestOf: number, filledClass: string) =>
-  Array.from({ length: bestOf }).map((_, index) => (
+  Array.from({ length: Math.floor(bestOf / 2) + 1 }).map((_, index) => (
     <span
       key={index}
-      className={`h-1.5 rounded-full ${index < wins ? filledClass : 'bg-white/10'} ${bestOf >= 7 ? 'w-6' : 'w-7'}`}
+      className={`h-1.5 rounded-full ${index < wins ? filledClass : 'bg-white/10'} ${bestOf >= 7 ? 'w-8' : 'w-9'}`}
     />
   ));
 
 const BracketTeamRow: React.FC<{
   participant: SeededPlayoffTeam | null;
   wins: number;
+  bestOf: number;
   accentClass: string;
+  filledClass: string;
   highlightClass: string;
   isEmphasized: boolean;
-}> = ({ participant, wins, accentClass, highlightClass, isEmphasized }) => {
+}> = ({ participant, wins, bestOf, accentClass, filledClass, highlightClass, isEmphasized }) => {
   if (!participant) {
     return (
-      <div className="grid grid-cols-[44px_minmax(0,1fr)_60px] items-center gap-3 rounded-xl bg-white/[0.03] px-3 py-3">
+      <div className="grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3 rounded-xl bg-white/[0.03] px-3 py-3">
         <div className="h-11 w-11 rounded-lg bg-black/25 border border-white/10 flex items-center justify-center font-mono text-sm text-zinc-500">
           ?
         </div>
@@ -540,15 +542,12 @@ const BracketTeamRow: React.FC<{
           <p className="font-display text-lg uppercase tracking-[0.08em] text-zinc-300 leading-none mt-3">Awaiting Matchup</p>
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 mt-1">Awaiting matchup</p>
         </div>
-        <div className="text-right">
-          <p className="font-mono text-sm text-zinc-500">-</p>
-        </div>
       </div>
     );
   }
 
   return (
-    <div className={`grid grid-cols-[44px_minmax(0,1fr)_72px] items-center gap-3 rounded-xl px-3 py-3 ${isEmphasized ? highlightClass : 'bg-white/[0.03]'}`}>
+    <div className={`grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-3 ${isEmphasized ? highlightClass : 'bg-white/[0.03]'}`}>
       <div className={`h-11 w-11 rounded-lg flex items-center justify-center font-mono text-sm font-bold ${isEmphasized ? 'bg-black/35 text-white' : 'bg-black/25 text-zinc-300'}`}>
         {participant.seed}
       </div>
@@ -561,13 +560,11 @@ const BracketTeamRow: React.FC<{
           {participant.team.name}
         </p>
         <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500 mt-2">
-          {participant.wins}-{participant.losses} | RD {participant.runDiff > 0 ? '+' : ''}
-          {participant.runDiff}
+          {participant.wins}-{participant.losses}
         </p>
-      </div>
-      <div className="text-right">
-        <p className="font-mono text-lg text-zinc-100 leading-none">{wins}</p>
-        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500 mt-1">Wins</p>
+        <div className="mt-3 flex items-center gap-1.5">
+          {pipsForSeries(wins, bestOf, isEmphasized ? filledClass : 'bg-zinc-100')}
+        </div>
       </div>
     </div>
   );
@@ -595,34 +592,186 @@ const BracketSeriesCard: React.FC<{
         <BracketTeamRow
           participant={series.topSeed}
           wins={series.topWins}
+          bestOf={series.bestOf}
           accentClass={accentClass}
+          filledClass={filledClass}
           highlightClass={highlightClass}
-        isEmphasized={series.winner?.team.id === series.topSeed?.team.id || series.leader?.team.id === series.topSeed?.team.id}
-      />
-      <div className="flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-600">vs</div>
-      <BracketTeamRow
-        participant={series.bottomSeed}
-        wins={series.bottomWins}
-        accentClass={accentClass}
-        highlightClass={highlightClass}
-        isEmphasized={series.winner?.team.id === series.bottomSeed?.team.id || series.leader?.team.id === series.bottomSeed?.team.id}
-      />
-    </div>
-
-      <div className="mt-4 border-t border-white/8 pt-3 flex items-end justify-between gap-4">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">{pipsForSeries(series.topWins, series.bestOf, filledClass)}</div>
-          <div className="flex items-center gap-1.5">{pipsForSeries(series.bottomWins, series.bestOf, 'bg-zinc-100')}</div>
-        </div>
-      <div className="max-w-[48%] text-right">
-        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{series.statusLabel}</p>
-        <p className={`font-display text-[1rem] uppercase tracking-[0.06em] leading-tight mt-1 break-words ${series.winner || series.leader ? accentClass : 'text-zinc-200'}`}>
-          {series.statusValue}
-        </p>
+          isEmphasized={series.winner?.team.id === series.topSeed?.team.id || series.leader?.team.id === series.topSeed?.team.id}
+        />
+        <div className="flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-600">vs</div>
+        <BracketTeamRow
+          participant={series.bottomSeed}
+          wins={series.bottomWins}
+          bestOf={series.bestOf}
+          accentClass={accentClass}
+          filledClass={filledClass}
+          highlightClass={highlightClass}
+          isEmphasized={series.winner?.team.id === series.bottomSeed?.team.id || series.leader?.team.id === series.bottomSeed?.team.id}
+        />
       </div>
-    </div>
+
+      {!series.winner && (
+        <div className="mt-4 border-t border-white/8 pt-3 text-right">
+          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{series.statusLabel}</p>
+          <p className={`mt-1 font-display text-[1rem] uppercase tracking-[0.06em] leading-tight break-words ${series.leader ? accentClass : 'text-zinc-200'}`}>
+            {series.statusValue}
+          </p>
+        </div>
+      )}
   </article>
 );
+
+const WorldSeriesTeamPanel: React.FC<{
+  participant: SeededPlayoffTeam | null;
+  wins: number;
+  leagueLabel: string;
+  accentClass: string;
+  accentBorderClass: string;
+  align: 'left' | 'right';
+  isWinner: boolean;
+}> = ({ participant, wins, leagueLabel, accentClass, accentBorderClass, align, isWinner }) => {
+  const alignmentClass = align === 'left' ? 'items-start text-left' : 'items-end text-right';
+
+  if (!participant) {
+    return (
+      <div className={`rounded-[2rem] border border-white/10 bg-black/20 px-6 py-8 md:px-8 md:py-10 ${alignmentClass}`}>
+        <div className="rounded-full border border-white/10 bg-white/5 px-4 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+          {leagueLabel}
+        </div>
+        <div className="mt-8 flex h-32 w-32 items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.03] font-mono text-lg text-zinc-600 md:h-40 md:w-40">
+          TBD
+        </div>
+        <p className="mt-6 font-display text-3xl uppercase tracking-[0.12em] text-zinc-200">Awaiting Winner</p>
+        <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">League title still in progress</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-[2rem] border px-6 py-8 md:px-8 md:py-10 ${isWinner ? accentBorderClass : 'border-white/10'} ${isWinner ? 'bg-white/[0.08] shadow-[0_28px_60px_rgba(255,255,255,0.08)]' : 'bg-black/20'} ${alignmentClass}`}>
+      <div className={`rounded-full border px-4 py-1 font-mono text-[10px] uppercase tracking-[0.22em] ${isWinner ? `${accentBorderClass} ${accentClass} bg-white/5` : 'border-white/10 bg-white/5 text-zinc-400'}`}>
+        {leagueLabel}
+      </div>
+      <div className={`mt-8 flex w-full ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
+        <TeamLogo team={participant.team} sizeClass="w-32 h-32 md:w-40 md:h-40" />
+      </div>
+      <p className={`mt-6 font-display text-4xl uppercase leading-none tracking-[0.12em] md:text-5xl ${isWinner ? accentClass : 'text-white'}`}>
+        {participant.team.city}
+      </p>
+      <p className="mt-2 font-display text-xl uppercase tracking-[0.14em] text-zinc-300 md:text-2xl">
+        {participant.team.name}
+      </p>
+      <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+        {participant.wins}-{participant.losses} | RD {participant.runDiff > 0 ? '+' : ''}{participant.runDiff}
+      </p>
+      <div className={`mt-8 flex w-full items-end gap-4 ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Series Wins</p>
+          <p className="mt-2 font-display text-5xl uppercase leading-none text-white md:text-6xl">{wins}</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const WorldSeriesShowcase: React.FC<{
+  series: BracketSeriesView;
+  platinumChampion: SeededPlayoffTeam | null;
+  prestigeChampion: SeededPlayoffTeam | null;
+  overallChampion: SeededPlayoffTeam | null;
+}> = ({ series, platinumChampion, prestigeChampion, overallChampion }) => {
+  const platinumWins = platinumChampion
+    ? series.topSeed?.team.id === platinumChampion.team.id
+      ? series.topWins
+      : series.bottomSeed?.team.id === platinumChampion.team.id
+        ? series.bottomWins
+        : 0
+    : 0;
+  const prestigeWins = prestigeChampion
+    ? series.topSeed?.team.id === prestigeChampion.team.id
+      ? series.topWins
+      : series.bottomSeed?.team.id === prestigeChampion.team.id
+        ? series.bottomWins
+        : 0
+    : 0;
+
+  const platinumWinner = Boolean(overallChampion && platinumChampion && overallChampion.team.id === platinumChampion.team.id);
+  const prestigeWinner = Boolean(overallChampion && prestigeChampion && overallChampion.team.id === prestigeChampion.team.id);
+
+  return (
+    <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.14),transparent_26%),radial-gradient(circle_at_top_right,rgba(0,94,255,0.16),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(23,182,144,0.12),transparent_30%),linear-gradient(135deg,#151515,#202020 40%,#121212)] p-5 md:p-7">
+      <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(90deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02),rgba(255,255,255,0.05))] px-4 py-4 md:px-6">
+        <div className="flex flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)] xl:items-center">
+          <WorldSeriesTeamPanel
+            participant={platinumChampion}
+            wins={platinumWins}
+            leagueLabel="Platinum Champion"
+            accentClass="text-platinum"
+            accentBorderClass="border-platinum/35"
+            align="left"
+            isWinner={platinumWinner}
+          />
+
+          <div className="flex flex-col items-center justify-center px-2 py-4 text-center">
+            <img
+              src={gpbLogo}
+              alt="GPB"
+              className="h-20 w-20 object-contain drop-shadow-[0_16px_40px_rgba(255,255,255,0.16)] md:h-24 md:w-24"
+            />
+            <div className="rounded-full border border-white/10 bg-black/30 px-4 py-1 font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+              Best of {series.bestOf}
+            </div>
+            <div className="mt-6 flex items-center gap-3 md:gap-4">
+              <span className="font-display text-6xl uppercase leading-none text-white md:text-7xl">{platinumWins}</span>
+              <span className="font-mono text-xs uppercase tracking-[0.28em] text-zinc-600">vs</span>
+              <span className="font-display text-6xl uppercase leading-none text-white md:text-7xl">{prestigeWins}</span>
+            </div>
+            <div className="mt-6 flex items-center gap-2">
+              {pipsForSeries(platinumWins, series.bestOf, 'bg-platinum')}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              {pipsForSeries(prestigeWins, series.bestOf, 'bg-prestige')}
+            </div>
+            <div className="mt-8 rounded-[1.5rem] border border-white/10 bg-black/25 px-5 py-4">
+              <div className="flex items-center gap-2">
+                <Crown className="h-4 w-4 text-zinc-100" />
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">World Series Champion</p>
+              </div>
+              {overallChampion ? (
+                <div className="mt-3 flex items-center justify-center gap-3">
+                  <TeamLogo team={overallChampion.team} sizeClass="w-14 h-14" />
+                  <div className="min-w-0 text-left">
+                    <p className="font-display text-2xl uppercase tracking-[0.1em] text-white">{overallChampion.team.city}</p>
+                    <p className="mt-1 font-display text-sm uppercase tracking-[0.14em] text-zinc-300">{overallChampion.team.name}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+                  Winner crowns here once the final ends
+                </p>
+              )}
+            </div>
+            <img
+              src={worldSeriesLogo}
+              alt="GPB World Series"
+              className="mt-6 h-16 w-auto object-contain drop-shadow-[0_18px_40px_rgba(210,178,92,0.3)] md:h-20"
+            />
+          </div>
+
+          <WorldSeriesTeamPanel
+            participant={prestigeChampion}
+            wins={prestigeWins}
+            leagueLabel="Prestige Champion"
+            accentClass="text-prestige"
+            accentBorderClass="border-prestige/35"
+            align="right"
+            isWinner={prestigeWinner}
+          />
+        </div>
+      </div>
+    </section>
+  );
+};
 
 const LeagueBracketDesktop: React.FC<{
   bracket: LeagueBracketView;
@@ -824,69 +973,12 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
         filledClass="bg-platinum"
       />
 
-      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-[#1a1a1a] via-[#242424] to-[#1b1b1b] p-4 md:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-4">
-            <img
-              src={gpbLogo}
-              alt="GPB"
-              className="h-20 w-20 object-contain drop-shadow-[0_8px_22px_rgba(255,255,255,0.12)] md:h-24 md:w-24"
-            />
-            <img
-              src={worldSeriesLogo}
-              alt="GPB World Series"
-              className="h-20 w-auto object-contain drop-shadow-[0_8px_22px_rgba(255,255,255,0.16)] md:h-24"
-            />
-          </div>
-          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Trophy className="w-4 h-4 text-zinc-100" />
-              <p className="font-mono text-[11px] uppercase text-zinc-400">Championship Stage</p>
-            </div>
-            <p className="font-mono text-xs text-zinc-500 mt-2">Final league showdown.</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_280px] gap-4 items-start">
-          <BracketSeriesCard
-            series={bracket.worldSeries}
-            accentClass="text-white"
-            accentBorderClass="border-white/20"
-            highlightClass="bg-white/10"
-            filledClass="bg-white"
-          />
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Crown className="w-4 h-4 text-zinc-100" />
-              <p className="font-display text-lg uppercase tracking-[0.14em] text-white">Champion Watch</p>
-            </div>
-            {bracket.champion ? (
-              <div className="flex items-center gap-3">
-                <TeamLogo team={bracket.champion.team} sizeClass="w-14 h-14" />
-                <div className="min-w-0">
-                  <p className="font-display text-xl uppercase tracking-[0.08em] text-white leading-none break-words">
-                    {bracket.champion.team.city}
-                  </p>
-                  <p className="font-display text-sm uppercase tracking-[0.1em] text-zinc-300 mt-1 leading-none break-words">
-                    {bracket.champion.team.name}
-                  </p>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500 mt-2">
-                    World Series winner
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <p className="font-display text-lg uppercase tracking-[0.08em] text-zinc-200">Title undecided</p>
-                <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500 mt-2">
-                  This panel updates once the World Series is won.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
+      <WorldSeriesShowcase
+        series={bracket.worldSeries}
+        platinumChampion={bracket.platinum.champion}
+        prestigeChampion={bracket.prestige.champion}
+        overallChampion={bracket.champion}
+      />
 
       <LeagueSection
         bracket={bracket.prestige}

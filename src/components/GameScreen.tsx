@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Clock3, FastForward, Play, SkipForward } from 'lucide-react';
-import { Game, GameSessionState, PlayLogEvent, SimulationSettings, Team } from '../types';
+import {
+  CompletedGameResult,
+  Game,
+  GameParticipantBatter,
+  GameParticipantPitcher,
+  GameSessionState,
+  LeaguePlayerState,
+  PlayLogEvent,
+  SimulationSettings,
+  Team,
+} from '../types';
 import {
   buildCompletedGameFromSession,
   createGameSession,
@@ -10,6 +20,7 @@ import {
   simulateNextHalfInning,
   startGameSession,
 } from '../logic/gameEngine';
+import { buildGameParticipants } from '../logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { TeamLogo } from './TeamLogo';
 
@@ -17,12 +28,13 @@ interface GameScreenProps {
   game: Game;
   games: Game[];
   teams: Team[];
+  playerState: LeaguePlayerState;
   settings: SimulationSettings;
   currentDate: string;
   blockingGames: Game[];
   onBack: () => void;
   onSimulateBlockingGames: () => void;
-  onCompleteGame: (game: Game) => void;
+  onCompleteGame: (result: CompletedGameResult) => void;
 }
 
 const LOG_REVEAL_DELAY_MS = 425;
@@ -50,16 +62,25 @@ const parseStoredLogs = (game: Game): PlayLogEvent[] => {
   }
 };
 
-const createEmptyBroadcastSession = (game: Game, started: boolean): GameSessionState => ({
+const createEmptyBroadcastSession = (
+  game: Game,
+  started: boolean,
+  participants: GameSessionState['participants'],
+): GameSessionState => ({
   gameId: game.gameId,
   date: game.date,
   awayTeamId: game.awayTeam,
   homeTeamId: game.homeTeam,
+  participants,
   status: started ? 'in_progress' : 'pregame',
   inning: 1,
   half: 'top',
   outs: 0,
-  bases: { first: false, second: false, third: false },
+  bases: { first: null, second: null, third: null },
+  awayBatterIndex: 0,
+  homeBatterIndex: 0,
+  awayPitching: { currentPitcherId: participants?.awayStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [] },
+  homePitching: { currentPitcherId: participants?.homeStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [] },
   scoreboard: {
     awayRuns: 0,
     homeRuns: 0,
@@ -70,6 +91,13 @@ const createEmptyBroadcastSession = (game: Game, started: boolean): GameSessionS
   },
   lineScore: [],
   logs: [],
+  playerStats: {
+    batting: {},
+    pitching: {},
+    winningPitcherId: null,
+    losingPitcherId: null,
+    savePitcherId: null,
+  },
   nextEventSeq: 1,
 });
 
@@ -87,8 +115,9 @@ const buildBroadcastSession = (
   game: Game,
   revealedLogs: PlayLogEvent[],
   hasStarted: boolean,
+  participants: GameSessionState['participants'],
 ): GameSessionState => {
-  const snapshot = createEmptyBroadcastSession(game, hasStarted);
+  const snapshot = createEmptyBroadcastSession(game, hasStarted, participants);
 
   for (const log of revealedLogs) {
     snapshot.logs.push(log);
@@ -97,7 +126,7 @@ const buildBroadcastSession = (
     if (log.outcome === 'HALF_END') {
       ensureLineScoreEntry(snapshot.lineScore, log.inning);
       snapshot.outs = 0;
-      snapshot.bases = { first: false, second: false, third: false };
+      snapshot.bases = { first: null, second: null, third: null };
       if (log.half === 'top') {
         snapshot.half = 'bottom';
         snapshot.inning = log.inning;
@@ -144,7 +173,7 @@ const buildBroadcastSession = (
 
     if (log.outcome === 'GAME_END') {
       snapshot.status = 'completed';
-      snapshot.bases = { first: false, second: false, third: false };
+      snapshot.bases = { first: null, second: null, third: null };
     }
   }
 
@@ -161,10 +190,38 @@ const BasesDiamond: React.FC<{ first: boolean; second: boolean; third: boolean }
   </div>
 );
 
+const getCurrentBatterForDisplay = (session: GameSessionState): GameParticipantBatter | null => {
+  if (!session.participants) {
+    return null;
+  }
+
+  const lineup = session.half === 'top' ? session.participants.awayLineup : session.participants.homeLineup;
+  const index = session.half === 'top' ? session.awayBatterIndex : session.homeBatterIndex;
+  if (lineup.length === 0) {
+    return null;
+  }
+
+  return lineup[index % lineup.length] ?? null;
+};
+
+const getCurrentPitcherForDisplay = (session: GameSessionState): GameParticipantPitcher | null => {
+  if (!session.participants) {
+    return null;
+  }
+
+  const pitchingState = session.half === 'top' ? session.homePitching : session.awayPitching;
+  const options = session.half === 'top'
+    ? [session.participants.homeStarter, ...session.participants.homeBullpen]
+    : [session.participants.awayStarter, ...session.participants.awayBullpen];
+
+  return options.find((pitcher): pitcher is GameParticipantPitcher => Boolean(pitcher) && pitcher.playerId === pitchingState.currentPitcherId) ?? null;
+};
+
 export const GameScreen: React.FC<GameScreenProps> = ({
   game,
   games,
   teams,
+  playerState,
   settings,
   currentDate,
   blockingGames,
@@ -174,17 +231,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 }) => {
   const awayTeam = useMemo(() => teams.find((team) => team.id === game.awayTeam) ?? null, [teams, game.awayTeam]);
   const homeTeam = useMemo(() => teams.find((team) => team.id === game.homeTeam) ?? null, [teams, game.homeTeam]);
+  const participants = useMemo(() => buildGameParticipants(game, games, playerState), [game, games, playerState]);
   const [session, setSession] = useState<GameSessionState | null>(null);
   const [visibleLogCount, setVisibleLogCount] = useState(0);
-  const [pendingCompletedGame, setPendingCompletedGame] = useState<Game | null>(null);
+  const [pendingCompletedGame, setPendingCompletedGame] = useState<CompletedGameResult | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const hydrated = hydrateGameSessionFromGame(game);
-    setSession(hydrated ?? createGameSession(game));
+    setSession(hydrated ?? createGameSession(game, participants));
     setPendingCompletedGame(null);
     setVisibleLogCount(game.status === 'completed' ? parseStoredLogs(game).length : 0);
-  }, [game]);
+  }, [game, participants]);
 
   const logs = useMemo(() => {
     if (session && session.logs.length > 0) {
@@ -194,9 +252,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   }, [session, game]);
   const visibleLogs = useMemo(() => logs.slice(0, visibleLogCount), [logs, visibleLogCount]);
   const isBroadcasting = visibleLogCount < logs.length;
-  const activeSession = useMemo(() => session ?? createGameSession(game), [session, game]);
+  const activeSession = useMemo(() => session ?? createGameSession(game, participants), [session, game, participants]);
   const displaySession = useMemo(
-    () => (isBroadcasting ? buildBroadcastSession(game, visibleLogs, activeSession.status !== 'pregame') : activeSession),
+    () => (isBroadcasting ? buildBroadcastSession(game, visibleLogs, activeSession.status !== 'pregame', activeSession.participants) : activeSession),
     [isBroadcasting, game, visibleLogs, activeSession],
   );
   const lineScore = displaySession.lineScore;
@@ -225,6 +283,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         : gameWindowStatus === 'live_window'
           ? 'Live Window'
           : 'Not Started';
+  const currentBatter = useMemo(() => getCurrentBatterForDisplay(activeSession), [activeSession]);
+  const currentPitcher = useMemo(() => getCurrentPitcherForDisplay(activeSession), [activeSession]);
+  const participantNamesById = useMemo(() => {
+    const map = new Map<string, string>();
+    activeSession.participants?.awayLineup.forEach((participant) => map.set(participant.playerId, participant.fullName));
+    activeSession.participants?.homeLineup.forEach((participant) => map.set(participant.playerId, participant.fullName));
+    activeSession.participants?.awayStarter && map.set(activeSession.participants.awayStarter.playerId, activeSession.participants.awayStarter.fullName);
+    activeSession.participants?.homeStarter && map.set(activeSession.participants.homeStarter.playerId, activeSession.participants.homeStarter.fullName);
+    activeSession.participants?.awayBullpen.forEach((participant) => map.set(participant.playerId, participant.fullName));
+    activeSession.participants?.homeBullpen.forEach((participant) => map.set(participant.playerId, participant.fullName));
+    return map;
+  }, [activeSession.participants]);
+  const runnerLabels = {
+    first: displaySession.bases.first ? participantNamesById.get(displaySession.bases.first) ?? 'Runner on 1st' : 'Empty',
+    second: displaySession.bases.second ? participantNamesById.get(displaySession.bases.second) ?? 'Runner on 2nd' : 'Empty',
+    third: displaySession.bases.third ? participantNamesById.get(displaySession.bases.third) ?? 'Runner on 3rd' : 'Empty',
+  };
+  const noParticipants = !activeSession.participants && game.status !== 'completed';
 
   useEffect(() => {
     if (game.status === 'completed') {
@@ -276,22 +352,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   };
 
   const handleStart = () => {
-    if (!session) return;
+    if (!session || noParticipants) return;
     setSession(startGameSession(session));
   };
 
   const handleNextAtBat = () => {
-    if (!session || !awayTeam || !homeTeam) return;
+    if (!session || !awayTeam || !homeTeam || noParticipants) return;
     commitSessionIfComplete(simulateNextAtBat(session, awayTeam, homeTeam, settings));
   };
 
   const handleNextHalf = () => {
-    if (!session || !awayTeam || !homeTeam) return;
+    if (!session || !awayTeam || !homeTeam || noParticipants) return;
     commitSessionIfComplete(simulateNextHalfInning(session, awayTeam, homeTeam, settings));
   };
 
   const handleSimToFinal = () => {
-    if (!session || !awayTeam || !homeTeam) return;
+    if (!session || !awayTeam || !homeTeam || noParticipants) return;
     commitSessionIfComplete(simulateGameToFinal(session, awayTeam, homeTeam, settings));
   };
 
@@ -351,6 +427,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {noParticipants && (
+        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-5">
+          <p className="font-display text-2xl uppercase tracking-[0.12em] text-white">Player Snapshot Missing</p>
+          <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-300">
+            Generate or assign rostered players before using the interactive player-driven game screen.
+          </p>
         </div>
       )}
 
@@ -430,6 +515,37 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
             </div>
 
+            {activeSession.participants && (
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Batter</p>
+                  <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">{currentBatter?.fullName ?? '---'}</p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
+                    {currentBatter ? `${currentBatter.primaryPosition} | Bats ${currentBatter.bats} | CON ${currentBatter.battingRatings.contact} | PWR ${currentBatter.battingRatings.power}` : 'Awaiting matchup'}
+                  </p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    {currentBatter?.battingStat
+                      ? `${currentBatter.battingStat.avg.toFixed(3).replace(/^0/, '')} AVG | ${currentBatter.battingStat.ops.toFixed(3)} OPS | ${currentBatter.battingStat.homeRuns} HR`
+                      : 'No season batting line loaded'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Pitcher</p>
+                  <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">{currentPitcher?.fullName ?? '---'}</p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
+                    {currentPitcher
+                      ? `${currentPitcher.role} | Throws ${currentPitcher.throws} | STF ${currentPitcher.pitchingRatings.stuff} | CMD ${currentPitcher.pitchingRatings.command} | PC ${displaySession.half === 'top' ? activeSession.homePitching.pitchCount : activeSession.awayPitching.pitchCount}`
+                      : 'Awaiting matchup'}
+                  </p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    {currentPitcher?.pitchingStat
+                      ? `${currentPitcher.pitchingStat.era.toFixed(2)} ERA | ${currentPitcher.pitchingStat.whip.toFixed(2)} WHIP | ${currentPitcher.pitchingStat.strikeouts} K`
+                      : 'No season pitching line loaded'}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="mt-5 grid grid-cols-[minmax(0,1fr)_180px] gap-4 items-center">
               <div className="overflow-x-auto scrollbar-subtle">
                 <table className="min-w-full font-mono text-sm">
@@ -470,10 +586,25 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 </table>
               </div>
               <BasesDiamond
-                first={displaySession.bases.first}
-                second={displaySession.bases.second}
-                third={displaySession.bases.third}
+                first={Boolean(displaySession.bases.first)}
+                second={Boolean(displaySession.bases.second)}
+                third={Boolean(displaySession.bases.third)}
               />
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
+                <p className="font-mono text-[10px] uppercase text-zinc-500">First Base</p>
+                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.first}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
+                <p className="font-mono text-[10px] uppercase text-zinc-500">Second Base</p>
+                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.second}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
+                <p className="font-mono text-[10px] uppercase text-zinc-500">Third Base</p>
+                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.third}</p>
+              </div>
             </div>
 
             <div className="mt-5 grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -497,11 +628,45 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               </div>
             </div>
 
+            {activeSession.participants && (
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Away Lineup</p>
+                  <div className="mt-3 space-y-1.5">
+                    {activeSession.participants.awayLineup.map((participant, index) => (
+                      <div
+                        key={participant.playerId}
+                        className={`flex items-center justify-between rounded-lg px-3 py-2 ${displaySession.half === 'top' && currentBatter?.playerId === participant.playerId ? 'bg-white/10' : 'bg-black/20'}`}
+                      >
+                        <span className="text-sm text-zinc-100">{index + 1}. {participant.fullName}</span>
+                        <span className="font-mono text-xs uppercase text-zinc-500">{participant.primaryPosition}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Home Lineup</p>
+                  <div className="mt-3 space-y-1.5">
+                    {activeSession.participants.homeLineup.map((participant, index) => (
+                      <div
+                        key={participant.playerId}
+                        className={`flex items-center justify-between rounded-lg px-3 py-2 ${displaySession.half === 'bottom' && currentBatter?.playerId === participant.playerId ? 'bg-white/10' : 'bg-black/20'}`}
+                      >
+                        <span className="text-sm text-zinc-100">{index + 1}. {participant.fullName}</span>
+                        <span className="font-mono text-xs uppercase text-zinc-500">{participant.primaryPosition}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-5 flex flex-wrap gap-2">
               {session.status === 'pregame' && blockingGames.length === 0 && game.status !== 'completed' && (
                 <button
                   onClick={handleStart}
-                  className="inline-flex items-center gap-2 rounded-xl bg-platinum px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black"
+                  disabled={noParticipants}
+                  className="inline-flex items-center gap-2 rounded-xl bg-platinum px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="w-4 h-4 fill-current" />
                   Start Game
@@ -511,7 +676,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <>
                   <button
                     onClick={handleNextAtBat}
-                    disabled={isBroadcasting}
+                    disabled={isBroadcasting || noParticipants}
                     className="inline-flex items-center gap-2 rounded-xl bg-platinum px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Play className="w-4 h-4 fill-current" />
@@ -519,7 +684,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </button>
                   <button
                     onClick={handleNextHalf}
-                    disabled={isBroadcasting}
+                    disabled={isBroadcasting || noParticipants}
                     className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <SkipForward className="w-4 h-4" />
@@ -527,7 +692,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </button>
                   <button
                     onClick={handleSimToFinal}
-                    disabled={isBroadcasting}
+                    disabled={isBroadcasting || noParticipants}
                     className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <FastForward className="w-4 h-4" />

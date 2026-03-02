@@ -183,12 +183,12 @@ export interface Game {
 }
 
 export type InningHalf = 'top' | 'bottom';
-export type AtBatOutcome = 'OUT' | 'BB' | '1B' | '2B' | '3B' | 'HR' | 'ERR';
+export type AtBatOutcome = 'OUT' | 'SO' | 'BB' | '1B' | '2B' | '3B' | 'HR' | 'ERR';
 
 export interface BaseState {
-  first: boolean;
-  second: boolean;
-  third: boolean;
+  first: string | null;
+  second: string | null;
+  third: string | null;
 }
 
 export interface InningLine {
@@ -197,14 +197,88 @@ export interface InningLine {
   home: number;
 }
 
+export interface GameParticipantBatter {
+  playerId: string;
+  teamId: string;
+  fullName: string;
+  bats: BatHand;
+  primaryPosition: BatterPosition;
+  battingRatings: PlayerBattingRatings;
+  battingStat: PlayerSeasonBatting | null;
+}
+
+export interface GameParticipantPitcher {
+  playerId: string;
+  teamId: string;
+  fullName: string;
+  throws: ThrowHand;
+  role: PitcherPosition;
+  pitchingRatings: PlayerPitchingRatings;
+  pitchingStat: PlayerSeasonPitching | null;
+}
+
+export interface GameParticipantsSnapshot {
+  awayLineup: GameParticipantBatter[];
+  homeLineup: GameParticipantBatter[];
+  awayStarter: GameParticipantPitcher | null;
+  homeStarter: GameParticipantPitcher | null;
+  awayBullpen: GameParticipantPitcher[];
+  homeBullpen: GameParticipantPitcher[];
+}
+
+export interface PlayerGameBattingLine {
+  playerId: string;
+  gamesPlayed: number;
+  plateAppearances: number;
+  atBats: number;
+  runsScored: number;
+  hits: number;
+  doubles: number;
+  triples: number;
+  homeRuns: number;
+  walks: number;
+  strikeouts: number;
+  rbi: number;
+}
+
+export interface PlayerGamePitchingLine {
+  playerId: string;
+  wins: number;
+  losses: number;
+  saves: number;
+  games: number;
+  gamesStarted: number;
+  inningsPitched: number;
+  hitsAllowed: number;
+  earnedRuns: number;
+  walks: number;
+  strikeouts: number;
+}
+
+export interface PlayerGameStatDelta {
+  batting: Record<string, PlayerGameBattingLine>;
+  pitching: Record<string, PlayerGamePitchingLine>;
+  winningPitcherId: string | null;
+  losingPitcherId: string | null;
+  savePitcherId: string | null;
+}
+
 export interface PlayLogEvent {
   seq: number;
   inning: number;
   half: InningHalf;
   battingTeamId: string;
-  outcome: AtBatOutcome | 'HALF_END' | 'GAME_END';
+  outcome: AtBatOutcome | 'PITCHING_CHANGE' | 'HALF_END' | 'GAME_END';
+  batterId: string | null;
+  batterName: string | null;
+  pitcherId: string | null;
+  pitcherName: string | null;
+  defenderId: string | null;
+  defenderName: string | null;
   description: string;
   runsScored: number;
+  rbi: number;
+  scoringPlayerIds: string[];
   outs: number;
   scoreAway: number;
   scoreHome: number;
@@ -220,20 +294,39 @@ export interface GameSessionScoreboard {
   homeErrors: number;
 }
 
+export interface TeamPitchingState {
+  currentPitcherId: string | null;
+  pitchCount: number;
+  battersFaced: number;
+  enteredInning: number;
+  bullpenUsedIds: string[];
+}
+
 export interface GameSessionState {
   gameId: string;
   date: string;
   awayTeamId: string;
   homeTeamId: string;
+  participants: GameParticipantsSnapshot | null;
   status: 'pregame' | 'in_progress' | 'completed';
   inning: number;
   half: InningHalf;
   outs: number;
   bases: BaseState;
+  awayBatterIndex: number;
+  homeBatterIndex: number;
+  awayPitching: TeamPitchingState;
+  homePitching: TeamPitchingState;
   scoreboard: GameSessionScoreboard;
   lineScore: InningLine[];
   logs: PlayLogEvent[];
+  playerStats: PlayerGameStatDelta;
   nextEventSeq: number;
+}
+
+export interface CompletedGameResult {
+  game: Game;
+  playerStatDelta: PlayerGameStatDelta;
 }
 
 export interface SimulationSettings {

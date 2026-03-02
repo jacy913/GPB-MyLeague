@@ -903,7 +903,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                     <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Batting Stats</h3>
                   </div>
                   <div className="space-y-2 font-mono text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-zinc-500">AVG</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? selectedRosterPlayer.battingStat.avg.toFixed(3).replace(/^0/, '.') : '---'}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-zinc-500">AVG</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? selectedRosterPlayer.battingStat.avg.toFixed(3).replace(/^0/, '') : '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">OPS</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? selectedRosterPlayer.battingStat.ops.toFixed(3) : '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">H</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.hits ?? '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">HR</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.homeRuns ?? '---'}</span></div>
