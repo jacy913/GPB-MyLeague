@@ -22,6 +22,7 @@ import {
 } from '../logic/gameEngine';
 import { buildGameParticipants } from '../logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
+import { formatBattingAverage } from '../logic/statFormatting';
 import { TeamLogo } from './TeamLogo';
 
 interface GameScreenProps {
@@ -525,7 +526,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </p>
                   <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
                     {currentBatter?.battingStat
-                      ? `${currentBatter.battingStat.avg.toFixed(3).replace(/^0/, '')} AVG | ${currentBatter.battingStat.ops.toFixed(3)} OPS | ${currentBatter.battingStat.homeRuns} HR`
+                      ? `${formatBattingAverage(currentBatter.battingStat.avg)} AVG | ${currentBatter.battingStat.atBats} AB | ${currentBatter.battingStat.homeRuns} HR`
                       : 'No season batting line loaded'}
                   </p>
                 </div>

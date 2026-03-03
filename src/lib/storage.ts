@@ -51,6 +51,27 @@ interface SettingsRow {
   win_loss_variance: number;
   home_field_advantage: number;
   game_luck_factor: number;
+  league_environment_balance: number;
+  batting_variance_factor: number;
+}
+
+export interface SliderPresetRecord {
+  id: number;
+  presetName: string;
+  settings: SimulationSettings;
+  updatedAt: string;
+}
+
+interface SliderPresetRow {
+  id: number;
+  preset_name: string;
+  continuity_weight: number;
+  win_loss_variance: number;
+  home_field_advantage: number;
+  game_luck_factor: number;
+  league_environment_balance: number;
+  batting_variance_factor: number;
+  updated_at: string;
 }
 
 interface GameRow {
@@ -207,6 +228,8 @@ const toSettings = (row: SettingsRow): SimulationSettings => ({
   winLossVariance: row.win_loss_variance,
   homeFieldAdvantage: row.home_field_advantage,
   gameLuckFactor: row.game_luck_factor,
+  leagueEnvironmentBalance: row.league_environment_balance,
+  battingVarianceFactor: row.batting_variance_factor,
 });
 
 const toSettingsRow = (settings: SimulationSettings, leagueId: string): SettingsRow & { league_id: string } => ({
@@ -215,6 +238,26 @@ const toSettingsRow = (settings: SimulationSettings, leagueId: string): Settings
   win_loss_variance: settings.winLossVariance,
   home_field_advantage: settings.homeFieldAdvantage,
   game_luck_factor: settings.gameLuckFactor,
+  league_environment_balance: settings.leagueEnvironmentBalance,
+  batting_variance_factor: settings.battingVarianceFactor,
+});
+
+const toSliderPresetRecord = (row: SliderPresetRow): SliderPresetRecord => ({
+  id: row.id,
+  presetName: row.preset_name,
+  settings: toSettings(row),
+  updatedAt: row.updated_at,
+});
+
+const toSliderPresetRow = (presetName: string, settings: SimulationSettings, leagueId: string) => ({
+  league_id: leagueId,
+  preset_name: presetName,
+  continuity_weight: settings.continuityWeight,
+  win_loss_variance: settings.winLossVariance,
+  home_field_advantage: settings.homeFieldAdvantage,
+  game_luck_factor: settings.gameLuckFactor,
+  league_environment_balance: settings.leagueEnvironmentBalance,
+  batting_variance_factor: settings.battingVarianceFactor,
 });
 
 const toGame = (row: GameRow): Game => ({
@@ -636,7 +679,7 @@ export const loadSupabaseLeagueState = async (): Promise<{
       .order('team_id', { ascending: true }),
     supabase
       .from('league_settings')
-      .select('continuity_weight, win_loss_variance, home_field_advantage, game_luck_factor')
+      .select('continuity_weight, win_loss_variance, home_field_advantage, game_luck_factor, league_environment_balance, batting_variance_factor')
       .eq('league_id', leagueId)
       .maybeSingle(),
     supabase
@@ -954,6 +997,63 @@ export const saveSupabaseLeagueState = async (
     if (deleteError) {
       throw deleteError;
     }
+  }
+};
+
+export const loadSupabaseSliderPresets = async (): Promise<SliderPresetRecord[]> => {
+  if (!supabase) {
+    return [];
+  }
+
+  const leagueId = await ensureLeague();
+  const { data, error } = await supabase
+    .from('slider_presets')
+    .select('id, preset_name, continuity_weight, win_loss_variance, home_field_advantage, game_luck_factor, league_environment_balance, batting_variance_factor, updated_at')
+    .eq('league_id', leagueId)
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return ((data as SliderPresetRow[] | null) ?? []).map(toSliderPresetRecord);
+};
+
+export const saveSupabaseSliderPreset = async (
+  presetName: string,
+  settings: SimulationSettings,
+): Promise<SliderPresetRecord> => {
+  if (!supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const leagueId = await ensureLeague();
+  const row = toSliderPresetRow(presetName, settings, leagueId);
+  const { data, error } = await supabase
+    .from('slider_presets')
+    .upsert(row, { onConflict: 'league_id,preset_name' })
+    .select('id, preset_name, continuity_weight, win_loss_variance, home_field_advantage, game_luck_factor, league_environment_balance, batting_variance_factor, updated_at')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return toSliderPresetRecord(data as SliderPresetRow);
+};
+
+export const deleteSupabaseSliderPreset = async (presetId: number): Promise<void> => {
+  if (!supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { error } = await supabase
+    .from('slider_presets')
+    .delete()
+    .eq('id', presetId);
+
+  if (error) {
+    throw error;
   }
 };
 

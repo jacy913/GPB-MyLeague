@@ -334,6 +334,8 @@ export interface SimulationSettings {
   winLossVariance: number; // Standard deviation for random baseline
   homeFieldAdvantage: number; // Probability boost (e.g., 0.035)
   gameLuckFactor: number; // Noise factor (e.g., 0-1)
+  leagueEnvironmentBalance: number; // 0 = offense-heavy, 1 = pitching-heavy
+  battingVarianceFactor: number; // 0 = compressed averages, 1 = wider spread
 }
 
 export type SimulationScope = 'next_game' | 'day' | 'week' | 'month' | 'to_date' | 'regular_season' | 'season';

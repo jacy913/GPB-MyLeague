@@ -29,6 +29,13 @@ export interface SimulationManagerResult {
   progress: number;
 }
 
+export interface SimulationProgressUpdate {
+  label: string;
+  completedGames: number;
+  totalGames: number;
+  currentDate: string;
+}
+
 interface SeriesState {
   playoff: PlayoffGameDetails;
   games: Game[];
@@ -617,7 +624,56 @@ export class SimulationManager {
     return this.getNextScheduledGame((game) => game.date >= normalizedCurrent && game.date <= targetEndDate);
   }
 
-  public run(target: SimulationTarget): SimulationManagerResult {
+  private getTargetLabel(target: SimulationTarget): string {
+    if (target.scope === 'day') {
+      return 'Simulating day';
+    }
+    if (target.scope === 'week') {
+      return 'Simulating week';
+    }
+    if (target.scope === 'month') {
+      return 'Simulating month';
+    }
+    if (target.scope === 'regular_season') {
+      return 'Simulating regular season';
+    }
+    if (target.scope === 'season') {
+      return 'Simulating full season';
+    }
+    if (target.scope === 'next_game') {
+      return 'Simulating next team game';
+    }
+
+    return 'Simulating selected range';
+  }
+
+  private getRemainingCandidateCount(normalizedCurrent: string, target: SimulationTarget, targetEndDate: string | null): number {
+    if (target.scope === 'season') {
+      return this.getScheduledGames().length;
+    }
+
+    if (target.scope === 'regular_season') {
+      return this.getScheduledGames((game) => isRegularSeasonGame(game) && game.date >= normalizedCurrent).length;
+    }
+
+    if (target.scope === 'next_game') {
+      const teamId = target.teamId ?? '';
+      return this.getScheduledGames(
+        (game) => game.date >= normalizedCurrent && (game.homeTeam === teamId || game.awayTeam === teamId),
+      ).length;
+    }
+
+    if (!targetEndDate) {
+      return 0;
+    }
+
+    return this.getScheduledGames((game) => game.date >= normalizedCurrent && game.date <= targetEndDate).length;
+  }
+
+  public async run(
+    target: SimulationTarget,
+    onProgress?: (update: SimulationProgressUpdate) => void,
+  ): Promise<SimulationManagerResult> {
     const normalizedCurrent = this.currentDate || this.seasonStartDate;
     const targetEndDate =
       target.scope === 'to_date'
@@ -629,9 +685,18 @@ export class SimulationManager {
             : target.scope === 'month'
               ? addDaysToISODate(normalizedCurrent, 29)
               : null;
+    const label = this.getTargetLabel(target);
 
     let simulatedGameCount = 0;
     let lastSimulatedDate = normalizedCurrent;
+
+    this.ensurePlayoffSchedule();
+    onProgress?.({
+      label,
+      completedGames: 0,
+      totalGames: this.getRemainingCandidateCount(normalizedCurrent, target, targetEndDate),
+      currentDate: normalizedCurrent,
+    });
 
     while (true) {
       this.ensurePlayoffSchedule();
@@ -643,6 +708,19 @@ export class SimulationManager {
       this.applyGameResult(candidate);
       simulatedGameCount += 1;
       lastSimulatedDate = candidate.date;
+
+      onProgress?.({
+        label,
+        completedGames: simulatedGameCount,
+        totalGames: simulatedGameCount + this.getRemainingCandidateCount(normalizedCurrent, target, targetEndDate),
+        currentDate: candidate.date,
+      });
+
+      if (simulatedGameCount % 6 === 0) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 0);
+        });
+      }
 
       if (target.scope === 'next_game') {
         break;

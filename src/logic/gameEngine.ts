@@ -464,26 +464,28 @@ const getOutcomeWeights = (
   const fatiguePenalty = getFatiguePenalty(session, pitcher);
   const defenseQuality = getDefenseQuality(session);
   const homeBonus = isHomeBatting ? settings.homeFieldAdvantage * 80 : -settings.homeFieldAdvantage * 80;
+  const environmentBias = (0.5 - settings.leagueEnvironmentBalance) * 2;
+  const varianceScale = 0.8 + settings.battingVarianceFactor * 0.8;
   const teamEdge = (battingTeam.rating - fieldingTeam.rating) * 0.65;
   const noise = (Math.random() - 0.5) * settings.gameLuckFactor * 60;
-  const powerEdge = batter.battingRatings.power - pitcher.pitchingRatings.movement;
-  const contactEdge = batter.battingRatings.contact - (pitcher.pitchingRatings.stuff * 0.55 + pitcher.pitchingRatings.movement * 0.45);
-  const disciplineEdge = batter.battingRatings.plateDiscipline - pitcher.pitchingRatings.control;
-  const strikeoutEdge = batter.battingRatings.avoidStrikeout - pitcher.pitchingRatings.stuff;
+  const powerEdge = (batter.battingRatings.power - pitcher.pitchingRatings.movement) * varianceScale;
+  const contactEdge = (batter.battingRatings.contact - (pitcher.pitchingRatings.stuff * 0.55 + pitcher.pitchingRatings.movement * 0.45)) * varianceScale;
+  const disciplineEdge = (batter.battingRatings.plateDiscipline - pitcher.pitchingRatings.control) * varianceScale;
+  const strikeoutEdge = (batter.battingRatings.avoidStrikeout - pitcher.pitchingRatings.stuff) * varianceScale;
   const speedEdge = (batter.battingRatings.speed + batter.battingRatings.baserunning) / 2 - defenseQuality;
-  const batterForm = getBatterFormBonus(batter);
-  const pitcherForm = getPitcherFormBonus(pitcher);
+  const batterForm = getBatterFormBonus(batter) * (0.75 + settings.battingVarianceFactor * 0.5);
+  const pitcherForm = getPitcherFormBonus(pitcher) * (0.75 + settings.battingVarianceFactor * 0.5);
   const edge = teamEdge + homeBonus + noise + fatiguePenalty + batterForm - pitcherForm;
 
   return {
-    OUT: clamp(410 - contactEdge * 0.85 - powerEdge * 0.12 + defenseQuality * 0.35 - edge * 0.35, 320, 560),
-    SO: clamp(180 - strikeoutEdge * 1.05 + (pitcher.pitchingRatings.command - batter.battingRatings.contact) * 0.45 - fatiguePenalty * 0.45 - batterForm * 0.16 + pitcherForm * 0.22, 90, 255),
-    BB: clamp(68 + disciplineEdge * 0.7 + (pitcher.pitchingRatings.command - pitcher.pitchingRatings.control) * -0.22 + fatiguePenalty * 0.35 + edge * 0.08, 28, 125),
-    '1B': clamp(140 + contactEdge * 0.82 + batterForm * 0.24 - pitcherForm * 0.18 + edge * 0.24, 92, 210),
-    '2B': clamp(33 + powerEdge * 0.32 + speedEdge * 0.12 + batterForm * 0.1 - pitcherForm * 0.08 + edge * 0.08, 12, 62),
-    '3B': clamp(4 + speedEdge * 0.05 + contactEdge * 0.015, 1, 10),
-    HR: clamp(21 + powerEdge * 0.42 + batterForm * 0.15 - pitcherForm * 0.1 + edge * 0.1 - defenseQuality * 0.03, 4, 48),
-    ERR: clamp(5 + (90 - defenseQuality) * 0.12, 1, 12),
+    OUT: clamp(408 - contactEdge * 0.82 - powerEdge * 0.1 + defenseQuality * 0.35 - edge * 0.31 - environmentBias * 33, 295, 570),
+    SO: clamp(181 - strikeoutEdge * 1.07 + (pitcher.pitchingRatings.command - batter.battingRatings.contact) * 0.45 - fatiguePenalty * 0.36 - batterForm * 0.09 + pitcherForm * 0.21 - environmentBias * 8.5, 88, 262),
+    BB: clamp(70 + disciplineEdge * 0.58 + (pitcher.pitchingRatings.command - pitcher.pitchingRatings.control) * -0.18 + fatiguePenalty * 0.3 + edge * 0.055 + environmentBias * 6, 28, 118),
+    '1B': clamp(143 + contactEdge * 0.72 + batterForm * 0.18 - pitcherForm * 0.17 + edge * 0.21 + environmentBias * 15, 96, 210),
+    '2B': clamp(33 + powerEdge * 0.3 + speedEdge * 0.1 + batterForm * 0.075 - pitcherForm * 0.07 + edge * 0.065 + environmentBias * 5, 11, 56),
+    '3B': clamp(3.5 + speedEdge * 0.048 + contactEdge * 0.012 + environmentBias * 0.45, 0.8, 8.5),
+    HR: clamp(19.5 + powerEdge * 0.34 + batterForm * 0.11 - pitcherForm * 0.1 + edge * 0.06 - defenseQuality * 0.02 + environmentBias * 3.5, 3.5, 38),
+    ERR: clamp(4 + (90 - defenseQuality) * 0.09 + environmentBias * 0.35, 0.5, 8),
   };
 };
 

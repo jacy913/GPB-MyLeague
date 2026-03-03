@@ -14,6 +14,8 @@ import {
   TeamRosterSlot,
 } from '../types';
 import { getScheduledGameTimeLabel } from '../logic/gameTimes';
+import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
+import { formatBattingAverage } from '../logic/statFormatting';
 import { TeamLogo } from './TeamLogo';
 
 interface TeamsHubProps {
@@ -118,7 +120,7 @@ const formatBattingLine = (stat: PlayerSeasonBatting | null): string => {
     return 'No batting line';
   }
 
-  return `${stat.avg.toFixed(3).replace(/^0/, '')} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI`;
+  return `${formatBattingAverage(stat.avg)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI`;
 };
 
 const formatPitchingLine = (stat: PlayerSeasonPitching | null): string => {
@@ -245,18 +247,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   );
 
   const latestBattingStatsByPlayerId = useMemo(() => {
-    const map = new Map<string, PlayerSeasonBatting>();
-    battingStats.forEach((stat) => {
-      const existing = map.get(stat.playerId);
-      if (
-        !existing ||
-        stat.seasonYear > existing.seasonYear ||
-        (stat.seasonYear === existing.seasonYear && stat.seasonPhase === 'playoffs' && existing.seasonPhase !== 'playoffs')
-      ) {
-        map.set(stat.playerId, stat);
-      }
-    });
-    return map;
+    return getPreferredBattingStatsByPlayerId(battingStats, 'regular_season');
   }, [battingStats]);
 
   const latestBattingRatingsByPlayerId = useMemo(() => {
@@ -271,18 +262,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   }, [battingRatings]);
 
   const latestPitchingStatsByPlayerId = useMemo(() => {
-    const map = new Map<string, PlayerSeasonPitching>();
-    pitchingStats.forEach((stat) => {
-      const existing = map.get(stat.playerId);
-      if (
-        !existing ||
-        stat.seasonYear > existing.seasonYear ||
-        (stat.seasonYear === existing.seasonYear && stat.seasonPhase === 'playoffs' && existing.seasonPhase !== 'playoffs')
-      ) {
-        map.set(stat.playerId, stat);
-      }
-    });
-    return map;
+    return getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season');
   }, [pitchingStats]);
 
   const latestPitchingRatingsByPlayerId = useMemo(() => {
@@ -903,8 +883,9 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                     <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Batting Stats</h3>
                   </div>
                   <div className="space-y-2 font-mono text-sm">
-                    <div className="flex justify-between gap-3"><span className="text-zinc-500">AVG</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? selectedRosterPlayer.battingStat.avg.toFixed(3).replace(/^0/, '') : '---'}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-zinc-500">AVG</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? formatBattingAverage(selectedRosterPlayer.battingStat.avg) : '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">OPS</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat ? selectedRosterPlayer.battingStat.ops.toFixed(3) : '---'}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-zinc-500">AB</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.atBats ?? '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">H</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.hits ?? '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">HR</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.homeRuns ?? '---'}</span></div>
                     <div className="flex justify-between gap-3"><span className="text-zinc-500">RBI</span><span className="text-zinc-100">{selectedRosterPlayer?.battingStat?.rbi ?? '---'}</span></div>

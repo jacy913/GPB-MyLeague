@@ -14,7 +14,24 @@ create table if not exists public.league_settings (
   win_loss_variance integer not null,
   home_field_advantage double precision not null,
   game_luck_factor double precision not null,
+  league_environment_balance double precision not null default 0.5,
+  batting_variance_factor double precision not null default 0.5,
   updated_at timestamptz not null default now()
+);
+
+create table if not exists public.slider_presets (
+  id bigint generated always as identity primary key,
+  league_id uuid not null references public.leagues(id) on delete cascade,
+  preset_name text not null,
+  continuity_weight double precision not null,
+  win_loss_variance double precision not null,
+  home_field_advantage double precision not null,
+  game_luck_factor double precision not null,
+  league_environment_balance double precision not null default 0.5,
+  batting_variance_factor double precision not null default 0.5,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (league_id, preset_name)
 );
 
 create table if not exists public.teams (
@@ -262,6 +279,12 @@ alter table public.season_games
 alter table public.season_games
   add column if not exists stats jsonb not null default '{}'::jsonb;
 
+alter table public.league_settings
+  add column if not exists league_environment_balance double precision not null default 0.5;
+
+alter table public.league_settings
+  add column if not exists batting_variance_factor double precision not null default 0.5;
+
 do $$
 declare
   constraint_record record;
@@ -317,9 +340,11 @@ create index if not exists roster_slots_team_season_idx on public.team_roster_sl
 create index if not exists player_transactions_player_idx on public.player_transactions(player_id, effective_date);
 create index if not exists league_games_league_id_idx on public.league_games(league_id);
 create index if not exists league_games_league_date_idx on public.league_games(league_id, game_date);
+create index if not exists slider_presets_league_id_idx on public.slider_presets(league_id);
 
 alter table public.leagues enable row level security;
 alter table public.league_settings enable row level security;
+alter table public.slider_presets enable row level security;
 alter table public.teams enable row level security;
 alter table public.players enable row level security;
 alter table public.player_season_batting enable row level security;
@@ -341,6 +366,10 @@ begin
 
   if not exists (select 1 from pg_policies where tablename = 'league_settings' and policyname = 'allow_anon_all_league_settings') then
     create policy allow_anon_all_league_settings on public.league_settings for all to anon using (true) with check (true);
+  end if;
+
+  if not exists (select 1 from pg_policies where tablename = 'slider_presets' and policyname = 'allow_anon_all_slider_presets') then
+    create policy allow_anon_all_slider_presets on public.slider_presets for all to anon using (true) with check (true);
   end if;
 
   if not exists (select 1 from pg_policies where tablename = 'teams' and policyname = 'allow_anon_all_teams') then

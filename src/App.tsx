@@ -10,6 +10,7 @@ import { CompletedGameResult, LeaguePlayerState, Team, Game, SimulationSettings,
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
+import { LeadersHub } from './components/LeadersHub';
 import { GPBBook } from './components/GPBBook';
 import { PlayoffsBracket } from './components/PlayoffsBracket';
 import { HomeDashboard } from './components/HomeDashboard';
@@ -20,15 +21,15 @@ import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, LayoutDashboard, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
+import { Activity, BarChart3, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, LayoutDashboard, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
-import { SimulationManager } from './logic/simulationManager';
+import { SimulationManager, SimulationProgressUpdate } from './logic/simulationManager';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from './logic/gameTimes';
 import { generatePlayerPool } from './logic/playerGenerator';
-import { applyPlayerGameStatDelta } from './logic/playerStats';
+import { applyPlayerGameStatDelta, resetPlayerSeasonStats } from './logic/playerStats';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -111,7 +112,9 @@ const isValidSettingsShape = (value: unknown): value is SimulationSettings => {
     typeof settings.continuityWeight === 'number' &&
     typeof settings.winLossVariance === 'number' &&
     typeof settings.homeFieldAdvantage === 'number' &&
-    typeof settings.gameLuckFactor === 'number'
+    typeof settings.gameLuckFactor === 'number' &&
+    typeof settings.leagueEnvironmentBalance === 'number' &&
+    typeof settings.battingVarianceFactor === 'number'
   );
 };
 
@@ -256,9 +259,10 @@ function App() {
   const [teams, setTeams] = useState<Team[]>(INITIAL_TEAMS);
   const [games, setGames] = useState<Game[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [simulationProgress, setSimulationProgress] = useState<SimulationProgressUpdate | null>(null);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'league_standings' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'league_standings' | 'leaders' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
   const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
@@ -481,23 +485,29 @@ function App() {
     const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
     const schedule = createMasterSchedule(freshTeams);
     const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+    const nextPlayerState = resetPlayerSeasonStats(playerState, resolveSeasonYear(firstDate, schedule));
 
     setTeams(freshTeams);
     setGames(schedule);
+    setPlayerState(nextPlayerState);
     setCurrentDate(firstDate);
     setSelectedDate(firstDate);
     setProgress(0);
     setSeasonComplete(false);
+    saveLocalPlayerState(nextPlayerState);
 
       void (async () => {
         try {
           await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false);
+          if (isSupabaseConfigured) {
+            await saveSupabasePlayerState(nextPlayerState);
+          }
         } catch (error) {
           console.error('Failed to persist reset season state:', error);
           pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
         }
       })();
-  }, [teams, settings, buildFreshSeasonTeams, createMasterSchedule, persistLeagueState, pushNotice]);
+  }, [teams, settings, playerState, buildFreshSeasonTeams, createMasterSchedule, persistLeagueState, pushNotice]);
 
   const handleSaveSettings = (newTeams: Team[], newSettings: SimulationSettings) => {
     setSettings(newSettings);
@@ -602,8 +612,27 @@ function App() {
     }
 
     setIsSimulating(true);
+    setSimulationProgress({
+      label:
+        target.scope === 'day'
+          ? 'Simulating day'
+          : target.scope === 'week'
+            ? 'Simulating week'
+            : target.scope === 'month'
+              ? 'Simulating month'
+              : target.scope === 'regular_season'
+                ? 'Simulating regular season'
+                : target.scope === 'season'
+                  ? 'Simulating full season'
+                  : target.scope === 'next_game'
+                    ? 'Simulating next team game'
+                    : 'Simulating selected range',
+      completedGames: 0,
+      totalGames: 0,
+      currentDate: currentDate || games[0]?.date || '',
+    });
 
-    requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
       const manager = new SimulationManager({
         teams,
         games,
@@ -612,23 +641,24 @@ function App() {
         currentDate: currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
       });
 
-      const result = manager.run(target);
-      const complete = result.games.every((game) => game.status === 'completed');
-      const finalizedTeams = complete
-        ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
-        : result.teams;
+      try {
+        const result = await manager.run(target, (update) => {
+          setSimulationProgress(update);
+        });
+        const complete = result.games.every((game) => game.status === 'completed');
+        const finalizedTeams = complete
+          ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
+          : result.teams;
 
-      setTeams(finalizedTeams);
-      setGames(result.games);
-      setPlayerState(result.playerState);
-      setCurrentDate(result.currentDate);
-      setSelectedDate(result.currentDate);
-      setProgress(getProgressFromGames(result.games));
-      setSeasonComplete(complete);
-      setIsSimulating(false);
-      saveLocalPlayerState(result.playerState);
+        setTeams(finalizedTeams);
+        setGames(result.games);
+        setPlayerState(result.playerState);
+        setCurrentDate(result.currentDate);
+        setSelectedDate(result.currentDate);
+        setProgress(getProgressFromGames(result.games));
+        setSeasonComplete(complete);
+        saveLocalPlayerState(result.playerState);
 
-      void (async () => {
         try {
           await persistLeagueState(
             finalizedTeams,
@@ -663,7 +693,10 @@ function App() {
           console.error('Failed to persist simulation results:', error);
           pushNotice('Simulation ran, but saving to Supabase failed. Local state is still updated.', 'warning');
         }
-      })();
+      } finally {
+        setIsSimulating(false);
+        setSimulationProgress(null);
+      }
     });
   }, [isSimulating, games, teams, playerState, settings, currentDate, getProgressFromGames, persistLeagueState, pushNotice]);
 
@@ -1432,6 +1465,13 @@ function App() {
               <span className="font-display text-lg uppercase tracking-wide">Standings</span>
             </button>
             <button
+              onClick={() => setView('leaders')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'leaders' ? 'bg-[#d4bb6a] text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <BarChart3 className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Leaders</span>
+            </button>
+            <button
               onClick={openRandomTeamPage}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'teams' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
@@ -1482,6 +1522,7 @@ function App() {
             <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Scores</button>
             <button onClick={() => setView('team_calendar')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'team_calendar' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Calendar</button>
             <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
+            <button onClick={() => setView('leaders')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'leaders' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Leaders</button>
             <button onClick={openRandomTeamPage} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'teams' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Teams</button>
             <button onClick={() => setView('playoffs')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Playoffs</button>
             <button onClick={() => setView('players')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'players' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Rosters</button>
@@ -1975,6 +2016,17 @@ function App() {
                 </div>
               )}
 
+              {view === 'leaders' && (
+                <LeadersHub
+                  teams={teams}
+                  players={playerState.players}
+                  battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                />
+              )}
+
               {view === 'gpb_book' && (
                 <GPBBook
                   teams={teams}
@@ -2047,6 +2099,63 @@ function App() {
           </AnimatePresence>
         </main>
       </div>
+
+      <AnimatePresence>
+        {isSimulating && simulationProgress && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/72 px-4 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="w-full max-w-xl rounded-[2rem] border border-[#d4bb6a]/20 bg-[linear-gradient(135deg,#121212,#1b1b1b,#101010)] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.52)]"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Simulation</p>
+                  <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">{simulationProgress.label}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-right">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Active date</p>
+                  <p className="mt-1 font-mono text-sm uppercase tracking-[0.12em] text-zinc-100">
+                    {simulationProgress.currentDate || currentDate || 'TBD'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-black/20 p-5">
+                <div className="flex items-center justify-between gap-4">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Progress</p>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300">
+                    {simulationProgress.totalGames > 0
+                      ? `${simulationProgress.completedGames} / ${simulationProgress.totalGames} games`
+                      : `${simulationProgress.completedGames} games`}
+                  </p>
+                </div>
+                <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#d4bb6a,#efe2ab,#37d6be)] transition-[width] duration-300"
+                    style={{
+                      width: `${
+                        simulationProgress.totalGames > 0
+                          ? Math.max(6, Math.min(100, (simulationProgress.completedGames / simulationProgress.totalGames) * 100))
+                          : 12
+                      }%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-4 text-sm leading-6 text-zinc-400">
+                  Each scheduled game is being resolved through the player-driven simulation engine and season stats are being updated game by game.
+                </p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0f0f0f]/95 backdrop-blur">
         <div className="flex items-center gap-4 px-4 sm:px-6 lg:px-8 py-3">

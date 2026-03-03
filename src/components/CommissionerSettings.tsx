@@ -3,6 +3,12 @@ import { LeaguePlayerState, Team, SimulationSettings } from '../types';
 import { Save, RotateCcw, Search, AlertTriangle, Trash2, Upload, Image as ImageIcon, Users } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../logic/simulation';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+import {
+  deleteSupabaseSliderPreset,
+  loadSupabaseSliderPresets,
+  saveSupabaseSliderPreset,
+  SliderPresetRecord,
+} from '../lib/storage';
 
 interface CommissionerSettingsProps {
   teams: Team[];
@@ -45,6 +51,11 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
   const [logoStatusMessage, setLogoStatusMessage] = useState<string | null>(null);
   const [logoRefreshKeyByTeamId, setLogoRefreshKeyByTeamId] = useState<Record<string, number>>({});
   const [availableLogoPaths, setAvailableLogoPaths] = useState<string[]>([]);
+  const [sliderPresetName, setSliderPresetName] = useState('');
+  const [sliderPresets, setSliderPresets] = useState<SliderPresetRecord[]>([]);
+  const [sliderPresetStatus, setSliderPresetStatus] = useState<string | null>(null);
+  const [isSavingSliderPreset, setIsSavingSliderPreset] = useState(false);
+  const [deletingSliderPresetId, setDeletingSliderPresetId] = useState<number | null>(null);
 
   // Validate on team change
   useEffect(() => {
@@ -115,6 +126,25 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     };
 
     void loadExistingLogos();
+  }, [isSupabaseEnabled]);
+
+  useEffect(() => {
+    const loadPresets = async () => {
+      if (!isSupabaseEnabled) {
+        setSliderPresets([]);
+        return;
+      }
+
+      try {
+        const presets = await loadSupabaseSliderPresets();
+        setSliderPresets(presets);
+      } catch (error) {
+        console.error('Failed to load slider presets:', error);
+        setSliderPresetStatus('Unable to load slider presets from Supabase.');
+      }
+    };
+
+    void loadPresets();
   }, [isSupabaseEnabled]);
 
   const getLogoPath = (teamId: string) => teamId.trim().toLowerCase();
@@ -282,6 +312,70 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     onPreviewGeneratePlayers();
   };
 
+  const handleSaveSettings = () => {
+    if (validationError) {
+      return;
+    }
+
+    const settingsChanged = JSON.stringify(settings) !== JSON.stringify(initialSettings);
+    if (settingsChanged) {
+      const approved = window.confirm(
+        'Saving these simulation settings will reset the current season schedule, standings, and season stats. Continue?'
+      );
+      if (!approved) {
+        return;
+      }
+    }
+
+    onSave(teams, settings);
+  };
+
+  const handleSaveSliderPreset = async () => {
+    if (!isSupabaseEnabled) {
+      setSliderPresetStatus('Supabase is not configured. Slider presets require Supabase.');
+      return;
+    }
+
+    const trimmedName = sliderPresetName.trim();
+    if (!trimmedName) {
+      setSliderPresetStatus('Enter a preset name before saving.');
+      return;
+    }
+
+    setIsSavingSliderPreset(true);
+    setSliderPresetStatus(null);
+    try {
+      const savedPreset = await saveSupabaseSliderPreset(trimmedName, settings);
+      setSliderPresets((prev) => [savedPreset, ...prev.filter((preset) => preset.id !== savedPreset.id && preset.presetName !== savedPreset.presetName)]);
+      setSliderPresetName('');
+      setSliderPresetStatus(`Saved slider preset "${savedPreset.presetName}".`);
+    } catch (error) {
+      console.error('Failed to save slider preset:', error);
+      setSliderPresetStatus('Failed to save slider preset to Supabase.');
+    } finally {
+      setIsSavingSliderPreset(false);
+    }
+  };
+
+  const handleDeleteSliderPreset = async (presetId: number) => {
+    if (!isSupabaseEnabled) {
+      return;
+    }
+
+    setDeletingSliderPresetId(presetId);
+    setSliderPresetStatus(null);
+    try {
+      await deleteSupabaseSliderPreset(presetId);
+      setSliderPresets((prev) => prev.filter((preset) => preset.id !== presetId));
+      setSliderPresetStatus('Deleted slider preset.');
+    } catch (error) {
+      console.error('Failed to delete slider preset:', error);
+      setSliderPresetStatus('Failed to delete slider preset.');
+    } finally {
+      setDeletingSliderPresetId(null);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between mb-6">
@@ -297,7 +391,7 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
             Cancel
           </button>
           <button 
-            onClick={() => onSave(teams, settings)}
+            onClick={handleSaveSettings}
             disabled={!!validationError}
             className="flex items-center gap-2 px-6 py-2 bg-platinum hover:bg-platinum/80 disabled:bg-white/10 disabled:text-slate-500 text-white font-display font-bold tracking-wide uppercase rounded-lg transition-all shadow-lg active:scale-95"
           >
@@ -316,6 +410,11 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
       {logoStatusMessage && (
         <div className="bg-white/5 border border-white/10 p-4 rounded-lg text-zinc-200">
           <span className="font-mono text-sm">{logoStatusMessage}</span>
+        </div>
+      )}
+      {sliderPresetStatus && (
+        <div className="bg-white/5 border border-white/10 p-4 rounded-lg text-zinc-200">
+          <span className="font-mono text-sm">{sliderPresetStatus}</span>
         </div>
       )}
 
@@ -568,6 +667,139 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Randomness factor in game outcomes. Higher means more upsets.
                 </p>
+              </div>
+
+              <div className="space-y-3 lg:col-span-2">
+                <div className="flex justify-between items-end gap-4">
+                  <label className="font-display text-sm text-slate-300 uppercase tracking-wide">League Environment</label>
+                  <span className="font-mono text-platinum text-sm">
+                    {settings.leagueEnvironmentBalance < 0.45
+                      ? 'Offense'
+                      : settings.leagueEnvironmentBalance > 0.55
+                        ? 'Pitching'
+                        : 'Balanced'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.leagueEnvironmentBalance}
+                  onChange={(e) => handleSettingChange('leagueEnvironmentBalance', parseFloat(e.target.value))}
+                  className="w-full accent-platinum h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                />
+                <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                  <span>More offense</span>
+                  <span>Balanced</span>
+                  <span>More pitching</span>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Center is the neutral batting-average target for the league. Slide left for a hotter run environment and right for a lower-scoring, pitching-driven league.
+                </p>
+              </div>
+
+              <div className="space-y-3 lg:col-span-2">
+                <div className="flex justify-between items-end gap-4">
+                  <label className="font-display text-sm text-slate-300 uppercase tracking-wide">Batting Average Variance</label>
+                  <span className="font-mono text-platinum text-sm">
+                    {settings.battingVarianceFactor < 0.35
+                      ? 'Tight'
+                      : settings.battingVarianceFactor > 0.65
+                        ? 'Wide'
+                        : 'Normal'}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={settings.battingVarianceFactor}
+                  onChange={(e) => handleSettingChange('battingVarianceFactor', parseFloat(e.target.value))}
+                  className="w-full accent-platinum h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"
+                />
+                <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                  <span>Compressed</span>
+                  <span>Normal</span>
+                  <span>Wider spread</span>
+                </div>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Controls how far hitters separate from the league mean. Lower values cluster averages together; higher values create more batting-title spikes and more weak-contact hitters.
+                </p>
+              </div>
+
+              <div className="space-y-4 lg:col-span-2 pt-4 border-t border-white/10">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <label className="font-display text-sm text-slate-300 uppercase tracking-wide">Slider Presets</label>
+                    <p className="mt-1 text-xs text-slate-500 leading-relaxed">
+                      Save the current slider setup to Supabase and reload it later.
+                    </p>
+                  </div>
+                  {!isSupabaseEnabled && (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-amber-300">Supabase required</span>
+                  )}
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <input
+                    type="text"
+                    value={sliderPresetName}
+                    onChange={(e) => setSliderPresetName(e.target.value)}
+                    placeholder="Preset name"
+                    className="w-full rounded-lg border border-white/10 bg-[#181818] px-4 py-3 text-sm text-white outline-none focus:border-platinum font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveSliderPreset()}
+                    disabled={!isSupabaseEnabled || isSavingSliderPreset}
+                    className="rounded-lg bg-[#d4bb6a] px-5 py-3 font-display text-sm font-bold uppercase tracking-wide text-black disabled:bg-white/10 disabled:text-slate-500"
+                  >
+                    {isSavingSliderPreset ? 'Saving...' : 'Save Preset'}
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {sliderPresets.length === 0 ? (
+                    <div className="rounded-lg border border-white/10 bg-[#181818] px-4 py-4 text-sm font-mono text-zinc-500">
+                      No slider presets saved yet.
+                    </div>
+                  ) : (
+                    sliderPresets.map((preset) => (
+                      <div key={preset.id} className="rounded-lg border border-white/10 bg-[#181818] px-4 py-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="font-display text-lg uppercase tracking-wide text-white">{preset.presetName}</p>
+                            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                              Updated {new Date(preset.updatedAt).toLocaleDateString()}
+                            </p>
+                            <p className="mt-2 font-mono text-[11px] text-zinc-400">
+                              Env {preset.settings.leagueEnvironmentBalance.toFixed(2)} | Var {preset.settings.battingVarianceFactor.toFixed(2)} | Luck {(preset.settings.gameLuckFactor * 100).toFixed(0)}%
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSettings(preset.settings)}
+                              className="rounded-lg border border-white/10 px-4 py-2 font-display text-sm uppercase tracking-wide text-white hover:border-white/20"
+                            >
+                              Apply
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteSliderPreset(preset.id)}
+                              disabled={deletingSliderPresetId === preset.id}
+                              className="rounded-lg border border-rose-500/25 px-4 py-2 font-display text-sm uppercase tracking-wide text-rose-300 hover:border-rose-400/40 disabled:opacity-50"
+                            >
+                              {deletingSliderPresetId === preset.id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
 
               {/* History Cleanup */}

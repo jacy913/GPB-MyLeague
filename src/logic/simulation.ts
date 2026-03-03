@@ -6,6 +6,8 @@ export const DEFAULT_SETTINGS: SimulationSettings = {
   winLossVariance: 4,
   homeFieldAdvantage: 0.025,
   gameLuckFactor: 0.08,
+  leagueEnvironmentBalance: 0.5,
+  battingVarianceFactor: 0.5,
 };
 
 export const GAMES_PER_SEASON = 154;
@@ -100,6 +102,31 @@ const calculateRuns = (teamRating: number, oppRating: number, isHome: boolean, l
   return k - 1;
 };
 
+const calculateEnvironmentAdjustedRuns = (
+  teamRating: number,
+  oppRating: number,
+  isHome: boolean,
+  luckFactor: number,
+  environmentBalance: number,
+): number => {
+  const offenseBias = (0.5 - environmentBalance) * 2;
+  const baseRuns = 4.45 + offenseBias * 0.65;
+  const ratingDiff = teamRating - oppRating;
+  const noise = (Math.random() - 0.5) * 2 * luckFactor;
+  const lambda = baseRuns + ratingDiff * 0.03 + (isHome ? 0.12 : -0.12) + noise;
+
+  const L = Math.exp(-Math.max(0.5, lambda));
+  let k = 0;
+  let p = 1;
+
+  do {
+    k++;
+    p *= Math.random();
+  } while (p > L);
+
+  return k - 1;
+};
+
 export const simulateGame = (
   homeTeam: Team,
   awayTeam: Team,
@@ -112,8 +139,20 @@ export const simulateGame = (
   const finalProb = Math.max(0.01, Math.min(0.99, winProb + probNoise));
   const homeWins = Math.random() < finalProb;
 
-  let homeScore = calculateRuns(homeTeam.rating, awayTeam.rating, true, settings.gameLuckFactor);
-  let awayScore = calculateRuns(awayTeam.rating, homeTeam.rating, false, settings.gameLuckFactor);
+  let homeScore = calculateEnvironmentAdjustedRuns(
+    homeTeam.rating,
+    awayTeam.rating,
+    true,
+    settings.gameLuckFactor,
+    settings.leagueEnvironmentBalance,
+  );
+  let awayScore = calculateEnvironmentAdjustedRuns(
+    awayTeam.rating,
+    homeTeam.rating,
+    false,
+    settings.gameLuckFactor,
+    settings.leagueEnvironmentBalance,
+  );
 
   if (homeWins && homeScore <= awayScore) {
     homeScore = awayScore + 1 + Math.floor(Math.random() * 2);

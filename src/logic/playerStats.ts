@@ -1,5 +1,6 @@
 import {
   LeaguePlayerState,
+  Player,
   PlayerGameBattingLine,
   PlayerGamePitchingLine,
   PlayerGameStatDelta,
@@ -7,6 +8,42 @@ import {
   PlayerSeasonPitching,
   SeasonPhase,
 } from '../types';
+
+const getSeasonPhasePreferenceScore = (seasonPhase: SeasonPhase, preferredPhase: SeasonPhase): number => {
+  if (seasonPhase === preferredPhase) {
+    return 2;
+  }
+
+  if (preferredPhase === 'playoffs' && seasonPhase === 'regular_season') {
+    return 1;
+  }
+
+  return 0;
+};
+
+const compareSeasonStatPriority = <
+  T extends {
+    playerId: string;
+    seasonYear: number;
+    seasonPhase: SeasonPhase;
+  },
+>(
+  left: T,
+  right: T,
+  preferredPhase: SeasonPhase,
+): number => {
+  if (left.seasonYear !== right.seasonYear) {
+    return right.seasonYear - left.seasonYear;
+  }
+
+  const leftPhaseScore = getSeasonPhasePreferenceScore(left.seasonPhase, preferredPhase);
+  const rightPhaseScore = getSeasonPhasePreferenceScore(right.seasonPhase, preferredPhase);
+  if (leftPhaseScore !== rightPhaseScore) {
+    return rightPhaseScore - leftPhaseScore;
+  }
+
+  return left.playerId.localeCompare(right.playerId);
+};
 
 const createEmptyBattingStat = (
   playerId: string,
@@ -137,5 +174,51 @@ export const applyPlayerGameStatDelta = (
     ...playerState,
     battingStats: Array.from(battingMap.values()),
     pitchingStats: Array.from(pitchingMap.values()),
+  };
+};
+
+export const getPreferredBattingStatsByPlayerId = (
+  stats: PlayerSeasonBatting[],
+  preferredPhase: SeasonPhase = 'regular_season',
+): Map<string, PlayerSeasonBatting> => {
+  const byPlayerId = new Map<string, PlayerSeasonBatting>();
+  [...stats]
+    .sort((left, right) => compareSeasonStatPriority(left, right, preferredPhase))
+    .forEach((stat) => {
+      if (!byPlayerId.has(stat.playerId)) {
+        byPlayerId.set(stat.playerId, stat);
+      }
+    });
+
+  return byPlayerId;
+};
+
+export const getPreferredPitchingStatsByPlayerId = (
+  stats: PlayerSeasonPitching[],
+  preferredPhase: SeasonPhase = 'regular_season',
+): Map<string, PlayerSeasonPitching> => {
+  const byPlayerId = new Map<string, PlayerSeasonPitching>();
+  [...stats]
+    .sort((left, right) => compareSeasonStatPriority(left, right, preferredPhase))
+    .forEach((stat) => {
+      if (!byPlayerId.has(stat.playerId)) {
+        byPlayerId.set(stat.playerId, stat);
+      }
+    });
+
+  return byPlayerId;
+};
+
+export const resetPlayerSeasonStats = (
+  playerState: LeaguePlayerState,
+  seasonYear: number,
+): LeaguePlayerState => {
+  const battingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'batter');
+  const pitchingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'pitcher');
+
+  return {
+    ...playerState,
+    battingStats: battingPlayers.map((player) => createEmptyBattingStat(player.playerId, seasonYear, 'regular_season')),
+    pitchingStats: pitchingPlayers.map((player) => createEmptyPitchingStat(player.playerId, seasonYear, 'regular_season')),
   };
 };
