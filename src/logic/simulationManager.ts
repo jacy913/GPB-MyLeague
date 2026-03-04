@@ -718,7 +718,7 @@ export class SimulationManager {
 
       if (simulatedGameCount % 6 === 0) {
         await new Promise<void>((resolve) => {
-          window.setTimeout(resolve, 0);
+          globalThis.setTimeout(resolve, 0);
         });
       }
 

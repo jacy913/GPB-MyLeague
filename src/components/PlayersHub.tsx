@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
+import { AttributeRadar } from './AttributeRadar';
 import { TeamLogo } from './TeamLogo';
 
 interface PlayersHubProps {
@@ -260,13 +261,36 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
   );
 
   const selectedTeam = selectedPlayer ? getPlayerTeam(selectedPlayer, teamsById) : null;
-  const selectedRosterSlot = selectedPlayer ? rosterSlotByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedBattingStats = selectedPlayer ? latestBattingStatByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedPitchingStats = selectedPlayer ? latestPitchingStatByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedBattingRatings = selectedPlayer ? latestBattingRatingsByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedPitchingRatings = selectedPlayer ? latestPitchingRatingsByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedOverall = selectedBattingRatings?.overall ?? selectedPitchingRatings?.overall ?? null;
-  const selectedPotentialOverall = selectedBattingRatings?.potentialOverall ?? selectedPitchingRatings?.potentialOverall ?? null;
+  const selectedAttributePoints = useMemo(() => {
+    if (selectedPlayer?.playerType === 'batter' && selectedBattingRatings) {
+      return [
+        { label: 'Contact', value: selectedBattingRatings.contact },
+        { label: 'Power', value: selectedBattingRatings.power },
+        { label: 'Discipline', value: selectedBattingRatings.plateDiscipline },
+        { label: 'Avoid K', value: selectedBattingRatings.avoidStrikeout },
+        { label: 'Speed', value: selectedBattingRatings.speed },
+        { label: 'Fielding', value: selectedBattingRatings.fielding },
+      ];
+    }
+
+    if (selectedPlayer?.playerType === 'pitcher' && selectedPitchingRatings) {
+      return [
+        { label: 'Stuff', value: selectedPitchingRatings.stuff },
+        { label: 'Command', value: selectedPitchingRatings.command },
+        { label: 'Control', value: selectedPitchingRatings.control },
+        { label: 'Movement', value: selectedPitchingRatings.movement },
+        { label: 'Stamina', value: selectedPitchingRatings.stamina },
+        { label: 'Fielding', value: selectedPitchingRatings.fielding },
+      ];
+    }
+
+    return [];
+  }, [selectedBattingRatings, selectedPitchingRatings, selectedPlayer]);
 
   const headerTitle = selectedPlayer ? formatPlayerLabel(selectedPlayer) : 'Player Pool Pending';
   const headerSubline = selectedPlayer
@@ -524,10 +548,10 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
               <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400 mt-2">
                 {headerSubline}
               </p>
-              <p className="text-sm text-zinc-300 mt-4">
+              <p className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-300 mt-4">
                 {selectedPlayer
-                  ? `Age ${selectedPlayer.age}. Bats ${selectedPlayer.bats}, throws ${selectedPlayer.throws}. ${selectedPlayer.teamId ? 'Currently attached to an active organization.' : 'Currently unattached to a club.'}`
-                  : 'This panel will show player details, ratings, and season production once the player pool has been generated.'}
+                  ? `Bats ${selectedPlayer.bats} | Throws ${selectedPlayer.throws} | ${selectedPlayer.contractYearsLeft} Year${selectedPlayer.contractYearsLeft === 1 ? '' : 's'} Left`
+                  : 'Bats -- | Throws -- | Years Left --'}
               </p>
             </div>
 
@@ -565,9 +589,9 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
               </p>
             </div>
             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Roster Slot</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Height</p>
               <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                {selectedRosterSlot?.slotCode ?? '---'}
+                {selectedPlayer?.height ?? '---'}
               </p>
             </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
@@ -577,9 +601,9 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
                 </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Potential</p>
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Weight</p>
                 <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                  {selectedPotentialOverall ?? (selectedPlayer ? Math.round(selectedPlayer.potential * 100) : '---')}
+                  {selectedPlayer ? `${selectedPlayer.weightLbs} lbs` : '---'}
                 </p>
               </div>
             </div>
@@ -590,28 +614,11 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
               <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Attributes</h3>
             </div>
             {selectedPlayer ? (
-              selectedPlayer.playerType === 'batter' && selectedBattingRatings ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-sm">
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Contact</span><span className="text-zinc-100">{selectedBattingRatings.contact}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Power</span><span className="text-zinc-100">{selectedBattingRatings.power}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Discipline</span><span className="text-zinc-100">{selectedBattingRatings.plateDiscipline}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Avoid K</span><span className="text-zinc-100">{selectedBattingRatings.avoidStrikeout}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Speed</span><span className="text-zinc-100">{selectedBattingRatings.speed}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Baserun</span><span className="text-zinc-100">{selectedBattingRatings.baserunning}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Fielding</span><span className="text-zinc-100">{selectedBattingRatings.fielding}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Arm</span><span className="text-zinc-100">{selectedBattingRatings.arm}</span></div>
-                </div>
-              ) : selectedPlayer.playerType === 'pitcher' && selectedPitchingRatings ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-sm">
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Stuff</span><span className="text-zinc-100">{selectedPitchingRatings.stuff}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Command</span><span className="text-zinc-100">{selectedPitchingRatings.command}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Control</span><span className="text-zinc-100">{selectedPitchingRatings.control}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Movement</span><span className="text-zinc-100">{selectedPitchingRatings.movement}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Stamina</span><span className="text-zinc-100">{selectedPitchingRatings.stamina}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Hold</span><span className="text-zinc-100">{selectedPitchingRatings.holdRunners}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Fielding</span><span className="text-zinc-100">{selectedPitchingRatings.fielding}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-zinc-500">Pot OVR</span><span className="text-zinc-100">{selectedPitchingRatings.potentialOverall}</span></div>
-                </div>
+              selectedAttributePoints.length > 0 ? (
+                <AttributeRadar
+                  points={selectedAttributePoints}
+                  accent={selectedPlayer.playerType === 'pitcher' ? '#0fe7d5' : '#d4bb6a'}
+                />
               ) : (
                 <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">No ratings loaded for this player yet.</p>
               )

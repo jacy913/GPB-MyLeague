@@ -1,24 +1,21 @@
 import { Team } from '../types';
 
-const NEUTRAL_RATING = 50;
-const NEUTRAL_BASELINE_WINS = 77;
-
 const createTeam = (
   id: string,
   city: string,
   name: string,
   league: 'Platinum' | 'Prestige',
   division: 'North' | 'South' | 'East' | 'West',
-  _rating: number,
-  _previousBaselineWins: number
+  rating: number,
+  previousBaselineWins: number
 ): Team => ({
   id,
   city,
   name,
   league,
   division,
-  rating: NEUTRAL_RATING,
-  previousBaselineWins: NEUTRAL_BASELINE_WINS,
+  rating,
+  previousBaselineWins,
   wins: 0,
   losses: 0,
   runsScored: 0,

@@ -2,6 +2,8 @@ import {
   BATTING_POSITIONS,
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
+  CORE_ROSTER_SLOTS,
+  CoreRosterSlotCode,
   LeaguePlayerState,
   PitcherPosition,
   Player,
@@ -11,11 +13,13 @@ import {
   PlayerSeasonBatting,
   PlayerSeasonPitching,
   PlayerStatus,
+  RESERVE_ROSTER_SLOTS,
   RosterSlotCode,
   STARTING_PITCHER_SLOTS,
   Team,
   TeamRosterSlot,
 } from '../types';
+import { generatePlayerBio } from './playerBio';
 
 type RandomSource = () => number;
 type AgeBucket = 'prospect' | 'peak' | 'veteran';
@@ -50,9 +54,19 @@ interface PlayerBlueprint {
 
 const DEFAULT_RANDOM: RandomSource = () => Math.random();
 
-export const DEFAULT_PLAYER_POOL_SIZE = 1000;
+export const DEFAULT_PLAYER_POOL_SIZE = 1320;
 export const DEFAULT_DRAFT_CLASS_SIZE = 100;
-export const DEFAULT_PLAYER_REPLENISHMENT_THRESHOLD = 800;
+export const DEFAULT_PLAYER_REPLENISHMENT_THRESHOLD = 1100;
+
+const DEFAULT_SUPPLEMENTAL_POOL_SIZE = 392;
+const DEFAULT_PROSPECT_POOL_SIZE = 200;
+const RESERVE_BATTER_SLOTS_PER_TEAM = 6;
+const SUPPLEMENTAL_BATTER_COUNT = 262;
+const SUPPLEMENTAL_PITCHER_TARGETS: Record<PitcherPosition, number> = {
+  SP: 20,
+  RP: 97,
+  CL: 13,
+};
 
 const WESTERN_FIRST = [
   'DeAndre', 'DeShawn', 'Jamal', 'Malik', 'Trevon', 'Tyrese', 'Tyrone', 'Darnell', 'Marquis', 'Terrell',
@@ -288,13 +302,6 @@ const HISPANIC_LAST = [
   'Menendez', 'Mercado', 'Merida', 'Merino', 'Mesa', 'Meza', 'Milan', 'Millan', 'Mina', 'Munguia', 'Muro',
 ];
 
-const DUTCH_FIRST = [
-  'Johannes', 'Hendrik', 'Cornelis', 'Jan', 'Willem', 'Pieter', 'Dirk', 'Albertus', 'Gerrit', 'Jacobus',
-  'Lars', 'Bram', 'Thijs', 'Ruben', 'Daan', 'Luuk', 'Milan', 'Levi', 'Sem', 'Finn',
-  'Jeroen', 'Bas', 'Maarten', 'Arjen', 'Sven', 'Niels', 'Koen', 'Tim', 'Bart', 'Rick',
-  'Martijn', 'Sander', 'Jasper', 'Stefan', 'Joost', 'Klaas', 'Wouter', 'Michiel', 'Erwin', 'Joris',
-];
-
 const DUTCH_LAST = [
   'De Jong', 'Jansen', 'De Vries', 'Van den Berg', 'Van Dijk', 'Bakker', 'Visser', 'Smit', 'Meijer', 'De Boer',
   'Van der Meer', 'Bos', 'Vos', 'Peters', 'Hendriks', 'Van Leeuwen', 'Dekker', 'Brouwer', 'De Groot', 'Gerritsen',
@@ -380,12 +387,6 @@ const KOREAN_LAST = [
   'Namgoong', 'Hwangbo', 'Jegal', 'Sagong', 'Seonu', 'Dokgo', 'Dongbang',
 ];
 
-const CHINESE_FIRST = [
-  'Wei', 'Hao', 'Yu', 'Jie', 'Xin', 'Jian', 'Peng', 'Bo', 'Ming', 'Jun',
-  'Cheng', 'Lei', 'Feng', 'Ping', 'Zhi', 'Qiang', 'Tao', 'Chao', 'Dong', 'Liang',
-  'Hua', 'Bin', 'Ning', 'Shan', 'Yang', 'Long', 'Kun', 'Fan', 'Yuan', 'Fei',
-];
-
 const CHINESE_LAST = [
   'Wang', 'Li', 'Zhang', 'Liu', 'Chen', 'Yang', 'Huang', 'Zhao', 'Wu', 'Zhou',
   'Xu', 'Sun', 'Ma', 'Zhu', 'Hu', 'Lin', 'Guo', 'He', 'Gao', 'Liang',
@@ -397,20 +398,9 @@ const HERITAGE_POOLS = [
   { weight: 20, firstNames: HISPANIC_FIRST, lastNames: HISPANIC_LAST, westernFirstMixChance: 0.3 },
   { weight: 20, firstNames: JAPANESE_FIRST, lastNames: JAPANESE_LAST, westernFirstMixChance: 0.3 },
   { weight: 10, firstNames: KOREAN_FIRST, lastNames: KOREAN_LAST, westernFirstMixChance: 0.3 },
-  { weight: 5, firstNames: DUTCH_FIRST, lastNames: DUTCH_LAST, westernFirstMixChance: 0.3 },
-  { weight: 5, firstNames: CHINESE_FIRST, lastNames: CHINESE_LAST, westernFirstMixChance: 0.3 },
+  { weight: 5, firstNames: WESTERN_FIRST, lastNames: DUTCH_LAST, westernFirstMixChance: 0 },
+  { weight: 5, firstNames: WESTERN_FIRST, lastNames: CHINESE_LAST, westernFirstMixChance: 0 },
 ] as const;
-
-const PITCHER_TARGETS: Record<PitcherPosition, number> = {
-  SP: 180,
-  RP: 225,
-  CL: 45,
-};
-
-const ACTIVE_AGE_BUCKETS: Record<Exclude<AgeBucket, 'prospect'>, number> = {
-  peak: 456,
-  veteran: 152,
-};
 
 const FREE_AGENT_AGE_BUCKETS: Record<Exclude<AgeBucket, 'prospect'>, number> = {
   peak: 144,
@@ -432,7 +422,7 @@ const SECONDARY_POSITION_MAP: Record<PlayerPosition, PlayerPosition[]> = {
   CL: ['RP'],
 };
 
-const SLOT_TO_PRIMARY_POSITION: Record<RosterSlotCode, PlayerPosition> = {
+const SLOT_TO_PRIMARY_POSITION: Record<CoreRosterSlotCode, PlayerPosition> = {
   C: 'C',
   '1B': '1B',
   '2B': '2B',
@@ -453,6 +443,12 @@ const SLOT_TO_PRIMARY_POSITION: Record<RosterSlotCode, PlayerPosition> = {
   RP4: 'RP',
   CL: 'CL',
 };
+
+const RESERVE_PITCHER_POSITION_WEIGHTS: Array<WeightedEntry<PitcherPosition>> = [
+  { value: 'SP', weight: 2 },
+  { value: 'RP', weight: 3 },
+  { value: 'CL', weight: 1 },
+];
 
 type BatterRatingsProfile = Omit<PlayerBattingRatings, 'playerId' | 'seasonYear'>;
 type PitcherRatingsProfile = Omit<PlayerPitchingRatings, 'playerId' | 'seasonYear'>;
@@ -555,6 +551,16 @@ const distributeEvenly = <T extends string>(values: T[], total: number): Record<
 
 const buildBucketPool = <T extends string>(counts: Record<T, number>): T[] =>
   Object.entries(counts).flatMap(([key, count]) => Array.from({ length: count }, () => key as T));
+
+const getActiveAgeBuckets = (activePlayerCount: number): Array<Exclude<AgeBucket, 'prospect'>> => {
+  const veteranCount = Math.round(activePlayerCount * 0.25);
+  const peakCount = Math.max(activePlayerCount - veteranCount, 0);
+
+  return [
+    ...Array.from({ length: peakCount }, () => 'peak' as const),
+    ...Array.from({ length: veteranCount }, () => 'veteran' as const),
+  ];
+};
 
 const getAgeForBucket = (bucket: AgeBucket, rng: RandomSource): number => {
   if (bucket === 'prospect') {
@@ -871,6 +877,7 @@ const createPlayerFromBlueprint = (
   const names = buildUniqueName(usedFullNames, rng);
   const throws = getThrowHand(blueprint.primaryPosition, rng);
   const bats = getBatHand(blueprint.primaryPosition, throws, rng);
+  const bio = generatePlayerBio(blueprint.primaryPosition, blueprint.status, age, rng);
 
   return {
     playerId: createUuid(),
@@ -883,8 +890,11 @@ const createPlayerFromBlueprint = (
     bats,
     throws,
     age,
+    height: bio.height,
+    weightLbs: bio.weightLbs,
     potential: getPotential(blueprint.status, blueprint.ageBucket, rng),
     status: blueprint.status,
+    contractYearsLeft: bio.contractYearsLeft,
     draftClassYear,
     draftRound: blueprint.status === 'prospect' ? null : randomInt(1, 20, rng),
     yearsPro,
@@ -929,46 +939,77 @@ const createEmptyPitchingStat = (playerId: string, seasonYear: number): PlayerSe
   whip: 0,
 });
 
-const getActiveRosterBlueprints = (teams: Team[], rng: RandomSource): PlayerBlueprint[] => {
-  const slotOrder: RosterSlotCode[] = [
-    ...BATTING_ROSTER_SLOTS,
-    ...STARTING_PITCHER_SLOTS,
-    ...BULLPEN_ROSTER_SLOTS,
-  ];
+const getReservePrimaryPosition = (reserveIndex: number, rng: RandomSource): PlayerPosition =>
+  reserveIndex < RESERVE_BATTER_SLOTS_PER_TEAM
+    ? sample(BATTING_POSITIONS, rng)
+    : weightedChoice(RESERVE_PITCHER_POSITION_WEIGHTS, rng);
 
-  const ageBuckets = shuffle(
-    [
-      ...Array.from({ length: ACTIVE_AGE_BUCKETS.peak }, () => 'peak' as const),
-      ...Array.from({ length: ACTIVE_AGE_BUCKETS.veteran }, () => 'veteran' as const),
-    ],
-    rng,
-  );
+const getActiveRosterBlueprints = (teams: Team[], rng: RandomSource): PlayerBlueprint[] => {
+  const ageBuckets = shuffle(getActiveAgeBuckets(teams.length * (CORE_ROSTER_SLOTS.length + RESERVE_ROSTER_SLOTS.length)), rng);
 
   let ageIndex = 0;
 
   return teams.flatMap((team) =>
-    slotOrder.map((slotCode) => ({
-      status: 'active' as const,
-      ageBucket: ageBuckets[ageIndex++],
-      primaryPosition: SLOT_TO_PRIMARY_POSITION[slotCode],
-      teamId: team.id,
-      slotCode,
-    })),
+    [
+      ...CORE_ROSTER_SLOTS.map((slotCode) => ({
+        status: 'active' as const,
+        ageBucket: ageBuckets[ageIndex++] ?? 'peak',
+        primaryPosition: SLOT_TO_PRIMARY_POSITION[slotCode],
+        teamId: team.id,
+        slotCode,
+      })),
+      ...RESERVE_ROSTER_SLOTS.map((slotCode, reserveIndex) => ({
+        status: 'active' as const,
+        ageBucket: ageBuckets[ageIndex++] ?? 'peak',
+        primaryPosition: getReservePrimaryPosition(reserveIndex, rng),
+        teamId: team.id,
+        slotCode,
+      })),
+    ],
   );
 };
 
-const getTargetPositionCounts = (): Record<PlayerPosition, number> => {
-  const batterTargets = distributeEvenly(BATTING_POSITIONS, 550);
+const getTargetPositionCounts = (activeBlueprints: PlayerBlueprint[]): Record<PlayerPosition, number> => {
+  const batterTargets = distributeEvenly(BATTING_POSITIONS, SUPPLEMENTAL_BATTER_COUNT);
+  const activeCounts = activeBlueprints.reduce(
+    (counts, blueprint) => {
+      counts[blueprint.primaryPosition] += 1;
+      return counts;
+    },
+    {
+      C: 0,
+      '1B': 0,
+      '2B': 0,
+      '3B': 0,
+      SS: 0,
+      LF: 0,
+      CF: 0,
+      RF: 0,
+      DH: 0,
+      SP: 0,
+      RP: 0,
+      CL: 0,
+    } as Record<PlayerPosition, number>,
+  );
+
   return {
-    ...batterTargets,
-    SP: PITCHER_TARGETS.SP,
-    RP: PITCHER_TARGETS.RP,
-    CL: PITCHER_TARGETS.CL,
+    C: activeCounts.C + batterTargets.C,
+    '1B': activeCounts['1B'] + batterTargets['1B'],
+    '2B': activeCounts['2B'] + batterTargets['2B'],
+    '3B': activeCounts['3B'] + batterTargets['3B'],
+    SS: activeCounts.SS + batterTargets.SS,
+    LF: activeCounts.LF + batterTargets.LF,
+    CF: activeCounts.CF + batterTargets.CF,
+    RF: activeCounts.RF + batterTargets.RF,
+    DH: activeCounts.DH + batterTargets.DH,
+    SP: activeCounts.SP + SUPPLEMENTAL_PITCHER_TARGETS.SP,
+    RP: activeCounts.RP + SUPPLEMENTAL_PITCHER_TARGETS.RP,
+    CL: activeCounts.CL + SUPPLEMENTAL_PITCHER_TARGETS.CL,
   };
 };
 
 const getRemainingPositionPool = (activeBlueprints: PlayerBlueprint[], rng: RandomSource): PlayerPosition[] => {
-  const targetCounts = getTargetPositionCounts();
+  const targetCounts = getTargetPositionCounts(activeBlueprints);
 
   activeBlueprints.forEach((blueprint) => {
     targetCounts[blueprint.primaryPosition] -= 1;
@@ -984,8 +1025,8 @@ const getRemainingPositionPool = (activeBlueprints: PlayerBlueprint[], rng: Rand
 
 const getSupplementalBlueprints = (activeBlueprints: PlayerBlueprint[], rng: RandomSource): PlayerBlueprint[] => {
   const remainingPositions = getRemainingPositionPool(activeBlueprints, rng);
-  const prospectPositions = remainingPositions.slice(0, 200);
-  const freeAgentPositions = remainingPositions.slice(200);
+  const prospectPositions = remainingPositions.slice(0, DEFAULT_PROSPECT_POOL_SIZE);
+  const freeAgentPositions = remainingPositions.slice(DEFAULT_PROSPECT_POOL_SIZE, DEFAULT_SUPPLEMENTAL_POOL_SIZE);
   const freeAgentAgeBuckets = shuffle(buildBucketPool(FREE_AGENT_AGE_BUCKETS), rng);
 
   const prospectBlueprints: PlayerBlueprint[] = prospectPositions.map((position) => ({
@@ -1104,7 +1145,10 @@ export const generateDraftClass = (
   count = DEFAULT_DRAFT_CLASS_SIZE,
   rng: RandomSource = DEFAULT_RANDOM,
 ): Player[] => {
-  const targetCounts = getTargetPositionCounts();
+  const targetCounts: Record<PlayerPosition, number> = {
+    ...distributeEvenly(BATTING_POSITIONS, SUPPLEMENTAL_BATTER_COUNT),
+    ...SUPPLEMENTAL_PITCHER_TARGETS,
+  };
   const usedFullNames = new Set<string>();
   const weightedPositions: Array<WeightedEntry<PlayerPosition>> = [
     ...Object.entries(targetCounts).map(([position, weight]) => ({

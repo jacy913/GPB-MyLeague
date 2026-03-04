@@ -24,7 +24,9 @@ export type PlayerPosition = BatterPosition | PitcherPosition;
 export type StartingPitcherSlot = 'SP1' | 'SP2' | 'SP3' | 'SP4' | 'SP5';
 export type ReliefPitcherSlot = 'RP1' | 'RP2' | 'RP3' | 'RP4';
 export type CloserSlot = 'CL';
-export type RosterSlotCode = BatterPosition | StartingPitcherSlot | ReliefPitcherSlot | CloserSlot;
+export type ReserveSlot = 'BN1' | 'BN2' | 'BN3' | 'BN4' | 'BN5' | 'BN6' | 'BN7' | 'BN8' | 'BN9' | 'BN10';
+export type CoreRosterSlotCode = BatterPosition | StartingPitcherSlot | ReliefPitcherSlot | CloserSlot;
+export type RosterSlotCode = CoreRosterSlotCode | ReserveSlot;
 export type SeasonPhase = 'regular_season' | 'playoffs';
 export type PlayerTransactionType = 'drafted' | 'signed' | 'released' | 'promoted' | 'demoted' | 'traded' | 'retired';
 
@@ -34,11 +36,13 @@ export const BATTING_ROSTER_SLOTS: BatterPosition[] = ['C', '1B', '2B', '3B', 'S
 export const STARTING_PITCHER_SLOTS: StartingPitcherSlot[] = ['SP1', 'SP2', 'SP3', 'SP4', 'SP5'];
 export const RELIEF_PITCHER_SLOTS: ReliefPitcherSlot[] = ['RP1', 'RP2', 'RP3', 'RP4'];
 export const BULLPEN_ROSTER_SLOTS: Array<ReliefPitcherSlot | CloserSlot> = ['RP1', 'RP2', 'RP3', 'RP4', 'CL'];
+export const CORE_ROSTER_SLOTS: CoreRosterSlotCode[] = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS];
+export const RESERVE_ROSTER_SLOTS: ReserveSlot[] = ['BN1', 'BN2', 'BN3', 'BN4', 'BN5', 'BN6', 'BN7', 'BN8', 'BN9', 'BN10'];
 export const ALL_ROSTER_SLOTS: RosterSlotCode[] = [
-  ...BATTING_ROSTER_SLOTS,
-  ...STARTING_PITCHER_SLOTS,
-  ...BULLPEN_ROSTER_SLOTS,
+  ...CORE_ROSTER_SLOTS,
+  ...RESERVE_ROSTER_SLOTS,
 ];
+export const TEAM_ACTIVE_ROSTER_SIZE = ALL_ROSTER_SLOTS.length;
 
 export interface Player {
   playerId: string;
@@ -51,8 +55,11 @@ export interface Player {
   bats: BatHand;
   throws: ThrowHand;
   age: number;
+  height: string;
+  weightLbs: number;
   potential: number;
   status: PlayerStatus;
+  contractYearsLeft: number;
   draftClassYear: number | null;
   draftRound: number | null;
   yearsPro: number;
@@ -139,6 +146,26 @@ export interface PlayerTransaction {
   toTeamId: string | null;
   effectiveDate: string;
   notes: string | null;
+}
+
+export type PendingTradeCategory = 'contender_push' | 'deadline_push' | 'prospect_swap' | 'blockbuster';
+
+export interface PendingTradeProposal {
+  proposalId: string;
+  createdDate: string;
+  fromTeamId: string;
+  toTeamId: string;
+  fromPlayerId: string;
+  toPlayerId: string;
+  fromTeamInterest: number;
+  toTeamInterest: number;
+  synergy: number;
+  category: PendingTradeCategory;
+  needSlot: RosterSlotCode;
+  summary: string;
+  fromTeamReason: string;
+  toTeamReason: string;
+  isBlockbuster: boolean;
 }
 
 export interface LeaguePlayerState {

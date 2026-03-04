@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
-import { generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
-import { CompletedGameResult, LeaguePlayerState, Team, Game, SimulationSettings, SimulationTarget } from './types';
+import { addDaysToISODate, generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
+import { CompletedGameResult, LeaguePlayerState, PendingTradeProposal, Team, Game, PlayerTransaction, RosterSlotCode, SimulationSettings, SimulationTarget } from './types';
 import { StandingsTable } from './components/StandingsTable';
 import { LeagueTable } from './components/LeagueTable';
 import { Leaderboard } from './components/Leaderboard';
@@ -17,19 +17,25 @@ import { HomeDashboard } from './components/HomeDashboard';
 import { TeamCalendar } from './components/TeamCalendar';
 import { TeamsHub } from './components/TeamsHub';
 import { PlayersHub } from './components/PlayersHub';
+import { FreeAgencyHub } from './components/FreeAgencyHub';
+import { TradesHub } from './components/TradesHub';
+import { SimulationHub, SimulationRunState } from './components/SimulationHub';
 import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TeamLogo } from './components/TeamLogo';
 import { CommissionerSettings } from './components/CommissionerSettings';
-import { Activity, BarChart3, Bell, BookOpen, CalendarDays, CalendarRange, Clock3, LayoutDashboard, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
+import { Activity, ArrowLeftRight, BarChart3, Bell, BookOpen, BriefcaseBusiness, CalendarDays, CalendarRange, Clock3, LayoutDashboard, Settings, Table2, Trophy, UserRound, Users } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { motion, AnimatePresence } from 'motion/react';
-import { SimulationManager, SimulationProgressUpdate } from './logic/simulationManager';
+import { SimulationProgressUpdate } from './logic/simulationManager';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
+import { generatePendingTradeProposals } from './logic/tradeLogic';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from './logic/gameTimes';
 import { generatePlayerPool } from './logic/playerGenerator';
 import { applyPlayerGameStatDelta, resetPlayerSeasonStats } from './logic/playerStats';
+import { repairRosterSlotsForTeams } from './logic/rosterManagement';
+import { getGeneratedContractYearsLeft } from './logic/playerBio';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -48,6 +54,7 @@ import {
   saveSupabaseSeasonRun,
   seedSupabaseLeagueState,
 } from './lib/storage';
+import { SimulationWorkerResponse } from './workers/simulationWorkerTypes';
 
 type NoticeLevel = 'info' | 'success' | 'warning' | 'error';
 
@@ -56,6 +63,11 @@ interface CommissionerNotice {
   message: string;
   level: NoticeLevel;
   createdAt: string;
+}
+
+interface TradeInterruptionPrompt {
+  count: number;
+  date: string;
 }
 
 const NOTICE_LEVEL_CLASS: Record<NoticeLevel, string> = {
@@ -67,7 +79,7 @@ const NOTICE_LEVEL_CLASS: Record<NoticeLevel, string> = {
 
 const EXPECTED_TEAM_COUNT = 32;
 const SUPABASE_TEAM_SOURCE_SYNC_KEY = 'gpb_supabase_team_source_sync_v1';
-const SUPABASE_TEAM_SOURCE_SYNC_VERSION = '2026-03-02-teams-ts';
+const SUPABASE_TEAM_SOURCE_SYNC_VERSION = '2026-03-03-teams-ts-trade-fix';
 
 const isValidTeamShape = (value: unknown): value is Team => {
   if (!value || typeof value !== 'object') {
@@ -161,6 +173,80 @@ const resolveSeasonYear = (currentDate: string | null | undefined, seasonGames: 
   const sourceDate = currentDate || seasonGames[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
   const year = Number(sourceDate?.slice(0, 4));
   return Number.isFinite(year) && year > 0 ? year : new Date().getFullYear();
+};
+
+const getSortedUniqueDates = (games: Game[]): string[] =>
+  Array.from(new Set<string>(games.map((game) => game.date))).sort((left, right) => left.localeCompare(right));
+
+const getSimulationScopeLabel = (target: SimulationTarget): string => {
+  if (target.scope === 'day') return 'Simulating day';
+  if (target.scope === 'week') return 'Simulating week';
+  if (target.scope === 'month') return 'Simulating month';
+  if (target.scope === 'regular_season') return 'Simulating regular season';
+  if (target.scope === 'season') return 'Simulating full season';
+  if (target.scope === 'next_game') return 'Simulating next team game';
+  return 'Simulating selected range';
+};
+
+const getSimulationTargetLabel = (target: SimulationTarget, teams: Team[], targetDate: string): string => {
+  if (target.scope === 'day') return 'Single Day';
+  if (target.scope === 'week') return 'One Week';
+  if (target.scope === 'month') return 'One Month';
+  if (target.scope === 'regular_season') return 'Regular Season Finish';
+  if (target.scope === 'season') return 'Full Season';
+  if (target.scope === 'next_game') {
+    const team = teams.find((entry) => entry.id === target.teamId) ?? null;
+    return team ? `${team.city} Next Game` : 'Next Team Game';
+  }
+  return targetDate ? `To ${targetDate}` : 'Selected Date';
+};
+
+const buildSimulationDatePlan = (games: Game[], currentDate: string, target: SimulationTarget): { dates: string[]; targetDate: string } => {
+  const uniqueDates = getSortedUniqueDates(games);
+  if (uniqueDates.length === 0) {
+    return { dates: [], targetDate: currentDate };
+  }
+
+  const startDate = uniqueDates.includes(currentDate)
+    ? currentDate
+    : uniqueDates.find((date) => date >= currentDate) ?? uniqueDates[0];
+
+  const buildRange = (endDate: string) => uniqueDates.filter((date) => date >= startDate && date <= endDate);
+
+  if (target.scope === 'day') {
+    return { dates: buildRange(startDate), targetDate: startDate };
+  }
+
+  if (target.scope === 'week') {
+    const targetDate = addDaysToISODate(startDate, 6);
+    return { dates: buildRange(targetDate), targetDate };
+  }
+
+  if (target.scope === 'month') {
+    const targetDate = addDaysToISODate(startDate, 29);
+    return { dates: buildRange(targetDate), targetDate };
+  }
+
+  if (target.scope === 'to_date') {
+    const targetDate = uniqueDates.find((date) => date >= (target.targetDate ?? startDate)) ?? uniqueDates[uniqueDates.length - 1];
+    return { dates: buildRange(targetDate), targetDate };
+  }
+
+  if (target.scope === 'regular_season') {
+    const regularDates = getSortedUniqueDates(games.filter(isRegularSeasonGame));
+    const targetDate = regularDates[regularDates.length - 1] ?? startDate;
+    return { dates: regularDates.filter((date) => date >= startDate), targetDate };
+  }
+
+  if (target.scope === 'season') {
+    return { dates: uniqueDates.filter((date) => date >= startDate), targetDate: uniqueDates[uniqueDates.length - 1] ?? startDate };
+  }
+
+  const nextTeamGame = games
+    .filter((game) => game.status === 'scheduled' && game.date >= startDate && (game.homeTeam === target.teamId || game.awayTeam === target.teamId))
+    .sort((left, right) => (left.date === right.date ? left.gameId.localeCompare(right.gameId) : left.date.localeCompare(right.date)))[0];
+  const targetDate = nextTeamGame?.date ?? startDate;
+  return { dates: buildRange(targetDate), targetDate };
 };
 
 const PLAYOFF_ROUND_LIMITS = [
@@ -262,10 +348,14 @@ function App() {
   const [simulationProgress, setSimulationProgress] = useState<SimulationProgressUpdate | null>(null);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'league_standings' | 'leaders' | 'teams' | 'players' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'simulation' | 'league_standings' | 'leaders' | 'teams' | 'players' | 'trades' | 'free_agency' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
   const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
+  const [pendingTrades, setPendingTrades] = useState<PendingTradeProposal[]>([]);
+  const [tradeBoardDate, setTradeBoardDate] = useState('');
+  const [tradeInterruptionPrompt, setTradeInterruptionPrompt] = useState<TradeInterruptionPrompt | null>(null);
+  const [simulationRunState, setSimulationRunState] = useState<SimulationRunState | null>(null);
   const [currentDate, setCurrentDate] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>(INITIAL_TEAMS[0]?.id ?? '');
@@ -277,6 +367,8 @@ function App() {
   const [isGeneratingPlayers, setIsGeneratingPlayers] = useState(false);
   const [playerGenerationPreview, setPlayerGenerationPreview] = useState<LeaguePlayerState | null>(null);
   const [commissionerNotices, setCommissionerNotices] = useState<CommissionerNotice[]>([]);
+  const previousSeasonCompleteRef = useRef(false);
+  const simulationWorkerRef = useRef<Worker | null>(null);
 
   const pushNotice = useCallback((message: string, level: NoticeLevel = 'info') => {
     const createdAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -289,6 +381,33 @@ function App() {
       },
       ...prev,
     ].slice(0, 30));
+  }, []);
+
+  const saveLocalPlayerStateSafely = useCallback((nextPlayerState: LeaguePlayerState) => {
+    try {
+      saveLocalPlayerState(nextPlayerState);
+      return true;
+    } catch (error) {
+      console.error('Failed to save player state to local storage:', error);
+      return false;
+    }
+  }, []);
+
+  const saveLocalLeagueStateSafely = useCallback((
+    nextTeams: Team[],
+    nextSettings: SimulationSettings,
+    nextGames: Game[],
+    nextCurrentDate: string,
+    nextProgress: number,
+    nextSeasonComplete: boolean,
+  ) => {
+    try {
+      saveLocalLeagueState(nextTeams, nextSettings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
+      return true;
+    } catch (error) {
+      console.error('Failed to save league state to local storage:', error);
+      return false;
+    }
   }, []);
 
   const getProgressFromGames = useCallback((seasonGames: Game[]): number => {
@@ -323,14 +442,11 @@ function App() {
     nextCurrentDate: string,
     nextProgress: number,
     nextSeasonComplete: boolean,
+    options?: {
+      pruneMissingGames?: boolean;
+    },
   ) => {
-    saveLocalLeagueState(nextTeams, nextSettings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
-
-    if (!isSupabaseConfigured) {
-      return;
-    }
-
-    await saveSupabaseLeagueState(
+    const localSaved = saveLocalLeagueStateSafely(
       nextTeams,
       nextSettings,
       nextGames,
@@ -338,8 +454,38 @@ function App() {
       nextProgress,
       nextSeasonComplete,
     );
-    setDataSource('supabase');
-  }, []);
+
+    if (!isSupabaseConfigured) {
+      if (!localSaved) {
+        throw new Error('Local storage save failed and Supabase is not configured.');
+      }
+      return;
+    }
+
+    try {
+      await saveSupabaseLeagueState(
+        nextTeams,
+        nextSettings,
+        nextGames,
+        nextCurrentDate,
+        nextProgress,
+        nextSeasonComplete,
+        {
+          pruneMissingGames: options?.pruneMissingGames ?? false,
+        },
+      );
+      setDataSource('supabase');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      const isStatementTimeout = message.includes('statement timeout') || message.includes('"code":"57014"');
+      if (localSaved && isStatementTimeout) {
+        console.warn('Supabase league-state sync timed out. Using local league state fallback.', error);
+        setDataSource('local');
+        return;
+      }
+      throw error;
+    }
+  }, [saveLocalLeagueStateSafely]);
 
   // Load state on mount and seed Supabase if empty.
   useEffect(() => {
@@ -363,7 +509,7 @@ function App() {
           const validRemoteGames = sanitizeGames(remoteState.games);
 
           setPlayerState(remotePlayerState);
-          saveLocalPlayerState(remotePlayerState);
+          saveLocalPlayerStateSafely(remotePlayerState);
 
           if (validRemoteTeams) {
             setTeams(validRemoteTeams);
@@ -381,7 +527,7 @@ function App() {
           }
 
           if (validRemoteTeams && validRemoteSettings) {
-            saveLocalLeagueState(
+            saveLocalLeagueStateSafely(
               validRemoteTeams,
               validRemoteSettings,
               validRemoteGames ?? [],
@@ -450,6 +596,14 @@ function App() {
     void bootstrap();
   }, [getProgressFromGames, pushNotice]);
 
+  useEffect(() => {
+    const justEnteredFreeAgencyWindow = seasonComplete && !previousSeasonCompleteRef.current;
+    if (justEnteredFreeAgencyWindow && playerState.players.some((player) => player.status === 'free_agent')) {
+      setView('free_agency');
+    }
+    previousSeasonCompleteRef.current = seasonComplete;
+  }, [playerState.players, seasonComplete]);
+
   // Initialize schedule on mount (or when teams change structure, but we handle that in save)
   useEffect(() => {
     if (!isBootstrapping && games.length === 0) {
@@ -463,7 +617,7 @@ function App() {
 
       void (async () => {
         try {
-          await persistLeagueState(teams, settings, schedule, firstDate, 0, false);
+          await persistLeagueState(teams, settings, schedule, firstDate, 0, false, { pruneMissingGames: true });
         } catch (error) {
           console.error('Failed to persist initialized schedule:', error);
         }
@@ -481,6 +635,12 @@ function App() {
     }
   }, [teams, selectedTeamId]);
 
+  useEffect(() => {
+    if (pendingTrades.length === 0 || view === 'trades') {
+      setTradeInterruptionPrompt(null);
+    }
+  }, [pendingTrades.length, view]);
+
   const resetSeason = useCallback((teamsToReset = teams, settingsToUse = settings) => {
     const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
     const schedule = createMasterSchedule(freshTeams);
@@ -494,11 +654,11 @@ function App() {
     setSelectedDate(firstDate);
     setProgress(0);
     setSeasonComplete(false);
-    saveLocalPlayerState(nextPlayerState);
+    saveLocalPlayerStateSafely(nextPlayerState);
 
       void (async () => {
         try {
-          await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false);
+          await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false, { pruneMissingGames: true });
           if (isSupabaseConfigured) {
             await saveSupabasePlayerState(nextPlayerState);
           }
@@ -585,7 +745,7 @@ function App() {
       const generatedPlayerState = playerGenerationPreview ?? generatePlayerPool(teams, resolveSeasonYear(currentDate, games));
 
       clearLocalPlayerState();
-      saveLocalPlayerState(generatedPlayerState);
+      saveLocalPlayerStateSafely(generatedPlayerState);
       setPlayerState(generatedPlayerState);
 
       if (isSupabaseConfigured) {
@@ -606,121 +766,336 @@ function App() {
     }
   }, [currentDate, games, playerGenerationPreview, pushNotice, teams]);
 
-  const runSimulationTarget = useCallback((target: SimulationTarget) => {
+  const persistSimulationSnapshot = useCallback(async (
+    nextTeams: Team[],
+    nextGames: Game[],
+    nextPlayerState: LeaguePlayerState,
+    nextCurrentDate: string,
+    nextSeasonComplete: boolean,
+  ) => {
+    const nextProgress = getProgressFromGames(nextGames);
+    saveLocalPlayerStateSafely(nextPlayerState);
+    try {
+      await persistLeagueState(
+        nextTeams,
+        settings,
+        nextGames,
+        nextCurrentDate,
+        nextProgress,
+        nextSeasonComplete,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : JSON.stringify(error);
+      throw new Error(`League state save failed: ${message}`);
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        await saveSupabasePlayerState(nextPlayerState);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : JSON.stringify(error);
+        throw new Error(`Player state save failed: ${message}`);
+      }
+    }
+
+    return nextProgress;
+  }, [getProgressFromGames, isSupabaseConfigured, persistLeagueState, saveLocalPlayerStateSafely, settings]);
+
+  const applySimulationFullState = useCallback((
+    nextTeams: Team[],
+    nextGames: Game[],
+    nextPlayerState: LeaguePlayerState,
+    nextCurrentDate: string,
+    nextProgress: number,
+    nextSeasonComplete: boolean,
+  ) => {
+    React.startTransition(() => {
+      setTeams(nextTeams);
+      setGames(nextGames);
+      setPlayerState(nextPlayerState);
+      setCurrentDate(nextCurrentDate);
+      setSelectedDate(nextCurrentDate);
+      setProgress(nextProgress);
+      setSeasonComplete(nextSeasonComplete);
+    });
+  }, []);
+
+  const destroySimulationWorker = useCallback((worker?: Worker | null) => {
+    const activeWorker = worker ?? simulationWorkerRef.current;
+    if (!activeWorker) {
+      return;
+    }
+
+    activeWorker.terminate();
+    if (simulationWorkerRef.current === activeWorker) {
+      simulationWorkerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    destroySimulationWorker();
+  }, [destroySimulationWorker]);
+
+  const runSimulationTarget = useCallback(async (target: SimulationTarget) => {
     if (isSimulating || games.length === 0) {
       return;
     }
 
+    const startingDate = currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    const plan = buildSimulationDatePlan(games, startingDate, target);
+    if (plan.dates.length === 0) {
+      pushNotice('No scheduled dates matched that simulation target.', 'info');
+      return;
+    }
+
+    destroySimulationWorker();
+
+    const label = getSimulationScopeLabel(target);
+    const targetLabel = getSimulationTargetLabel(target, teams, plan.targetDate);
+    const worker = new Worker(new URL('./workers/simulationWorker.ts', import.meta.url), { type: 'module' });
+    simulationWorkerRef.current = worker;
+
+    setView('simulation');
     setIsSimulating(true);
     setSimulationProgress({
-      label:
-        target.scope === 'day'
-          ? 'Simulating day'
-          : target.scope === 'week'
-            ? 'Simulating week'
-            : target.scope === 'month'
-              ? 'Simulating month'
-              : target.scope === 'regular_season'
-                ? 'Simulating regular season'
-                : target.scope === 'season'
-                  ? 'Simulating full season'
-                  : target.scope === 'next_game'
-                    ? 'Simulating next team game'
-                    : 'Simulating selected range',
+      label,
       completedGames: 0,
       totalGames: 0,
-      currentDate: currentDate || games[0]?.date || '',
+      currentDate: startingDate,
+    });
+    setSimulationRunState({
+      status: 'running',
+      label,
+      targetLabel,
+      queuedDates: plan.dates,
+      currentIndex: 0,
+      startDate: startingDate,
+      currentDate: startingDate,
+      targetDate: plan.targetDate,
+      simulatedGameCount: 0,
     });
 
-    requestAnimationFrame(async () => {
-      const manager = new SimulationManager({
+    worker.onmessage = (event: MessageEvent<SimulationWorkerResponse>) => {
+      void (async () => {
+        if (simulationWorkerRef.current !== worker) {
+          return;
+        }
+
+        const message = event.data;
+
+        if (message.type === 'day_started') {
+          setSimulationProgress({
+            label,
+            completedGames: 0,
+            totalGames: message.payload.scheduledGames,
+            currentDate: message.payload.currentDate,
+          });
+          setSimulationRunState((current) => current ? {
+            ...current,
+            currentIndex: message.payload.currentIndex,
+            currentDate: message.payload.currentDate,
+          } : null);
+          return;
+        }
+
+        if (message.type === 'day_completed') {
+          setSimulationProgress({
+            label,
+            completedGames: message.payload.scheduledGames,
+            totalGames: message.payload.scheduledGames,
+            currentDate: message.payload.currentDate,
+          });
+          setSimulationRunState((current) => current ? {
+            ...current,
+            currentIndex: message.payload.currentIndex,
+            currentDate: message.payload.currentDate,
+            simulatedGameCount: message.payload.simulatedGameCount,
+          } : null);
+          return;
+        }
+
+        if (message.type === 'error') {
+          destroySimulationWorker(worker);
+          setIsSimulating(false);
+          setSimulationProgress(null);
+          setSimulationRunState((current) => current ? {
+            ...current,
+            status: 'error',
+            message: message.payload.message || 'The simulation engine failed unexpectedly.',
+          } : null);
+          pushNotice('Simulation failed. Review the current day and try a shorter run.', 'error');
+          return;
+        }
+
+        destroySimulationWorker(worker);
+
+        try {
+          const snapshot = message.payload.snapshot;
+          const nextProgress = await persistSimulationSnapshot(
+            snapshot.teams,
+            snapshot.games,
+            snapshot.playerState,
+            snapshot.currentDate,
+            snapshot.seasonComplete,
+          );
+
+          applySimulationFullState(
+            snapshot.teams,
+            snapshot.games,
+            snapshot.playerState,
+            snapshot.currentDate,
+            nextProgress,
+            snapshot.seasonComplete,
+          );
+
+          if (message.type === 'cancelled') {
+            setSimulationRunState((current) => current ? {
+              ...current,
+              status: 'cancelled',
+              currentDate: snapshot.currentDate,
+              simulatedGameCount: snapshot.simulatedGameCount,
+              message: message.payload.message,
+            } : null);
+            pushNotice('Simulation stopped.', 'info');
+            return;
+          }
+
+          if (message.type === 'interrupted') {
+            if (message.payload.interruptionKind === 'trade') {
+              setPendingTrades(message.payload.pendingTrades ?? []);
+              setTradeBoardDate(snapshot.currentDate);
+              setTradeInterruptionPrompt({
+                count: message.payload.interruptionCount,
+                date: snapshot.currentDate,
+              });
+              pushNotice(
+                message.payload.interruptionCount === 1
+                  ? '1 trade needs commissioner approval.'
+                  : `${message.payload.interruptionCount} trades need commissioner approval.`,
+                'warning',
+              );
+            } else {
+              pushNotice('Simulation halted for a new free-agency offer.', 'warning');
+              setView('free_agency');
+            }
+
+            setSimulationRunState((current) => current ? {
+              ...current,
+              status: 'interrupted',
+              interruptionKind: message.payload.interruptionKind,
+              interruptionCount: message.payload.interruptionCount,
+              currentDate: snapshot.currentDate,
+              simulatedGameCount: snapshot.simulatedGameCount,
+              message: message.payload.message,
+            } : null);
+            return;
+          }
+
+          setSimulationRunState((current) => current ? {
+            ...current,
+            status: 'complete',
+            currentIndex: current.queuedDates.length,
+            currentDate: snapshot.currentDate,
+            simulatedGameCount: snapshot.simulatedGameCount,
+            message: message.payload.message,
+          } : null);
+
+          if (snapshot.seasonComplete && snapshot.simulatedGameCount > 0) {
+            if (isSupabaseConfigured) {
+              const seasonLabel = `Season ${new Date(`${snapshot.currentDate}T00:00:00Z`).getUTCFullYear()}`;
+              await saveSupabaseSeasonRun(snapshot.teams, snapshot.games, settings, seasonLabel);
+              pushNotice('Season simulation completed and saved to Supabase.', 'success');
+            } else {
+              pushNotice('Season simulation completed and saved locally.', 'success');
+            }
+          } else if (snapshot.simulatedGameCount === 0) {
+            pushNotice('No scheduled games matched the selected simulation scope.', 'info');
+          } else {
+            pushNotice(`Simulated ${snapshot.simulatedGameCount} games through ${snapshot.currentDate}.`, 'info');
+          }
+        } catch (error) {
+          console.error('Failed to finalize simulation snapshot:', error);
+          const errorMessage = error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+              ? error
+              : JSON.stringify(error);
+          setSimulationRunState((current) => current ? {
+            ...current,
+            status: 'error',
+            message: errorMessage || 'The simulation engine failed unexpectedly.',
+          } : null);
+          pushNotice('Simulation failed while saving the final snapshot.', 'error');
+        } finally {
+          setIsSimulating(false);
+          setSimulationProgress(null);
+        }
+      })();
+    };
+
+    worker.onerror = (event) => {
+      if (simulationWorkerRef.current !== worker) {
+        return;
+      }
+
+      console.error('Simulation worker crashed:', event);
+      destroySimulationWorker(worker);
+      setIsSimulating(false);
+      setSimulationProgress(null);
+      setSimulationRunState((current) => current ? {
+        ...current,
+        status: 'error',
+        message: 'The background simulation worker crashed unexpectedly.',
+      } : null);
+      pushNotice('Simulation failed. The background worker crashed.', 'error');
+    };
+
+    worker.postMessage({
+      type: 'start',
+      payload: {
         teams,
         games,
         playerState,
         settings,
-        currentDate: currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
-      });
-
-      try {
-        const result = await manager.run(target, (update) => {
-          setSimulationProgress(update);
-        });
-        const complete = result.games.every((game) => game.status === 'completed');
-        const finalizedTeams = complete
-          ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
-          : result.teams;
-
-        setTeams(finalizedTeams);
-        setGames(result.games);
-        setPlayerState(result.playerState);
-        setCurrentDate(result.currentDate);
-        setSelectedDate(result.currentDate);
-        setProgress(getProgressFromGames(result.games));
-        setSeasonComplete(complete);
-        saveLocalPlayerState(result.playerState);
-
-        try {
-          await persistLeagueState(
-            finalizedTeams,
-            settings,
-            result.games,
-            result.currentDate,
-            getProgressFromGames(result.games),
-            complete,
-          );
-
-          if (isSupabaseConfigured) {
-            await saveSupabasePlayerState(result.playerState);
-          }
-
-          if (complete && result.simulatedGameCount > 0) {
-            if (isSupabaseConfigured) {
-              const seasonLabel = `Season ${new Date(`${result.currentDate}T00:00:00Z`).getUTCFullYear()}`;
-              await saveSupabaseSeasonRun(finalizedTeams, result.games, settings, seasonLabel);
-              pushNotice('Season simulation completed and saved to Supabase.', 'success');
-            } else {
-              pushNotice('Season simulation completed and saved locally.', 'info');
-            }
-            return;
-          }
-
-          if (result.simulatedGameCount === 0) {
-            pushNotice('No scheduled games matched the selected simulation scope.', 'info');
-          } else {
-            pushNotice(`Simulated ${result.simulatedGameCount} games through ${result.currentDate}.`, 'info');
-          }
-        } catch (error) {
-          console.error('Failed to persist simulation results:', error);
-          pushNotice('Simulation ran, but saving to Supabase failed. Local state is still updated.', 'warning');
-        }
-      } finally {
-        setIsSimulating(false);
-        setSimulationProgress(null);
-      }
+        target,
+        startingDate,
+        queuedDates: plan.dates,
+        targetDate: plan.targetDate,
+        label,
+        throttleMs: 340,
+      },
     });
-  }, [isSimulating, games, teams, playerState, settings, currentDate, getProgressFromGames, persistLeagueState, pushNotice]);
+  }, [applySimulationFullState, currentDate, destroySimulationWorker, games, isSimulating, persistSimulationSnapshot, playerState, pushNotice, settings, teams]);
+
+  const cancelSimulationRun = useCallback(() => {
+    if (!isSimulating || !simulationWorkerRef.current) {
+      return;
+    }
+    simulationWorkerRef.current.postMessage({ type: 'cancel' });
+    pushNotice('Stopping simulation after the active day resolves.', 'info');
+  }, [isSimulating, pushNotice]);
 
   const simulateToSelectedDate = useCallback(() => {
     if (!selectedDate) {
       return;
     }
-    runSimulationTarget({ scope: 'to_date', targetDate: selectedDate });
+    void runSimulationTarget({ scope: 'to_date', targetDate: selectedDate });
   }, [selectedDate, runSimulationTarget]);
 
   const simulateDay = useCallback(() => {
-    runSimulationTarget({ scope: 'day' });
+    void runSimulationTarget({ scope: 'day' });
   }, [runSimulationTarget]);
 
   const simulateToEndOfRegularSeason = useCallback(() => {
-    runSimulationTarget({ scope: 'regular_season' });
+    void runSimulationTarget({ scope: 'regular_season' });
   }, [runSimulationTarget]);
 
   const simulateWeek = useCallback(() => {
-    runSimulationTarget({ scope: 'week' });
+    void runSimulationTarget({ scope: 'week' });
   }, [runSimulationTarget]);
 
   const simulateMonth = useCallback(() => {
-    runSimulationTarget({ scope: 'month' });
+    void runSimulationTarget({ scope: 'month' });
   }, [runSimulationTarget]);
 
   const simulateNextTeamGame = useCallback(() => {
@@ -728,11 +1103,11 @@ function App() {
       pushNotice('Select a team before running "Simulate Next Game".', 'warning');
       return;
     }
-    runSimulationTarget({ scope: 'next_game', teamId: selectedTeamId });
+    void runSimulationTarget({ scope: 'next_game', teamId: selectedTeamId });
   }, [selectedTeamId, runSimulationTarget, pushNotice]);
 
   const quickSimSeason = useCallback(() => {
-    runSimulationTarget({ scope: 'season' });
+    void runSimulationTarget({ scope: 'season' });
   }, [runSimulationTarget]);
 
   const simulateToDate = useCallback((targetDate: string) => {
@@ -741,8 +1116,8 @@ function App() {
     }
 
     setSelectedDate(targetDate);
-    runSimulationTarget({ scope: 'to_date', targetDate });
-  }, [runSimulationTarget]);
+    setView('simulation');
+  }, []);
 
   const handleTradeProposal = useCallback(async (
     trade: { fromTeamId: string; toTeamId: string; fromPlayerId: string; toPlayerId: string },
@@ -767,6 +1142,9 @@ function App() {
     }
 
     const effectiveDate = currentDate || selectedDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    const activeRosterSeasonYear = playerState.rosterSlots.length > 0
+      ? Math.max(...playerState.rosterSlots.map((slot) => slot.seasonYear))
+      : resolveSeasonYear(effectiveDate, games);
     const nextPlayers = playerState.players.map((player) => {
       if (player.playerId === trade.fromPlayerId) {
         return { ...player, teamId: trade.toTeamId, status: 'active' as const };
@@ -778,6 +1156,9 @@ function App() {
     });
 
     const nextRosterSlots = playerState.rosterSlots.map((slot) => {
+      if (slot.seasonYear !== activeRosterSeasonYear) {
+        return { ...slot };
+      }
       if (slot.playerId === trade.fromPlayerId) {
         return { ...slot, playerId: trade.toPlayerId };
       }
@@ -787,6 +1168,16 @@ function App() {
       return { ...slot };
     });
 
+    const repairedRoster = repairRosterSlotsForTeams(
+      {
+        ...playerState,
+        players: nextPlayers,
+        rosterSlots: nextRosterSlots,
+      },
+      [trade.fromTeamId, trade.toTeamId],
+      activeRosterSeasonYear,
+    );
+
     const nextPlayerState: LeaguePlayerState = {
       ...playerState,
       players: nextPlayers,
@@ -794,7 +1185,7 @@ function App() {
       pitchingStats: playerState.pitchingStats.map((stat) => ({ ...stat })),
       battingRatings: playerState.battingRatings.map((rating) => ({ ...rating })),
       pitchingRatings: playerState.pitchingRatings.map((rating) => ({ ...rating })),
-      rosterSlots: nextRosterSlots,
+      rosterSlots: repairedRoster.rosterSlots,
       transactions: [
         {
           playerId: trade.fromPlayerId,
@@ -812,12 +1203,20 @@ function App() {
           effectiveDate,
           notes: `Swap return: ${fromPlayer.firstName} ${fromPlayer.lastName}`,
         },
+        ...repairedRoster.promotions.map((promotion) => ({
+          playerId: promotion.playerId,
+          eventType: 'promoted' as const,
+          fromTeamId: promotion.teamId,
+          toTeamId: promotion.teamId,
+          effectiveDate,
+          notes: `Auto-promoted from ${promotion.fromSlot ?? 'unassigned'} to ${promotion.toSlot} after roster reshuffle.`,
+        })),
         ...playerState.transactions.map((transaction) => ({ ...transaction })),
       ],
     };
 
     setPlayerState(nextPlayerState);
-    saveLocalPlayerState(nextPlayerState);
+    saveLocalPlayerStateSafely(nextPlayerState);
 
     try {
       if (isSupabaseConfigured) {
@@ -832,6 +1231,135 @@ function App() {
       pushNotice('Trade completed locally, but syncing player data failed.', 'warning');
     }
   }, [currentDate, games, playerState, pushNotice, selectedDate]);
+
+  const handleApprovePendingTrade = useCallback(async (proposalId: string) => {
+    const proposal = pendingTrades.find((entry) => entry.proposalId === proposalId) ?? null;
+    if (!proposal) {
+      pushNotice('That trade proposal is no longer available.', 'warning');
+      return;
+    }
+
+    await handleTradeProposal({
+      fromTeamId: proposal.fromTeamId,
+      toTeamId: proposal.toTeamId,
+      fromPlayerId: proposal.fromPlayerId,
+      toPlayerId: proposal.toPlayerId,
+    });
+
+    setPendingTrades((current) => current.filter((entry) => entry.proposalId !== proposalId));
+  }, [handleTradeProposal, pendingTrades, pushNotice]);
+
+  const handleVetoPendingTrade = useCallback((proposalId: string) => {
+    setPendingTrades((current) => current.filter((entry) => entry.proposalId !== proposalId));
+    pushNotice('Trade vetoed by the commissioner.', 'info');
+  }, [pushNotice]);
+
+  const handleFreeAgencyAssignment = useCallback(async (
+    assignment: { playerId: string; teamId: string; slotCode: RosterSlotCode; contractYearsLeft: number },
+  ) => {
+    const freeAgent = playerState.players.find((player) => player.playerId === assignment.playerId) ?? null;
+    const team = teams.find((candidate) => candidate.id === assignment.teamId) ?? null;
+    if (!freeAgent || !team) {
+      pushNotice('Free-agency assignment could not be completed.', 'error');
+      return;
+    }
+
+    const effectiveDate = currentDate || selectedDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    const seasonYear = resolveSeasonYear(currentDate, games);
+    const newContractYearsLeft = assignment.contractYearsLeft > 0
+      ? assignment.contractYearsLeft
+      : getGeneratedContractYearsLeft('active', freeAgent.age, Math.random);
+    const existingSlot = playerState.rosterSlots.find((slot) => slot.teamId === assignment.teamId && slot.slotCode === assignment.slotCode) ?? null;
+    const displacedPlayer = existingSlot
+      ? playerState.players.find((player) => player.playerId === existingSlot.playerId) ?? null
+      : null;
+
+    const nextPlayers = playerState.players.map((player) => {
+      if (player.playerId === assignment.playerId) {
+        return { ...player, teamId: assignment.teamId, status: 'active' as const, contractYearsLeft: newContractYearsLeft };
+      }
+      if (displacedPlayer && player.playerId === displacedPlayer.playerId) {
+        return { ...player, teamId: null, status: 'free_agent' as const, contractYearsLeft: 0 };
+      }
+      return { ...player };
+    });
+
+    const preservedSlots = playerState.rosterSlots
+      .filter((slot) => slot.playerId !== assignment.playerId)
+      .map((slot) => {
+        if (slot.teamId === assignment.teamId && slot.slotCode === assignment.slotCode) {
+          return { ...slot, playerId: assignment.playerId, seasonYear };
+        }
+        return { ...slot };
+      });
+
+    const hasUpdatedSlot = preservedSlots.some((slot) => slot.teamId === assignment.teamId && slot.slotCode === assignment.slotCode);
+    const nextRosterSlots = hasUpdatedSlot
+      ? preservedSlots
+      : [
+          ...preservedSlots,
+          {
+            seasonYear,
+            teamId: assignment.teamId,
+            slotCode: assignment.slotCode,
+            playerId: assignment.playerId,
+          },
+        ];
+
+    const nextTransactions = [
+      {
+        playerId: assignment.playerId,
+        eventType: 'signed' as const,
+        fromTeamId: null,
+        toTeamId: assignment.teamId,
+        effectiveDate,
+        notes: `${team.city} signed into ${assignment.slotCode}.`,
+      },
+      ...playerState.transactions.map((transaction) => ({ ...transaction })),
+    ];
+
+    if (displacedPlayer) {
+      nextTransactions.unshift({
+        playerId: displacedPlayer.playerId,
+        eventType: 'released' as const,
+        fromTeamId: assignment.teamId,
+        toTeamId: null,
+        effectiveDate,
+        notes: `${displacedPlayer.firstName} ${displacedPlayer.lastName} lost the ${assignment.slotCode} spot.`,
+      });
+    }
+
+    const nextPlayerState: LeaguePlayerState = {
+      ...playerState,
+      players: nextPlayers,
+      battingStats: playerState.battingStats.map((stat) => ({ ...stat })),
+      pitchingStats: playerState.pitchingStats.map((stat) => ({ ...stat })),
+      battingRatings: playerState.battingRatings.map((rating) => ({ ...rating })),
+      pitchingRatings: playerState.pitchingRatings.map((rating) => ({ ...rating })),
+      rosterSlots: nextRosterSlots,
+      transactions: nextTransactions,
+    };
+
+    setPlayerState(nextPlayerState);
+    setSelectedTeamId(assignment.teamId);
+    saveLocalPlayerStateSafely(nextPlayerState);
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(nextPlayerState);
+      }
+
+      pushNotice(
+        displacedPlayer
+          ? `${freeAgent.firstName} ${freeAgent.lastName} signed with ${team.city} and replaced ${displacedPlayer.firstName} ${displacedPlayer.lastName}.`
+          : `${freeAgent.firstName} ${freeAgent.lastName} signed with ${team.city}.`,
+        'success',
+      );
+    } catch (error) {
+      console.error('Failed to persist free-agency assignment:', error);
+      pushNotice('Free-agent assignment completed locally, but syncing player data failed.', 'warning');
+    }
+  }, [currentDate, games, playerState, pushNotice, selectedDate, teams]);
 
   const applyCompletedGameResults = useCallback(async (completedResults: CompletedGameResult[]) => {
     if (completedResults.length === 0) {
@@ -914,7 +1442,7 @@ function App() {
     setSelectedDate(orderedResults[orderedResults.length - 1]?.game.date ?? selectedDate);
     setProgress(nextProgress);
     setSeasonComplete(nextSeasonComplete);
-    saveLocalPlayerState(nextPlayerState);
+    saveLocalPlayerStateSafely(nextPlayerState);
 
     try {
       await persistLeagueState(nextTeams, settings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
@@ -964,6 +1492,13 @@ function App() {
     setView('teams');
   }, []);
 
+  const openSimulationCenter = useCallback((targetDate?: string) => {
+    if (targetDate) {
+      setSelectedDate(targetDate);
+    }
+    setView('simulation');
+  }, []);
+
   const getDivisionTeams = (league: string, division: string) => {
     return teams.filter(t => t.league === league && t.division === division);
   };
@@ -974,11 +1509,39 @@ function App() {
 
   const activeDate = selectedDate || games[0]?.date || currentDate;
   const currentTimelineDate = currentDate || activeDate;
+  const scheduleViewActive = view === 'games_schedule';
+  const simulationPerformanceMode = isSimulating;
+  const refreshTradeBoard = useCallback(() => {
+    if (!currentTimelineDate) {
+      setPendingTrades([]);
+      setTradeBoardDate('');
+      return;
+    }
+
+    const nextTrades = generatePendingTradeProposals(
+      teams,
+      playerState,
+      games.filter(isRegularSeasonGame),
+      currentTimelineDate,
+    );
+    setPendingTrades(nextTrades);
+    setTradeBoardDate(currentTimelineDate);
+  }, [currentTimelineDate, teams, playerState, games]);
   const allScheduleDates = useMemo(
     () => Array.from(new Set<string>(games.map((game) => game.date))).sort((a, b) => a.localeCompare(b)),
     [games],
   );
+  useEffect(() => {
+    if (simulationPerformanceMode || !currentTimelineDate || tradeBoardDate === currentTimelineDate) {
+      return;
+    }
+    refreshTradeBoard();
+  }, [currentTimelineDate, simulationPerformanceMode, tradeBoardDate, refreshTradeBoard]);
   const bannerDate = useMemo(() => {
+    if (simulationPerformanceMode) {
+      return '';
+    }
+
     const timelineDate = currentTimelineDate;
     if (!timelineDate || allScheduleDates.length === 0) {
       return '';
@@ -990,25 +1553,36 @@ function App() {
     }
 
     return allScheduleDates[currentIndex - 1];
-  }, [allScheduleDates, currentTimelineDate]);
+  }, [allScheduleDates, currentTimelineDate, simulationPerformanceMode]);
 
   const gamesForBannerDate = useMemo(
-    () =>
-      games
-        .filter((game) => game.date === bannerDate)
-        .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
-    [games, bannerDate],
+    () => simulationPerformanceMode
+      ? []
+      : games
+          .filter((game) => game.date === bannerDate)
+          .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
+    [bannerDate, games, simulationPerformanceMode],
   );
 
   const gamesForActiveDate = useMemo(
-    () =>
-      games
-        .filter((game) => game.date === activeDate)
-        .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1)),
-    [games, activeDate],
+    () => scheduleViewActive
+      ? games
+          .filter((game) => game.date === activeDate)
+          .sort((a, b) => (a.status === b.status ? a.gameId.localeCompare(b.gameId) : a.status === 'completed' ? -1 : 1))
+      : [],
+    [activeDate, games, scheduleViewActive],
   );
-  const seasonProgressSummary = useMemo(() => getProjectedSeasonSummary(games), [games]);
+  const seasonProgressSummary = useMemo(
+    () => scheduleViewActive
+      ? getProjectedSeasonSummary(games)
+      : { completedGames: 0, totalGames: 0, remainingGames: 0, progress: 0 },
+    [games, scheduleViewActive],
+  );
   const calendarSummaryByDate = useMemo(() => {
+    if (!scheduleViewActive) {
+      return new Map<string, { total: number; completed: number; scheduled: number; playoff: number }>();
+    }
+
     const summary = new Map<string, { total: number; completed: number; scheduled: number; playoff: number }>();
     games.forEach((game) => {
       const current = summary.get(game.date) ?? { total: 0, completed: 0, scheduled: 0, playoff: 0 };
@@ -1024,17 +1598,39 @@ function App() {
       summary.set(game.date, current);
     });
     return summary;
-  }, [games]);
+  }, [games, scheduleViewActive]);
   const lastRegularSeasonDate = useMemo(() => {
+    if (!scheduleViewActive) {
+      return '';
+    }
+
     const regularSeasonDates = games
       .filter(isRegularSeasonGame)
       .map((game) => game.date)
       .sort((left, right) => left.localeCompare(right));
     return regularSeasonDates[regularSeasonDates.length - 1] ?? '';
-  }, [games]);
+  }, [games, scheduleViewActive]);
 
   const teamLookup = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const playersById = useMemo(() => new Map(playerState.players.map((player) => [player.playerId, player])), [playerState.players]);
+  const battingRatingsByPlayerId = useMemo(
+    () => new Map(playerState.battingRatings.map((rating) => [rating.playerId, rating])),
+    [playerState.battingRatings],
+  );
+  const pitchingRatingsByPlayerId = useMemo(
+    () => new Map(playerState.pitchingRatings.map((rating) => [rating.playerId, rating])),
+    [playerState.pitchingRatings],
+  );
   const pregameRecordByGameId = useMemo(() => {
+    if (!scheduleViewActive) {
+      return new Map<string, {
+        awayWins: number;
+        awayLosses: number;
+        homeWins: number;
+        homeLosses: number;
+      }>();
+    }
+
     const orderedGames = [...games].sort((a, b) => (a.date === b.date ? a.gameId.localeCompare(b.gameId) : a.date.localeCompare(b.date)));
     const currentRecords = new Map<string, { wins: number; losses: number }>(
       teams.map((team) => [team.id, { wins: 0, losses: 0 }]),
@@ -1073,7 +1669,7 @@ function App() {
     });
 
     return snapshots;
-  }, [games, teams]);
+  }, [games, scheduleViewActive, teams]);
 
   const getStatNumber = (game: Game, key: string): number => {
     const value = game.stats[key];
@@ -1167,43 +1763,106 @@ function App() {
 
     return `${winnerPrimary} defeat ${loserPrimary} ${winnerRuns}-${loserRuns} in ${homeVenue}.`;
   }, [getFallbackHits, teamLookup]);
+  const buildBroadcastTransactionSummary = useCallback((transaction: PlayerTransaction) => {
+    const player = playersById.get(transaction.playerId);
+    const team = transaction.toTeamId ? teamLookup.get(transaction.toTeamId) ?? null : null;
+    const fromTeam = transaction.fromTeamId ? teamLookup.get(transaction.fromTeamId) ?? null : null;
+    const playerName = player ? `${player.firstName} ${player.lastName}` : 'Unknown Player';
+    const overall = player
+      ? battingRatingsByPlayerId.get(player.playerId)?.overall ?? pitchingRatingsByPlayerId.get(player.playerId)?.overall ?? 0
+      : 0;
 
-  const activeDateHasPlayoffs = useMemo(() => gamesForActiveDate.some((game) => isPlayoffGame(game)), [gamesForActiveDate]);
+    if (transaction.eventType === 'signed') {
+      return `${team?.city ?? 'A contender'} make a real market statement by signing ${playerName}${overall > 0 ? `, an ${overall}-OVR addition,` : ''} for the next chapter.`;
+    }
+
+    if (transaction.eventType === 'released') {
+      return `${playerName} hits the open market after departing ${fromTeam?.city ?? 'his previous club'}.`;
+    }
+
+    if (transaction.eventType === 'traded') {
+      if (overall >= 86) {
+        return `${team?.city ?? 'A contender'} land ${playerName}${overall > 0 ? `, an ${overall}-OVR star,` : ''} in a blockbuster trade that shakes the league office.`;
+      }
+      return `${playerName} changes uniforms as the league office processes another major trade swing.`;
+    }
+
+    return `${playerName} is back in the news as league movement continues.`;
+  }, [battingRatingsByPlayerId, pitchingRatingsByPlayerId, playersById, teamLookup]);
+
+  const activeDateHasPlayoffs = useMemo(
+    () => scheduleViewActive && gamesForActiveDate.some((game) => isPlayoffGame(game)),
+    [gamesForActiveDate, scheduleViewActive],
+  );
   const currentTimelineTimeLabel = useMemo(
     () => getCurrentSimTimeLabel(games, currentTimelineDate),
     [games, currentTimelineDate],
   );
+  const transactionDates = useMemo(
+    () => simulationPerformanceMode
+      ? []
+      : Array.from(new Set(playerState.transactions.map((transaction) => transaction.effectiveDate))).sort((a, b) => a.localeCompare(b)),
+    [playerState.transactions, simulationPerformanceMode],
+  );
   const broadcastFlairDate = useMemo(() => {
-    if (!currentTimelineDate || allScheduleDates.length === 0) {
+    if (simulationPerformanceMode) {
+      return '';
+    }
+
+    if (!currentTimelineDate && allScheduleDates.length === 0 && transactionDates.length === 0) {
       return '';
     }
 
     const todaysCompleted = games.some((game) => game.date === currentTimelineDate && game.status === 'completed');
-    if (todaysCompleted) {
+    const todaysTransactions = playerState.transactions.some((transaction) => transaction.effectiveDate === currentTimelineDate);
+    if (todaysCompleted || todaysTransactions) {
       return currentTimelineDate;
     }
 
     const currentIndex = allScheduleDates.indexOf(currentTimelineDate);
     for (let index = currentIndex - 1; index >= 0; index -= 1) {
       const candidateDate = allScheduleDates[index];
-      if (games.some((game) => game.date === candidateDate && game.status === 'completed')) {
+      if (
+        games.some((game) => game.date === candidateDate && game.status === 'completed') ||
+        playerState.transactions.some((transaction) => transaction.effectiveDate === candidateDate)
+      ) {
         return candidateDate;
       }
     }
 
+    const latestTransactionDate = transactionDates[transactionDates.length - 1] ?? '';
+    if (latestTransactionDate) {
+      return latestTransactionDate;
+    }
+
     return currentTimelineDate;
-  }, [allScheduleDates, currentTimelineDate, games]);
+  }, [allScheduleDates, currentTimelineDate, games, playerState.transactions, simulationPerformanceMode, transactionDates]);
   const flairGames = useMemo(
-    () =>
-      games
-        .filter((game) => game.date === broadcastFlairDate && game.status === 'completed')
-        .sort((a, b) => a.gameId.localeCompare(b.gameId)),
-    [broadcastFlairDate, games],
+    () => simulationPerformanceMode
+      ? []
+      : games
+          .filter((game) => game.date === broadcastFlairDate && game.status === 'completed')
+          .sort((a, b) => a.gameId.localeCompare(b.gameId)),
+    [broadcastFlairDate, games, simulationPerformanceMode],
   );
-  const flairLabel = broadcastFlairDate === currentTimelineDate ? 'Today' : 'Yesterday';
+  const flairTransactions = useMemo(
+    () => simulationPerformanceMode
+      ? []
+      : playerState.transactions
+          .filter((transaction) => transaction.effectiveDate === broadcastFlairDate && transaction.eventType === 'signed')
+          .sort((left, right) => left.playerId.localeCompare(right.playerId)),
+    [broadcastFlairDate, playerState.transactions, simulationPerformanceMode],
+  );
+  const flairLabel = simulationPerformanceMode ? 'Simulation' : broadcastFlairDate === currentTimelineDate ? 'Today' : 'Yesterday';
   const flairSummaries = useMemo(
-    () => flairGames.map((game) => ({ gameId: game.gameId, summary: buildBroadcastSummary(game) })),
-    [buildBroadcastSummary, flairGames],
+    () => [
+      ...flairTransactions.map((transaction) => ({
+        gameId: `txn-${transaction.playerId}-${transaction.effectiveDate}`,
+        summary: buildBroadcastTransactionSummary(transaction),
+      })),
+      ...flairGames.map((game) => ({ gameId: game.gameId, summary: buildBroadcastSummary(game) })),
+    ],
+    [buildBroadcastSummary, buildBroadcastTransactionSummary, flairGames, flairTransactions],
   );
   const flairSignature = useMemo(
     () => flairSummaries.map((item) => `${item.gameId}:${item.summary}`).join('|'),
@@ -1244,29 +1903,33 @@ function App() {
   }, [broadcastHighlightTokens]);
 
   useEffect(() => {
-    setFlairIndex(0);
-    setIsFlairVisible(true);
-  }, [flairSignature]);
-
-  useEffect(() => {
-    if (flairSummaries.length <= 1) {
+    if (simulationPerformanceMode) {
       return;
     }
 
-    const holdTimer = window.setTimeout(() => {
+    setFlairIndex(0);
+    setIsFlairVisible(true);
+  }, [flairSignature, simulationPerformanceMode]);
+
+  useEffect(() => {
+    if (simulationPerformanceMode || flairSummaries.length <= 1) {
+      return;
+    }
+
+    const holdTimer = globalThis.setTimeout(() => {
       setIsFlairVisible(false);
     }, 7000);
 
-    const swapTimer = window.setTimeout(() => {
+    const swapTimer = globalThis.setTimeout(() => {
       setFlairIndex((previous) => (previous + 1) % flairSummaries.length);
       setIsFlairVisible(true);
     }, 7450);
 
     return () => {
-      window.clearTimeout(holdTimer);
-      window.clearTimeout(swapTimer);
+      globalThis.clearTimeout(holdTimer);
+      globalThis.clearTimeout(swapTimer);
     };
-  }, [flairIndex, flairSummaries]);
+  }, [flairIndex, flairSummaries, simulationPerformanceMode]);
   const selectedGame = useMemo(
     () => (selectedGameId ? games.find((game) => game.gameId === selectedGameId) ?? null : null),
     [games, selectedGameId],
@@ -1325,73 +1988,84 @@ function App() {
 
       <div className="sticky top-0 z-50">
         <div className="border-b border-white/10 bg-[#111111]/96 backdrop-blur">
-          <div className="flex items-center gap-3 px-3 sm:px-5 lg:px-8 py-2">
-            <div className="hidden md:flex min-w-[170px] items-center gap-2 border-r border-white/10 pr-4">
-              <div className="h-2 w-2 rounded-full bg-platinum" />
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Yesterday</p>
-                <p className="font-mono text-xs text-zinc-200">{formatHeaderDate(bannerDate || currentTimelineDate)}</p>
+          {simulationPerformanceMode ? (
+            <div className="px-3 py-3 sm:px-5 lg:px-8">
+              <div className="rounded-xl border border-[#d4bb6a]/20 bg-[#d4bb6a]/8 px-4 py-3">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#d8c88b]">Simulation Focus Mode</p>
+                <p className="mt-1 text-sm text-zinc-200">
+                  Live score banners and ticker updates are paused while the calendar sim runs.
+                </p>
               </div>
             </div>
+          ) : (
+            <div className="flex items-center gap-3 px-3 sm:px-5 lg:px-8 py-2">
+              <div className="hidden md:flex min-w-[170px] items-center gap-2 border-r border-white/10 pr-4">
+                <div className="h-2 w-2 rounded-full bg-platinum" />
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Yesterday</p>
+                  <p className="font-mono text-xs text-zinc-200">{formatHeaderDate(bannerDate || currentTimelineDate)}</p>
+                </div>
+              </div>
 
-            <div className="flex-1 overflow-x-auto scrollbar-subtle">
-              <div className="flex min-w-max gap-2">
-                {gamesForBannerDate.length === 0 ? (
-                  <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                    No games on previous sim date
-                  </div>
-                ) : (
-                  gamesForBannerDate.map((game) => {
-                    const awayTeam = teamLookup.get(game.awayTeam);
-                    const homeTeam = teamLookup.get(game.homeTeam);
-                    const awayRuns = game.status === 'completed' ? game.score.away : 0;
-                    const homeRuns = game.status === 'completed' ? game.score.home : 0;
-                    const isPlayoffBannerGame = isPlayoffGame(game);
+              <div className="flex-1 overflow-x-auto scrollbar-subtle">
+                <div className="flex min-w-max gap-2">
+                  {gamesForBannerDate.length === 0 ? (
+                    <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                      No games on previous sim date
+                    </div>
+                  ) : (
+                    gamesForBannerDate.map((game) => {
+                      const awayTeam = teamLookup.get(game.awayTeam);
+                      const homeTeam = teamLookup.get(game.homeTeam);
+                      const awayRuns = game.status === 'completed' ? game.score.away : 0;
+                      const homeRuns = game.status === 'completed' ? game.score.home : 0;
+                      const isPlayoffBannerGame = isPlayoffGame(game);
 
-                    return (
-                      <button
-                        key={`banner-${game.gameId}`}
-                        onClick={() => openGameScreen(game.gameId)}
-                        className={`min-w-[196px] rounded-xl border px-3 py-2 text-left transition-colors hover:border-white/25 ${
-                          isPlayoffBannerGame
-                            ? 'border-zinc-200/20 bg-zinc-100/[0.06]'
-                            : 'border-white/10 bg-white/[0.04]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className={`font-mono text-[10px] uppercase tracking-[0.16em] ${
-                            game.status === 'completed' ? 'text-zinc-200' : 'text-zinc-500'
-                          }`}>
-                            {game.status === 'completed' ? 'Final' : 'Scheduled'}
-                          </span>
-                          {isPlayoffBannerGame && (
-                            <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-300">PL</span>
-                          )}
-                        </div>
-
-                        <div className="mt-2 space-y-2">
-                          <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
-                            {awayTeam ? <TeamLogo team={awayTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
-                            <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
-                              {awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase()}
+                      return (
+                        <button
+                          key={`banner-${game.gameId}`}
+                          onClick={() => openGameScreen(game.gameId)}
+                          className={`min-w-[196px] rounded-xl border px-3 py-2 text-left transition-colors hover:border-white/25 ${
+                            isPlayoffBannerGame
+                              ? 'border-zinc-200/20 bg-zinc-100/[0.06]'
+                              : 'border-white/10 bg-white/[0.04]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`font-mono text-[10px] uppercase tracking-[0.16em] ${
+                              game.status === 'completed' ? 'text-zinc-200' : 'text-zinc-500'
+                            }`}>
+                              {game.status === 'completed' ? 'Final' : 'Scheduled'}
                             </span>
-                            <span className="font-mono text-right text-sm text-white">{awayRuns}</span>
+                            {isPlayoffBannerGame && (
+                              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-300">PL</span>
+                            )}
                           </div>
-                          <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
-                            {homeTeam ? <TeamLogo team={homeTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
-                            <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
-                              {homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase()}
-                            </span>
-                            <span className="font-mono text-right text-sm text-white">{homeRuns}</span>
+
+                          <div className="mt-2 space-y-2">
+                            <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
+                              {awayTeam ? <TeamLogo team={awayTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
+                              <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
+                                {awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase()}
+                              </span>
+                              <span className="font-mono text-right text-sm text-white">{awayRuns}</span>
+                            </div>
+                            <div className="grid grid-cols-[24px_minmax(0,1fr)_28px] items-center gap-2">
+                              {homeTeam ? <TeamLogo team={homeTeam} sizeClass="w-6 h-6" /> : <div className="w-6 h-6" />}
+                              <span className="font-mono text-xs uppercase tracking-[0.08em] text-zinc-200 truncate">
+                                {homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase()}
+                              </span>
+                              <span className="font-mono text-right text-sm text-white">{homeRuns}</span>
+                            </div>
                           </div>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10">
@@ -1458,6 +2132,13 @@ function App() {
               <span className="font-display text-lg uppercase tracking-wide">Calendar</span>
             </button>
             <button
+              onClick={() => setView('simulation')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'simulation' ? 'bg-[#d4bb6a] text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Activity className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Simulation</span>
+            </button>
+            <button
               onClick={() => setView('league_standings')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
@@ -1477,6 +2158,20 @@ function App() {
             >
               <Users className="w-5 h-5" />
               <span className="font-display text-lg uppercase tracking-wide">Teams</span>
+            </button>
+            <button
+              onClick={() => setView('free_agency')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'free_agency' ? 'bg-[#d4bb6a] text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <BriefcaseBusiness className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Free Agency</span>
+            </button>
+            <button
+              onClick={() => setView('trades')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'trades' ? 'bg-[#d4bb6a] text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <ArrowLeftRight className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Trades</span>
             </button>
             <button
               onClick={() => setView('playoffs')}
@@ -1521,9 +2216,12 @@ function App() {
             <button onClick={() => setView('dashboard')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'dashboard' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Home</button>
             <button onClick={() => setView('games_schedule')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'games_schedule' ? 'bg-prestige text-black' : 'bg-[#202020] text-zinc-300'}`}>Scores</button>
             <button onClick={() => setView('team_calendar')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'team_calendar' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Calendar</button>
+            <button onClick={() => setView('simulation')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'simulation' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Simulation</button>
             <button onClick={() => setView('league_standings')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'league_standings' ? 'bg-platinum text-black' : 'bg-[#202020] text-zinc-300'}`}>Standings</button>
             <button onClick={() => setView('leaders')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'leaders' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Leaders</button>
             <button onClick={openRandomTeamPage} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'teams' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Teams</button>
+            <button onClick={() => setView('free_agency')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'free_agency' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Free Agency</button>
+            <button onClick={() => setView('trades')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'trades' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Trades</button>
             <button onClick={() => setView('playoffs')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Playoffs</button>
             <button onClick={() => setView('players')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'players' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Rosters</button>
             <button onClick={() => setView('gpb_book')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Engine</button>
@@ -1864,7 +2562,8 @@ function App() {
                   onSelectTeamId={setSelectedTeamId}
                   onOpenGame={openGameScreen}
                   onOpenTeams={() => setView('teams')}
-                  onOpenPlayers={() => setView('players')}
+                  onOpenSimulation={openSimulationCenter}
+                  onOpenFreeAgency={() => setView('free_agency')}
                   onOpenStandings={() => setView('league_standings')}
                   onSimulateToSelectedDate={simulateToSelectedDate}
                   onSimulateToEndOfRegularSeason={simulateToEndOfRegularSeason}
@@ -1876,6 +2575,29 @@ function App() {
                   onResetSeason={() => resetSeason()}
                   onSimulateToDate={simulateToDate}
                   onProposeTrade={handleTradeProposal}
+                />
+              )}
+
+              {view === 'simulation' && (
+                <SimulationHub
+                  teams={teams}
+                  games={games}
+                  currentDate={currentDate}
+                  selectedDate={selectedDate}
+                  selectedTeamId={selectedTeamId}
+                  isSimulating={isSimulating}
+                  seasonComplete={seasonComplete}
+                  simulationProgress={simulationProgress}
+                  simulationRunState={simulationRunState}
+                  onSelectDate={setSelectedDate}
+                  onSelectTeamId={setSelectedTeamId}
+                  onStartSimulation={(target) => {
+                    void runSimulationTarget(target);
+                  }}
+                  onCancelSimulation={cancelSimulationRun}
+                  onResetSeason={() => resetSeason()}
+                  onOpenTrades={() => setView('trades')}
+                  onOpenFreeAgency={() => setView('free_agency')}
                 />
               )}
 
@@ -1916,6 +2638,36 @@ function App() {
                   battingStats={playerState.battingStats}
                   pitchingStats={playerState.pitchingStats}
                   rosterSlots={playerState.rosterSlots}
+                />
+              )}
+
+              {view === 'free_agency' && (
+                <FreeAgencyHub
+                  teams={teams}
+                  players={playerState.players}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
+                  rosterSlots={playerState.rosterSlots}
+                  currentDate={currentDate}
+                  seasonComplete={seasonComplete}
+                  onAssignPlayer={handleFreeAgencyAssignment}
+                  onExit={() => setView('dashboard')}
+                />
+              )}
+
+              {view === 'trades' && (
+                <TradesHub
+                  teams={teams}
+                  players={playerState.players}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  pendingTrades={pendingTrades}
+                  currentDate={currentTimelineDate}
+                  onApproveTrade={handleApprovePendingTrade}
+                  onVetoTrade={handleVetoPendingTrade}
+                  onRefreshBoard={refreshTradeBoard}
                 />
               )}
 
@@ -2101,23 +2853,85 @@ function App() {
       </div>
 
       <AnimatePresence>
-        {isSimulating && simulationProgress && (
+        {tradeInterruptionPrompt && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/72 px-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm"
           >
             <motion.div
-              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              initial={{ opacity: 0, y: 18, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.98 }}
-              className="w-full max-w-xl rounded-[2rem] border border-[#d4bb6a]/20 bg-[linear-gradient(135deg,#121212,#1b1b1b,#101010)] p-6 shadow-[0_28px_80px_rgba(0,0,0,0.52)]"
+              exit={{ opacity: 0, y: 14, scale: 0.98 }}
+              className="w-full max-w-xl rounded-[2rem] border border-[#d4bb6a]/25 bg-[linear-gradient(145deg,#121212,#1a1a1a,#0c0c0c)] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.6)]"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-[#d4bb6a]/30 bg-[#d4bb6a]/10">
+                    <ArrowLeftRight className="h-7 w-7 text-[#ecd693]" />
+                  </div>
+                  <div>
+                    <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Alert</p>
+                    <p className="mt-2 font-headline text-4xl uppercase tracking-[0.06em] text-white">
+                      {tradeInterruptionPrompt.count} Trade{tradeInterruptionPrompt.count === 1 ? '' : 's'} Need Approval
+                    </p>
+                    <p className="mt-3 max-w-lg text-sm leading-6 text-zinc-300">
+                      The sim finished {tradeInterruptionPrompt.date} before stopping. Review the proposals when you are ready without forcing an immediate screen swap.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTradeInterruptionPrompt(null)}
+                  className="rounded-full border border-white/10 bg-black/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400 transition-colors hover:border-white/20 hover:text-white"
+                >
+                  Later
+                </button>
+              </div>
+
+              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTradeInterruptionPrompt(null);
+                    setView('trades');
+                  }}
+                  className="rounded-2xl border border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.26),rgba(212,187,106,0.1))] px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-white"
+                >
+                  Open Trade Desk
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTradeInterruptionPrompt(null)}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-zinc-300 transition-colors hover:border-white/20 hover:text-white"
+                >
+                  Stay Here
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {view !== 'simulation' && isSimulating && simulationProgress && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed bottom-24 right-4 z-[80] w-[min(360px,calc(100vw-2rem))]"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 12 }}
+              className="w-full rounded-[1.75rem] border border-[#d4bb6a]/20 bg-[linear-gradient(135deg,#121212,#1b1b1b,#101010)] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.52)]"
             >
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Simulation</p>
-                  <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">{simulationProgress.label}</p>
+                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{simulationProgress.label}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-right">
                   <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Active date</p>
@@ -2149,8 +2963,25 @@ function App() {
                   />
                 </div>
                 <p className="mt-4 text-sm leading-6 text-zinc-400">
-                  Each scheduled game is being resolved through the player-driven simulation engine and season stats are being updated game by game.
+                  Simulation is running in the background. You can keep using other tabs while the calendar advances.
                 </p>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setView('simulation')}
+                  className="rounded-2xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-[#f3dea1]"
+                >
+                  Open Sim
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelSimulationRun}
+                  className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-white"
+                >
+                  Stop
+                </button>
               </div>
             </motion.div>
           </motion.div>
@@ -2159,41 +2990,53 @@ function App() {
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0f0f0f]/95 backdrop-blur">
         <div className="flex items-center gap-4 px-4 sm:px-6 lg:px-8 py-3">
-          <div className="hidden md:flex min-w-[132px] items-center gap-3 border-r border-white/10 pr-4">
-            <div className="h-2 w-2 rounded-full bg-prestige" />
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{flairLabel}</p>
-              <p className="font-mono text-xs text-zinc-200">
-                {broadcastFlairDate ? formatHeaderDate(broadcastFlairDate) : 'No Results'}
+          {simulationPerformanceMode ? (
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#d8c88b]">Simulation active</p>
+              <p className="mt-1 text-sm text-zinc-300">
+                The calendar is updating day by day. Broadcast crawl is paused until the run stops.
               </p>
             </div>
-          </div>
-          <div className="min-w-0 flex-1">
-            {activeFlairItem ? (
-              <button
-                key={`flair-active-${activeFlairItem.gameId}-${flairIndex}`}
-                onClick={() => openGameScreen(activeFlairItem.gameId)}
-                className={`block w-full overflow-hidden text-left transition-opacity duration-300 ${
-                  isFlairVisible ? 'opacity-100' : 'opacity-0'
-                }`}
-              >
-                {shouldMarqueeFlair ? (
-                  <div className="broadcast-marquee">
-                    <div className="broadcast-marquee__track">
-                      <span className="text-base md:text-lg text-zinc-100">{renderBroadcastText(activeFlairItem.summary)}</span>
-                      <span className="broadcast-marquee__gap" aria-hidden="true">|</span>
-                      <span className="text-base md:text-lg text-zinc-100" aria-hidden="true">{renderBroadcastText(activeFlairItem.summary)}</span>
-                    </div>
-                  </div>
+          ) : (
+            <>
+              <div className="hidden md:flex min-w-[132px] items-center gap-3 border-r border-white/10 pr-4">
+                <div className="h-2 w-2 rounded-full bg-prestige" />
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{flairLabel}</p>
+                  <p className="font-mono text-xs text-zinc-200">
+                    {broadcastFlairDate ? formatHeaderDate(broadcastFlairDate) : 'No Results'}
+                  </p>
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                {activeFlairItem ? (
+                  <button
+                    key={`flair-active-${activeFlairItem.gameId}-${flairIndex}`}
+                    onClick={() => openGameScreen(activeFlairItem.gameId)}
+                    className={`block w-full overflow-hidden text-left transition-opacity duration-300 ${
+                      isFlairVisible ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  >
+                    {shouldMarqueeFlair ? (
+                      <div className="broadcast-marquee">
+                        <div className="broadcast-marquee__track">
+                          <span className="text-base md:text-lg text-zinc-100">{renderBroadcastText(activeFlairItem.summary)}</span>
+                          <span className="broadcast-marquee__gap" aria-hidden="true">|</span>
+                          <span className="text-base md:text-lg text-zinc-100" aria-hidden="true">{renderBroadcastText(activeFlairItem.summary)}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-base md:text-lg text-zinc-100 truncate">{renderBroadcastText(activeFlairItem.summary)}</p>
+                    )}
+                  </button>
                 ) : (
-                  <p className="text-base md:text-lg text-zinc-100 truncate">{renderBroadcastText(activeFlairItem.summary)}</p>
-                )}              </button>
-            ) : (
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                No completed games to report yet.
-              </p>
-            )}
-          </div>
+                  <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
+                    No completed games to report yet.
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

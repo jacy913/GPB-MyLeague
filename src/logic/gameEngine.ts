@@ -844,6 +844,37 @@ const completeGame = (session: GameSessionState, description: string): GameSessi
   return appendLog(completed, createLog(completed, 'GAME_END', description, null, null, null, 0, 0, []));
 };
 
+const completeBrokenGameByForfeit = (
+  session: GameSessionState,
+  awayTeam: Team,
+  homeTeam: Team,
+  brokenTeamId: string,
+  reason: string,
+): GameSessionState => {
+  const awayBroken = brokenTeamId === awayTeam.id;
+  const awayRuns = awayBroken
+    ? session.scoreboard.awayRuns
+    : Math.max(session.scoreboard.awayRuns, session.scoreboard.homeRuns + 1, 1);
+  const homeRuns = awayBroken
+    ? Math.max(session.scoreboard.homeRuns, session.scoreboard.awayRuns + 1, 1)
+    : session.scoreboard.homeRuns;
+  const winner = awayBroken ? homeTeam : awayTeam;
+  const loser = awayBroken ? awayTeam : homeTeam;
+
+  return completeGame(
+    {
+      ...session,
+      scoreboard: {
+        ...session.scoreboard,
+        awayRuns,
+        homeRuns,
+      },
+      lineScore: updateLineScore([], 1, awayBroken ? 'bottom' : 'top', awayBroken ? homeRuns : awayRuns),
+    },
+    `${winner.city} ${winner.name} take a forfeit win over ${loser.city} ${loser.name}. ${reason}`,
+  );
+};
+
 const parseStoredParticipants = (game: Game): GameParticipantsSnapshot | null => {
   const raw = typeof game.stats.participants === 'string' ? game.stats.participants : null;
   if (!raw) {
@@ -1213,8 +1244,26 @@ export const simulateGameToFinal = (
   settings: SimulationSettings,
 ): GameSessionState => {
   let current = session.status === 'pregame' ? startGameSession(session) : session;
+  let stalledSteps = 0;
   while (current.status !== 'completed') {
-    current = simulateNextAtBat(current, awayTeam, homeTeam, settings);
+    const next = simulateNextAtBat(current, awayTeam, homeTeam, settings);
+    if (next === current) {
+      stalledSteps += 1;
+      const missingBatter = getCurrentBatter(current);
+      const missingPitcher = getCurrentPitcher(current);
+      if (!missingBatter || !missingPitcher || stalledSteps >= 3) {
+        const brokenTeamId = !missingBatter ? getBattingTeamId(current) : getFieldingTeamId(current);
+        const reason = !missingBatter
+          ? 'The batting side had no valid lineup entry available.'
+          : !missingPitcher
+            ? 'The fielding side had no valid pitcher available.'
+            : 'The game state stalled unexpectedly and was terminated to protect the simulation.';
+        return completeBrokenGameByForfeit(current, awayTeam, homeTeam, brokenTeamId, reason);
+      }
+    } else {
+      stalledSteps = 0;
+    }
+    current = next;
   }
   return current;
 };

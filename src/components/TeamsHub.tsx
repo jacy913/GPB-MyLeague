@@ -9,13 +9,16 @@ import {
   PlayerPitchingRatings,
   PlayerSeasonBatting,
   PlayerSeasonPitching,
+  RESERVE_ROSTER_SLOTS,
   STARTING_PITCHER_SLOTS,
   Team,
+  TEAM_ACTIVE_ROSTER_SIZE,
   TeamRosterSlot,
 } from '../types';
 import { getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
+import { AttributeRadar } from './AttributeRadar';
 import { TeamLogo } from './TeamLogo';
 
 interface TeamsHubProps {
@@ -45,6 +48,8 @@ const getFallbackHits = (game: Game, side: 'away' | 'home'): number => {
   const runs = side === 'away' ? game.score.away : game.score.home;
   return runs + 3 + (hashKey(`${game.gameId}:${side}:team-hits`) % 5);
 };
+
+const formatRosterSlotLabel = (slotCode: string): string => (slotCode.startsWith('BN') ? `Bench ${slotCode.slice(2)}` : slotCode);
 
 const getHitsForTeam = (teamId: string, games: Game[]): number =>
   games.reduce((total, game) => {
@@ -445,7 +450,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   ]);
 
   const teamRosterPlayers = useMemo(() => {
-    const slotOrder = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS];
+    const slotOrder = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS, ...RESERVE_ROSTER_SLOTS];
     return slotOrder
       .map((slotCode) => {
         const entry = selectedTeamRosterBySlot.get(slotCode);
@@ -497,8 +502,31 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
     [selectedRosterPlayerId, teamRosterPlayers],
   );
   const selectedRosterOverall = selectedRosterPlayer?.battingRatings?.overall ?? selectedRosterPlayer?.pitchingRatings?.overall ?? null;
-  const selectedRosterPotentialOverall =
-    selectedRosterPlayer?.battingRatings?.potentialOverall ?? selectedRosterPlayer?.pitchingRatings?.potentialOverall ?? null;
+  const selectedRosterAttributePoints = useMemo(() => {
+    if (selectedRosterPlayer?.player.playerType === 'batter' && selectedRosterPlayer.battingRatings) {
+      return [
+        { label: 'Contact', value: selectedRosterPlayer.battingRatings.contact },
+        { label: 'Power', value: selectedRosterPlayer.battingRatings.power },
+        { label: 'Discipline', value: selectedRosterPlayer.battingRatings.plateDiscipline },
+        { label: 'Avoid K', value: selectedRosterPlayer.battingRatings.avoidStrikeout },
+        { label: 'Speed', value: selectedRosterPlayer.battingRatings.speed },
+        { label: 'Fielding', value: selectedRosterPlayer.battingRatings.fielding },
+      ];
+    }
+
+    if (selectedRosterPlayer?.player.playerType === 'pitcher' && selectedRosterPlayer.pitchingRatings) {
+      return [
+        { label: 'Stuff', value: selectedRosterPlayer.pitchingRatings.stuff },
+        { label: 'Command', value: selectedRosterPlayer.pitchingRatings.command },
+        { label: 'Control', value: selectedRosterPlayer.pitchingRatings.control },
+        { label: 'Movement', value: selectedRosterPlayer.pitchingRatings.movement },
+        { label: 'Stamina', value: selectedRosterPlayer.pitchingRatings.stamina },
+        { label: 'Fielding', value: selectedRosterPlayer.pitchingRatings.fielding },
+      ];
+    }
+
+    return [];
+  }, [selectedRosterPlayer]);
 
   return (
     <section className="space-y-6">
@@ -752,7 +780,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
               <h2 className="font-display text-3xl uppercase tracking-[0.12em] text-white">Roster</h2>
             </div>
             <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-              {selectedTeamRosterBySlot.size}/19 assigned{activeRosterSeasonYear !== null ? ` | ${activeRosterSeasonYear}` : ''}
+              {selectedTeamRosterBySlot.size}/{TEAM_ACTIVE_ROSTER_SIZE} assigned{activeRosterSeasonYear !== null ? ` | ${activeRosterSeasonYear}` : ''}
             </p>
           </div>
           <div className="mt-4 grid grid-cols-1 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)] gap-6">
@@ -777,13 +805,13 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   </h2>
                   <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400 mt-2">
                     {selectedRosterPlayer
-                      ? `${selectedRosterPlayer.player.primaryPosition}${selectedRosterPlayer.player.secondaryPosition ? ` / ${selectedRosterPlayer.player.secondaryPosition}` : ''} | ${selectedRosterPlayer.player.status.replace('_', ' ')}`
+                      ? `${formatRosterSlotLabel(selectedRosterPlayer.slotCode)} | ${selectedRosterPlayer.player.primaryPosition}${selectedRosterPlayer.player.secondaryPosition ? ` / ${selectedRosterPlayer.player.secondaryPosition}` : ''} | ${selectedRosterPlayer.player.status.replace('_', ' ')}`
                       : 'No rostered players loaded yet.'}
                   </p>
-                  <p className="text-sm text-zinc-300 mt-4">
+                  <p className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-300 mt-4">
                     {selectedRosterPlayer
-                      ? `Age ${selectedRosterPlayer.player.age}. Bats ${selectedRosterPlayer.player.bats}, throws ${selectedRosterPlayer.player.throws}. Currently attached to the ${selectedTeam.city} organization.`
-                      : 'This panel will show the currently selected player on the team roster.'}
+                      ? `Bats ${selectedRosterPlayer.player.bats} | Throws ${selectedRosterPlayer.player.throws} | ${selectedRosterPlayer.player.contractYearsLeft} Year${selectedRosterPlayer.player.contractYearsLeft === 1 ? '' : 's'} Left`
+                      : 'Bats -- | Throws -- | Years Left --'}
                   </p>
                 </div>
 
@@ -821,9 +849,9 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Roster Slot</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Height</p>
                   <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                    {selectedRosterPlayer?.slotCode ?? '---'}
+                    {selectedRosterPlayer?.player.height ?? '---'}
                   </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
@@ -833,9 +861,9 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Potential</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Weight</p>
                   <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                    {selectedRosterPotentialOverall ?? '---'}
+                    {selectedRosterPlayer ? `${selectedRosterPlayer.player.weightLbs} lbs` : '---'}
                   </p>
                 </div>
               </div>
@@ -846,28 +874,11 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Attributes</h3>
                 </div>
                 {selectedRosterPlayer ? (
-                  selectedRosterPlayer.player.playerType === 'batter' && selectedRosterPlayer.battingRatings ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-sm">
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Contact</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.contact}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Power</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.power}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Discipline</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.plateDiscipline}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Avoid K</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.avoidStrikeout}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Speed</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.speed}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Baserun</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.baserunning}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Fielding</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.fielding}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Arm</span><span className="text-zinc-100">{selectedRosterPlayer.battingRatings.arm}</span></div>
-                    </div>
-                  ) : selectedRosterPlayer.player.playerType === 'pitcher' && selectedRosterPlayer.pitchingRatings ? (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-sm">
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Stuff</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.stuff}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Command</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.command}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Control</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.control}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Movement</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.movement}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Stamina</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.stamina}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Hold</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.holdRunners}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Fielding</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.fielding}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-zinc-500">Pot OVR</span><span className="text-zinc-100">{selectedRosterPlayer.pitchingRatings.potentialOverall}</span></div>
-                    </div>
+                  selectedRosterAttributePoints.length > 0 ? (
+                    <AttributeRadar
+                      points={selectedRosterAttributePoints}
+                      accent={selectedRosterPlayer.player.playerType === 'pitcher' ? '#0fe7d5' : '#d4bb6a'}
+                    />
                   ) : (
                     <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">No ratings loaded for this player yet.</p>
                   )
@@ -920,10 +931,10 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
               </div>
 
               <div className="rounded-2xl border border-white/10 overflow-hidden">
-                <div className="grid grid-cols-[56px_minmax(0,1.7fr)_84px_84px_84px_84px] gap-3 bg-white/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                <div className="grid grid-cols-[56px_minmax(0,1.7fr)_96px_84px_84px_84px] gap-3 bg-white/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
                   <span>Club</span>
                   <span>Name</span>
-                  <span>Pos</span>
+                  <span>Slot</span>
                   <span>Age</span>
                   <span>Ovr</span>
                   <span>Pot</span>
@@ -944,7 +955,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                         <button
                           key={entry.player.playerId}
                           onClick={() => setSelectedRosterPlayerId(entry.player.playerId)}
-                          className={`grid w-full grid-cols-[56px_minmax(0,1.7fr)_84px_84px_84px_84px] gap-3 px-4 py-3 text-left transition-colors ${
+                          className={`grid w-full grid-cols-[56px_minmax(0,1.7fr)_96px_84px_84px_84px] gap-3 px-4 py-3 text-left transition-colors ${
                             isSelected ? 'bg-white/10' : 'bg-transparent hover:bg-white/5'
                           }`}
                         >
@@ -955,8 +966,12 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                             <p className="font-display text-xl uppercase tracking-[0.08em] text-white truncate">
                               {entry.player.firstName} {entry.player.lastName}
                             </p>
+                            <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500 truncate">
+                              {entry.player.primaryPosition}
+                              {entry.player.secondaryPosition ? ` / ${entry.player.secondaryPosition}` : ''}
+                            </p>
                           </div>
-                          <span className="font-display text-xl uppercase tracking-[0.06em] text-zinc-100">{entry.player.primaryPosition}</span>
+                          <span className="font-display text-lg uppercase tracking-[0.06em] text-zinc-100">{formatRosterSlotLabel(entry.slotCode)}</span>
                           <span className="font-display text-xl uppercase tracking-[0.06em] text-zinc-100">{entry.player.age}</span>
                           <span className={`font-display text-xl font-bold uppercase tracking-[0.06em] ${getOverallTextClass(entry.overall || null)}`}>
                             {entry.overall || '---'}

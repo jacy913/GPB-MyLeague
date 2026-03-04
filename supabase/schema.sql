@@ -63,8 +63,11 @@ create table if not exists public.players (
   bats text not null check (bats in ('L', 'R', 'S')),
   throws text not null check (throws in ('L', 'R')),
   age integer not null check (age >= 15 and age <= 60),
+  height text not null default '6''0"',
+  weight_lbs integer not null default 200 check (weight_lbs between 120 and 400),
   potential double precision not null check (potential >= 0 and potential <= 1),
   status text not null check (status in ('active', 'free_agent', 'prospect', 'retired')),
+  contract_years_left integer not null default 0 check (contract_years_left between 0 and 5),
   draft_class_year integer,
   draft_round integer,
   years_pro integer not null default 0 check (years_pro >= 0),
@@ -101,6 +104,15 @@ create table if not exists public.players (
   constraint players_secondary_position_check
     check (secondary_position is null or secondary_position <> primary_position)
 );
+
+alter table if exists public.players
+  add column if not exists height text not null default '6''0"';
+
+alter table if exists public.players
+  add column if not exists weight_lbs integer not null default 200;
+
+alter table if exists public.players
+  add column if not exists contract_years_left integer not null default 0;
 
 create table if not exists public.player_season_batting (
   stat_id bigint generated always as identity primary key,
@@ -189,7 +201,7 @@ create table if not exists public.team_roster_slots (
   league_id uuid not null references public.leagues(id) on delete cascade,
   season_year integer not null,
   team_id text not null,
-  slot_code text not null check (slot_code in ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH', 'SP1', 'SP2', 'SP3', 'SP4', 'SP5', 'RP1', 'RP2', 'RP3', 'RP4', 'CL')),
+  slot_code text not null check (slot_code in ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH', 'SP1', 'SP2', 'SP3', 'SP4', 'SP5', 'RP1', 'RP2', 'RP3', 'RP4', 'CL', 'BN1', 'BN2', 'BN3', 'BN4', 'BN5', 'BN6', 'BN7', 'BN8', 'BN9', 'BN10')),
   player_id uuid not null references public.players(player_id) on delete cascade,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -304,6 +316,21 @@ begin
   end loop;
 end $$;
 
+do $$
+declare
+  constraint_record record;
+begin
+  for constraint_record in
+    select constraint_name
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'team_roster_slots'
+      and constraint_type = 'CHECK'
+  loop
+    execute format('alter table public.team_roster_slots drop constraint if exists %I', constraint_record.constraint_name);
+  end loop;
+end $$;
+
 alter table public.player_batting_ratings
   add constraint player_batting_ratings_contact_range check (contact between 60 and 100),
   add constraint player_batting_ratings_power_range check (power between 60 and 100),
@@ -326,6 +353,11 @@ alter table public.player_pitching_ratings
   add constraint player_pitching_ratings_fielding_range check (fielding between 60 and 100),
   add constraint player_pitching_ratings_overall_range check (overall between 60 and 100),
   add constraint player_pitching_ratings_potential_overall_range check (potential_overall between 60 and 100);
+
+alter table public.team_roster_slots
+  add constraint team_roster_slots_slot_code_check check (
+    slot_code in ('C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH', 'SP1', 'SP2', 'SP3', 'SP4', 'SP5', 'RP1', 'RP2', 'RP3', 'RP4', 'CL', 'BN1', 'BN2', 'BN3', 'BN4', 'BN5', 'BN6', 'BN7', 'BN8', 'BN9', 'BN10')
+  );
 
 create index if not exists season_runs_league_id_idx on public.season_runs(league_id);
 create index if not exists season_games_season_run_id_idx on public.season_games(season_run_id);

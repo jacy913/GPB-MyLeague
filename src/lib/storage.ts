@@ -11,6 +11,7 @@ import {
   Team,
   TeamRosterSlot,
 } from '../types';
+import { getFallbackPlayerBio } from '../logic/playerBio';
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEYS = {
@@ -104,8 +105,11 @@ interface PlayerRow {
   bats: Player['bats'];
   throws: Player['throws'];
   age: number;
+  height?: string;
+  weight_lbs?: number;
   potential: number;
   status: Player['status'];
+  contract_years_left?: number;
   draft_class_year: number | null;
   draft_round: number | null;
   years_pro: number;
@@ -302,6 +306,7 @@ const toLeagueStateRow = (
 });
 
 const toPlayer = (row: PlayerRow): Player => ({
+  ...getFallbackPlayerBio(row.primary_position, row.status, row.age),
   playerId: row.player_id,
   teamId: row.team_id,
   firstName: row.first_name,
@@ -312,8 +317,11 @@ const toPlayer = (row: PlayerRow): Player => ({
   bats: row.bats,
   throws: row.throws,
   age: row.age,
+  height: row.height ?? getFallbackPlayerBio(row.primary_position, row.status, row.age).height,
+  weightLbs: row.weight_lbs ?? getFallbackPlayerBio(row.primary_position, row.status, row.age).weightLbs,
   potential: row.potential,
   status: row.status,
+  contractYearsLeft: row.contract_years_left ?? getFallbackPlayerBio(row.primary_position, row.status, row.age).contractYearsLeft,
   draftClassYear: row.draft_class_year,
   draftRound: row.draft_round,
   yearsPro: row.years_pro,
@@ -332,8 +340,11 @@ const toPlayerRow = (player: Player, leagueId: string): PlayerRow & { league_id:
   bats: player.bats,
   throws: player.throws,
   age: player.age,
+  height: player.height,
+  weight_lbs: player.weightLbs,
   potential: player.potential,
   status: player.status,
+  contract_years_left: player.contractYearsLeft,
   draft_class_year: player.draftClassYear,
   draft_round: player.draftRound,
   years_pro: player.yearsPro,
@@ -509,6 +520,42 @@ const toPlayerTransactionRow = (
   notes: transaction.notes,
 });
 
+const chunkArray = <T,>(items: T[], chunkSize: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+};
+
+const dedupeByKey = <T,>(items: T[], getKey: (item: T) => string): T[] =>
+  Array.from(new Map(items.map((item) => [getKey(item), item])).values());
+
+const deleteRowsByPlayerIds = async (
+  table:
+    | 'player_season_batting'
+    | 'player_season_pitching'
+    | 'player_batting_ratings'
+    | 'player_pitching_ratings',
+  playerIds: string[],
+  chunkSize: number,
+): Promise<void> => {
+  if (!supabase || playerIds.length === 0) {
+    return;
+  }
+
+  for (const chunk of chunkArray(playerIds, chunkSize)) {
+    const { error } = await supabase
+      .from(table)
+      .delete()
+      .in('player_id', chunk);
+
+    if (error) {
+      throw error;
+    }
+  }
+};
+
 const ensureLeague = async (): Promise<string> => {
   if (!supabase) {
     throw new Error('Supabase is not configured.');
@@ -596,8 +643,19 @@ export const loadLocalPlayerState = (): LeaguePlayerState => {
     }
   };
 
+  const rawPlayers = parseJson<Player[]>(localStorage.getItem(STORAGE_KEYS.players), []);
+  const normalizedPlayers = rawPlayers.map((player) => {
+    const fallback = getFallbackPlayerBio(player.primaryPosition, player.status, player.age);
+    return {
+      ...player,
+      height: player.height ?? fallback.height,
+      weightLbs: typeof player.weightLbs === 'number' ? player.weightLbs : fallback.weightLbs,
+      contractYearsLeft: typeof player.contractYearsLeft === 'number' ? player.contractYearsLeft : fallback.contractYearsLeft,
+    };
+  });
+
   return {
-    players: parseJson<Player[]>(localStorage.getItem(STORAGE_KEYS.players), []),
+    players: normalizedPlayers,
     battingStats: parseJson<PlayerSeasonBatting[]>(localStorage.getItem(STORAGE_KEYS.battingStats), []),
     pitchingStats: parseJson<PlayerSeasonPitching[]>(localStorage.getItem(STORAGE_KEYS.pitchingStats), []),
     battingRatings: parseJson<PlayerBattingRatings[]>(localStorage.getItem(STORAGE_KEYS.battingRatings), []),
@@ -740,7 +798,7 @@ export const loadSupabasePlayerState = async (): Promise<LeaguePlayerState> => {
   const { data: playerRows, error: playerError } = await supabase
     .from('players')
     .select(
-      'player_id, team_id, first_name, last_name, player_type, primary_position, secondary_position, bats, throws, age, potential, status, draft_class_year, draft_round, years_pro, retirement_year',
+      'player_id, team_id, first_name, last_name, player_type, primary_position, secondary_position, bats, throws, age, height, weight_lbs, potential, status, contract_years_left, draft_class_year, draft_round, years_pro, retirement_year',
     )
     .eq('league_id', leagueId)
     .order('last_name', { ascending: true })
@@ -934,6 +992,10 @@ export const saveSupabaseLeagueState = async (
   currentDate: string,
   progress: number,
   seasonComplete: boolean,
+  options?: {
+    pruneMissingGames?: boolean;
+    gameChunkSize?: number;
+  },
 ): Promise<void> => {
   if (!supabase) {
     return;
@@ -944,20 +1006,25 @@ export const saveSupabaseLeagueState = async (
   const settingsRow = toSettingsRow(settings, leagueId);
   const gameRows = games.map((game) => toGameRow(game, leagueId));
   const stateRow = toLeagueStateRow(leagueId, currentDate, progress, seasonComplete);
-  const sourceIds = games.map((game) => game.gameId);
+  const pruneMissingGames = options?.pruneMissingGames ?? false;
+  const gameChunkSize = options?.gameChunkSize ?? 150;
+  let staleGameIds: string[] = [];
 
-  const { data: existingGameRows, error: existingGameRowsError } = await supabase
-    .from('league_games')
-    .select('game_id')
-    .eq('league_id', leagueId);
+  if (pruneMissingGames) {
+    const sourceIds = games.map((game) => game.gameId);
+    const { data: existingGameRows, error: existingGameRowsError } = await supabase
+      .from('league_games')
+      .select('game_id')
+      .eq('league_id', leagueId);
 
-  if (existingGameRowsError) {
-    throw existingGameRowsError;
+    if (existingGameRowsError) {
+      throw existingGameRowsError;
+    }
+
+    staleGameIds = ((existingGameRows as Array<{ game_id: string }> | null) ?? [])
+      .map((row) => row.game_id)
+      .filter((gameId) => !sourceIds.includes(gameId));
   }
-
-  const staleGameIds = ((existingGameRows as Array<{ game_id: string }> | null) ?? [])
-    .map((row) => row.game_id)
-    .filter((gameId) => !sourceIds.includes(gameId));
 
   const [{ error: teamsUpsertError }, { error: settingsUpsertError }, { error: stateUpsertError }] = await Promise.all([
     supabase.from('teams').upsert(teamRows, { onConflict: 'league_id,team_id' }),
@@ -975,9 +1042,8 @@ export const saveSupabaseLeagueState = async (
     throw stateUpsertError;
   }
 
-  const chunkSize = 500;
-  for (let index = 0; index < gameRows.length; index += chunkSize) {
-    const chunk = gameRows.slice(index, index + chunkSize);
+  for (let index = 0; index < gameRows.length; index += gameChunkSize) {
+    const chunk = gameRows.slice(index, index + gameChunkSize);
     const { error: gamesUpsertError } = await supabase
       .from('league_games')
       .upsert(chunk, { onConflict: 'league_id,game_id' });
@@ -1064,11 +1130,29 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
 
   const leagueId = await ensureLeague();
   const playerRows = playerState.players.map((player) => toPlayerRow(player, leagueId));
-  const battingRows = playerState.battingStats.map(toBattingStatRow);
-  const pitchingRows = playerState.pitchingStats.map(toPitchingStatRow);
-  const battingRatingRows = playerState.battingRatings.map(toBattingRatingsRow);
-  const pitchingRatingRows = playerState.pitchingRatings.map(toPitchingRatingsRow);
-  const rosterRows = playerState.rosterSlots.map((slot) => toRosterSlotRow(slot, leagueId));
+  const battingRows = dedupeByKey(
+    playerState.battingStats.map(toBattingStatRow),
+    (row) => `${row.player_id}:${row.season_year}:${row.season_phase}`,
+  );
+  const pitchingRows = dedupeByKey(
+    playerState.pitchingStats.map(toPitchingStatRow),
+    (row) => `${row.player_id}:${row.season_year}:${row.season_phase}`,
+  );
+  const battingRatingRows = dedupeByKey(
+    playerState.battingRatings.map(toBattingRatingsRow),
+    (row) => `${row.player_id}:${row.season_year}`,
+  );
+  const pitchingRatingRows = dedupeByKey(
+    playerState.pitchingRatings.map(toPitchingRatingsRow),
+    (row) => `${row.player_id}:${row.season_year}`,
+  );
+  const rosterRows = dedupeByKey(
+    dedupeByKey(
+      playerState.rosterSlots.map((slot) => toRosterSlotRow(slot, leagueId)),
+      (row) => `${row.league_id}:${row.season_year}:${row.player_id}`,
+    ),
+    (row) => `${row.league_id}:${row.season_year}:${row.team_id}:${row.slot_code}`,
+  );
   const transactionRows = playerState.transactions.map((transaction) => toPlayerTransactionRow(transaction, leagueId));
   const sourcePlayerIds = playerState.players.map((player) => player.playerId);
 
@@ -1087,8 +1171,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
 
   const chunkSize = 500;
 
-  for (let index = 0; index < playerRows.length; index += chunkSize) {
-    const chunk = playerRows.slice(index, index + chunkSize);
+  for (const chunk of chunkArray(playerRows, chunkSize)) {
     const { error } = await supabase.from('players').upsert(chunk, { onConflict: 'player_id' });
     if (error) {
       throw error;
@@ -1096,54 +1179,28 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (stalePlayerIds.length > 0) {
-    const { error } = await supabase
-      .from('players')
-      .delete()
-      .eq('league_id', leagueId)
-      .in('player_id', stalePlayerIds);
+    for (const chunk of chunkArray(stalePlayerIds, chunkSize)) {
+      const { error } = await supabase
+        .from('players')
+        .delete()
+        .eq('league_id', leagueId)
+        .in('player_id', chunk);
 
-    if (error) {
-      throw error;
+      if (error) {
+        throw error;
+      }
     }
   }
 
   if (sourcePlayerIds.length > 0) {
-    const { error: deleteBattingError } = await supabase
-      .from('player_season_batting')
-      .delete()
-      .in('player_id', sourcePlayerIds);
-    if (deleteBattingError) {
-      throw deleteBattingError;
-    }
-
-    const { error: deletePitchingError } = await supabase
-      .from('player_season_pitching')
-      .delete()
-      .in('player_id', sourcePlayerIds);
-    if (deletePitchingError) {
-      throw deletePitchingError;
-    }
-
-    const { error: deleteBattingRatingsError } = await supabase
-      .from('player_batting_ratings')
-      .delete()
-      .in('player_id', sourcePlayerIds);
-    if (deleteBattingRatingsError) {
-      throw deleteBattingRatingsError;
-    }
-
-    const { error: deletePitchingRatingsError } = await supabase
-      .from('player_pitching_ratings')
-      .delete()
-      .in('player_id', sourcePlayerIds);
-    if (deletePitchingRatingsError) {
-      throw deletePitchingRatingsError;
-    }
+    await deleteRowsByPlayerIds('player_season_batting', sourcePlayerIds, chunkSize);
+    await deleteRowsByPlayerIds('player_season_pitching', sourcePlayerIds, chunkSize);
+    await deleteRowsByPlayerIds('player_batting_ratings', sourcePlayerIds, chunkSize);
+    await deleteRowsByPlayerIds('player_pitching_ratings', sourcePlayerIds, chunkSize);
   }
 
   if (battingRows.length > 0) {
-    for (let index = 0; index < battingRows.length; index += chunkSize) {
-      const chunk = battingRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(battingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_season_batting')
         .insert(chunk);
@@ -1154,8 +1211,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (pitchingRows.length > 0) {
-    for (let index = 0; index < pitchingRows.length; index += chunkSize) {
-      const chunk = pitchingRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(pitchingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_season_pitching')
         .insert(chunk);
@@ -1166,8 +1222,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (battingRatingRows.length > 0) {
-    for (let index = 0; index < battingRatingRows.length; index += chunkSize) {
-      const chunk = battingRatingRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(battingRatingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_batting_ratings')
         .insert(chunk);
@@ -1178,8 +1233,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (pitchingRatingRows.length > 0) {
-    for (let index = 0; index < pitchingRatingRows.length; index += chunkSize) {
-      const chunk = pitchingRatingRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(pitchingRatingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_pitching_ratings')
         .insert(chunk);
@@ -1198,8 +1252,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (rosterRows.length > 0) {
-    for (let index = 0; index < rosterRows.length; index += chunkSize) {
-      const chunk = rosterRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(rosterRows, chunkSize)) {
       const { error } = await supabase
         .from('team_roster_slots')
         .insert(chunk);
@@ -1218,8 +1271,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   }
 
   if (transactionRows.length > 0) {
-    for (let index = 0; index < transactionRows.length; index += chunkSize) {
-      const chunk = transactionRows.slice(index, index + chunkSize);
+    for (const chunk of chunkArray(transactionRows, chunkSize)) {
       const { error } = await supabase
         .from('player_transactions')
         .insert(chunk);

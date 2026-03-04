@@ -45,7 +45,8 @@ interface HomeDashboardProps {
   onSelectTeamId: (teamId: string) => void;
   onOpenGame: (gameId: string) => void;
   onOpenTeams: () => void;
-  onOpenPlayers: () => void;
+  onOpenSimulation: (targetDate?: string) => void;
+  onOpenFreeAgency: () => void;
   onOpenStandings: () => void;
   onSimulateToSelectedDate: () => void;
   onSimulateToEndOfRegularSeason: () => void;
@@ -90,6 +91,11 @@ type HeadlineDeck = {
 
 type StoryCandidate = HeadlineCard & {
   priority: number;
+};
+
+type TransactionStoryCandidate = HeadlineCard & {
+  priority: number;
+  key: string;
 };
 
 type DerivedBattingLine = {
@@ -164,7 +170,7 @@ const formatTickerTransaction = (
   const toLabel = toTeam ? toTeam.city : 'FA Pool';
 
   if (transaction.eventType === 'traded') {
-    return `TRADE | ${playerLabel} moved from ${fromLabel} to ${toLabel}`;
+    return `TRADE | ${playerLabel} shipped from ${fromLabel} to ${toLabel}`;
   }
 
   if (transaction.eventType === 'signed') {
@@ -214,6 +220,21 @@ const createStory = (
   summary,
   accent,
   game,
+});
+
+const createTransactionStory = (
+  priority: number,
+  key: string,
+  headline: string,
+  summary: string,
+  accent: string,
+): TransactionStoryCandidate => ({
+  priority,
+  key,
+  headline,
+  summary,
+  accent,
+  game: null,
 });
 
 const buildGameStoryCandidates = (
@@ -595,10 +616,75 @@ const createGameHeadline = (game: Game, teamsById: Map<string, Team>): HeadlineC
   };
 };
 
+const buildTransactionStoryCandidates = (
+  transactions: PlayerTransaction[],
+  playersById: Map<string, Player>,
+  teamsById: Map<string, Team>,
+  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
+  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
+  timelineDate: string,
+): TransactionStoryCandidate[] => {
+  const targetDate = timelineDate || transactions[0]?.effectiveDate || '';
+  const sourceTransactions = [...transactions]
+    .filter((transaction) => (transaction.eventType === 'signed' || transaction.eventType === 'traded') && (!targetDate || transaction.effectiveDate === targetDate))
+    .sort((left, right) => right.effectiveDate.localeCompare(left.effectiveDate));
+
+  return sourceTransactions.map((transaction) => {
+    const player = playersById.get(transaction.playerId);
+    const team = transaction.toTeamId ? teamsById.get(transaction.toTeamId) ?? null : null;
+    const overall = player
+      ? battingRatingsByPlayerId.get(player.playerId)?.overall ?? pitchingRatingsByPlayerId.get(player.playerId)?.overall ?? 0
+      : 0;
+    const playerName = player ? `${player.firstName} ${player.lastName}` : 'Unknown Player';
+    const teamCity = team?.city ?? 'A contender';
+    const years = player?.contractYearsLeft ?? 0;
+
+    if (transaction.eventType === 'traded' && overall >= 86) {
+      return createTransactionStory(
+        235,
+        `trade:${transaction.playerId}:${transaction.effectiveDate}:${transaction.toTeamId ?? 'na'}`,
+        'SHAKEUP IN THE LEAGUE',
+        `${teamCity} acquired superstar ${playerName}${overall > 0 ? `, an ${overall}-OVR force,` : ''} in a blockbuster trade that could bend the pennant race.`,
+        'from-[#6b500c] via-[#1a1a1a] to-[#10383a]',
+      );
+    }
+
+    if (overall >= 88) {
+      return createTransactionStory(
+        220,
+        `signing:${transaction.playerId}:${transaction.effectiveDate}`,
+        'THE MARKET JUST SHOOK',
+        `${teamCity} landed ${playerName}, an ${overall}-OVR prize, on a ${years}-year swing that instantly changes the league map.`,
+        'from-[#6a560d] via-[#1b1b1b] to-[#0d3b34]',
+      );
+    }
+
+    if (overall >= 80) {
+      return createTransactionStory(
+        185,
+        `signing:${transaction.playerId}:${transaction.effectiveDate}`,
+        'A FRANCHISE BET IN FREE AGENCY',
+        `${teamCity} moved aggressively for ${playerName}, locking in a ${years}-year commitment to patch a real roster need.`,
+        'from-[#5c430a] via-[#1a1a1a] to-[#153531]',
+      );
+    }
+
+    return createTransactionStory(
+      150,
+      `signing:${transaction.playerId}:${transaction.effectiveDate}`,
+      'FREE AGENCY BOARD MOVES',
+      `${teamCity} brought in ${playerName} on a ${years}-year deal, signaling a fresh roster direction before the next slate.`,
+      'from-[#4e3908] via-[#1c1c1c] to-[#12312d]',
+    );
+  });
+};
+
 const generateHeadlineDeck = (
   games: Game[],
   teamsById: Map<string, Team>,
   timelineDate: string,
+  transactions: PlayerTransaction[],
+  playersById: Map<string, Player>,
   battingStatsByPlayerId: Map<string, PlayerSeasonBatting>,
   battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
   pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
@@ -607,7 +693,16 @@ const generateHeadlineDeck = (
     .filter((game) => game.status === 'completed')
     .sort((left, right) => compareGameOrder(right, left));
 
-  if (recentCompleted.length === 0) {
+  const transactionStories = buildTransactionStoryCandidates(
+    transactions,
+    playersById,
+    teamsById,
+    battingRatingsByPlayerId,
+    pitchingRatingsByPlayerId,
+    timelineDate,
+  );
+
+  if (recentCompleted.length === 0 && transactionStories.length === 0) {
     return {
       primary: {
         headline: 'THE PENNANT RACE BEGINS',
@@ -617,6 +712,14 @@ const generateHeadlineDeck = (
       },
       secondary: [],
       sourceDate: null,
+    };
+  }
+
+  if (recentCompleted.length === 0 && transactionStories.length > 0) {
+    return {
+      primary: transactionStories[0],
+      secondary: transactionStories.slice(1, 4),
+      sourceDate: timelineDate || transactions[0]?.effectiveDate || null,
     };
   }
 
@@ -637,6 +740,13 @@ const generateHeadlineDeck = (
 
   const uniqueStories: StoryCandidate[] = [];
   const seen = new Set<string>();
+  for (const story of transactionStories) {
+    if (seen.has(story.key)) {
+      continue;
+    }
+    seen.add(story.key);
+    uniqueStories.push(story);
+  }
   for (const story of rankedStories) {
     const key = `${story.game?.gameId ?? 'none'}:${story.headline}`;
     if (seen.has(key)) {
@@ -797,7 +907,8 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onSelectTeamId,
   onOpenGame,
   onOpenTeams,
-  onOpenPlayers,
+  onOpenSimulation,
+  onOpenFreeAgency,
   onOpenStandings,
   onSimulateToSelectedDate,
   onSimulateToEndOfRegularSeason,
@@ -846,11 +957,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         games,
         teamsById,
         timelineDate,
+        transactions,
+        playersById,
         battingStatsByPlayerId,
         battingRatingsByPlayerId,
         pitchingRatingsByPlayerId,
       ),
-    [games, teamsById, timelineDate, battingStatsByPlayerId, battingRatingsByPlayerId, pitchingRatingsByPlayerId],
+    [games, teamsById, timelineDate, transactions, playersById, battingStatsByPlayerId, battingRatingsByPlayerId, pitchingRatingsByPlayerId],
   );
   const headline = headlineDeck.primary;
   const featuredGame = useMemo(() => getFeaturedGame(todaysGames, teamsById), [todaysGames, teamsById]);
@@ -1132,23 +1245,18 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Commissioner Console</p>
-                <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">Season Controls</p>
+                <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">Simulation Center</p>
               </div>
               <ShieldAlert className="h-5 w-5 text-prestige" />
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button onClick={onSimulateDay} disabled={isSimulating} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">Sim Day</button>
-              <button onClick={onSimulateWeek} disabled={isSimulating} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">Sim Week</button>
-              <button onClick={onSimulateMonth} disabled={isSimulating} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">Sim Month</button>
-              <button onClick={onSimulateNextGame} disabled={isSimulating} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">Next Team Game</button>
-              <button onClick={onSimulateToEndOfRegularSeason} disabled={isSimulating} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left font-headline text-xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">To Reg Finale</button>
-              <button onClick={onQuickSimSeason} disabled={isSimulating} className="rounded-2xl border border-[#d4bb6a]/20 bg-[#d4bb6a]/10 px-4 py-4 text-left font-headline text-xl uppercase tracking-[0.08em] text-[#f1dea2] transition-colors hover:border-[#d4bb6a]/35 disabled:opacity-50">Quick Sim Season</button>
-            </div>
+            <p className="mt-4 text-sm leading-6 text-zinc-400">
+              Simulation now runs from its own calendar-driven control room. Open the board, pick the window, and let the season move day by day until a trade or market event forces a commissioner stop.
+            </p>
 
-            <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-3">
               <label className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Sim To Selected Date</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Queue Target Date</span>
                 <input
                   type="date"
                   value={selectedDate || currentDate}
@@ -1158,15 +1266,20 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                   className="mt-2 block w-full bg-transparent font-mono text-sm text-white outline-none"
                 />
               </label>
-              <button onClick={onSimulateToSelectedDate} disabled={isSimulating} className="rounded-2xl border border-prestige/25 bg-prestige/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-prestige transition-colors hover:border-prestige/40 disabled:opacity-50">
-                Sim
+              <button onClick={() => onOpenSimulation(selectedDate || currentDate)} className="rounded-2xl border border-prestige/25 bg-prestige/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-prestige transition-colors hover:border-prestige/40">
+                Open
               </button>
             </div>
 
-            <button onClick={onResetSeason} disabled={isSimulating} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">
-              <RefreshCcw className="h-4 w-4" />
-              Reset Season
-            </button>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <button onClick={() => onOpenSimulation()} className="rounded-2xl border border-[#d4bb6a]/20 bg-[#d4bb6a]/10 px-4 py-4 text-left font-headline text-xl uppercase tracking-[0.08em] text-[#f1dea2] transition-colors hover:border-[#d4bb6a]/35">
+                Enter Simulation
+              </button>
+              <button onClick={onResetSeason} disabled={isSimulating} className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 font-headline text-xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">
+                <RefreshCcw className="h-4 w-4" />
+                Reset
+              </button>
+            </div>
           </article>
         </div>
       </div>
@@ -1182,11 +1295,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               Current Date {timelineDate ? formatHeadlineDate(timelineDate) : 'TBD'}
             </span>
             <button
-              onClick={() => nextMilestone && onSimulateToDate(nextMilestone.date)}
+              onClick={() => nextMilestone && onOpenSimulation(nextMilestone.date)}
               disabled={isSimulating || !nextMilestone}
               className="rounded-full border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-2 font-headline text-xl uppercase tracking-[0.08em] text-[#ecd693] transition-colors hover:border-[#d4bb6a]/40 disabled:opacity-40"
             >
-              Simulate To Next Event
+              Open Next Event In Sim Center
             </button>
           </div>
         </div>
@@ -1237,9 +1350,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             />
             <ActionTile
               title="Free Agency Pool"
-              subtitle="Jump to the player database and review unattached talent."
+              subtitle="Enter the market room and decide where unsigned talent lands."
               value={`${freeAgents.length} free agents`}
-              onClick={onOpenPlayers}
+              onClick={onOpenFreeAgency}
             />
             <ActionTile
               title="Team Rosters"

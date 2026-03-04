@@ -154,6 +154,9 @@ const generateBattingOrder = (startingNine: TeamRosterEntry[]): TeamRosterEntry[
   return ordered.filter((entry): entry is TeamRosterEntry => entry !== null);
 };
 
+const dedupeRosterEntries = (entries: TeamRosterEntry[]): TeamRosterEntry[] =>
+  Array.from(new Map(entries.map((entry) => [entry.player.playerId, entry])).values());
+
 const toBatterParticipant = (entry: TeamRosterEntry): GameParticipantBatter | null => {
   if (!entry.battingRatings || entry.player.teamId === null || entry.player.playerType !== 'batter') {
     return null;
@@ -234,40 +237,48 @@ const buildTeamRosterContext = (
       });
     });
 
-  const battingEntries = BATTING_ROSTER_SLOTS
+  const rosterEntries = dedupeRosterEntries(Array.from(rosterBySlot.values()));
+  const slottedBattingEntries = BATTING_ROSTER_SLOTS
     .map((slotCode) => rosterBySlot.get(slotCode) ?? null)
     .filter((entry): entry is TeamRosterEntry => entry !== null);
-  const orderedLineup = generateBattingOrder(battingEntries)
+  const fallbackBattingEntries = rosterEntries.filter(
+    (entry) =>
+      entry.player.playerType === 'batter' &&
+      entry.battingRatings &&
+      !slottedBattingEntries.some((slotted) => slotted.player.playerId === entry.player.playerId),
+  );
+  const orderedLineup = generateBattingOrder([...slottedBattingEntries, ...fallbackBattingEntries])
     .map(toBatterParticipant)
     .filter((entry): entry is GameParticipantBatter => entry !== null);
 
-  const starters = STARTING_PITCHER_SLOTS
+  const slottedStarterEntries = STARTING_PITCHER_SLOTS
     .map((slotCode) => rosterBySlot.get(slotCode) ?? null)
     .filter((entry): entry is TeamRosterEntry => entry !== null)
-    .map(toPitcherParticipant)
-    .filter((entry): entry is GameParticipantPitcher => entry !== null);
-
-  const bullpen = BULLPEN_ROSTER_SLOTS
+    .filter((entry) => entry.player.playerType === 'pitcher' && Boolean(entry.pitchingRatings))
+    .sort((left, right) => getPitchingTrendScore(right) - getPitchingTrendScore(left));
+  const allPitcherEntries = rosterEntries
+    .filter((entry) => entry.player.playerType === 'pitcher' && Boolean(entry.pitchingRatings))
+    .sort((left, right) => getPitchingTrendScore(right) - getPitchingTrendScore(left));
+  const bullpenEntries = BULLPEN_ROSTER_SLOTS
     .map((slotCode) => rosterBySlot.get(slotCode) ?? null)
     .filter((entry): entry is TeamRosterEntry => entry !== null)
+    .filter((entry) => entry.player.playerType === 'pitcher' && Boolean(entry.pitchingRatings));
+  const chosenStarterEntry = slottedStarterEntries.length > 0
+    ? slottedStarterEntries[teamGameIndex % slottedStarterEntries.length] ?? slottedStarterEntries[0]
+    : allPitcherEntries[teamGameIndex % Math.max(1, allPitcherEntries.length)] ?? allPitcherEntries[0] ?? null;
+  const bullpen = dedupeRosterEntries([
+    ...bullpenEntries,
+    ...allPitcherEntries.filter((entry) => entry.player.playerId !== chosenStarterEntry?.player.playerId),
+  ])
     .map(toPitcherParticipant)
     .filter((entry): entry is GameParticipantPitcher => entry !== null);
 
   if (orderedLineup.length === 0) {
     return null;
   }
-
-  const sortedStarters = STARTING_PITCHER_SLOTS
-    .map((slotCode) => rosterBySlot.get(slotCode) ?? null)
-    .filter((entry): entry is TeamRosterEntry => entry !== null)
-    .sort((left, right) => getPitchingTrendScore(right) - getPitchingTrendScore(left));
-
-  const rotationStarter = sortedStarters.length > 0
-    ? toPitcherParticipant(sortedStarters[teamGameIndex % sortedStarters.length] ?? sortedStarters[0])
-    : starters[teamGameIndex % Math.max(1, starters.length)] ?? starters[0] ?? null;
   return {
     lineup: orderedLineup,
-    starter: rotationStarter,
+    starter: chosenStarterEntry ? toPitcherParticipant(chosenStarterEntry) : null,
     bullpen,
   };
 };
