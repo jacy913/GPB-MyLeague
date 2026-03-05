@@ -38,7 +38,16 @@ interface GameScreenProps {
   onCompleteGame: (result: CompletedGameResult) => void;
 }
 
-const LOG_REVEAL_DELAY_MS = 425;
+const BASE_LOG_REVEAL_DELAY_MS = 95;
+const FAST_LOG_REVEAL_DELAY_MS = 40;
+
+const getLogRevealBatchSize = (totalLogs: number): number => {
+  if (totalLogs >= 220) return 8;
+  if (totalLogs >= 140) return 6;
+  if (totalLogs >= 90) return 4;
+  if (totalLogs >= 45) return 3;
+  return 1;
+};
 
 const getOrdinal = (value: number): string => {
   const tens = value % 100;
@@ -107,7 +116,6 @@ const ensureLineScoreEntry = (lineScore: GameSessionState['lineScore'], inning: 
   if (!line) {
     line = { inning, away: 0, home: 0 };
     lineScore.push(line);
-    lineScore.sort((left, right) => left.inning - right.inning);
   }
   return line;
 };
@@ -237,20 +245,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [visibleLogCount, setVisibleLogCount] = useState(0);
   const [pendingCompletedGame, setPendingCompletedGame] = useState<CompletedGameResult | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
+  const storedLogs = useMemo(() => parseStoredLogs(game), [game.gameId, game.stats.playLog]);
 
   useEffect(() => {
     const hydrated = hydrateGameSessionFromGame(game);
     setSession(hydrated ?? createGameSession(game, participants));
     setPendingCompletedGame(null);
-    setVisibleLogCount(game.status === 'completed' ? parseStoredLogs(game).length : 0);
-  }, [game, participants]);
+    setVisibleLogCount(game.status === 'completed' ? storedLogs.length : 0);
+  }, [game, participants, storedLogs.length]);
 
   const logs = useMemo(() => {
     if (session && session.logs.length > 0) {
       return session.logs;
     }
-    return parseStoredLogs(game);
-  }, [session, game]);
+    return storedLogs;
+  }, [session, storedLogs]);
   const visibleLogs = useMemo(() => logs.slice(0, visibleLogCount), [logs, visibleLogCount]);
   const isBroadcasting = visibleLogCount < logs.length;
   const activeSession = useMemo(() => session ?? createGameSession(game, participants), [session, game, participants]);
@@ -318,21 +327,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       return;
     }
 
+    const step = getLogRevealBatchSize(logs.length);
+    const delayMs = session.status === 'completed' ? FAST_LOG_REVEAL_DELAY_MS : BASE_LOG_REVEAL_DELAY_MS;
     const timer = window.setTimeout(() => {
-      setVisibleLogCount((previous) => Math.min(previous + 1, logs.length));
-    }, LOG_REVEAL_DELAY_MS);
+      setVisibleLogCount((previous) => Math.min(previous + step, logs.length));
+    }, delayMs);
 
     return () => window.clearTimeout(timer);
   }, [game.status, logs.length, session, visibleLogCount]);
 
   useEffect(() => {
-    if (!pendingCompletedGame || visibleLogCount < logs.length) {
+    if (!pendingCompletedGame) {
       return;
     }
 
+    setVisibleLogCount((current) => Math.max(current, logs.length));
     onCompleteGame(pendingCompletedGame);
     setPendingCompletedGame(null);
-  }, [pendingCompletedGame, visibleLogCount, logs.length, onCompleteGame]);
+  }, [pendingCompletedGame, logs.length, onCompleteGame]);
 
   useEffect(() => {
     if (!logViewportRef.current || visibleLogs.length === 0) {
@@ -341,7 +353,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     logViewportRef.current.scrollTo({
       top: logViewportRef.current.scrollHeight,
-      behavior: 'smooth',
+      behavior: 'auto',
     });
   }, [visibleLogs.length]);
 

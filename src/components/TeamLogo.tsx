@@ -7,22 +7,34 @@ interface TeamLogoProps {
   sizeClass?: string;
 }
 
-const LOGO_CACHE_BUSTER = Date.now();
+const TEAM_LOGO_BASE_URL_CACHE = new Map<string, string | null>();
 
-const getTeamLogoUrl = (teamId: string, version: number): string | null => {
+const getTeamLogoBaseUrl = (teamId: string): string | null => {
+  if (TEAM_LOGO_BASE_URL_CACHE.has(teamId)) {
+    return TEAM_LOGO_BASE_URL_CACHE.get(teamId) ?? null;
+  }
+
   if (!isSupabaseConfigured || !supabase) {
+    TEAM_LOGO_BASE_URL_CACHE.set(teamId, null);
     return null;
   }
 
   const path = teamId.trim().toLowerCase();
   const { data } = supabase.storage.from('teamlogos').getPublicUrl(path);
-  return `${data.publicUrl}?v=${version}`;
+  TEAM_LOGO_BASE_URL_CACHE.set(teamId, data.publicUrl);
+  return data.publicUrl;
 };
 
-export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10' }) => {
+const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10' }) => {
   const [logoFailed, setLogoFailed] = useState(false);
-  const [cacheVersion, setCacheVersion] = useState<number>(LOGO_CACHE_BUSTER);
-  const logoUrl = useMemo(() => getTeamLogoUrl(team.id, cacheVersion), [team.id, cacheVersion]);
+  const [cacheVersion, setCacheVersion] = useState<number | null>(null);
+  const logoUrl = useMemo(() => {
+    const baseUrl = getTeamLogoBaseUrl(team.id);
+    if (!baseUrl) {
+      return null;
+    }
+    return cacheVersion ? `${baseUrl}?v=${cacheVersion}` : baseUrl;
+  }, [team.id, cacheVersion]);
 
   useEffect(() => {
     setLogoFailed(false);
@@ -34,7 +46,7 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10
         return;
       }
     }
-    setCacheVersion(LOGO_CACHE_BUSTER);
+    setCacheVersion(null);
   }, [team.id]);
 
   useEffect(() => {
@@ -67,3 +79,8 @@ export const TeamLogo: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10
     </div>
   );
 };
+
+export const TeamLogo = React.memo(
+  TeamLogoComponent,
+  (prev, next) => prev.team.id === next.team.id && prev.sizeClass === next.sizeClass,
+);

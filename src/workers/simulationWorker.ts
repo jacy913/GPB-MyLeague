@@ -87,7 +87,9 @@ const delay = (ms: number) =>
 const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
   cancelRequested = false;
   runInFlight = true;
-
+  let totalSimulatedGames = 0;
+  let knownTradeIds = new Set<string>();
+  let knownFreeAgencyKeys = new Set<string>();
   const working = {
     teams: startPayload.teams.map((team) => ({ ...team })),
     games: startPayload.games.map((game) => ({
@@ -108,33 +110,32 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
     currentDate: startPayload.startingDate,
   };
 
-  const manager = new SimulationManager({
-    teams: working.teams,
-    games: working.games,
-    playerState: working.playerState,
-    settings: startPayload.settings,
-    currentDate: working.currentDate,
-  });
-
-  let totalSimulatedGames = 0;
-  let knownTradeIds = new Set(
-    generatePendingTradeProposals(
-      working.teams,
-      working.playerState,
-      working.games.filter(isRegularSeasonGame),
-      startPayload.startingDate,
-    ).map(getStableTradeMarketKey),
-  );
-  let knownFreeAgencyKeys = new Set(
-    getSimulationFreeAgencyAlerts({
-      ...startPayload,
+  try {
+    const manager = new SimulationManager({
       teams: working.teams,
       games: working.games,
       playerState: working.playerState,
-    }).map((alert) => alert.key),
-  );
+      settings: startPayload.settings,
+      currentDate: working.currentDate,
+    });
 
-  try {
+    knownTradeIds = new Set(
+      generatePendingTradeProposals(
+        working.teams,
+        working.playerState,
+        working.games.filter(isRegularSeasonGame),
+        startPayload.startingDate,
+      ).map(getStableTradeMarketKey),
+    );
+    knownFreeAgencyKeys = new Set(
+      getSimulationFreeAgencyAlerts({
+        ...startPayload,
+        teams: working.teams,
+        games: working.games,
+        playerState: working.playerState,
+      }).map((alert) => alert.key),
+    );
+
     for (let index = 0; index < startPayload.queuedDates.length; index += 1) {
       if (cancelRequested) {
         postMessageToMain({
@@ -170,24 +171,11 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       const complete = result.games.every((game) => game.status === 'completed');
       const finalizedTeams = complete
         ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
-        : result.teams.map((team) => ({ ...team }));
+        : result.teams;
 
       working.teams = finalizedTeams;
-      working.games = result.games.map((game) => ({
-        ...game,
-        playoff: game.playoff ? { ...game.playoff } : null,
-        score: { ...game.score },
-        stats: { ...game.stats },
-      }));
-      working.playerState = {
-        players: result.playerState.players.map((player) => ({ ...player })),
-        battingStats: result.playerState.battingStats.map((stat) => ({ ...stat })),
-        pitchingStats: result.playerState.pitchingStats.map((stat) => ({ ...stat })),
-        battingRatings: result.playerState.battingRatings.map((rating) => ({ ...rating })),
-        pitchingRatings: result.playerState.pitchingRatings.map((rating) => ({ ...rating })),
-        rosterSlots: result.playerState.rosterSlots.map((slot) => ({ ...slot })),
-        transactions: result.playerState.transactions.map((transaction) => ({ ...transaction })),
-      };
+      working.games = result.games;
+      working.playerState = result.playerState;
       working.currentDate = result.currentDate;
       totalSimulatedGames += result.simulatedGameCount;
 
@@ -201,10 +189,11 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         },
       });
 
+      const regularSeasonGames = working.games.filter(isRegularSeasonGame);
       const nextTrades = generatePendingTradeProposals(
         finalizedTeams,
         working.playerState,
-        working.games.filter(isRegularSeasonGame),
+        regularSeasonGames,
         result.currentDate,
       );
       const newTrades = nextTrades.filter((proposal) => !knownTradeIds.has(getStableTradeMarketKey(proposal)));

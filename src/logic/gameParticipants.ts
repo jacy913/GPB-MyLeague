@@ -18,6 +18,16 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from './playerStats';
 
+export interface GameParticipantsBuildContext {
+  latestSeasonYear: number | null;
+  playersById: Map<string, Player>;
+  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>;
+  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>;
+  battingStatsByPlayerId: Map<string, PlayerSeasonBatting>;
+  pitchingStatsByPlayerId: Map<string, PlayerSeasonPitching>;
+  rosterSlotsByTeamId?: Map<string, TeamRosterSlot[]>;
+}
+
 type TeamRosterEntry = {
   player: Player;
   battingRatings: PlayerBattingRatings | null;
@@ -203,25 +213,27 @@ const buildTeamRosterContext = (
   teamGameIndex: number,
   seasonPhase: Game['phase'],
   playerState: LeaguePlayerState,
+  context?: GameParticipantsBuildContext,
 ): {
   lineup: GameParticipantBatter[];
   starter: GameParticipantPitcher | null;
   bullpen: GameParticipantPitcher[];
 } | null => {
-  const latestSeasonYear = getLatestRosterSeasonYear(playerState.rosterSlots);
+  const latestSeasonYear = context?.latestSeasonYear ?? getLatestRosterSeasonYear(playerState.rosterSlots);
   if (!latestSeasonYear) {
     return null;
   }
 
-  const battingRatingsByPlayerId = getLatestBattingRatingsByPlayerId(playerState.battingRatings);
-  const pitchingRatingsByPlayerId = getLatestPitchingRatingsByPlayerId(playerState.pitchingRatings);
-  const battingStatsByPlayerId = getPreferredBattingStatsByPlayerId(playerState.battingStats, seasonPhase);
-  const pitchingStatsByPlayerId = getPreferredPitchingStatsByPlayerId(playerState.pitchingStats, seasonPhase);
-  const playersById = new Map(playerState.players.map((player) => [player.playerId, player]));
+  const battingRatingsByPlayerId = context?.battingRatingsByPlayerId ?? getLatestBattingRatingsByPlayerId(playerState.battingRatings);
+  const pitchingRatingsByPlayerId = context?.pitchingRatingsByPlayerId ?? getLatestPitchingRatingsByPlayerId(playerState.pitchingRatings);
+  const battingStatsByPlayerId = context?.battingStatsByPlayerId ?? getPreferredBattingStatsByPlayerId(playerState.battingStats, seasonPhase);
+  const pitchingStatsByPlayerId = context?.pitchingStatsByPlayerId ?? getPreferredPitchingStatsByPlayerId(playerState.pitchingStats, seasonPhase);
+  const playersById = context?.playersById ?? new Map(playerState.players.map((player) => [player.playerId, player]));
 
   const rosterBySlot = new Map<string, TeamRosterEntry>();
-  playerState.rosterSlots
-    .filter((slot) => slot.seasonYear === latestSeasonYear && slot.teamId === teamId)
+  const teamRosterSlots = context?.rosterSlotsByTeamId?.get(teamId) ??
+    playerState.rosterSlots.filter((slot) => slot.seasonYear === latestSeasonYear && slot.teamId === teamId);
+  teamRosterSlots
     .forEach((slot) => {
       const player = playersById.get(slot.playerId);
       if (!player) {
@@ -287,9 +299,10 @@ export const buildGameParticipants = (
   game: Game,
   games: Game[],
   playerState: LeaguePlayerState,
+  context?: GameParticipantsBuildContext,
 ): GameParticipantsSnapshot | null => {
-  const awayContext = buildTeamRosterContext(game.awayTeam, getTeamGameIndex(game.awayTeam, game, games), game.phase, playerState);
-  const homeContext = buildTeamRosterContext(game.homeTeam, getTeamGameIndex(game.homeTeam, game, games), game.phase, playerState);
+  const awayContext = buildTeamRosterContext(game.awayTeam, getTeamGameIndex(game.awayTeam, game, games), game.phase, playerState, context);
+  const homeContext = buildTeamRosterContext(game.homeTeam, getTeamGameIndex(game.homeTeam, game, games), game.phase, playerState, context);
 
   if (!awayContext || !homeContext) {
     return null;

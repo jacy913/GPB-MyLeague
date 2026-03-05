@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, ShieldAlert, Sparkles, Star } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Star } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
@@ -14,7 +14,6 @@ import {
   TeamRosterSlot,
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
-import { formatBattingAverage } from '../logic/statFormatting';
 import { TeamLogo } from './TeamLogo';
 
 interface FreeAgencyHubProps {
@@ -89,12 +88,6 @@ const getLatestPitchingRatings = (ratings: PlayerPitchingRatings[]): Map<string,
   });
   return next;
 };
-
-const formatPitchingLine = (stat: PlayerSeasonPitching | null): string =>
-  stat ? `${stat.era.toFixed(2)} ERA | ${stat.whip.toFixed(2)} WHIP | ${stat.strikeouts} K` : 'No pro line yet';
-
-const formatBattingLine = (stat: PlayerSeasonBatting | null): string =>
-  stat ? `${formatBattingAverage(stat.avg)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI` : 'No pro line yet';
 
 const getRosterSlotLabel = (slotCode: RosterSlotCode): string => {
   if (slotCode.startsWith('SP')) return 'Rotation';
@@ -374,13 +367,17 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                     <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Player</th>
                     <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Pos</th>
                     <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">OVR</th>
-                    <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Season Line</th>
-                    <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Offers</th>
+                    <th className="px-4 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Offer Interest</th>
                   </tr>
                 </thead>
                 <tbody>
                   {freeAgents.map((entry) => {
                     const selected = entry.player.playerId === selectedFreeAgent.player.playerId;
+                    const offerTeams: Team[] = Array.from(
+                      new Map<string, Team>(entry.offers.map((offer) => [offer.team.id, offer.team] as const)).values(),
+                    );
+                    const visibleOfferTeams = offerTeams.slice(0, 6);
+                    const hiddenOfferTeamCount = Math.max(offerTeams.length - visibleOfferTeams.length, 0);
 
                     return (
                       <tr
@@ -403,11 +400,27 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                         </td>
                         <td className="px-4 py-4 font-mono text-sm uppercase tracking-[0.16em] text-zinc-300">{entry.player.primaryPosition}</td>
                         <td className="px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-[#ecd693]">{entry.overall}</td>
-                        <td className="px-4 py-4 font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-400">
-                          {entry.player.playerType === 'pitcher' ? formatPitchingLine(entry.pitchingStat) : formatBattingLine(entry.battingStat)}
-                        </td>
-                        <td className="rounded-r-2xl px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-white">
-                          {entry.offers.length}
+                        <td className="rounded-r-2xl px-4 py-4">
+                          {offerTeams.length === 0 ? (
+                            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">No offers</p>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-2">
+                              {visibleOfferTeams.map((team) => (
+                                <div
+                                  key={`${entry.player.playerId}-${team.id}`}
+                                  className="rounded-xl border border-white/10 bg-white/[0.03] p-1.5"
+                                  title={`${team.city} ${team.name}`}
+                                >
+                                  <TeamLogo team={team} sizeClass="h-7 w-7" />
+                                </div>
+                              ))}
+                              {hiddenOfferTeamCount > 0 && (
+                                <div className="rounded-full border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-[#ecd693]">
+                                  +{hiddenOfferTeamCount}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -418,61 +431,7 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
           </section>
 
           <section className={`${sectionClass} p-6`}>
-            <div className="rounded-[1.75rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(212,187,106,0.22),transparent_42%),rgba(0,0,0,0.18)] p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">Selected Free Agent</p>
-                  <p className="mt-3 font-headline text-5xl uppercase tracking-[0.06em] text-white">
-                    {selectedFreeAgent.player.firstName} {selectedFreeAgent.player.lastName}
-                  </p>
-                  <p className="mt-3 font-mono text-xs uppercase tracking-[0.18em] text-zinc-400">
-                    {selectedFreeAgent.player.primaryPosition} | {selectedFreeAgent.player.playerType} | Age {selectedFreeAgent.player.age} | {selectedFreeAgent.player.bats}/{selectedFreeAgent.player.throws}
-                  </p>
-                </div>
-
-                <div className="rounded-[1.5rem] border border-white/10 bg-black/30 px-5 py-4 text-right">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Market Grade</p>
-                  <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-[#ecd693]">{selectedFreeAgent.overall}</p>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Overall</p>
-                </div>
-              </div>
-
-              <div className="mt-5 grid gap-4 md:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Season Line</p>
-                  <p className="mt-3 font-mono text-sm uppercase tracking-[0.12em] text-zinc-200">
-                    {selectedFreeAgent.player.playerType === 'pitcher'
-                      ? formatPitchingLine(selectedFreeAgent.pitchingStat)
-                      : formatBattingLine(selectedFreeAgent.battingStat)}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Market Value</p>
-                  <p className="mt-3 font-headline text-2xl uppercase tracking-[0.08em] text-white">{Math.round(selectedFreeAgent.marketValue)}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Decision Pressure</p>
-                  <p className="mt-3 flex items-center gap-2 font-headline text-2xl uppercase tracking-[0.08em] text-[#ecd693]">
-                    <Sparkles className="h-5 w-5" />
-                    {selectedFreeAgent.offers.length} offers
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-black/20 p-4">
-                <div className="flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4 text-prestige" />
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Market Read</p>
-                </div>
-                <p className="mt-3 text-sm leading-7 text-zinc-300">
-                  {selectedFreeAgent.offers.length > 0
-                    ? `${selectedFreeAgent.player.lastName} has a live market. The teams below see enough value to cut into an existing slot right now.`
-                    : `${selectedFreeAgent.player.lastName} is not drawing active bids right now. Fringe market players will stay unsigned until a clearer roster need opens.`}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6">
+            <div>
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Offer Board</p>
@@ -483,7 +442,7 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                 </div>
               </div>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-6 max-h-[58vh] space-y-4 overflow-y-auto pr-1 scrollbar-subtle">
                 {selectedFreeAgent.offers.length === 0 ? (
                   <div className="rounded-[1.75rem] border border-dashed border-white/10 bg-black/20 p-8 text-center">
                     <p className="font-headline text-3xl uppercase tracking-[0.08em] text-white">No viable bidders</p>

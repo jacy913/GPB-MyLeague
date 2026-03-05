@@ -6,10 +6,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
 import { addDaysToISODate, generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
-import { CompletedGameResult, LeaguePlayerState, PendingTradeProposal, Team, Game, PlayerTransaction, RosterSlotCode, SimulationSettings, SimulationTarget } from './types';
-import { StandingsTable } from './components/StandingsTable';
-import { LeagueTable } from './components/LeagueTable';
-import { Leaderboard } from './components/Leaderboard';
+import { CompletedGameResult, LeaguePlayerState, PendingTradeProposal, Team, TeamRosterSlot, Game, PlayerTransaction, RosterSlotCode, SimulationSettings, SimulationTarget } from './types';
+import { StandingsHub } from './components/StandingsHub';
 import { LeadersHub } from './components/LeadersHub';
 import { GPBBook } from './components/GPBBook';
 import { PlayoffsBracket } from './components/PlayoffsBracket';
@@ -19,6 +17,7 @@ import { TeamsHub } from './components/TeamsHub';
 import { PlayersHub } from './components/PlayersHub';
 import { FreeAgencyHub } from './components/FreeAgencyHub';
 import { TradesHub } from './components/TradesHub';
+import { DraftHub } from './components/DraftHub';
 import { SimulationHub, SimulationRunState } from './components/SimulationHub';
 import { GameScreen } from './components/GameScreen';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
@@ -33,6 +32,15 @@ import { buildGameParticipants } from './logic/gameParticipants';
 import { generatePendingTradeProposals } from './logic/tradeLogic';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from './logic/gameTimes';
 import { generatePlayerPool } from './logic/playerGenerator';
+import {
+  applyNextDraftPick,
+  createDraftClassState,
+  DRAFT_CLASS_SIZE,
+  DRAFT_ROUNDS,
+  DraftClassState,
+  DraftHistoryEntry,
+  generateDraftClassBundle,
+} from './logic/draftLogic';
 import { applyPlayerGameStatDelta, resetPlayerSeasonStats } from './logic/playerStats';
 import { repairRosterSlotsForTeams } from './logic/rosterManagement';
 import { getGeneratedContractYearsLeft } from './logic/playerBio';
@@ -70,6 +78,18 @@ interface TradeInterruptionPrompt {
   date: string;
 }
 
+interface SeasonResetStatus {
+  isResetting: boolean;
+  progress: number;
+  label: string;
+}
+
+interface SimulationSaveStatus {
+  isSaving: boolean;
+  progress: number;
+  label: string;
+}
+
 const NOTICE_LEVEL_CLASS: Record<NoticeLevel, string> = {
   info: 'text-zinc-300',
   success: 'text-white',
@@ -80,6 +100,22 @@ const NOTICE_LEVEL_CLASS: Record<NoticeLevel, string> = {
 const EXPECTED_TEAM_COUNT = 32;
 const SUPABASE_TEAM_SOURCE_SYNC_KEY = 'gpb_supabase_team_source_sync_v1';
 const SUPABASE_TEAM_SOURCE_SYNC_VERSION = '2026-03-03-teams-ts-trade-fix';
+const DRAFT_CENTER_STORAGE_KEY = 'gpb_draft_center_v1';
+const IDLE_SEASON_RESET_STATUS: SeasonResetStatus = {
+  isResetting: false,
+  progress: 0,
+  label: '',
+};
+const IDLE_SIMULATION_SAVE_STATUS: SimulationSaveStatus = {
+  isSaving: false,
+  progress: 0,
+  label: '',
+};
+
+interface DraftCenterState {
+  activeClass: DraftClassState | null;
+  history: DraftHistoryEntry[];
+}
 
 const isValidTeamShape = (value: unknown): value is Team => {
   if (!value || typeof value !== 'object') {
@@ -255,6 +291,36 @@ const PLAYOFF_ROUND_LIMITS = [
   { round: 'league_series', seriesCount: 2, bestOf: 7 },
   { round: 'world_series', seriesCount: 1, bestOf: 7 },
 ] as const;
+const SUPABASE_BOOTSTRAP_TIMEOUT_MS = 45000;
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timeoutHandle: ReturnType<typeof globalThis.setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = globalThis.setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== null) {
+      globalThis.clearTimeout(timeoutHandle);
+    }
+  }
+};
+
+const toErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
 
 const getProjectedSeasonSummary = (seasonGames: Game[]) => {
   if (seasonGames.length === 0) {
@@ -341,15 +407,35 @@ const getProjectedSeasonSummary = (seasonGames: Game[]) => {
   };
 };
 
+const buildRosterSlotSignature = (slot: TeamRosterSlot): string =>
+  `${slot.seasonYear}|${slot.teamId}|${slot.slotCode}|${slot.playerId}`;
+
+const areRosterSlotsEquivalent = (left: TeamRosterSlot[], right: TeamRosterSlot[]): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftSignatures = left.map(buildRosterSlotSignature).sort((a, b) => a.localeCompare(b));
+  const rightSignatures = right.map(buildRosterSlotSignature).sort((a, b) => a.localeCompare(b));
+
+  for (let index = 0; index < leftSignatures.length; index += 1) {
+    if (leftSignatures[index] !== rightSignatures[index]) {
+      return false;
+    }
+  }
+  return true;
+};
+
 function App() {
   const [teams, setTeams] = useState<Team[]>(INITIAL_TEAMS);
   const [games, setGames] = useState<Game[]>([]);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isFinalizingSimulation, setIsFinalizingSimulation] = useState(false);
+  const [simulationSaveStatus, setSimulationSaveStatus] = useState<SimulationSaveStatus>(IDLE_SIMULATION_SAVE_STATUS);
   const [simulationProgress, setSimulationProgress] = useState<SimulationProgressUpdate | null>(null);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
-  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'simulation' | 'league_standings' | 'leaders' | 'teams' | 'players' | 'trades' | 'free_agency' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
-  const [standingsMode, setStandingsMode] = useState<'divisional' | 'league'>('divisional');
+  const [view, setView] = useState<'dashboard' | 'games_schedule' | 'team_calendar' | 'simulation' | 'league_standings' | 'leaders' | 'teams' | 'players' | 'trades' | 'draft' | 'free_agency' | 'playoffs' | 'gpb_book' | 'notifications' | 'settings' | 'game_screen'>('dashboard');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const [pendingTrades, setPendingTrades] = useState<PendingTradeProposal[]>([]);
@@ -365,10 +451,17 @@ function App() {
   const [isClearingHistory, setIsClearingHistory] = useState(false);
   const [isWipingPlayers, setIsWipingPlayers] = useState(false);
   const [isGeneratingPlayers, setIsGeneratingPlayers] = useState(false);
+  const [seasonResetStatus, setSeasonResetStatus] = useState<SeasonResetStatus>(IDLE_SEASON_RESET_STATUS);
+  const [draftCenter, setDraftCenter] = useState<DraftCenterState>({ activeClass: null, history: [] });
+  const [isDraftProcessing, setIsDraftProcessing] = useState(false);
   const [playerGenerationPreview, setPlayerGenerationPreview] = useState<LeaguePlayerState | null>(null);
   const [commissionerNotices, setCommissionerNotices] = useState<CommissionerNotice[]>([]);
   const previousSeasonCompleteRef = useRef(false);
   const simulationWorkerRef = useRef<Worker | null>(null);
+  const draftCenterRef = useRef<DraftCenterState>({ activeClass: null, history: [] });
+  const playerStateRef = useRef<LeaguePlayerState>(EMPTY_PLAYER_STATE);
+  const draftAutoRunTimerRef = useRef<number | null>(null);
+  const rosterAutoOptimizedRef = useRef(false);
 
   const pushNotice = useCallback((message: string, level: NoticeLevel = 'info') => {
     const createdAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -410,6 +503,104 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    playerStateRef.current = playerState;
+  }, [playerState]);
+
+  useEffect(() => {
+    if (isBootstrapping || rosterAutoOptimizedRef.current || teams.length === 0 || playerState.players.length === 0) {
+      return;
+    }
+
+    rosterAutoOptimizedRef.current = true;
+    const fallbackSeasonYear = resolveSeasonYear(
+      currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getUTCFullYear()),
+      games,
+    );
+    const repairedRoster = repairRosterSlotsForTeams(
+      playerState,
+      teams.map((team) => team.id),
+      fallbackSeasonYear,
+    );
+
+    if (areRosterSlotsEquivalent(playerState.rosterSlots, repairedRoster.rosterSlots)) {
+      return;
+    }
+
+    const optimizedPlayerState: LeaguePlayerState = {
+      ...playerState,
+      rosterSlots: repairedRoster.rosterSlots,
+    };
+
+    setPlayerState(optimizedPlayerState);
+    playerStateRef.current = optimizedPlayerState;
+    saveLocalPlayerStateSafely(optimizedPlayerState);
+    pushNotice('Auto-optimized team lineups and rotations by overall ratings.', 'info');
+  }, [currentDate, games, isBootstrapping, playerState, pushNotice, saveLocalPlayerStateSafely, teams]);
+
+  useEffect(() => {
+    draftCenterRef.current = draftCenter;
+  }, [draftCenter]);
+
+  useEffect(() => {
+    try {
+      const serialized = localStorage.getItem(DRAFT_CENTER_STORAGE_KEY);
+      if (!serialized) {
+        return;
+      }
+      const parsed = JSON.parse(serialized) as DraftCenterState;
+      if (!parsed || typeof parsed !== 'object') {
+        return;
+      }
+      setDraftCenter({
+        activeClass: parsed.activeClass ?? null,
+        history: Array.isArray(parsed.history) ? parsed.history : [],
+      });
+    } catch (error) {
+      console.error('Failed to load draft center state:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_CENTER_STORAGE_KEY, JSON.stringify(draftCenter));
+    } catch (error) {
+      console.error('Failed to persist draft center state:', error);
+    }
+  }, [draftCenter]);
+
+  useEffect(() => {
+    if (!draftCenter.activeClass) {
+      return;
+    }
+    const playerIds = new Set(playerState.players.map((player) => player.playerId));
+    const hasMissingProspect = draftCenter.activeClass.prospects.some((prospect) => !playerIds.has(prospect.playerId));
+    if (!hasMissingProspect) {
+      return;
+    }
+
+    setDraftCenter((current) => ({
+      ...current,
+      activeClass: null,
+    }));
+    pushNotice('Draft board cleared because the active class no longer matches the current player pool.', 'warning');
+  }, [draftCenter.activeClass, playerState.players, pushNotice]);
+
+  const stopDraftAutoRun = useCallback(() => {
+    if (draftAutoRunTimerRef.current !== null) {
+      globalThis.clearTimeout(draftAutoRunTimerRef.current);
+      draftAutoRunTimerRef.current = null;
+    }
+    setIsDraftProcessing(false);
+  }, []);
+
+  useEffect(() => () => {
+    if (draftAutoRunTimerRef.current !== null) {
+      globalThis.clearTimeout(draftAutoRunTimerRef.current);
+      draftAutoRunTimerRef.current = null;
+    }
+  }, []);
+
   const getProgressFromGames = useCallback((seasonGames: Game[]): number => {
     if (seasonGames.length === 0) {
       return 0;
@@ -444,6 +635,7 @@ function App() {
     nextSeasonComplete: boolean,
     options?: {
       pruneMissingGames?: boolean;
+      supabaseGamesOverride?: Game[];
     },
   ) => {
     const localSaved = saveLocalLeagueStateSafely(
@@ -466,7 +658,7 @@ function App() {
       await saveSupabaseLeagueState(
         nextTeams,
         nextSettings,
-        nextGames,
+        options?.supabaseGamesOverride ?? nextGames,
         nextCurrentDate,
         nextProgress,
         nextSeasonComplete,
@@ -477,10 +669,18 @@ function App() {
       setDataSource('supabase');
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
-      const isStatementTimeout = message.includes('statement timeout') || message.includes('"code":"57014"');
-      if (localSaved && isStatementTimeout) {
-        console.warn('Supabase league-state sync timed out. Using local league state fallback.', error);
-        setDataSource('local');
+      const normalizedMessage = message.toLowerCase();
+      const isStatementTimeout = normalizedMessage.includes('statement timeout') || normalizedMessage.includes('"code":"57014"');
+      if (isStatementTimeout) {
+        console.warn(
+          localSaved
+            ? 'Supabase league-state sync timed out. Using local league state fallback.'
+            : 'Supabase league-state sync timed out. Keeping in-memory league state.',
+          error,
+        );
+        if (localSaved) {
+          setDataSource('local');
+        }
         return;
       }
       throw error;
@@ -494,16 +694,42 @@ function App() {
 
       try {
         if (isSupabaseConfigured) {
-          await seedSupabaseLeagueState(INITIAL_TEAMS, DEFAULT_SETTINGS);
+          let [remoteState, remotePlayerState] = await withTimeout(
+            Promise.all([
+              loadSupabaseLeagueState(),
+              loadSupabasePlayerState(),
+            ]),
+            SUPABASE_BOOTSTRAP_TIMEOUT_MS,
+            'Supabase initial load',
+          );
+          const hasRemoteTeams = Array.isArray(remoteState.teams) && remoteState.teams.length > 0;
+          const hasRemoteSettings = Boolean(remoteState.settings);
+          if (!hasRemoteTeams || !hasRemoteSettings) {
+            await withTimeout(
+              seedSupabaseLeagueState(INITIAL_TEAMS, DEFAULT_SETTINGS),
+              SUPABASE_BOOTSTRAP_TIMEOUT_MS,
+              'Supabase seed',
+            );
+            [remoteState, remotePlayerState] = await withTimeout(
+              Promise.all([
+                loadSupabaseLeagueState(),
+                loadSupabasePlayerState(),
+              ]),
+              SUPABASE_BOOTSTRAP_TIMEOUT_MS,
+              'Supabase reload after seed',
+            );
+          }
+
           const hasSyncedTeamSource = localStorage.getItem(SUPABASE_TEAM_SOURCE_SYNC_KEY) === SUPABASE_TEAM_SOURCE_SYNC_VERSION;
           if (!hasSyncedTeamSource) {
-            await replaceSupabaseTeamsFromSource(INITIAL_TEAMS);
+            await withTimeout(
+              replaceSupabaseTeamsFromSource(INITIAL_TEAMS),
+              SUPABASE_BOOTSTRAP_TIMEOUT_MS,
+              'Supabase team source sync',
+            );
             localStorage.setItem(SUPABASE_TEAM_SOURCE_SYNC_KEY, SUPABASE_TEAM_SOURCE_SYNC_VERSION);
           }
-          const [remoteState, remotePlayerState] = await Promise.all([
-            loadSupabaseLeagueState(),
-            loadSupabasePlayerState(),
-          ]);
+
           const validRemoteTeams = sanitizeTeams(remoteState.teams);
           const validRemoteSettings = isValidSettingsShape(remoteState.settings) ? remoteState.settings : null;
           const validRemoteGames = sanitizeGames(remoteState.games);
@@ -565,6 +791,7 @@ function App() {
         setDataSource('local');
       } catch (error) {
         console.error('Failed to load Supabase state, falling back to local storage:', error);
+        const bootstrapErrorMessage = toErrorMessage(error);
         const localState = loadLocalLeagueState();
         const localPlayerState = loadLocalPlayerState();
         const validLocalTeams = sanitizeTeams(localState.teams);
@@ -587,7 +814,10 @@ function App() {
           setSeasonComplete(typeof localState.seasonComplete === 'boolean' ? localState.seasonComplete : validLocalGames.every((game) => game.status === 'completed'));
         }
         setDataSource('local');
-        pushNotice('Supabase sync failed. Using local storage fallback.', 'warning');
+        pushNotice(
+          `Supabase bootstrap failed: ${bootstrapErrorMessage.slice(0, 180)}. Using local storage fallback.`,
+          'warning',
+        );
       } finally {
         setIsBootstrapping(false);
       }
@@ -641,39 +871,123 @@ function App() {
     }
   }, [pendingTrades.length, view]);
 
-  const resetSeason = useCallback((teamsToReset = teams, settingsToUse = settings) => {
-    const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
-    const schedule = createMasterSchedule(freshTeams);
-    const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
-    const nextPlayerState = resetPlayerSeasonStats(playerState, resolveSeasonYear(firstDate, schedule));
+  const resetSeason = useCallback(async (teamsToReset = teams, settingsToUse = settings) => {
+    if (seasonResetStatus.isResetting) {
+      return;
+    }
 
-    setTeams(freshTeams);
-    setGames(schedule);
-    setPlayerState(nextPlayerState);
-    setCurrentDate(firstDate);
-    setSelectedDate(firstDate);
-    setProgress(0);
-    setSeasonComplete(false);
-    saveLocalPlayerStateSafely(nextPlayerState);
+    if (isSimulating || isFinalizingSimulation) {
+      pushNotice('Stop the active simulation run before resetting the season.', 'warning');
+      return;
+    }
 
-      void (async () => {
-        try {
-          await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false, { pruneMissingGames: true });
-          if (isSupabaseConfigured) {
-            await saveSupabasePlayerState(nextPlayerState);
-          }
-        } catch (error) {
-          console.error('Failed to persist reset season state:', error);
-          pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
+    const updateResetProgress = (progressValue: number, label: string) => {
+      setSeasonResetStatus({
+        isResetting: true,
+        progress: progressValue,
+        label,
+      });
+    };
+
+    updateResetProgress(8, 'Preparing season reset');
+
+    try {
+      if (simulationWorkerRef.current) {
+        simulationWorkerRef.current.terminate();
+        simulationWorkerRef.current = null;
+      }
+
+      stopDraftAutoRun();
+      const clearedDraftCenter: DraftCenterState = {
+        activeClass: null,
+        history: draftCenterRef.current.history,
+      };
+      setDraftCenter(clearedDraftCenter);
+      draftCenterRef.current = clearedDraftCenter;
+
+      setIsSimulating(false);
+      setIsFinalizingSimulation(false);
+      setSimulationProgress(null);
+      setSimulationRunState(null);
+
+      updateResetProgress(24, 'Building clean schedule and records');
+
+      const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
+      const schedule = createMasterSchedule(freshTeams);
+      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+      const resetSeasonYear = resolveSeasonYear(firstDate, schedule);
+      const seasonResetPlayerState = resetPlayerSeasonStats(playerState, resetSeasonYear);
+      const nextPlayerState: LeaguePlayerState = {
+        ...seasonResetPlayerState,
+        transactions: [],
+      };
+
+      updateResetProgress(46, 'Applying reset locally');
+
+      React.startTransition(() => {
+        setTeams(freshTeams);
+        setGames(schedule);
+        setPlayerState(nextPlayerState);
+        setCurrentDate(firstDate);
+        setSelectedDate(firstDate);
+        setProgress(0);
+        setSeasonComplete(false);
+        setPendingTrades([]);
+        setTradeBoardDate('');
+        setTradeInterruptionPrompt(null);
+        setSelectedGameId(null);
+      });
+
+      saveLocalPlayerStateSafely(nextPlayerState);
+      saveLocalLeagueStateSafely(freshTeams, settingsToUse, schedule, firstDate, 0, false);
+
+      updateResetProgress(66, 'Syncing league state');
+
+      try {
+        await persistLeagueState(freshTeams, settingsToUse, schedule, firstDate, 0, false, { pruneMissingGames: true });
+
+        if (isSupabaseConfigured) {
+          updateResetProgress(84, 'Syncing player state');
+          await saveSupabasePlayerState(nextPlayerState);
         }
-      })();
-  }, [teams, settings, playerState, buildFreshSeasonTeams, createMasterSchedule, persistLeagueState, pushNotice]);
+
+        updateResetProgress(100, 'Season reset complete');
+        pushNotice(
+          isSupabaseConfigured
+            ? 'Season fully reset and synced to Supabase.'
+            : 'Season fully reset locally.',
+          'success',
+        );
+      } catch (error) {
+        console.error('Failed to persist reset season state:', error);
+        pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
+      }
+    } finally {
+      globalThis.setTimeout(() => {
+        setSeasonResetStatus(IDLE_SEASON_RESET_STATUS);
+      }, 500);
+    }
+  }, [
+    teams,
+    settings,
+    seasonResetStatus.isResetting,
+    isSimulating,
+    isFinalizingSimulation,
+    pushNotice,
+    buildFreshSeasonTeams,
+    createMasterSchedule,
+    playerState,
+    saveLocalPlayerStateSafely,
+    saveLocalLeagueStateSafely,
+    persistLeagueState,
+    stopDraftAutoRun,
+  ]);
 
   const handleSaveSettings = (newTeams: Team[], newSettings: SimulationSettings) => {
     setSettings(newSettings);
-    resetSeason(newTeams, newSettings);
+    void resetSeason(newTeams, newSettings);
     pushNotice(
-      isSupabaseConfigured ? 'League settings updated and season reset.' : 'League settings updated locally.',
+      isSupabaseConfigured ? 'League settings updated. Season reset started.' : 'League settings updated locally. Season reset started.',
       'success',
     );
     setView('games_schedule');
@@ -772,9 +1086,42 @@ function App() {
     nextPlayerState: LeaguePlayerState,
     nextCurrentDate: string,
     nextSeasonComplete: boolean,
+    onProgress?: (progress: number, label: string) => void,
   ) => {
+    const emitSaveProgress = (nextSaveProgress: number, nextLabel: string) => {
+      if (!onProgress) {
+        return;
+      }
+      onProgress(Math.max(0, Math.min(100, nextSaveProgress)), nextLabel);
+    };
+
+    emitSaveProgress(12, 'Writing local player snapshot');
     const nextProgress = getProgressFromGames(nextGames);
     saveLocalPlayerStateSafely(nextPlayerState);
+    emitSaveProgress(26, 'Diffing game results');
+    const currentGamesById = new Map(games.map((game) => [game.gameId, game]));
+    const changedGames = nextGames.filter((game) => {
+      const previous = currentGamesById.get(game.gameId);
+      if (!previous) {
+        return true;
+      }
+
+      if (previous.status !== game.status) {
+        return true;
+      }
+
+      if (previous.date !== game.date || previous.phase !== game.phase) {
+        return true;
+      }
+
+      if (previous.score.home !== game.score.home || previous.score.away !== game.score.away) {
+        return true;
+      }
+
+      return JSON.stringify(previous.stats) !== JSON.stringify(game.stats);
+    });
+
+    emitSaveProgress(42, 'Saving league state');
     try {
       await persistLeagueState(
         nextTeams,
@@ -783,13 +1130,24 @@ function App() {
         nextCurrentDate,
         nextProgress,
         nextSeasonComplete,
+        {
+          supabaseGamesOverride: changedGames,
+        },
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : JSON.stringify(error);
-      throw new Error(`League state save failed: ${message}`);
+      const lowerMessage = message.toLowerCase();
+      const isStatementTimeout = lowerMessage.includes('statement timeout') || lowerMessage.includes('"code":"57014"');
+      if (isStatementTimeout) {
+        console.warn('League-state save timed out after simulation snapshot. Keeping in-memory snapshot.', error);
+        emitSaveProgress(72, 'League save timed out; keeping in-memory state');
+      } else {
+        throw new Error(`League state save failed: ${message}`);
+      }
     }
 
     if (isSupabaseConfigured) {
+      emitSaveProgress(82, 'Saving player state');
       try {
         await saveSupabasePlayerState(nextPlayerState);
       } catch (error) {
@@ -798,6 +1156,7 @@ function App() {
       }
     }
 
+    emitSaveProgress(90, isSupabaseConfigured ? 'Player state saved' : 'Snapshot saved locally');
     return nextProgress;
   }, [getProgressFromGames, isSupabaseConfigured, persistLeagueState, saveLocalPlayerStateSafely, settings]);
 
@@ -837,7 +1196,10 @@ function App() {
   }, [destroySimulationWorker]);
 
   const runSimulationTarget = useCallback(async (target: SimulationTarget) => {
-    if (isSimulating || games.length === 0) {
+    if (isSimulating || isFinalizingSimulation || seasonResetStatus.isResetting || isDraftProcessing || games.length === 0) {
+      if (isDraftProcessing) {
+        pushNotice('Stop the active draft run before starting simulation.', 'warning');
+      }
       return;
     }
 
@@ -857,6 +1219,8 @@ function App() {
 
     setView('simulation');
     setIsSimulating(true);
+    setIsFinalizingSimulation(false);
+    setSimulationSaveStatus(IDLE_SIMULATION_SAVE_STATUS);
     setSimulationProgress({
       label,
       completedGames: 0,
@@ -917,6 +1281,8 @@ function App() {
         if (message.type === 'error') {
           destroySimulationWorker(worker);
           setIsSimulating(false);
+          setIsFinalizingSimulation(false);
+          setSimulationSaveStatus(IDLE_SIMULATION_SAVE_STATUS);
           setSimulationProgress(null);
           setSimulationRunState((current) => current ? {
             ...current,
@@ -928,27 +1294,24 @@ function App() {
         }
 
         destroySimulationWorker(worker);
+        setIsSimulating(false);
+        setSimulationProgress(null);
+        setIsFinalizingSimulation(true);
+        setSimulationSaveStatus({
+          isSaving: true,
+          progress: 6,
+          label: 'Preparing simulation snapshot',
+        });
 
         try {
           const snapshot = message.payload.snapshot;
-          const nextProgress = await persistSimulationSnapshot(
-            snapshot.teams,
-            snapshot.games,
-            snapshot.playerState,
-            snapshot.currentDate,
-            snapshot.seasonComplete,
-          );
-
-          applySimulationFullState(
-            snapshot.teams,
-            snapshot.games,
-            snapshot.playerState,
-            snapshot.currentDate,
-            nextProgress,
-            snapshot.seasonComplete,
-          );
 
           if (message.type === 'cancelled') {
+            setSimulationSaveStatus({
+              isSaving: true,
+              progress: 10,
+              label: 'Saving stopped simulation state',
+            });
             setSimulationRunState((current) => current ? {
               ...current,
               status: 'cancelled',
@@ -957,10 +1320,12 @@ function App() {
               message: message.payload.message,
             } : null);
             pushNotice('Simulation stopped.', 'info');
-            return;
-          }
-
-          if (message.type === 'interrupted') {
+          } else if (message.type === 'interrupted') {
+            setSimulationSaveStatus({
+              isSaving: true,
+              progress: 10,
+              label: 'Saving interrupted simulation state',
+            });
             if (message.payload.interruptionKind === 'trade') {
               setPendingTrades(message.payload.pendingTrades ?? []);
               setTradeBoardDate(snapshot.currentDate);
@@ -988,31 +1353,75 @@ function App() {
               simulatedGameCount: snapshot.simulatedGameCount,
               message: message.payload.message,
             } : null);
-            return;
+          } else {
+            setSimulationSaveStatus({
+              isSaving: true,
+              progress: 10,
+              label: 'Saving completed simulation state',
+            });
+            setSimulationRunState((current) => current ? {
+              ...current,
+              status: 'complete',
+              currentIndex: current.queuedDates.length,
+              currentDate: snapshot.currentDate,
+              simulatedGameCount: snapshot.simulatedGameCount,
+              message: message.payload.message,
+            } : null);
           }
 
-          setSimulationRunState((current) => current ? {
-            ...current,
-            status: 'complete',
-            currentIndex: current.queuedDates.length,
-            currentDate: snapshot.currentDate,
-            simulatedGameCount: snapshot.simulatedGameCount,
-            message: message.payload.message,
-          } : null);
+          const nextProgress = await persistSimulationSnapshot(
+            snapshot.teams,
+            snapshot.games,
+            snapshot.playerState,
+            snapshot.currentDate,
+            snapshot.seasonComplete,
+            (nextSaveProgress, nextLabel) => {
+              setSimulationSaveStatus({
+                isSaving: true,
+                progress: nextSaveProgress,
+                label: nextLabel,
+              });
+            },
+          );
 
-          if (snapshot.seasonComplete && snapshot.simulatedGameCount > 0) {
+          setSimulationSaveStatus({
+            isSaving: true,
+            progress: 94,
+            label: 'Applying saved snapshot',
+          });
+          applySimulationFullState(
+            snapshot.teams,
+            snapshot.games,
+            snapshot.playerState,
+            snapshot.currentDate,
+            nextProgress,
+            snapshot.seasonComplete,
+          );
+
+          if (message.type === 'complete' && snapshot.seasonComplete && snapshot.simulatedGameCount > 0) {
             if (isSupabaseConfigured) {
+              setSimulationSaveStatus({
+                isSaving: true,
+                progress: 97,
+                label: 'Saving season archive',
+              });
               const seasonLabel = `Season ${new Date(`${snapshot.currentDate}T00:00:00Z`).getUTCFullYear()}`;
               await saveSupabaseSeasonRun(snapshot.teams, snapshot.games, settings, seasonLabel);
               pushNotice('Season simulation completed and saved to Supabase.', 'success');
             } else {
               pushNotice('Season simulation completed and saved locally.', 'success');
             }
-          } else if (snapshot.simulatedGameCount === 0) {
+          } else if (message.type === 'complete' && snapshot.simulatedGameCount === 0) {
             pushNotice('No scheduled games matched the selected simulation scope.', 'info');
-          } else {
+          } else if (message.type === 'complete') {
             pushNotice(`Simulated ${snapshot.simulatedGameCount} games through ${snapshot.currentDate}.`, 'info');
           }
+
+          setSimulationSaveStatus({
+            isSaving: true,
+            progress: 100,
+            label: 'Save complete',
+          });
         } catch (error) {
           console.error('Failed to finalize simulation snapshot:', error);
           const errorMessage = error instanceof Error
@@ -1027,8 +1436,8 @@ function App() {
           } : null);
           pushNotice('Simulation failed while saving the final snapshot.', 'error');
         } finally {
-          setIsSimulating(false);
-          setSimulationProgress(null);
+          setIsFinalizingSimulation(false);
+          setSimulationSaveStatus(IDLE_SIMULATION_SAVE_STATUS);
         }
       })();
     };
@@ -1039,13 +1448,20 @@ function App() {
       }
 
       console.error('Simulation worker crashed:', event);
+      const workerErrorDetails = [event.message, event.filename, event.lineno ? `line ${event.lineno}` : '', event.colno ? `col ${event.colno}` : '']
+        .filter((token) => Boolean(token))
+        .join(' | ');
       destroySimulationWorker(worker);
       setIsSimulating(false);
+      setIsFinalizingSimulation(false);
+      setSimulationSaveStatus(IDLE_SIMULATION_SAVE_STATUS);
       setSimulationProgress(null);
       setSimulationRunState((current) => current ? {
         ...current,
         status: 'error',
-        message: 'The background simulation worker crashed unexpectedly.',
+        message: workerErrorDetails
+          ? `The background simulation worker crashed unexpectedly. ${workerErrorDetails}`
+          : 'The background simulation worker crashed unexpectedly.',
       } : null);
       pushNotice('Simulation failed. The background worker crashed.', 'error');
     };
@@ -1065,7 +1481,7 @@ function App() {
         throttleMs: 340,
       },
     });
-  }, [applySimulationFullState, currentDate, destroySimulationWorker, games, isSimulating, persistSimulationSnapshot, playerState, pushNotice, settings, teams]);
+  }, [applySimulationFullState, currentDate, destroySimulationWorker, games, isDraftProcessing, isFinalizingSimulation, isSimulating, persistSimulationSnapshot, playerState, pushNotice, seasonResetStatus.isResetting, settings, teams]);
 
   const cancelSimulationRun = useCallback(() => {
     if (!isSimulating || !simulationWorkerRef.current) {
@@ -1306,6 +1722,21 @@ function App() {
           },
         ];
 
+    const repairedRoster = repairRosterSlotsForTeams(
+      {
+        ...playerState,
+        players: nextPlayers,
+        battingStats: playerState.battingStats,
+        pitchingStats: playerState.pitchingStats,
+        battingRatings: playerState.battingRatings,
+        pitchingRatings: playerState.pitchingRatings,
+        rosterSlots: nextRosterSlots,
+        transactions: [],
+      },
+      [assignment.teamId],
+      seasonYear,
+    );
+
     const nextTransactions = [
       {
         playerId: assignment.playerId,
@@ -1315,6 +1746,14 @@ function App() {
         effectiveDate,
         notes: `${team.city} signed into ${assignment.slotCode}.`,
       },
+      ...repairedRoster.promotions.map((promotion) => ({
+        playerId: promotion.playerId,
+        eventType: 'promoted' as const,
+        fromTeamId: promotion.teamId,
+        toTeamId: promotion.teamId,
+        effectiveDate,
+        notes: `Auto-promoted from ${promotion.fromSlot ?? 'unassigned'} to ${promotion.toSlot} after free-agency signing.`,
+      })),
       ...playerState.transactions.map((transaction) => ({ ...transaction })),
     ];
 
@@ -1336,7 +1775,7 @@ function App() {
       pitchingStats: playerState.pitchingStats.map((stat) => ({ ...stat })),
       battingRatings: playerState.battingRatings.map((rating) => ({ ...rating })),
       pitchingRatings: playerState.pitchingRatings.map((rating) => ({ ...rating })),
-      rosterSlots: nextRosterSlots,
+      rosterSlots: repairedRoster.rosterSlots,
       transactions: nextTransactions,
     };
 
@@ -1360,6 +1799,275 @@ function App() {
       pushNotice('Free-agent assignment completed locally, but syncing player data failed.', 'warning');
     }
   }, [currentDate, games, playerState, pushNotice, selectedDate, teams]);
+
+  const executeDraftBatch = useCallback((pickCount: number) => {
+    const activeDraftClass = draftCenterRef.current.activeClass;
+    if (!activeDraftClass || activeDraftClass.isComplete || pickCount <= 0) {
+      return { applied: 0, completed: Boolean(activeDraftClass?.isComplete), nextPlayerState: null as LeaguePlayerState | null };
+    }
+
+    const effectiveDate = currentDate || selectedDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    let workingDraftClass = {
+      ...activeDraftClass,
+      prospects: [...activeDraftClass.prospects],
+      picks: [...activeDraftClass.picks],
+    };
+    let workingPlayerState = playerStateRef.current;
+    let applied = 0;
+
+    for (let index = 0; index < pickCount; index += 1) {
+      const stepResult = applyNextDraftPick(workingDraftClass, workingPlayerState, teams, effectiveDate);
+      if (!stepResult) {
+        break;
+      }
+
+      workingDraftClass = stepResult.draftClass;
+      workingPlayerState = stepResult.playerState;
+      applied += 1;
+
+      if (workingDraftClass.isComplete) {
+        break;
+      }
+    }
+
+    if (applied === 0) {
+      return { applied: 0, completed: workingDraftClass.isComplete, nextPlayerState: null as LeaguePlayerState | null };
+    }
+
+    const shouldArchiveClass = workingDraftClass.isComplete && !draftCenterRef.current.history.some((entry) => entry.draftId === workingDraftClass.draftId);
+    const nextHistory = shouldArchiveClass
+      ? [
+          ...draftCenterRef.current.history,
+          {
+            draftId: workingDraftClass.draftId,
+            seasonYear: workingDraftClass.seasonYear,
+            completedAt: new Date().toISOString(),
+            pickCount: workingDraftClass.picks.length,
+            picks: [...workingDraftClass.picks],
+          },
+        ]
+      : draftCenterRef.current.history;
+
+    setPlayerState(workingPlayerState);
+    playerStateRef.current = workingPlayerState;
+    saveLocalPlayerStateSafely(workingPlayerState);
+
+    const nextDraftCenter: DraftCenterState = {
+      activeClass: workingDraftClass,
+      history: nextHistory,
+    };
+    setDraftCenter(nextDraftCenter);
+    draftCenterRef.current = nextDraftCenter;
+
+    return {
+      applied,
+      completed: workingDraftClass.isComplete,
+      nextPlayerState: workingPlayerState,
+    };
+  }, [currentDate, games, saveLocalPlayerStateSafely, selectedDate, teams]);
+
+  const handleGenerateDraftClass = useCallback(async () => {
+    if (isSimulating || isFinalizingSimulation) {
+      pushNotice('Stop simulation before generating a draft class.', 'warning');
+      return;
+    }
+
+    if (isDraftProcessing) {
+      pushNotice('Stop the current draft auto-run before generating a new class.', 'warning');
+      return;
+    }
+
+    const existingClass = draftCenterRef.current.activeClass;
+    if (existingClass && !existingClass.isComplete) {
+      const approved = window.confirm('An active draft class already exists. Replace it with a new class?');
+      if (!approved) {
+        return;
+      }
+    }
+
+    const seasonYear = resolveSeasonYear(currentDate, games);
+    const targetProspectCount = Math.max(DRAFT_CLASS_SIZE, teams.length * DRAFT_ROUNDS + 32);
+    const bundle = generateDraftClassBundle(seasonYear, targetProspectCount);
+
+    const staleProspectIds = new Set(existingClass?.prospects.map((prospect) => prospect.playerId) ?? []);
+    const cleanedPlayerState: LeaguePlayerState = staleProspectIds.size === 0
+      ? playerStateRef.current
+      : {
+          ...playerStateRef.current,
+          players: playerStateRef.current.players.filter((player) => !staleProspectIds.has(player.playerId)),
+          battingStats: playerStateRef.current.battingStats.filter((stat) => !staleProspectIds.has(stat.playerId)),
+          pitchingStats: playerStateRef.current.pitchingStats.filter((stat) => !staleProspectIds.has(stat.playerId)),
+          battingRatings: playerStateRef.current.battingRatings.filter((ratings) => !staleProspectIds.has(ratings.playerId)),
+          pitchingRatings: playerStateRef.current.pitchingRatings.filter((ratings) => !staleProspectIds.has(ratings.playerId)),
+          rosterSlots: playerStateRef.current.rosterSlots.filter((slot) => !staleProspectIds.has(slot.playerId)),
+          transactions: playerStateRef.current.transactions.filter((transaction) => !staleProspectIds.has(transaction.playerId)),
+        };
+
+    const existingPlayerIds = new Set(cleanedPlayerState.players.map((player) => player.playerId));
+    const nextPlayerState: LeaguePlayerState = {
+      ...cleanedPlayerState,
+      players: [...cleanedPlayerState.players, ...bundle.players.filter((player) => !existingPlayerIds.has(player.playerId))],
+      battingStats: [...cleanedPlayerState.battingStats, ...bundle.battingStats],
+      pitchingStats: [...cleanedPlayerState.pitchingStats, ...bundle.pitchingStats],
+      battingRatings: [...cleanedPlayerState.battingRatings, ...bundle.battingRatings],
+      pitchingRatings: [...cleanedPlayerState.pitchingRatings, ...bundle.pitchingRatings],
+      rosterSlots: [...cleanedPlayerState.rosterSlots],
+      transactions: [...cleanedPlayerState.transactions],
+    };
+
+    const nextDraftCenter: DraftCenterState = {
+      activeClass: createDraftClassState(seasonYear, teams, bundle.prospects),
+      history: draftCenterRef.current.history,
+    };
+
+    setPlayerState(nextPlayerState);
+    playerStateRef.current = nextPlayerState;
+    setDraftCenter(nextDraftCenter);
+    draftCenterRef.current = nextDraftCenter;
+    saveLocalPlayerStateSafely(nextPlayerState);
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(nextPlayerState);
+      }
+      pushNotice(`Draft class generated for ${seasonYear}: ${bundle.prospects.length} prospects are on the board.`, 'success');
+    } catch (error) {
+      console.error('Failed to persist generated draft class:', error);
+      pushNotice('Draft class generated locally, but syncing player state failed.', 'warning');
+    }
+  }, [currentDate, games, isDraftProcessing, isFinalizingSimulation, isSimulating, pushNotice, saveLocalPlayerStateSafely, teams]);
+
+  const handleDraftNextPick = useCallback(async () => {
+    if (isDraftProcessing) {
+      return;
+    }
+    const result = executeDraftBatch(1);
+    if (result.applied === 0 || !result.nextPlayerState) {
+      pushNotice('No draft pick was made. Generate a class first.', 'warning');
+      return;
+    }
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(result.nextPlayerState);
+      }
+    } catch (error) {
+      console.error('Failed to persist draft pick:', error);
+      pushNotice('Draft pick applied locally, but syncing player state failed.', 'warning');
+      return;
+    }
+
+    pushNotice(result.completed ? 'Draft complete.' : 'Draft pick processed.', 'success');
+  }, [executeDraftBatch, isDraftProcessing, pushNotice]);
+
+  const runDraftAuto = useCallback((scope: 'round' | 'full') => {
+    const activeClass = draftCenterRef.current.activeClass;
+    if (!activeClass || activeClass.isComplete || isDraftProcessing) {
+      return;
+    }
+
+    const completedPicks = activeClass.picks.length;
+    const totalRemaining = Math.max(activeClass.totalPicks - completedPicks, 0);
+    if (totalRemaining <= 0) {
+      return;
+    }
+    const picksUntilRoundEnd = activeClass.draftOrder.length > 0
+      ? activeClass.draftOrder.length - (completedPicks % activeClass.draftOrder.length || 0)
+      : 0;
+    const targetPickCount = scope === 'round' ? Math.min(picksUntilRoundEnd || 0, totalRemaining) : totalRemaining;
+    if (targetPickCount <= 0) {
+      return;
+    }
+
+    setIsDraftProcessing(true);
+    let processed = 0;
+    let latestPlayerState: LeaguePlayerState | null = null;
+
+    const step = () => {
+      const remaining = targetPickCount - processed;
+      if (remaining <= 0) {
+        stopDraftAutoRun();
+        if (latestPlayerState && isSupabaseConfigured) {
+          void saveSupabasePlayerState(latestPlayerState).catch((error) => {
+            console.error('Failed to persist auto-draft state:', error);
+            pushNotice('Auto draft finished locally, but Supabase sync failed.', 'warning');
+          });
+        }
+        pushNotice(scope === 'round' ? 'Round auto draft finished.' : 'Full auto draft finished.', 'success');
+        return;
+      }
+
+      const batchSize = scope === 'full' ? 8 : 4;
+      const result = executeDraftBatch(Math.min(batchSize, remaining));
+      processed += result.applied;
+      latestPlayerState = result.nextPlayerState ?? latestPlayerState;
+
+      if (result.applied === 0 || result.completed || processed >= targetPickCount) {
+        stopDraftAutoRun();
+        if (latestPlayerState && isSupabaseConfigured) {
+          void saveSupabasePlayerState(latestPlayerState).catch((error) => {
+            console.error('Failed to persist auto-draft state:', error);
+            pushNotice('Auto draft finished locally, but Supabase sync failed.', 'warning');
+          });
+        }
+        pushNotice(result.completed ? 'Draft complete.' : 'Auto draft finished.', 'success');
+        return;
+      }
+
+      draftAutoRunTimerRef.current = globalThis.setTimeout(step, 45);
+    };
+
+    step();
+  }, [executeDraftBatch, isDraftProcessing, pushNotice, stopDraftAutoRun]);
+
+  const handleResetDraftBoard = useCallback(async () => {
+    if (isDraftProcessing) {
+      stopDraftAutoRun();
+    }
+
+    const activeClass = draftCenterRef.current.activeClass;
+    if (!activeClass) {
+      return;
+    }
+
+    const approved = window.confirm('Clear the active draft board and remove undrafted prospects from this class?');
+    if (!approved) {
+      return;
+    }
+
+    const undraftedProspectIds = new Set(activeClass.prospects.map((prospect) => prospect.playerId));
+    const nextPlayerState: LeaguePlayerState = {
+      ...playerStateRef.current,
+      players: playerStateRef.current.players.filter((player) => !undraftedProspectIds.has(player.playerId)),
+      battingStats: playerStateRef.current.battingStats.filter((stat) => !undraftedProspectIds.has(stat.playerId)),
+      pitchingStats: playerStateRef.current.pitchingStats.filter((stat) => !undraftedProspectIds.has(stat.playerId)),
+      battingRatings: playerStateRef.current.battingRatings.filter((ratings) => !undraftedProspectIds.has(ratings.playerId)),
+      pitchingRatings: playerStateRef.current.pitchingRatings.filter((ratings) => !undraftedProspectIds.has(ratings.playerId)),
+      rosterSlots: playerStateRef.current.rosterSlots.filter((slot) => !undraftedProspectIds.has(slot.playerId)),
+      transactions: playerStateRef.current.transactions.filter((transaction) => !undraftedProspectIds.has(transaction.playerId)),
+    };
+
+    const nextDraftCenter: DraftCenterState = {
+      ...draftCenterRef.current,
+      activeClass: null,
+    };
+
+    setPlayerState(nextPlayerState);
+    playerStateRef.current = nextPlayerState;
+    setDraftCenter(nextDraftCenter);
+    draftCenterRef.current = nextDraftCenter;
+    saveLocalPlayerStateSafely(nextPlayerState);
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(nextPlayerState);
+      }
+      pushNotice('Draft board cleared.', 'info');
+    } catch (error) {
+      console.error('Failed to persist draft board reset:', error);
+      pushNotice('Draft board cleared locally, but syncing player state failed.', 'warning');
+    }
+  }, [isDraftProcessing, pushNotice, saveLocalPlayerStateSafely, stopDraftAutoRun]);
 
   const applyCompletedGameResults = useCallback(async (completedResults: CompletedGameResult[]) => {
     if (completedResults.length === 0) {
@@ -1499,14 +2207,6 @@ function App() {
     setView('simulation');
   }, []);
 
-  const getDivisionTeams = (league: string, division: string) => {
-    return teams.filter(t => t.league === league && t.division === division);
-  };
-
-  const getLeagueTeams = (league: string) => {
-    return teams.filter(t => t.league === league);
-  };
-
   const activeDate = selectedDate || games[0]?.date || currentDate;
   const currentTimelineDate = currentDate || activeDate;
   const scheduleViewActive = view === 'games_schedule';
@@ -1532,11 +2232,16 @@ function App() {
     [games],
   );
   useEffect(() => {
-    if (simulationPerformanceMode || !currentTimelineDate || tradeBoardDate === currentTimelineDate) {
+    if (simulationPerformanceMode || isFinalizingSimulation || !currentTimelineDate || tradeBoardDate === currentTimelineDate) {
+      return;
+    }
+
+    // Preserve interruption proposals while timeline state catches up after worker stop.
+    if (pendingTrades.length > 0 && tradeBoardDate && tradeBoardDate !== currentTimelineDate) {
       return;
     }
     refreshTradeBoard();
-  }, [currentTimelineDate, simulationPerformanceMode, tradeBoardDate, refreshTradeBoard]);
+  }, [currentTimelineDate, isFinalizingSimulation, pendingTrades.length, simulationPerformanceMode, tradeBoardDate, refreshTradeBoard]);
   const bannerDate = useMemo(() => {
     if (simulationPerformanceMode) {
       return '';
@@ -2174,6 +2879,13 @@ function App() {
               <span className="font-display text-lg uppercase tracking-wide">Trades</span>
             </button>
             <button
+              onClick={() => setView('draft')}
+              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'draft' ? 'bg-[#d4bb6a] text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
+            >
+              <Clock3 className="w-5 h-5" />
+              <span className="font-display text-lg uppercase tracking-wide">Draft</span>
+            </button>
+            <button
               onClick={() => setView('playoffs')}
               className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#1e1e1e] text-zinc-300 hover:bg-[#282828]'}`}
             >
@@ -2222,6 +2934,7 @@ function App() {
             <button onClick={openRandomTeamPage} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'teams' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Teams</button>
             <button onClick={() => setView('free_agency')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'free_agency' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Free Agency</button>
             <button onClick={() => setView('trades')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'trades' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Trades</button>
+            <button onClick={() => setView('draft')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'draft' ? 'bg-[#d4bb6a] text-black' : 'bg-[#202020] text-zinc-300'}`}>Draft</button>
             <button onClick={() => setView('playoffs')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'playoffs' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Playoffs</button>
             <button onClick={() => setView('players')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'players' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Rosters</button>
             <button onClick={() => setView('gpb_book')} className={`px-3 py-2 rounded-lg text-sm font-display uppercase tracking-wide ${view === 'gpb_book' ? 'bg-white text-black' : 'bg-[#202020] text-zinc-300'}`}>Engine</button>
@@ -2572,7 +3285,9 @@ function App() {
                   onSimulateMonth={simulateMonth}
                   onSimulateNextGame={simulateNextTeamGame}
                   onQuickSimSeason={quickSimSeason}
-                  onResetSeason={() => resetSeason()}
+                  onResetSeason={() => {
+                    void resetSeason();
+                  }}
                   onSimulateToDate={simulateToDate}
                   onProposeTrade={handleTradeProposal}
                 />
@@ -2589,13 +3304,17 @@ function App() {
                   seasonComplete={seasonComplete}
                   simulationProgress={simulationProgress}
                   simulationRunState={simulationRunState}
+                  simulationSaveStatus={simulationSaveStatus}
                   onSelectDate={setSelectedDate}
                   onSelectTeamId={setSelectedTeamId}
                   onStartSimulation={(target) => {
                     void runSimulationTarget(target);
                   }}
                   onCancelSimulation={cancelSimulationRun}
-                  onResetSeason={() => resetSeason()}
+                  onResetSeason={() => {
+                    void resetSeason();
+                  }}
+                  seasonResetStatus={seasonResetStatus}
                   onOpenTrades={() => setView('trades')}
                   onOpenFreeAgency={() => setView('free_agency')}
                 />
@@ -2664,10 +3383,33 @@ function App() {
                   battingRatings={playerState.battingRatings}
                   pitchingRatings={playerState.pitchingRatings}
                   pendingTrades={pendingTrades}
-                  currentDate={currentTimelineDate}
+                  transactions={playerState.transactions}
+                  currentDate={pendingTrades.length > 0 && tradeBoardDate ? tradeBoardDate : currentTimelineDate}
                   onApproveTrade={handleApprovePendingTrade}
                   onVetoTrade={handleVetoPendingTrade}
                   onRefreshBoard={refreshTradeBoard}
+                />
+              )}
+
+              {view === 'draft' && (
+                <DraftHub
+                  teams={teams}
+                  currentDate={currentDate}
+                  draftClass={draftCenter.activeClass}
+                  draftHistory={draftCenter.history}
+                  isDraftProcessing={isDraftProcessing}
+                  onGenerateDraftClass={() => {
+                    void handleGenerateDraftClass();
+                  }}
+                  onDraftNextPick={() => {
+                    void handleDraftNextPick();
+                  }}
+                  onAutoDraftRound={() => runDraftAuto('round')}
+                  onAutoDraftAll={() => runDraftAuto('full')}
+                  onStopAutoDraft={stopDraftAutoRun}
+                  onResetDraftBoard={() => {
+                    void handleResetDraftBoard();
+                  }}
                 />
               )}
 
@@ -2689,83 +3431,16 @@ function App() {
               )}
 
               {view === 'league_standings' && (
-                <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
-                  <div className="xl:col-span-3 space-y-8">
-                    <section className="bg-gradient-to-r from-[#1f1f1f] via-[#262626] to-[#1f1f1f] rounded-2xl border border-white/10 p-3">
-                      <div className="inline-flex rounded-xl border border-white/10 bg-black/30 p-1">
-                        <button
-                          onClick={() => setStandingsMode('divisional')}
-                          className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
-                            standingsMode === 'divisional'
-                              ? 'bg-white text-black'
-                              : 'text-zinc-300 hover:text-white'
-                          }`}
-                        >
-                          Divisional View
-                        </button>
-                        <button
-                          onClick={() => setStandingsMode('league')}
-                          className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
-                            standingsMode === 'league'
-                              ? 'bg-white text-black'
-                              : 'text-zinc-300 hover:text-white'
-                          }`}
-                        >
-                          League View
-                        </button>
-                      </div>
-                    </section>
-
-                    {standingsMode === 'divisional' ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h2 className="font-display text-2xl uppercase text-prestige tracking-widest">Prestige</h2>
-                            <div className="h-px flex-1 bg-gradient-to-r from-prestige/60 to-transparent" />
-                          </div>
-                          <StandingsTable divisionName="North" teams={getDivisionTeams('Prestige', 'North')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="South" teams={getDivisionTeams('Prestige', 'South')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="East" teams={getDivisionTeams('Prestige', 'East')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="West" teams={getDivisionTeams('Prestige', 'West')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
-                        </div>
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-3 mb-2">
-                            <h2 className="font-display text-2xl uppercase text-platinum tracking-widest">Platinum</h2>
-                            <div className="h-px flex-1 bg-gradient-to-r from-platinum/60 to-transparent" />
-                          </div>
-                          <StandingsTable divisionName="North" teams={getDivisionTeams('Platinum', 'North')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="South" teams={getDivisionTeams('Platinum', 'South')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="East" teams={getDivisionTeams('Platinum', 'East')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
-                          <StandingsTable divisionName="West" teams={getDivisionTeams('Platinum', 'West')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        <LeagueTable leagueName="Prestige League" teams={getLeagueTeams('Prestige')} headerColor="text-prestige" onSelectTeam={openTeamPage} />
-                        <LeagueTable leagueName="Platinum League" teams={getLeagueTeams('Platinum')} headerColor="text-platinum" onSelectTeam={openTeamPage} />
-                      </div>
-                    )}
-                  </div>
-
-                  <aside className="xl:col-span-1">
-                    <div className="sticky top-24">
-                      <Leaderboard teams={teams} />
-                      <div className="mt-8 p-4 bg-[#323232] rounded-lg border border-white/10">
-                        <h4 className="font-display text-xs uppercase tracking-widest text-zinc-500 mb-2">Simulation Logic</h4>
-                        <div className="space-y-2 text-xs text-zinc-400 font-mono">
-                          <div className="flex justify-between">
-                            <span>Continuity:</span>
-                            <span className="text-prestige">{(settings.continuityWeight * 100).toFixed(0)}%</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Variance:</span>
-                            <span className="text-platinum">{settings.winLossVariance}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </aside>
-                </div>
+                <StandingsHub
+                  teams={teams}
+                  players={playerState.players}
+                  battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
+                  battingRatings={playerState.battingRatings}
+                  pitchingRatings={playerState.pitchingRatings}
+                  rosterSlots={playerState.rosterSlots}
+                  onSelectTeam={openTeamPage}
+                />
               )}
 
               {view === 'leaders' && (

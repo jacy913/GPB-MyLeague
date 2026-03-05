@@ -247,10 +247,58 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
 
   const playerAutoReplenishmentBlueprint = [
     'Threshold check: if active + free_agent players falls below 800, trigger a new draft class',
-    'Draft class size: 100 prospects',
-    'Draft class age range: 18-20',
+    'Draft class size: 128 prospects (32 teams x 4 rounds)',
+    'Draft class age range: 17-20',
     'Execution model: stored procedure or scheduled Supabase cron job once per simulated season year',
     'Result: long-term leagues keep a stable talent pipeline and avoid player-pool collapse',
+  ];
+
+  const draftClassGenerationBlueprint = [
+    'Generate 128 draft-eligible prospects each offseason so every team can complete 4 rounds (32 picks per round).',
+    'Age distribution target: 17 (10%), 18 (35%), 19 (35%), 20 (20%) to keep upside realistic while still supplying polished options.',
+    'Role split target: 56% batters, 44% pitchers; enforce positional minimums so catcher and starting-pitcher pools never run dry.',
+    'Each prospect gets hidden true rating + visible scouting band (projected range) so draft outcomes preserve uncertainty.',
+    'Assign prospect archetypes (contact, power, speed, command, stuff, movement) to support team-fit logic in AI drafting.',
+  ];
+
+  const draftUiBlueprint = [
+    'Left-nav `Draft` hub with a live round/pick header, current team on the clock, and commissioner controls (pause, advance pick, auto-run round).',
+    'Main board split: Best Available, Team Needs, Pick Feed, and Team War Room panel for the active franchise.',
+    'Prospect card essentials: age, role, primary/secondary position, projected OVR band, potential tier, and readiness tag.',
+    'Sticky status rail: round progress, next 5 picks, total signed picks, and teams currently over roster limit.',
+    'Simulation interruption behavior mirrors trades: show popup `X Draft Picks Ready` and route manually, no forced screen flip.',
+  ];
+
+  const fourRoundDraftFlowBlueprint = [
+    'Round 1: highest-upside focus, strongest weight on star potential and premium-position scarcity.',
+    'Round 2: blend of upside and immediate fit, with stronger team-need weighting.',
+    'Round 3: depth and role coverage (bench bats, bullpen arms, defensive specialists).',
+    'Round 4: value/risk swings and stash prospects; undrafted players move to free-agent prospect pool.',
+  ];
+
+  const draftWaiverBlueprint = [
+    'After each pick, run roster-cap check. If the team exceeds active + backup cap, mark a required roster move before next simulation day.',
+    'Default behavior: auto-waive lowest-value non-core player from the same role group (batter/pitcher) while preserving lineup + rotation legality.',
+    'Legality guard: do not waive players that would break batting-order minimums or drop below minimum starting-pitcher coverage.',
+    'Create transaction records for both draft signing and waiver event so the feed remains audit-friendly.',
+    'If no legal waive candidate exists, place drafted player in reserve/prospect slot and surface a commissioner warning.',
+  ];
+
+  const draftAiLogicBlueprint = [
+    'Build team draft profile from record, roster strength by slot, age curve, and organizational direction (contend/retool/rebuild).',
+    'Score each prospect using weighted factors: true talent, potential, positional need, scarcity, age-upside, readiness, and variance risk.',
+    'Use round-based weight shifts: early rounds bias ceiling, later rounds bias depth fit and near-term utility.',
+    'Select with weighted randomness (softmax) among top candidates to avoid deterministic repeated drafts.',
+    'Reject choices that create illegal roster states unless auto-waive/reserve rules can immediately resolve them.',
+  ];
+
+  const draftLogicBayContract = [
+    'DraftProspect: playerId, classYear, age, playerType, positions, projectedOverallLow, projectedOverallHigh, potentialTier, archetype, signability',
+    'DraftPickSlot: seasonYear, round, pickNumber, teamId, originalTeamId, status',
+    "DraftSelection: seasonYear, round, pickNumber, teamId, playerId, signedStatus ('signed' | 'reserve' | 'declined')",
+    'TeamDraftProfile: teamId, direction, needScoresBySlot, ageCurveIndex, riskTolerance',
+    "DraftRosterAction: teamId, draftedPlayerId, requiredAction ('none' | 'auto_waive' | 'manual_review'), waivedPlayerId?",
+    'DraftRunState: seasonYear, currentRound, currentPick, picksRemaining, isPaused, interruptionReason',
   ];
 
   const rosterBlueprint = [
@@ -535,6 +583,25 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           </div>
         </div>
 
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Draft Rounds</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">4</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Picks Per Round</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">32</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Draft Class Size</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">128</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Prospect Age Band</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">17-20</p>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
             <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Design Corrections</h4>
@@ -633,6 +700,63 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           <p className="font-mono text-[11px] text-zinc-500 mt-2">
             Recommended future implementation: use a database-side scheduler for annual replenishment, but keep the player-generator logic deterministic and reusable in app code first.
           </p>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Draft System Blueprint (Logic Bay)</h4>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Draft Class Generation</p>
+              <div className="space-y-1.5">
+                {draftClassGenerationBlueprint.map((item) => (
+                  <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Draft UI Direction</p>
+              <div className="space-y-1.5">
+                {draftUiBlueprint.map((item) => (
+                  <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Four-Round Flow</p>
+              <div className="space-y-1.5">
+                {fourRoundDraftFlowBlueprint.map((item) => (
+                  <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+              <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">Post-Pick Waiver Handling</p>
+              <div className="space-y-1.5">
+                {draftWaiverBlueprint.map((item) => (
+                  <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-[#111] px-3 py-3 mt-4">
+            <p className="font-mono text-[11px] uppercase text-zinc-500 mb-2">AI Team Drafting Model</p>
+            <div className="space-y-1.5">
+              {draftAiLogicBlueprint.map((item) => (
+                <p key={item} className="font-mono text-[11px] text-zinc-400">{item}</p>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-[#111] border border-white/10 rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto mt-4">
+            <p className="text-zinc-500 uppercase text-[11px] mb-2">Draft Logic Bay Data Contract</p>
+            {draftLogicBayContract.map((item) => (
+              <p key={item} className="mt-1 first:mt-0">{item}</p>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">

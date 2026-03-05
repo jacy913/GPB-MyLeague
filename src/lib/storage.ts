@@ -32,6 +32,17 @@ const STORAGE_KEYS = {
 
 const LEAGUE_SLUG = 'grand-league';
 const LEAGUE_NAME = 'Grand League Baseball';
+const LEAGUE_ID_CACHE_KEY = 'gpb_supabase_league_id_v1';
+const SUPABASE_BACKOFF_UNTIL_KEY = 'gpb_supabase_backoff_until_v1';
+const SUPABASE_BACKOFF_MS = 2 * 60 * 1000;
+const DB_RATING_MIN = 60;
+const DB_RATING_MAX = 100;
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+const sanitizeDbRating = (value: number): number =>
+  clamp(Number.isFinite(value) ? Math.round(value) : DB_RATING_MIN, DB_RATING_MIN, DB_RATING_MAX);
+let cachedLeagueId: string | null = null;
+let ensureLeaguePromise: Promise<string> | null = null;
+let supabaseBackoffUntil = 0;
 
 interface TeamRow {
   team_id: string;
@@ -336,19 +347,21 @@ const toPlayerRow = (player: Player, leagueId: string): PlayerRow & { league_id:
   last_name: player.lastName,
   player_type: player.playerType,
   primary_position: player.primaryPosition,
-  secondary_position: player.secondaryPosition,
+  secondary_position: player.secondaryPosition === player.primaryPosition ? null : player.secondaryPosition,
   bats: player.bats,
   throws: player.throws,
-  age: player.age,
+  age: clamp(Math.round(player.age), 15, 60),
   height: player.height,
-  weight_lbs: player.weightLbs,
-  potential: player.potential,
+  weight_lbs: clamp(Math.round(player.weightLbs), 120, 400),
+  potential: clamp(player.potential, 0, 1),
   status: player.status,
-  contract_years_left: player.contractYearsLeft,
+  contract_years_left: clamp(Math.round(player.contractYearsLeft), 0, 5),
   draft_class_year: player.draftClassYear,
-  draft_round: player.draftRound,
-  years_pro: player.yearsPro,
-  retirement_year: player.retirementYear,
+  draft_round: player.draftRound === null ? null : Math.max(1, Math.round(player.draftRound)),
+  years_pro: Math.max(0, Math.round(player.yearsPro)),
+  retirement_year: player.status === 'retired'
+    ? player.retirementYear ?? new Date().getUTCFullYear()
+    : null,
 });
 
 const toBattingStat = (row: PlayerSeasonBattingRow): PlayerSeasonBatting => ({
@@ -443,16 +456,16 @@ const toBattingRatings = (row: PlayerBattingRatingsRow): PlayerBattingRatings =>
 const toBattingRatingsRow = (ratings: PlayerBattingRatings): PlayerBattingRatingsRow => ({
   player_id: ratings.playerId,
   season_year: ratings.seasonYear,
-  contact: ratings.contact,
-  power: ratings.power,
-  plate_discipline: ratings.plateDiscipline,
-  avoid_strikeout: ratings.avoidStrikeout,
-  speed: ratings.speed,
-  baserunning: ratings.baserunning,
-  fielding: ratings.fielding,
-  arm: ratings.arm,
-  overall: ratings.overall,
-  potential_overall: ratings.potentialOverall,
+  contact: sanitizeDbRating(ratings.contact),
+  power: sanitizeDbRating(ratings.power),
+  plate_discipline: sanitizeDbRating(ratings.plateDiscipline),
+  avoid_strikeout: sanitizeDbRating(ratings.avoidStrikeout),
+  speed: sanitizeDbRating(ratings.speed),
+  baserunning: sanitizeDbRating(ratings.baserunning),
+  fielding: sanitizeDbRating(ratings.fielding),
+  arm: sanitizeDbRating(ratings.arm),
+  overall: sanitizeDbRating(ratings.overall),
+  potential_overall: sanitizeDbRating(Math.max(ratings.potentialOverall, ratings.overall)),
 });
 
 const toPitchingRatings = (row: PlayerPitchingRatingsRow): PlayerPitchingRatings => ({
@@ -472,15 +485,15 @@ const toPitchingRatings = (row: PlayerPitchingRatingsRow): PlayerPitchingRatings
 const toPitchingRatingsRow = (ratings: PlayerPitchingRatings): PlayerPitchingRatingsRow => ({
   player_id: ratings.playerId,
   season_year: ratings.seasonYear,
-  stuff: ratings.stuff,
-  command: ratings.command,
-  control: ratings.control,
-  movement: ratings.movement,
-  stamina: ratings.stamina,
-  hold_runners: ratings.holdRunners,
-  fielding: ratings.fielding,
-  overall: ratings.overall,
-  potential_overall: ratings.potentialOverall,
+  stuff: sanitizeDbRating(ratings.stuff),
+  command: sanitizeDbRating(ratings.command),
+  control: sanitizeDbRating(ratings.control),
+  movement: sanitizeDbRating(ratings.movement),
+  stamina: sanitizeDbRating(ratings.stamina),
+  hold_runners: sanitizeDbRating(ratings.holdRunners),
+  fielding: sanitizeDbRating(ratings.fielding),
+  overall: sanitizeDbRating(ratings.overall),
+  potential_overall: sanitizeDbRating(Math.max(ratings.potentialOverall, ratings.overall)),
 });
 
 const toRosterSlot = (row: TeamRosterSlotRow): TeamRosterSlot => ({
@@ -528,31 +541,152 @@ const chunkArray = <T,>(items: T[], chunkSize: number): T[][] => {
   return chunks;
 };
 
-const dedupeByKey = <T,>(items: T[], getKey: (item: T) => string): T[] =>
-  Array.from(new Map(items.map((item) => [getKey(item), item])).values());
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
 
-const deleteRowsByPlayerIds = async (
-  table:
-    | 'player_season_batting'
-    | 'player_season_pitching'
-    | 'player_batting_ratings'
-    | 'player_pitching_ratings',
-  playerIds: string[],
-  chunkSize: number,
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+};
+
+const isRetryableSupabaseError = (error: unknown): boolean => {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('statement timeout') ||
+    message.includes('"code":"57014"') ||
+    message.includes('canceling statement') ||
+    message.includes('gateway timeout') ||
+    message.includes('"code":"504"') ||
+    message.includes('"code":"40001"') ||
+    message.includes('deadlock')
+  );
+};
+
+const runSupabaseMutationWithRetry = async (
+  operation: () => PromiseLike<{ error: unknown }>,
+  retries = 2,
 ): Promise<void> => {
-  if (!supabase || playerIds.length === 0) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const { error } = await operation();
+    if (!error) {
+      return;
+    }
+
+    lastError = error;
+    if (!isRetryableSupabaseError(error) || attempt >= retries) {
+      break;
+    }
+
+    await sleep(180 * (attempt + 1));
+  }
+
+  throw lastError;
+};
+
+const upsertLeagueGameRowsWithRetry = async (
+  rows: Array<GameRow & { league_id: string }>,
+  retries = 2,
+): Promise<void> => {
+  if (!supabase || rows.length === 0) {
     return;
   }
 
-  for (const chunk of chunkArray(playerIds, chunkSize)) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
     const { error } = await supabase
-      .from(table)
-      .delete()
-      .in('player_id', chunk);
+      .from('league_games')
+      .upsert(rows, { onConflict: 'league_id,game_id' });
 
-    if (error) {
-      throw error;
+    if (!error) {
+      return;
     }
+
+    lastError = error;
+    if (!isRetryableSupabaseError(error) || attempt >= retries) {
+      break;
+    }
+
+    await sleep(200 * (attempt + 1));
+  }
+
+  if (rows.length > 1 && isRetryableSupabaseError(lastError)) {
+    const splitIndex = Math.ceil(rows.length / 2);
+    await upsertLeagueGameRowsWithRetry(rows.slice(0, splitIndex), retries);
+    await upsertLeagueGameRowsWithRetry(rows.slice(splitIndex), retries);
+    return;
+  }
+
+  throw lastError;
+};
+
+const dedupeByKey = <T,>(items: T[], getKey: (item: T) => string): T[] =>
+  Array.from(new Map(items.map((item) => [getKey(item), item])).values());
+
+const isSupabaseBackoffError = (error: unknown): boolean => {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('522') ||
+    message.includes('cloudflare') ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('fetch failed') ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('gateway timeout') ||
+    message.includes('connection reset')
+  );
+};
+
+const getSupabaseBackoffUntil = (): number => {
+  if (supabaseBackoffUntil > 0) {
+    return supabaseBackoffUntil;
+  }
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(SUPABASE_BACKOFF_UNTIL_KEY);
+      const parsed = raw ? Number(raw) : 0;
+      if (Number.isFinite(parsed) && parsed > 0) {
+        supabaseBackoffUntil = parsed;
+        return parsed;
+      }
+    }
+  } catch (error) {
+    console.warn('Unable to read Supabase backoff cache:', error);
+  }
+
+  return 0;
+};
+
+const setSupabaseBackoff = (durationMs = SUPABASE_BACKOFF_MS): void => {
+  const until = Date.now() + Math.max(1, durationMs);
+  supabaseBackoffUntil = until;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(SUPABASE_BACKOFF_UNTIL_KEY, String(until));
+    }
+  } catch (error) {
+    console.warn('Unable to persist Supabase backoff cache:', error);
+  }
+};
+
+const clearSupabaseBackoff = (): void => {
+  supabaseBackoffUntil = 0;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(SUPABASE_BACKOFF_UNTIL_KEY);
+    }
+  } catch (error) {
+    console.warn('Unable to clear Supabase backoff cache:', error);
   }
 };
 
@@ -561,34 +695,102 @@ const ensureLeague = async (): Promise<string> => {
     throw new Error('Supabase is not configured.');
   }
 
-  const { data: existingLeague, error: fetchError } = await supabase
-    .from('leagues')
-    .select('id')
-    .eq('slug', LEAGUE_SLUG)
-    .maybeSingle();
-
-  if (fetchError) {
-    throw fetchError;
+  if (cachedLeagueId) {
+    return cachedLeagueId;
   }
 
-  if (existingLeague?.id) {
-    return existingLeague.id;
+  const backoffUntil = getSupabaseBackoffUntil();
+  if (backoffUntil > Date.now()) {
+    throw new Error(`Supabase temporary backoff active until ${new Date(backoffUntil).toISOString()}`);
   }
 
-  const { data: insertedLeague, error: insertError } = await supabase
-    .from('leagues')
-    .insert({
-      slug: LEAGUE_SLUG,
-      name: LEAGUE_NAME,
-    })
-    .select('id')
-    .single();
-
-  if (insertError) {
-    throw insertError;
+  if (ensureLeaguePromise) {
+    return ensureLeaguePromise;
   }
 
-  return insertedLeague.id;
+  ensureLeaguePromise = (async () => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const storedLeagueId = localStorage.getItem(LEAGUE_ID_CACHE_KEY);
+        if (storedLeagueId) {
+          cachedLeagueId = storedLeagueId;
+          return storedLeagueId;
+        }
+      }
+    } catch (error) {
+      console.warn('Unable to read cached Supabase league id from localStorage:', error);
+    }
+
+    let existingLeague: { id?: string } | null = null;
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('leagues')
+        .select('id')
+        .eq('slug', LEAGUE_SLUG)
+        .maybeSingle();
+      if (fetchError) {
+        throw fetchError;
+      }
+      existingLeague = data as { id?: string } | null;
+    } catch (error) {
+      if (isSupabaseBackoffError(error)) {
+        setSupabaseBackoff();
+      }
+      throw error;
+    }
+
+    if (existingLeague?.id) {
+      cachedLeagueId = existingLeague.id;
+      clearSupabaseBackoff();
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(LEAGUE_ID_CACHE_KEY, existingLeague.id);
+        }
+      } catch (error) {
+        console.warn('Unable to persist Supabase league id cache:', error);
+      }
+      return existingLeague.id;
+    }
+
+    let insertedLeague: { id: string };
+    try {
+      const { data, error: insertError } = await supabase
+        .from('leagues')
+        .insert({
+          slug: LEAGUE_SLUG,
+          name: LEAGUE_NAME,
+        })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        throw insertError;
+      }
+      insertedLeague = data as { id: string };
+    } catch (error) {
+      if (isSupabaseBackoffError(error)) {
+        setSupabaseBackoff();
+      }
+      throw error;
+    }
+
+    cachedLeagueId = insertedLeague.id;
+    clearSupabaseBackoff();
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(LEAGUE_ID_CACHE_KEY, insertedLeague.id);
+      }
+    } catch (error) {
+      console.warn('Unable to persist Supabase league id cache:', error);
+    }
+    return insertedLeague.id;
+  })();
+
+  try {
+    return await ensureLeaguePromise;
+  } finally {
+    ensureLeaguePromise = null;
+  }
 };
 
 export const loadLocalLeagueState = (): {
@@ -675,7 +877,17 @@ export const saveLocalLeagueState = (
 ): void => {
   localStorage.setItem(STORAGE_KEYS.teams, JSON.stringify(teams));
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
-  localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(games));
+  try {
+    localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(games));
+  } catch (error) {
+    // Quota fallback: keep structural game data and strip box score payloads.
+    const compactGames = games.map((game) => ({
+      ...game,
+      stats: {},
+    }));
+    localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(compactGames));
+    console.warn('Saved compact local game snapshot after quota pressure.', error);
+  }
   localStorage.setItem(STORAGE_KEYS.currentDate, currentDate);
   localStorage.setItem(STORAGE_KEYS.progress, String(progress));
   localStorage.setItem(STORAGE_KEYS.seasonComplete, String(seasonComplete));
@@ -950,6 +1162,7 @@ export const replaceSupabaseTeamsFromSource = async (teams: Team[]): Promise<voi
   const leagueId = await ensureLeague();
   const teamRows = teams.map((team) => toTeamRow(team, leagueId));
   const sourceIds = teams.map((team) => team.id);
+  const sourceIdSet = new Set(sourceIds);
 
   const { data: existingRows, error: existingRowsError } = await supabase
     .from('teams')
@@ -962,7 +1175,7 @@ export const replaceSupabaseTeamsFromSource = async (teams: Team[]): Promise<voi
 
   const staleIds = ((existingRows as Array<{ team_id: string }> | null) ?? [])
     .map((row) => row.team_id)
-    .filter((teamId) => !sourceIds.includes(teamId));
+    .filter((teamId) => !sourceIdSet.has(teamId));
 
   const { error: teamsUpsertError } = await supabase
     .from('teams')
@@ -1007,11 +1220,12 @@ export const saveSupabaseLeagueState = async (
   const gameRows = games.map((game) => toGameRow(game, leagueId));
   const stateRow = toLeagueStateRow(leagueId, currentDate, progress, seasonComplete);
   const pruneMissingGames = options?.pruneMissingGames ?? false;
-  const gameChunkSize = options?.gameChunkSize ?? 150;
+  const gameChunkSize = options?.gameChunkSize ?? 40;
   let staleGameIds: string[] = [];
 
   if (pruneMissingGames) {
     const sourceIds = games.map((game) => game.gameId);
+    const sourceIdSet = new Set(sourceIds);
     const { data: existingGameRows, error: existingGameRowsError } = await supabase
       .from('league_games')
       .select('game_id')
@@ -1023,45 +1237,29 @@ export const saveSupabaseLeagueState = async (
 
     staleGameIds = ((existingGameRows as Array<{ game_id: string }> | null) ?? [])
       .map((row) => row.game_id)
-      .filter((gameId) => !sourceIds.includes(gameId));
+      .filter((gameId) => !sourceIdSet.has(gameId));
   }
 
-  const [{ error: teamsUpsertError }, { error: settingsUpsertError }, { error: stateUpsertError }] = await Promise.all([
-    supabase.from('teams').upsert(teamRows, { onConflict: 'league_id,team_id' }),
-    supabase.from('league_settings').upsert(settingsRow, { onConflict: 'league_id' }),
-    supabase.from('league_state').upsert(stateRow, { onConflict: 'league_id' }),
+  await Promise.all([
+    runSupabaseMutationWithRetry(() => supabase.from('teams').upsert(teamRows, { onConflict: 'league_id,team_id' })),
+    runSupabaseMutationWithRetry(() => supabase.from('league_settings').upsert(settingsRow, { onConflict: 'league_id' })),
+    runSupabaseMutationWithRetry(() => supabase.from('league_state').upsert(stateRow, { onConflict: 'league_id' })),
   ]);
-
-  if (teamsUpsertError) {
-    throw teamsUpsertError;
-  }
-  if (settingsUpsertError) {
-    throw settingsUpsertError;
-  }
-  if (stateUpsertError) {
-    throw stateUpsertError;
-  }
 
   for (let index = 0; index < gameRows.length; index += gameChunkSize) {
     const chunk = gameRows.slice(index, index + gameChunkSize);
-    const { error: gamesUpsertError } = await supabase
-      .from('league_games')
-      .upsert(chunk, { onConflict: 'league_id,game_id' });
-
-    if (gamesUpsertError) {
-      throw gamesUpsertError;
-    }
+    await upsertLeagueGameRowsWithRetry(chunk);
   }
 
   if (staleGameIds.length > 0) {
-    const { error: deleteError } = await supabase
-      .from('league_games')
-      .delete()
-      .eq('league_id', leagueId)
-      .in('game_id', staleGameIds);
-
-    if (deleteError) {
-      throw deleteError;
+    for (const staleChunk of chunkArray(staleGameIds, 500)) {
+      await runSupabaseMutationWithRetry(() =>
+        supabase
+          .from('league_games')
+          .delete()
+          .eq('league_id', leagueId)
+          .in('game_id', staleChunk),
+      );
     }
   }
 };
@@ -1155,6 +1353,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
   );
   const transactionRows = playerState.transactions.map((transaction) => toPlayerTransactionRow(transaction, leagueId));
   const sourcePlayerIds = playerState.players.map((player) => player.playerId);
+  const sourcePlayerIdSet = new Set(sourcePlayerIds);
 
   const { data: existingPlayerRows, error: existingPlayersError } = await supabase
     .from('players')
@@ -1167,7 +1366,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
 
   const stalePlayerIds = ((existingPlayerRows as Array<{ player_id: string }> | null) ?? [])
     .map((row) => row.player_id)
-    .filter((playerId) => !sourcePlayerIds.includes(playerId));
+    .filter((playerId) => !sourcePlayerIdSet.has(playerId));
 
   const chunkSize = 500;
 
@@ -1192,18 +1391,11 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
     }
   }
 
-  if (sourcePlayerIds.length > 0) {
-    await deleteRowsByPlayerIds('player_season_batting', sourcePlayerIds, chunkSize);
-    await deleteRowsByPlayerIds('player_season_pitching', sourcePlayerIds, chunkSize);
-    await deleteRowsByPlayerIds('player_batting_ratings', sourcePlayerIds, chunkSize);
-    await deleteRowsByPlayerIds('player_pitching_ratings', sourcePlayerIds, chunkSize);
-  }
-
   if (battingRows.length > 0) {
     for (const chunk of chunkArray(battingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_season_batting')
-        .insert(chunk);
+        .upsert(chunk, { onConflict: 'player_id,season_year,season_phase' });
       if (error) {
         throw error;
       }
@@ -1214,7 +1406,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
     for (const chunk of chunkArray(pitchingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_season_pitching')
-        .insert(chunk);
+        .upsert(chunk, { onConflict: 'player_id,season_year,season_phase' });
       if (error) {
         throw error;
       }
@@ -1225,7 +1417,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
     for (const chunk of chunkArray(battingRatingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_batting_ratings')
-        .insert(chunk);
+        .upsert(chunk, { onConflict: 'player_id,season_year' });
       if (error) {
         throw error;
       }
@@ -1236,7 +1428,7 @@ export const saveSupabasePlayerState = async (playerState: LeaguePlayerState): P
     for (const chunk of chunkArray(pitchingRatingRows, chunkSize)) {
       const { error } = await supabase
         .from('player_pitching_ratings')
-        .insert(chunk);
+        .upsert(chunk, { onConflict: 'player_id,season_year' });
       if (error) {
         throw error;
       }

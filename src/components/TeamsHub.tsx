@@ -50,6 +50,8 @@ const getFallbackHits = (game: Game, side: 'away' | 'home'): number => {
 };
 
 const formatRosterSlotLabel = (slotCode: string): string => (slotCode.startsWith('BN') ? `Bench ${slotCode.slice(2)}` : slotCode);
+const ROSTER_DISPLAY_ORDER = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS, ...RESERVE_ROSTER_SLOTS];
+const ROSTER_STRENGTH_SLOT_COUNT = BATTING_ROSTER_SLOTS.length + STARTING_PITCHER_SLOTS.length;
 
 const getHitsForTeam = (teamId: string, games: Game[]): number =>
   games.reduce((total, game) => {
@@ -214,6 +216,20 @@ const getOverallRingOffset = (overall: number | null): number => {
   const normalized = overall === null ? 0 : Math.max(60, Math.min(100, overall));
   const progress = normalized === 0 ? 0 : (normalized - 60) / 40;
   return OVR_RING_CIRCUMFERENCE * (1 - progress);
+};
+const ROSTER_STRENGTH_RING_RADIUS = 40;
+const ROSTER_STRENGTH_RING_CIRCUMFERENCE = 2 * Math.PI * ROSTER_STRENGTH_RING_RADIUS;
+const getRosterStrengthRingOffset = (overall: number | null): number => {
+  const normalized = overall === null ? 0 : Math.max(60, Math.min(100, overall));
+  const progress = normalized === 0 ? 0 : (normalized - 60) / 40;
+  return ROSTER_STRENGTH_RING_CIRCUMFERENCE * (1 - progress);
+};
+const getRosterStrengthTier = (overall: number | null): string => {
+  if (overall === null) return 'Awaiting Data';
+  if (overall >= 88) return 'Elite Core';
+  if (overall >= 82) return 'Strong Core';
+  if (overall >= 76) return 'Competitive';
+  return 'Rebuilding';
 };
 const getOverallTextClass = (overall: number | null): string => {
   if (overall === null) {
@@ -450,8 +466,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   ]);
 
   const teamRosterPlayers = useMemo(() => {
-    const slotOrder = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS, ...RESERVE_ROSTER_SLOTS];
-    return slotOrder
+    return ROSTER_DISPLAY_ORDER
       .map((slotCode) => {
         const entry = selectedTeamRosterBySlot.get(slotCode);
         if (!entry) {
@@ -469,6 +484,32 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
       .sort((left, right) => right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName));
   }, [selectedTeamRosterBySlot]);
+  const teamRosterBySlot = useMemo(
+    () =>
+      [...teamRosterPlayers].sort((left, right) => {
+        const leftOrder = ROSTER_DISPLAY_ORDER.indexOf(left.slotCode as typeof ROSTER_DISPLAY_ORDER[number]);
+        const rightOrder = ROSTER_DISPLAY_ORDER.indexOf(right.slotCode as typeof ROSTER_DISPLAY_ORDER[number]);
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName);
+      }),
+    [teamRosterPlayers],
+  );
+  const backupPlayers = useMemo(
+    () =>
+      teamRosterBySlot.filter((entry) =>
+        RESERVE_ROSTER_SLOTS.includes(entry.slotCode as typeof RESERVE_ROSTER_SLOTS[number])),
+    [teamRosterBySlot],
+  );
+  const backupBattersCount = useMemo(
+    () => backupPlayers.filter((entry) => entry.player.playerType === 'batter').length,
+    [backupPlayers],
+  );
+  const backupPitchersCount = useMemo(
+    () => backupPlayers.filter((entry) => entry.player.playerType === 'pitcher').length,
+    [backupPlayers],
+  );
   const battingOrder = useMemo(
     () =>
       generateBattingOrder(
@@ -502,6 +543,18 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
     [selectedRosterPlayerId, teamRosterPlayers],
   );
   const selectedRosterOverall = selectedRosterPlayer?.battingRatings?.overall ?? selectedRosterPlayer?.pitchingRatings?.overall ?? null;
+  const rosterStrength = useMemo(() => {
+    const contributors = [...battingOrder, ...startingRotation];
+    if (contributors.length === 0) {
+      return { overall: null as number | null, filledSlots: 0 };
+    }
+
+    const totalOverall = contributors.reduce((sum, entry) => sum + entry.overall, 0);
+    return {
+      overall: Math.round(totalOverall / contributors.length),
+      filledSlots: contributors.length,
+    };
+  }, [battingOrder, startingRotation]);
   const selectedRosterAttributePoints = useMemo(() => {
     if (selectedRosterPlayer?.player.playerType === 'batter' && selectedRosterPlayer.battingRatings) {
       return [
@@ -597,7 +650,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
 
       <div className="space-y-6">
         <section className="rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_34%),linear-gradient(135deg,#181818,#242424,#171717)] p-6">
-          <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_160px] gap-6 items-start">
+          <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)_280px] gap-6 items-stretch">
             <div className="rounded-3xl border border-white/10 bg-black/25 p-5 flex flex-col items-center justify-center text-center">
               <TeamLogo team={selectedTeam} sizeClass="h-36 w-36" />
               <p className="mt-4 font-display text-4xl uppercase tracking-[0.14em] text-white">{selectedTeam.city}</p>
@@ -605,18 +658,11 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
             </div>
 
             <div className="space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{selectedTeam.league} {selectedTeam.division}</p>
-                  <h1 className="font-display text-5xl uppercase tracking-[0.14em] text-white mt-1">
-                    {selectedTeam.city} {selectedTeam.name}
-                  </h1>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-right">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Record</p>
-                  <p className="font-display text-4xl uppercase tracking-[0.1em] text-white mt-1">{formatRecord(selectedTeam)}</p>
-                  <p className="font-mono text-xs text-zinc-400 mt-1">{formatPct(selectedTeam)} pct</p>
-                </div>
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{selectedTeam.league} {selectedTeam.division}</p>
+                <h1 className="font-display text-5xl uppercase tracking-[0.14em] text-white mt-1">
+                  {selectedTeam.city} {selectedTeam.name}
+                </h1>
               </div>
 
               <p className="max-w-4xl text-zinc-300 leading-relaxed">
@@ -648,16 +694,53 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
             </div>
 
             <div className="grid grid-cols-1 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Record</p>
-                <p className="font-display text-4xl uppercase tracking-[0.08em] text-white mt-2">{formatRecord(selectedTeam)}</p>
-                <p className="font-mono text-xs text-zinc-400 mt-1">{formatPct(selectedTeam)} pct</p>
+              <div className="rounded-3xl border border-[#30d7c1]/20 bg-[radial-gradient(circle_at_top,rgba(48,215,193,0.14),rgba(0,0,0,0.2)_55%),#151515] px-5 py-5">
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Roster Strength</p>
+                <div className="mt-4 flex items-center gap-4">
+                  <div className="relative flex h-[96px] w-[96px] items-center justify-center">
+                    <svg className="h-[96px] w-[96px] -rotate-90" viewBox="0 0 96 96" aria-hidden="true">
+                      <circle cx="48" cy="48" r={ROSTER_STRENGTH_RING_RADIUS} className="fill-none stroke-white/10" strokeWidth="7" />
+                      <circle
+                        cx="48"
+                        cy="48"
+                        r={ROSTER_STRENGTH_RING_RADIUS}
+                        className="fill-none stroke-[#30d7c1]"
+                        strokeWidth="7"
+                        strokeLinecap="round"
+                        strokeDasharray={ROSTER_STRENGTH_RING_CIRCUMFERENCE}
+                        strokeDashoffset={getRosterStrengthRingOffset(rosterStrength.overall)}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-500">AVG</span>
+                      <span className={`mt-1 font-display text-4xl uppercase tracking-[0.06em] ${getOverallTextClass(rosterStrength.overall)}`}>
+                        {rosterStrength.overall ?? '---'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="font-display text-2xl uppercase tracking-[0.08em] text-white">{getRosterStrengthTier(rosterStrength.overall)}</p>
+                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                      {rosterStrength.filledSlots}/{ROSTER_STRENGTH_SLOT_COUNT} lineup + rotation
+                    </p>
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                      Core slots only, backups excluded
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Run Differential</p>
-                <p className="font-display text-4xl uppercase tracking-[0.08em] text-white mt-2">
-                  {teamRunDiff >= 0 ? '+' : ''}{teamRunDiff}
-                </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-4">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Record</p>
+                  <p className="font-display text-4xl uppercase tracking-[0.08em] text-white mt-2">{formatRecord(selectedTeam)}</p>
+                  <p className="font-mono text-xs text-zinc-400 mt-1">{formatPct(selectedTeam)} pct</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-4">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Run Differential</p>
+                  <p className="font-display text-4xl uppercase tracking-[0.08em] text-white mt-2">
+                    {teamRunDiff >= 0 ? '+' : ''}{teamRunDiff}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -670,7 +753,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                 <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Lineup Logic</p>
                 <h2 className="font-display text-3xl uppercase tracking-[0.12em] text-white mt-1">Batting Order</h2>
               </div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Weighted Assignment</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{battingOrder.length} Hitters</p>
             </div>
             <div className="mt-4 space-y-3">
               {battingOrder.length === 0 ? (
@@ -681,37 +764,26 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   </p>
                 </div>
               ) : (
-                battingOrder.map((entry, index) => (
+                battingOrder.map((entry) => (
                   <button
                     key={`batting-order-${entry.player.playerId}`}
                     onClick={() => setSelectedRosterPlayerId(entry.player.playerId)}
-                    className={`grid w-full grid-cols-[48px_minmax(0,1fr)_88px] items-center gap-4 rounded-2xl border px-4 py-4 text-left transition-colors ${
+                    className={`grid w-full grid-cols-[110px_minmax(0,1fr)_70px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${
                       selectedRosterPlayerId === entry.player.playerId
                         ? 'border-white/20 bg-white/10'
-                        : 'border-white/10 bg-black/20 hover:border-white/20'
+                        : 'border-white/10 bg-black/25 hover:border-white/20'
                     }`}
                   >
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                      <span className="font-display text-2xl uppercase tracking-[0.08em] text-white">{index + 1}</span>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-display text-2xl uppercase tracking-[0.08em] text-white truncate">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">{entry.slotCode}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <TeamLogo team={selectedTeam} sizeClass="h-7 w-7" />
+                      <span className="truncate font-display text-lg uppercase tracking-[0.06em] text-white">
                         {entry.player.firstName} {entry.player.lastName}
-                      </p>
-                      <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-500 truncate">
-                        {entry.player.primaryPosition}
-                        {entry.player.secondaryPosition ? ` / ${entry.player.secondaryPosition}` : ''} | {entry.slotCode}
-                      </p>
-                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.14em] text-zinc-400 truncate">
-                        {entry.battingRatings
-                          ? `Con ${entry.battingRatings.contact} | Pow ${entry.battingRatings.power} | Disc ${entry.battingRatings.plateDiscipline} | Spd ${entry.battingRatings.speed}`
-                          : 'Ratings unavailable'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">OVR</p>
-                      <p className={`mt-1 font-display text-3xl font-bold uppercase tracking-[0.08em] ${getOverallTextClass(entry.overall)}`}>{entry.overall}</p>
-                    </div>
+                      </span>
+                    </span>
+                    <span className={`text-right font-display text-xl uppercase tracking-[0.06em] ${getOverallTextClass(entry.overall || null)}`}>
+                      {entry.overall || '---'}
+                    </span>
                   </button>
                 ))
               )}
@@ -724,7 +796,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                 <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Pitching Staff</p>
                 <h2 className="font-display text-3xl uppercase tracking-[0.12em] text-white mt-1">Starting Rotation</h2>
               </div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">SP1 through SP5</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{startingRotation.length} Starters</p>
             </div>
             <div className="mt-4 space-y-3">
               {startingRotation.length === 0 ? (
@@ -735,37 +807,26 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   </p>
                 </div>
               ) : (
-                startingRotation.map((entry, index) => (
+                startingRotation.map((entry) => (
                   <button
                     key={`rotation-${entry.player.playerId}`}
                     onClick={() => setSelectedRosterPlayerId(entry.player.playerId)}
-                    className={`grid w-full grid-cols-[56px_minmax(0,1fr)_96px] items-center gap-4 rounded-2xl border px-4 py-4 text-left transition-colors ${
+                    className={`grid w-full grid-cols-[110px_minmax(0,1fr)_70px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${
                       selectedRosterPlayerId === entry.player.playerId
                         ? 'border-white/20 bg-white/10'
-                        : 'border-white/10 bg-black/20 hover:border-white/20'
+                        : 'border-white/10 bg-black/25 hover:border-white/20'
                     }`}
                   >
-                    <div className="flex h-12 min-w-[56px] items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                      <span className="font-display text-xl uppercase tracking-[0.08em] text-white">#{index + 1}</span>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-display text-2xl uppercase tracking-[0.08em] text-white truncate">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">{entry.slotCode}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <TeamLogo team={selectedTeam} sizeClass="h-7 w-7" />
+                      <span className="truncate font-display text-lg uppercase tracking-[0.06em] text-white">
                         {entry.player.firstName} {entry.player.lastName}
-                      </p>
-                      <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-500 truncate">
-                        {entry.slotCode} | {entry.player.throws}HP
-                        {entry.player.secondaryPosition ? ` | ${entry.player.primaryPosition}/${entry.player.secondaryPosition}` : ` | ${entry.player.primaryPosition}`}
-                      </p>
-                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.14em] text-zinc-400 truncate">
-                        {entry.pitchingRatings
-                          ? `Stuff ${entry.pitchingRatings.stuff} | Cmd ${entry.pitchingRatings.command} | Ctl ${entry.pitchingRatings.control} | Sta ${entry.pitchingRatings.stamina}`
-                          : 'Ratings unavailable'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">OVR</p>
-                      <p className={`mt-1 font-display text-3xl font-bold uppercase tracking-[0.08em] ${getOverallTextClass(entry.overall)}`}>{entry.overall}</p>
-                    </div>
+                      </span>
+                    </span>
+                    <span className={`text-right font-display text-xl uppercase tracking-[0.06em] ${getOverallTextClass(entry.overall || null)}`}>
+                      {entry.overall || '---'}
+                    </span>
                   </button>
                 ))
               )}
@@ -780,7 +841,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
               <h2 className="font-display text-3xl uppercase tracking-[0.12em] text-white">Roster</h2>
             </div>
             <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-              {selectedTeamRosterBySlot.size}/{TEAM_ACTIVE_ROSTER_SIZE} assigned{activeRosterSeasonYear !== null ? ` | ${activeRosterSeasonYear}` : ''}
+              {selectedTeamRosterBySlot.size}/{TEAM_ACTIVE_ROSTER_SIZE} assigned | {backupPlayers.length}/{RESERVE_ROSTER_SLOTS.length} backups{activeRosterSeasonYear !== null ? ` | ${activeRosterSeasonYear}` : ''}
             </p>
           </div>
           <div className="mt-4 grid grid-cols-1 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)] gap-6">
@@ -925,9 +986,54 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   <Filter className="h-5 w-5 text-zinc-400" />
                   <h3 className="font-display text-2xl uppercase tracking-[0.12em] text-white">Player List</h3>
                 </div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                  {teamRosterPlayers.length} results
-                </p>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                    {teamRosterBySlot.length} total
+                  </span>
+                  <span className="rounded-full border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-[#ecd693]">
+                    {backupPlayers.length} backups
+                  </span>
+                </div>
+              </div>
+
+              <div className="mb-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-display text-xl uppercase tracking-[0.1em] text-white">Bench Unit</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                    {backupBattersCount} batters | {backupPitchersCount} pitchers
+                  </p>
+                </div>
+                {backupPlayers.length === 0 ? (
+                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    No backup players assigned yet.
+                  </p>
+                ) : (
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    {backupPlayers.map((entry) => (
+                      <button
+                        key={`bench-${entry.player.playerId}`}
+                        type="button"
+                        onClick={() => setSelectedRosterPlayerId(entry.player.playerId)}
+                        className={`grid w-full grid-cols-[110px_minmax(0,1fr)_70px] items-center gap-3 rounded-xl border px-3 py-2 text-left transition-colors ${
+                          selectedRosterPlayerId === entry.player.playerId
+                            ? 'border-white/20 bg-white/10'
+                            : 'border-white/10 bg-black/25 hover:border-white/20'
+                        }`}
+                      >
+                        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">{formatRosterSlotLabel(entry.slotCode)}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <TeamLogo team={selectedTeam} sizeClass="h-7 w-7" />
+                          <span className="truncate font-display text-lg uppercase tracking-[0.06em] text-white">
+                            {entry.player.firstName} {entry.player.lastName}
+                          </span>
+                        </span>
+                        <span className={`text-right font-display text-xl uppercase tracking-[0.06em] ${getOverallTextClass(entry.overall || null)}`}>
+                          {entry.overall || '---'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-2xl border border-white/10 overflow-hidden">
@@ -941,7 +1047,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                 </div>
 
                 <div className="max-h-[720px] overflow-y-auto scrollbar-subtle divide-y divide-white/5">
-                  {teamRosterPlayers.length === 0 ? (
+                  {teamRosterBySlot.length === 0 ? (
                     <div className="px-4 py-12 text-center">
                       <p className="font-display text-3xl uppercase tracking-[0.12em] text-zinc-300">No Players Loaded</p>
                       <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500 mt-3">
@@ -949,7 +1055,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                       </p>
                     </div>
                   ) : (
-                    teamRosterPlayers.map((entry) => {
+                    teamRosterBySlot.map((entry) => {
                       const isSelected = entry.player.playerId === selectedRosterPlayerId;
                       return (
                         <button

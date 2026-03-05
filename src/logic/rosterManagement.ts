@@ -76,19 +76,19 @@ const scoreBatterForSlot = (
     return Number.NEGATIVE_INFINITY;
   }
 
-  let score = overall * 10;
+  let score = overall * 16;
   if (slotCode === 'DH') {
-    if (player.primaryPosition === 'DH') score += 420;
-    if (DH_FIT_POSITIONS.has(player.primaryPosition)) score += 220;
-    if (player.secondaryPosition && DH_FIT_POSITIONS.has(player.secondaryPosition)) score += 100;
+    if (player.primaryPosition === 'DH') score += 180;
+    if (DH_FIT_POSITIONS.has(player.primaryPosition)) score += 120;
+    if (player.secondaryPosition && DH_FIT_POSITIONS.has(player.secondaryPosition)) score += 70;
   } else {
-    if (player.primaryPosition === slotCode) score += 520;
-    else if (player.secondaryPosition === slotCode) score += 260;
-    else score += 40;
+    if (player.primaryPosition === slotCode) score += 220;
+    else if (player.secondaryPosition === slotCode) score += 120;
+    else score += 35;
   }
 
-  if (currentSlot === slotCode) score += 80;
-  else if (currentSlot && currentSlot.startsWith('BN')) score += 18;
+  if (currentSlot === slotCode) score += 45;
+  else if (currentSlot && currentSlot.startsWith('BN')) score += 10;
 
   return score;
 };
@@ -103,26 +103,26 @@ const scorePitcherForSlot = (
     return Number.NEGATIVE_INFINITY;
   }
 
-  let score = overall * 10;
+  let score = overall * 16;
   if (slotCode.startsWith('SP')) {
-    if (player.primaryPosition === 'SP') score += 520;
-    else if (player.secondaryPosition === 'SP') score += 220;
-    else if (player.primaryPosition === 'RP') score += 80;
-    else if (player.primaryPosition === 'CL') score += 50;
+    if (player.primaryPosition === 'SP') score += 240;
+    else if (player.secondaryPosition === 'SP') score += 120;
+    else if (player.primaryPosition === 'RP') score += 70;
+    else if (player.primaryPosition === 'CL') score += 55;
   } else if (slotCode === 'CL') {
-    if (player.primaryPosition === 'CL') score += 480;
-    else if (player.primaryPosition === 'RP') score += 280;
-    else if (player.secondaryPosition === 'CL') score += 160;
-    else if (player.primaryPosition === 'SP') score += 40;
+    if (player.primaryPosition === 'CL') score += 220;
+    else if (player.primaryPosition === 'RP') score += 150;
+    else if (player.secondaryPosition === 'CL') score += 90;
+    else if (player.primaryPosition === 'SP') score += 45;
   } else {
-    if (player.primaryPosition === 'RP') score += 420;
-    else if (player.primaryPosition === 'CL') score += 360;
-    else if (player.secondaryPosition === 'RP') score += 180;
-    else if (player.primaryPosition === 'SP') score += 100;
+    if (player.primaryPosition === 'RP') score += 180;
+    else if (player.primaryPosition === 'CL') score += 140;
+    else if (player.secondaryPosition === 'RP') score += 90;
+    else if (player.primaryPosition === 'SP') score += 65;
   }
 
-  if (currentSlot === slotCode) score += 80;
-  else if (currentSlot && currentSlot.startsWith('BN')) score += 18;
+  if (currentSlot === slotCode) score += 45;
+  else if (currentSlot && currentSlot.startsWith('BN')) score += 10;
 
   return score;
 };
@@ -133,7 +133,7 @@ const scoreReservePlayer = (
   currentSlot: RosterSlotCode | null,
   reserveSlot: typeof RESERVE_ROSTER_SLOTS[number],
 ): number => {
-  let score = overall * 10;
+  let score = overall * 12;
   if (currentSlot === reserveSlot) score += 40;
   else if (currentSlot && currentSlot.startsWith('BN')) score += 25;
   return score;

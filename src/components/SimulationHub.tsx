@@ -43,6 +43,8 @@ interface SimulationHubProps {
   seasonComplete: boolean;
   simulationProgress: { completedGames: number; totalGames: number; currentDate: string; label: string } | null;
   simulationRunState: SimulationRunState | null;
+  seasonResetStatus: { isResetting: boolean; progress: number; label: string };
+  simulationSaveStatus: { isSaving: boolean; progress: number; label: string };
   onSelectDate: (date: string) => void;
   onSelectTeamId: (teamId: string) => void;
   onStartSimulation: (target: SimulationTarget) => void;
@@ -119,6 +121,8 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   seasonComplete,
   simulationProgress,
   simulationRunState,
+  seasonResetStatus,
+  simulationSaveStatus,
   onSelectDate,
   onSelectTeamId,
   onStartSimulation,
@@ -146,11 +150,12 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   const planProgress = simulationRunState && simulationRunState.queuedDates.length > 0
     ? (simulationRunState.currentIndex / simulationRunState.queuedDates.length) * 100
     : 0;
+  const controlsLocked = isSimulating || seasonResetStatus.isResetting || simulationSaveStatus.isSaving;
 
   const [focusedMonth, setFocusedMonth] = useState(getMonthKey(cursorDate || activeDate || uniqueDates[0] || new Date().toISOString().slice(0, 7)));
 
   useEffect(() => {
-    const sourceDate = simulationRunState?.targetDate || cursorDate || activeDate || uniqueDates[0] || '';
+    const sourceDate = simulationRunState?.currentDate || cursorDate || activeDate || uniqueDates[0] || simulationRunState?.targetDate || '';
     if (sourceDate) {
       setFocusedMonth(getMonthKey(sourceDate));
     }
@@ -345,27 +350,27 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button onClick={() => onStartSimulation({ scope: 'day' })} disabled={isSimulating || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'day' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Day</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Resolve the current slate and advance the calendar one step.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'week' })} disabled={isSimulating || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'week' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Week</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Walk forward through each day until the next full week closes.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'month' })} disabled={isSimulating || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'month' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Month</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Run a longer stretch while staying interruptible for market events.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'next_game', teamId: selectedTeamId })} disabled={isSimulating || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'next_game', teamId: selectedTeamId })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Next Team Game</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Stop the sim at the next date involving the selected club.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'regular_season' })} disabled={isSimulating || regularSeasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'regular_season' })} disabled={controlsLocked || regularSeasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-xl uppercase tracking-[0.08em] text-white">To Reg Finale</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Carry the league through the full regular-season calendar.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'season' })} disabled={isSimulating || seasonComplete} className="rounded-2xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-4 text-left hover:border-[#d4bb6a]/40 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'season' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-4 text-left hover:border-[#d4bb6a]/40 disabled:opacity-50">
                 <p className="font-headline text-xl uppercase tracking-[0.08em] text-[#f3dea1]">Full Season</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-300">Run everything, but still halt when the market needs commissioner attention.</p>
               </button>
@@ -398,7 +403,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
 
               <button
                 onClick={() => onStartSimulation({ scope: 'to_date', targetDate: activeDate })}
-                disabled={isSimulating || !activeDate}
+                disabled={controlsLocked || !activeDate}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl border border-prestige/30 bg-prestige/12 px-4 py-3 font-headline text-2xl uppercase tracking-[0.08em] text-prestige hover:border-prestige/45 disabled:opacity-50"
               >
                 <CalendarDays className="h-5 w-5" />
@@ -409,7 +414,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <button
                 onClick={onCancelSimulation}
-                disabled={!isSimulating}
+                disabled={!isSimulating || seasonResetStatus.isResetting}
                 className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white hover:border-white/20 disabled:opacity-50"
               >
                 <PauseCircle className="h-5 w-5" />
@@ -417,13 +422,53 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
               </button>
               <button
                 onClick={onResetSeason}
-                disabled={isSimulating}
+                disabled={controlsLocked}
                 className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white hover:border-white/20 disabled:opacity-50"
               >
                 <RotateCcw className="h-5 w-5" />
                 Reset
               </button>
             </div>
+
+            {seasonResetStatus.isResetting && (
+              <div className="mt-4 rounded-2xl border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-200">Season Reset In Progress</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#f3dea1]">
+                    {Math.max(0, Math.min(100, Math.round(seasonResetStatus.progress)))}%
+                  </p>
+                </div>
+                <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-300">
+                  {seasonResetStatus.label || 'Resetting season state'}
+                </p>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/30">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#d4bb6a,#f3e5aa,#30d7c1)] transition-[width] duration-300"
+                    style={{ width: `${Math.max(6, Math.min(100, seasonResetStatus.progress))}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {simulationSaveStatus.isSaving && (
+              <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-100">Simulation Save In Progress</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200">
+                    {Math.max(0, Math.min(100, Math.round(simulationSaveStatus.progress)))}%
+                  </p>
+                </div>
+                <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-cyan-100/90">
+                  {simulationSaveStatus.label || 'Saving simulation snapshot'}
+                </p>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/30">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#30d7c1,#8be9ff,#f3e5aa)] transition-[width] duration-300"
+                    style={{ width: `${Math.max(6, Math.min(100, simulationSaveStatus.progress))}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </article>
 
           <article className={`${sectionClass} p-5`}>
@@ -516,7 +561,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
                   )}
                   <button
                     onClick={() => onStartSimulation({ scope: 'to_date', targetDate: activeDate })}
-                    disabled={isSimulating || !activeDate}
+                    disabled={controlsLocked || !activeDate}
                     className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white hover:border-white/20 disabled:opacity-50"
                   >
                     <SkipForward className="h-5 w-5" />

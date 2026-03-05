@@ -9,6 +9,13 @@ import {
   SeasonPhase,
 } from '../types';
 
+export interface PlayerStatAccumulator {
+  battingByKey: Map<string, PlayerSeasonBatting>;
+  pitchingByKey: Map<string, PlayerSeasonPitching>;
+  preferredBattingByPhase: Record<SeasonPhase, Map<string, PlayerSeasonBatting>>;
+  preferredPitchingByPhase: Record<SeasonPhase, Map<string, PlayerSeasonPitching>>;
+}
+
 const getSeasonPhasePreferenceScore = (seasonPhase: SeasonPhase, preferredPhase: SeasonPhase): number => {
   if (seasonPhase === preferredPhase) {
     return 2;
@@ -145,35 +152,98 @@ const applyPitchingLine = (stat: PlayerSeasonPitching, delta: PlayerGamePitching
   };
 };
 
+const updatePreferredSeasonStat = <
+  T extends {
+    playerId: string;
+    seasonYear: number;
+    seasonPhase: SeasonPhase;
+  },
+>(
+  preferredMap: Map<string, T>,
+  updatedStat: T,
+  preferredPhase: SeasonPhase,
+): void => {
+  const current = preferredMap.get(updatedStat.playerId);
+  if (!current || compareSeasonStatPriority(updatedStat, current, preferredPhase) < 0) {
+    preferredMap.set(updatedStat.playerId, updatedStat);
+    return;
+  }
+
+  if (
+    current.playerId === updatedStat.playerId &&
+    current.seasonYear === updatedStat.seasonYear &&
+    current.seasonPhase === updatedStat.seasonPhase
+  ) {
+    preferredMap.set(updatedStat.playerId, updatedStat);
+  }
+};
+
+export const createPlayerStatAccumulator = (playerState: LeaguePlayerState): PlayerStatAccumulator => {
+  const battingByKey = new Map<string, PlayerSeasonBatting>(
+    playerState.battingStats.map((stat) => [`${stat.playerId}:${stat.seasonYear}:${stat.seasonPhase}`, stat] as const),
+  );
+  const pitchingByKey = new Map<string, PlayerSeasonPitching>(
+    playerState.pitchingStats.map((stat) => [`${stat.playerId}:${stat.seasonYear}:${stat.seasonPhase}`, stat] as const),
+  );
+
+  return {
+    battingByKey,
+    pitchingByKey,
+    preferredBattingByPhase: {
+      regular_season: getPreferredBattingStatsByPlayerId(Array.from(battingByKey.values()), 'regular_season'),
+      playoffs: getPreferredBattingStatsByPlayerId(Array.from(battingByKey.values()), 'playoffs'),
+    },
+    preferredPitchingByPhase: {
+      regular_season: getPreferredPitchingStatsByPlayerId(Array.from(pitchingByKey.values()), 'regular_season'),
+      playoffs: getPreferredPitchingStatsByPlayerId(Array.from(pitchingByKey.values()), 'playoffs'),
+    },
+  };
+};
+
+export const applyPlayerGameStatDeltaToAccumulator = (
+  accumulator: PlayerStatAccumulator,
+  delta: PlayerGameStatDelta,
+  seasonYear: number,
+  seasonPhase: SeasonPhase,
+): void => {
+  Object.values(delta.batting).forEach((battingLine) => {
+    const key = `${battingLine.playerId}:${seasonYear}:${seasonPhase}`;
+    const current = accumulator.battingByKey.get(key) ?? createEmptyBattingStat(battingLine.playerId, seasonYear, seasonPhase);
+    const updated = applyBattingLine(current, battingLine);
+    accumulator.battingByKey.set(key, updated);
+    updatePreferredSeasonStat(accumulator.preferredBattingByPhase.regular_season, updated, 'regular_season');
+    updatePreferredSeasonStat(accumulator.preferredBattingByPhase.playoffs, updated, 'playoffs');
+  });
+
+  Object.values(delta.pitching).forEach((pitchingLine) => {
+    const key = `${pitchingLine.playerId}:${seasonYear}:${seasonPhase}`;
+    const current = accumulator.pitchingByKey.get(key) ?? createEmptyPitchingStat(pitchingLine.playerId, seasonYear, seasonPhase);
+    const updated = applyPitchingLine(current, pitchingLine);
+    accumulator.pitchingByKey.set(key, updated);
+    updatePreferredSeasonStat(accumulator.preferredPitchingByPhase.regular_season, updated, 'regular_season');
+    updatePreferredSeasonStat(accumulator.preferredPitchingByPhase.playoffs, updated, 'playoffs');
+  });
+};
+
+export const materializePlayerStatAccumulator = (
+  accumulator: PlayerStatAccumulator,
+): Pick<LeaguePlayerState, 'battingStats' | 'pitchingStats'> => ({
+  battingStats: Array.from(accumulator.battingByKey.values()),
+  pitchingStats: Array.from(accumulator.pitchingByKey.values()),
+});
+
 export const applyPlayerGameStatDelta = (
   playerState: LeaguePlayerState,
   delta: PlayerGameStatDelta,
   seasonYear: number,
   seasonPhase: SeasonPhase,
 ): LeaguePlayerState => {
-  const battingMap = new Map<string, PlayerSeasonBatting>(
-    playerState.battingStats.map((stat) => [`${stat.playerId}:${stat.seasonYear}:${stat.seasonPhase}`, stat] as const),
-  );
-  const pitchingMap = new Map<string, PlayerSeasonPitching>(
-    playerState.pitchingStats.map((stat) => [`${stat.playerId}:${stat.seasonYear}:${stat.seasonPhase}`, stat] as const),
-  );
-
-  Object.values(delta.batting).forEach((battingLine) => {
-    const key = `${battingLine.playerId}:${seasonYear}:${seasonPhase}`;
-    const current = battingMap.get(key) ?? createEmptyBattingStat(battingLine.playerId, seasonYear, seasonPhase);
-    battingMap.set(key, applyBattingLine(current, battingLine));
-  });
-
-  Object.values(delta.pitching).forEach((pitchingLine) => {
-    const key = `${pitchingLine.playerId}:${seasonYear}:${seasonPhase}`;
-    const current = pitchingMap.get(key) ?? createEmptyPitchingStat(pitchingLine.playerId, seasonYear, seasonPhase);
-    pitchingMap.set(key, applyPitchingLine(current, pitchingLine));
-  });
+  const accumulator = createPlayerStatAccumulator(playerState);
+  applyPlayerGameStatDeltaToAccumulator(accumulator, delta, seasonYear, seasonPhase);
 
   return {
     ...playerState,
-    battingStats: Array.from(battingMap.values()),
-    pitchingStats: Array.from(pitchingMap.values()),
+    ...materializePlayerStatAccumulator(accumulator),
   };
 };
 

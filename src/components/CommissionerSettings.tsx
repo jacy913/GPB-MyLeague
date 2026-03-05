@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LeaguePlayerState, Team, SimulationSettings } from '../types';
-import { Save, RotateCcw, Search, AlertTriangle, Trash2, Upload, Image as ImageIcon, Users } from 'lucide-react';
+import { Save, RotateCcw, Search, AlertTriangle, Trash2, Image as ImageIcon, Users } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../logic/simulation';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import {
@@ -229,6 +229,29 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     }
   };
 
+  const handleEditLogoClick = (team: Team, hasExistingLogo: boolean) => {
+    if (!isSupabaseEnabled) {
+      setLogoStatusMessage('Supabase is not configured. Add your env keys first to edit logos.');
+      return;
+    }
+
+    if (uploadingTeamId === team.id) {
+      return;
+    }
+
+    const approved = window.confirm(
+      hasExistingLogo
+        ? `Replace the current logo for ${team.city} ${team.name}? The existing logo will be deleted before the new one is uploaded.`
+        : `Upload a new logo for ${team.city} ${team.name}?`
+    );
+    if (!approved) {
+      return;
+    }
+
+    const fileInput = document.getElementById(`logo-upload-${team.id}`) as HTMLInputElement | null;
+    fileInput?.click();
+  };
+
   const leagueOrder: Team['league'][] = ['Prestige', 'Platinum'];
   const divisionOrder: Team['division'][] = ['North', 'South', 'East', 'West'];
 
@@ -254,6 +277,25 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
       return a.name.localeCompare(b.name);
     });
   }, [teams, searchQuery]);
+
+  const groupedFilteredTeams = useMemo(() => (
+    leagueOrder
+      .map((league) => {
+        const divisions = divisionOrder
+          .map((division) => ({
+            division,
+            teams: filteredTeams.filter((team) => team.league === league && team.division === division),
+          }))
+          .filter((entry) => entry.teams.length > 0);
+
+        return {
+          league,
+          divisions,
+          teamCount: divisions.reduce((sum, entry) => sum + entry.teams.length, 0),
+        };
+      })
+      .filter((entry) => entry.divisions.length > 0)
+  ), [divisionOrder, filteredTeams, leagueOrder]);
 
   const leagueAccentText = (league: Team['league']) => (league === 'Prestige' ? 'text-prestige' : 'text-platinum');
   const leagueAccentBorder = (league: Team['league']) => (league === 'Prestige' ? 'border-l-prestige/70' : 'border-l-platinum/70');
@@ -441,136 +483,147 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
             </p>
           )}
 
-          <div className="space-y-4 max-h-[680px] lg:max-h-[74vh] overflow-y-auto pr-2 custom-scrollbar">
-            {filteredTeams.map((team, index) => {
-              const previousTeam = filteredTeams[index - 1];
-              const startsNewGroup =
-                index === 0 ||
-                previousTeam.league !== team.league ||
-                previousTeam.division !== team.division;
-
-              return (
-                <React.Fragment key={`${team.id}-${index}`}>
-                  {startsNewGroup && (
-                    <div className="px-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className={`text-xs font-display uppercase tracking-widest ${leagueAccentText(team.league)}`}>
-                          {team.league}
-                        </span>
-                        <span className="text-xs font-mono text-slate-500 uppercase">{team.division} Division</span>
-                        <div className={`h-px flex-1 ${team.league === 'Prestige' ? 'bg-prestige/40' : 'bg-platinum/40'}`} />
-                      </div>
-                    </div>
-                  )}
-
-                  <div
-                    className={`grid grid-cols-1 md:grid-cols-6 gap-4 items-center bg-[#181818] p-3 rounded-lg border border-white/5 border-l-2 ${leagueAccentBorder(team.league)} hover:border-white/20 transition-colors`}
-                  >
-                    {(() => {
-                      const logoPath = getLogoPath(team.id);
-                      const hasLogo = availableLogoPaths.includes(logoPath);
-                      const logoUrl = hasLogo ? getLogoUrl(team.id) : null;
-
-                      return (
-                        <>
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Abbr</label>
-                      <input
-                        type="text"
-                        value={team.id}
-                        onChange={(e) => handleTeamChange(team, 'id', e.target.value.trim().toLowerCase())}
-                        className={`w-full bg-transparent border-b border-white/10 focus:border-platinum font-mono tracking-widest ${leagueAccentText(team.league)} uppercase focus:outline-none py-1`}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Location</label>
-                      <div className={`text-[10px] uppercase tracking-widest font-mono mb-1 ${leagueAccentText(team.league)}`}>{team.league}</div>
-                      <input 
-                        type="text" 
-                        value={team.city}
-                        onChange={(e) => handleTeamChange(team, 'city', e.target.value)}
-                        className="w-full bg-transparent border-b border-white/10 focus:border-platinum text-white font-display uppercase tracking-wide focus:outline-none py-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Team Name</label>
-                      <input 
-                        type="text" 
-                        value={team.name}
-                        onChange={(e) => handleTeamChange(team, 'name', e.target.value)}
-                        className="w-full bg-transparent border-b border-white/10 focus:border-platinum text-white font-display uppercase tracking-wide focus:outline-none py-1"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">League</label>
-                      <select 
-                        value={team.league}
-                        onChange={(e) => handleTeamChange(team, 'league', e.target.value)}
-                        className={`w-full bg-[#323232] border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-platinum ${leagueAccentText(team.league)}`}
-                      >
-                        <option value="Platinum">Platinum</option>
-                        <option value="Prestige">Prestige</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Division</label>
-                      <select 
-                        value={team.division}
-                        onChange={(e) => handleTeamChange(team, 'division', e.target.value)}
-                        className="w-full bg-[#323232] border border-white/10 rounded px-2 py-1 text-xs text-slate-300 font-mono focus:outline-none focus:border-platinum"
-                      >
-                        <option value="North">North</option>
-                        <option value="South">South</option>
-                        <option value="East">East</option>
-                        <option value="West">West</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Logo</label>
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-16 rounded-lg border border-white/15 p-1.5 flex items-center justify-center overflow-hidden shrink-0">
-                          {logoUrl ? (
-                            <img
-                              src={logoUrl}
-                              alt={`${team.name} logo`}
-                              className="w-full h-full object-contain scale-110"
-                            />
-                          ) : (
-                              <ImageIcon className="w-4 h-4 text-zinc-500" />
-                          )}
-                        </div>
-                        <label className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 text-xs font-mono text-zinc-300 hover:text-white hover:border-white/25 transition-colors cursor-pointer">
-                          <Upload className="w-3 h-3" />
-                          <span>
-                            {uploadingTeamId === team.id
-                              ? 'Uploading...'
-                              : isSupabaseEnabled
-                                ? 'Upload'
-                                : 'Upload*'}
-                          </span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            disabled={uploadingTeamId === team.id}
-                            onChange={(e) => {
-                              const nextFile = e.target.files?.[0] ?? null;
-                              void handleLogoUpload(team, nextFile);
-                              e.target.value = '';
-                            }}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                        </>
-                      );
-                    })()}
+          <div className="space-y-6 max-h-[680px] lg:max-h-[74vh] overflow-y-auto pr-2 custom-scrollbar">
+            {groupedFilteredTeams.length === 0 ? (
+              <div className="rounded-lg border border-white/10 bg-[#181818] px-4 py-6 text-center text-sm font-mono text-zinc-500">
+                No teams matched your search.
+              </div>
+            ) : (
+              groupedFilteredTeams.map((leagueGroup) => (
+                <section key={leagueGroup.league} className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <p className={`font-display text-xl uppercase tracking-[0.08em] ${leagueAccentText(leagueGroup.league)}`}>
+                      {leagueGroup.league}
+                    </p>
+                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400">
+                      {leagueGroup.teamCount} teams
+                    </span>
+                    <div className={`h-px flex-1 ${leagueGroup.league === 'Prestige' ? 'bg-prestige/40' : 'bg-platinum/40'}`} />
                   </div>
-                </React.Fragment>
-              );
-            })}
+
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    {leagueGroup.divisions.map((divisionGroup) => (
+                      <article key={`${leagueGroup.league}-${divisionGroup.division}`} className="rounded-xl border border-white/10 bg-[#141414] p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300">
+                            {divisionGroup.division} Division
+                          </p>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                            {divisionGroup.teams.length}/4 clubs
+                          </span>
+                        </div>
+
+                        <div className="space-y-3">
+                          {divisionGroup.teams.map((team) => {
+                            const logoPath = getLogoPath(team.id);
+                            const hasLogo = availableLogoPaths.includes(logoPath);
+                            const logoUrl = hasLogo ? getLogoUrl(team.id) : null;
+
+                            return (
+                              <div
+                                key={team.id}
+                                className={`grid grid-cols-1 md:grid-cols-6 gap-4 items-center bg-[#181818] p-3 rounded-lg border border-white/5 border-l-2 ${leagueAccentBorder(team.league)} hover:border-white/20 transition-colors`}
+                              >
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Abbr</label>
+                                  <input
+                                    type="text"
+                                    value={team.id}
+                                    onChange={(e) => handleTeamChange(team, 'id', e.target.value.trim().toLowerCase())}
+                                    className={`w-full bg-transparent border-b border-white/10 focus:border-platinum font-mono tracking-widest ${leagueAccentText(team.league)} uppercase focus:outline-none py-1`}
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Location</label>
+                                  <div className={`text-[10px] uppercase tracking-widest font-mono mb-1 ${leagueAccentText(team.league)}`}>{team.league}</div>
+                                  <input
+                                    type="text"
+                                    value={team.city}
+                                    onChange={(e) => handleTeamChange(team, 'city', e.target.value)}
+                                    className="w-full bg-transparent border-b border-white/10 focus:border-platinum text-white font-display uppercase tracking-wide focus:outline-none py-1"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Team Name</label>
+                                  <input
+                                    type="text"
+                                    value={team.name}
+                                    onChange={(e) => handleTeamChange(team, 'name', e.target.value)}
+                                    className="w-full bg-transparent border-b border-white/10 focus:border-platinum text-white font-display uppercase tracking-wide focus:outline-none py-1"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">League</label>
+                                  <select
+                                    value={team.league}
+                                    onChange={(e) => handleTeamChange(team, 'league', e.target.value)}
+                                    className={`w-full bg-[#323232] border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-platinum ${leagueAccentText(team.league)}`}
+                                  >
+                                    <option value="Platinum">Platinum</option>
+                                    <option value="Prestige">Prestige</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Division</label>
+                                  <select
+                                    value={team.division}
+                                    onChange={(e) => handleTeamChange(team, 'division', e.target.value)}
+                                    className="w-full bg-[#323232] border border-white/10 rounded px-2 py-1 text-xs text-slate-300 font-mono focus:outline-none focus:border-platinum"
+                                  >
+                                    <option value="North">North</option>
+                                    <option value="South">South</option>
+                                    <option value="East">East</option>
+                                    <option value="West">West</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="text-[10px] uppercase text-slate-500 font-bold tracking-wider block mb-1">Edit Logo</label>
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-16 h-16 rounded-lg border border-white/15 p-1.5 flex items-center justify-center overflow-hidden shrink-0">
+                                      {logoUrl ? (
+                                        <img
+                                          src={logoUrl}
+                                          alt={`${team.name} logo`}
+                                          className="w-full h-full object-contain scale-110"
+                                        />
+                                      ) : (
+                                        <ImageIcon className="w-4 h-4 text-zinc-500" />
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEditLogoClick(team, hasLogo)}
+                                      disabled={uploadingTeamId === team.id || !isSupabaseEnabled}
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-white/10 text-xs font-mono text-zinc-300 hover:text-white hover:border-white/25 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {uploadingTeamId === team.id ? 'Uploading...' : 'Edit Logo'}
+                                    </button>
+                                    <input
+                                      id={`logo-upload-${team.id}`}
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      disabled={uploadingTeamId === team.id}
+                                      onChange={(e) => {
+                                        const nextFile = e.target.files?.[0] ?? null;
+                                        void handleLogoUpload(team, nextFile);
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))
+            )}
           </div>
         </div>
 

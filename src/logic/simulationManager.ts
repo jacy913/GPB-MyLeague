@@ -1,8 +1,13 @@
 import { Game, LeaguePlayerState, PlayoffGameDetails, PlayoffLeague, PlayoffRoundKey, SimulationSettings, SimulationTarget, Team } from '../types';
 import { addDaysToISODate } from './simulation';
 import { buildCompletedGameFromSession, createGameSession, simulateGameToFinal } from './gameEngine';
-import { buildGameParticipants } from './gameParticipants';
-import { applyPlayerGameStatDelta } from './playerStats';
+import { buildGameParticipants, GameParticipantsBuildContext } from './gameParticipants';
+import {
+  applyPlayerGameStatDeltaToAccumulator,
+  createPlayerStatAccumulator,
+  materializePlayerStatAccumulator,
+  PlayerStatAccumulator,
+} from './playerStats';
 import {
   SeededPlayoffTeam,
   compareSeededTeams,
@@ -97,6 +102,9 @@ export class SimulationManager {
   private readonly settings: SimulationSettings;
   private readonly teamOrder: string[];
   private readonly teamsById: Map<string, Team>;
+  private readonly playersById: Map<string, LeaguePlayerState['players'][number]>;
+  private readonly participantBuildContext: Omit<GameParticipantsBuildContext, 'battingStatsByPlayerId' | 'pitchingStatsByPlayerId'>;
+  private readonly playerStatAccumulator: PlayerStatAccumulator;
   private games: Game[];
   private playerState: LeaguePlayerState;
   private readonly seasonStartDate: string;
@@ -125,10 +133,57 @@ export class SimulationManager {
       rosterSlots: input.playerState.rosterSlots.map((slot) => ({ ...slot })),
       transactions: input.playerState.transactions.map((transaction) => ({ ...transaction })),
     };
+    this.playersById = new Map(this.playerState.players.map((player) => [player.playerId, player]));
+    this.playerStatAccumulator = createPlayerStatAccumulator(this.playerState);
+    const latestSeasonYear = this.playerState.rosterSlots.length > 0
+      ? Math.max(...this.playerState.rosterSlots.map((slot) => slot.seasonYear))
+      : null;
+    const rosterSlotsByTeamId = new Map<string, typeof this.playerState.rosterSlots>();
+    if (latestSeasonYear !== null) {
+      this.playerState.rosterSlots.forEach((slot) => {
+        if (slot.seasonYear !== latestSeasonYear) {
+          return;
+        }
+        const current = rosterSlotsByTeamId.get(slot.teamId) ?? [];
+        current.push(slot);
+        rosterSlotsByTeamId.set(slot.teamId, current);
+      });
+    }
+    this.participantBuildContext = {
+      latestSeasonYear,
+      playersById: this.playersById,
+      battingRatingsByPlayerId: this.getLatestBattingRatingsByPlayerId(),
+      pitchingRatingsByPlayerId: this.getLatestPitchingRatingsByPlayerId(),
+      rosterSlotsByTeamId,
+    };
 
     this.seasonStartDate = this.games[0]?.date ?? input.currentDate;
     this.regularSeasonEndDate = getRegularSeasonEndDate(this.games, input.currentDate);
     this.currentDate = input.currentDate || this.seasonStartDate;
+  }
+
+  private getLatestBattingRatingsByPlayerId() {
+    const byPlayerId = new Map<string, LeaguePlayerState['battingRatings'][number]>();
+    [...this.playerState.battingRatings]
+      .sort((left, right) => right.seasonYear - left.seasonYear)
+      .forEach((rating) => {
+        if (!byPlayerId.has(rating.playerId)) {
+          byPlayerId.set(rating.playerId, rating);
+        }
+      });
+    return byPlayerId;
+  }
+
+  private getLatestPitchingRatingsByPlayerId() {
+    const byPlayerId = new Map<string, LeaguePlayerState['pitchingRatings'][number]>();
+    [...this.playerState.pitchingRatings]
+      .sort((left, right) => right.seasonYear - left.seasonYear)
+      .forEach((rating) => {
+        if (!byPlayerId.has(rating.playerId)) {
+          byPlayerId.set(rating.playerId, rating);
+        }
+      });
+    return byPlayerId;
   }
 
   private getAllDates(): string[] {
@@ -571,7 +626,16 @@ export class SimulationManager {
       return;
     }
 
-    const participants = buildGameParticipants(game, this.games, this.playerState);
+    const participants = buildGameParticipants(
+      game,
+      this.games,
+      this.playerState,
+      {
+        ...this.participantBuildContext,
+        battingStatsByPlayerId: this.playerStatAccumulator.preferredBattingByPhase[game.phase],
+        pitchingStatsByPlayerId: this.playerStatAccumulator.preferredPitchingByPhase[game.phase],
+      },
+    );
     const session = simulateGameToFinal(createGameSession(game, participants), awayTeam, homeTeam, this.settings);
     const completed = buildCompletedGameFromSession(game, session);
     const completedGame = completed.game;
@@ -580,8 +644,8 @@ export class SimulationManager {
     game.score = { ...completedGame.score };
     game.stats = { ...completedGame.stats };
 
-    this.playerState = applyPlayerGameStatDelta(
-      this.playerState,
+    applyPlayerGameStatDeltaToAccumulator(
+      this.playerStatAccumulator,
       completed.playerStatDelta,
       Number(game.date.slice(0, 4)),
       game.phase,
@@ -747,6 +811,11 @@ export class SimulationManager {
 
     const completedGames = this.games.filter((game) => game.status === 'completed').length;
     const progress = this.games.length > 0 ? (completedGames / this.games.length) * 100 : 0;
+    const materializedPlayerStats = materializePlayerStatAccumulator(this.playerStatAccumulator);
+    this.playerState = {
+      ...this.playerState,
+      ...materializedPlayerStats,
+    };
 
     const teams = this.teamOrder
       .map((id) => this.teamsById.get(id))
