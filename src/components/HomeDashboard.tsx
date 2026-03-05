@@ -2,11 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   ChevronRight,
+  Crown,
   Newspaper,
-  RefreshCcw,
   ScrollText,
-  ShieldAlert,
   Sparkles,
+  Trophy,
   Users,
 } from 'lucide-react';
 import {
@@ -16,10 +16,13 @@ import {
   PlayerBattingRatings,
   PlayerPitchingRatings,
   PlayerSeasonBatting,
+  PlayerSeasonPitching,
   PlayerTransaction,
   Team,
 } from '../types';
 import { isPlayoffGame, isRegularSeasonGame } from '../logic/playoffs';
+import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
+import { formatBattingAverage } from '../logic/statFormatting';
 import { TeamLogo } from './TeamLogo';
 
 interface TradeProposal {
@@ -34,6 +37,7 @@ interface HomeDashboardProps {
   games: Game[];
   players: Player[];
   battingStats: PlayerSeasonBatting[];
+  pitchingStats: PlayerSeasonPitching[];
   battingRatings: PlayerBattingRatings[];
   pitchingRatings: PlayerPitchingRatings[];
   transactions: PlayerTransaction[];
@@ -128,6 +132,14 @@ type FeaturedGameCard = {
   angle: string;
 };
 
+type MvpCandidate = {
+  playerId: string;
+  playerName: string;
+  team: Team | null;
+  odds: number;
+  summary: string;
+};
+
 const compareGameOrder = (left: Game, right: Game): number =>
   left.date === right.date ? left.gameId.localeCompare(right.gameId) : left.date.localeCompare(right.date);
 
@@ -156,6 +168,20 @@ const getWinPct = (team: Team): number => {
 };
 
 const formatRecord = (team: Team): string => `${team.wins}-${team.losses}`;
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const normalizeOdds = (
+  entries: Array<Omit<MvpCandidate, 'odds'>>,
+  rawScores: number[],
+): MvpCandidate[] => {
+  const positiveScores = rawScores.map((score) => Math.max(0.1, score));
+  const total = positiveScores.reduce((sum, score) => sum + score, 0);
+  return entries.map((entry, index) => ({
+    ...entry,
+    odds: total > 0 ? Number(((positiveScores[index] / total) * 100).toFixed(1)) : 0,
+  }));
+};
 
 const formatTickerTransaction = (
   transaction: PlayerTransaction,
@@ -896,6 +922,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   games,
   players,
   battingStats,
+  pitchingStats,
   battingRatings,
   pitchingRatings,
   transactions,
@@ -923,6 +950,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 }) => {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [activeDivisionIndex, setActiveDivisionIndex] = useState(0);
+  const [mvpBoard, setMvpBoard] = useState<'batting' | 'pitching'>('batting');
   const [tradeFromTeamId, setTradeFromTeamId] = useState(selectedTeamId);
   const [tradeToTeamId, setTradeToTeamId] = useState(teams.find((team) => team.id !== selectedTeamId)?.id ?? teams[0]?.id ?? '');
   const [tradeFromPlayerId, setTradeFromPlayerId] = useState('');
@@ -946,6 +974,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   }, [battingStats]);
   const battingRatingsByPlayerId = useMemo(() => new Map(battingRatings.map((rating) => [rating.playerId, rating])), [battingRatings]);
   const pitchingRatingsByPlayerId = useMemo(() => new Map(pitchingRatings.map((rating) => [rating.playerId, rating])), [pitchingRatings]);
+  const preferredBattingStatsByPlayerId = useMemo(
+    () => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'),
+    [battingStats],
+  );
+  const preferredPitchingStatsByPlayerId = useMemo(
+    () => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
+    [pitchingStats],
+  );
   const timelineDate = currentDate || selectedDate || games[0]?.date || '';
   const todaysGames = useMemo(
     () => games.filter((game) => game.date === timelineDate).sort(compareGameOrder),
@@ -967,6 +1003,76 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   );
   const headline = headlineDeck.primary;
   const featuredGame = useMemo(() => getFeaturedGame(todaysGames, teamsById), [todaysGames, teamsById]);
+  const battingMvpCandidates = useMemo(() => {
+    const entries = players
+      .map((player) => {
+        const stat = preferredBattingStatsByPlayerId.get(player.playerId);
+        const rating = battingRatingsByPlayerId.get(player.playerId);
+        if (!stat || !rating || stat.atBats < 120) {
+          return null;
+        }
+        const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
+        const winPctBonus = team ? getWinPct(team) * 60 : 0;
+        const rawScore =
+          stat.avg * 700 +
+          stat.ops * 260 +
+          stat.homeRuns * 4 +
+          stat.rbi * 1.75 +
+          stat.hits * 0.5 +
+          stat.runsScored * 0.7 +
+          rating.overall * 0.45 +
+          winPctBonus;
+        return {
+          rawScore,
+          entry: {
+            playerId: player.playerId,
+            playerName: `${player.firstName} ${player.lastName}`,
+            team,
+            summary: `${formatBattingAverage(stat.avg)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI | ${rating.overall} OVR`,
+          },
+        };
+      })
+      .filter((entry): entry is { rawScore: number; entry: Omit<MvpCandidate, 'odds'> } => Boolean(entry))
+      .sort((left, right) => right.rawScore - left.rawScore)
+      .slice(0, 8);
+
+    return normalizeOdds(entries.map((entry) => entry.entry), entries.map((entry) => entry.rawScore)).slice(0, 3);
+  }, [battingRatingsByPlayerId, players, preferredBattingStatsByPlayerId, teamsById]);
+  const pitchingMvpCandidates = useMemo(() => {
+    const entries = players
+      .map((player) => {
+        const stat = preferredPitchingStatsByPlayerId.get(player.playerId);
+        const rating = pitchingRatingsByPlayerId.get(player.playerId);
+        if (!stat || !rating || (stat.inningsPitched < 50 && stat.saves < 12)) {
+          return null;
+        }
+        const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
+        const winPctBonus = team ? getWinPct(team) * 55 : 0;
+        const rawScore =
+          clamp(6 - stat.era, 0, 6) * 40 +
+          clamp(2 - stat.whip, 0, 2) * 70 +
+          stat.strikeouts * 0.9 +
+          stat.wins * 4.5 +
+          stat.saves * 2.25 +
+          stat.inningsPitched * 1.1 +
+          rating.overall * 0.45 +
+          winPctBonus;
+        return {
+          rawScore,
+          entry: {
+            playerId: player.playerId,
+            playerName: `${player.firstName} ${player.lastName}`,
+            team,
+            summary: `${stat.era.toFixed(2)} ERA | ${stat.strikeouts} K | ${stat.inningsPitched.toFixed(1)} IP | ${rating.overall} OVR`,
+          },
+        };
+      })
+      .filter((entry): entry is { rawScore: number; entry: Omit<MvpCandidate, 'odds'> } => Boolean(entry))
+      .sort((left, right) => right.rawScore - left.rawScore)
+      .slice(0, 8);
+
+    return normalizeOdds(entries.map((entry) => entry.entry), entries.map((entry) => entry.rawScore)).slice(0, 3);
+  }, [pitchingRatingsByPlayerId, players, preferredPitchingStatsByPlayerId, teamsById]);
   const milestones = useMemo(() => getMilestones(games), [games]);
   const nextMilestone = useMemo(
     () => milestones.find((milestone) => milestone.date > timelineDate && milestone.date <= (games[games.length - 1]?.date ?? milestone.date)) ?? null,
@@ -1076,16 +1182,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   }, [divisionSnapshots, selectedTeam]);
 
   useEffect(() => {
-    if (divisionSnapshots.length <= 1) {
-      return undefined;
-    }
-
     const intervalId = window.setInterval(() => {
-      setActiveDivisionIndex((current) => (current + 1) % divisionSnapshots.length);
+      setMvpBoard((current) => (current === 'batting' ? 'pitching' : 'batting'));
     }, 7000);
 
     return () => window.clearInterval(intervalId);
-  }, [divisionSnapshots.length]);
+  }, []);
 
   const handleTradeSubmit = () => {
     if (!tradeFromTeamId || !tradeToTeamId || !tradeFromPlayerId || !tradeToPlayerId) {
@@ -1105,6 +1207,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const heroHomeTeam = headline.game ? teamsById.get(headline.game.homeTeam) ?? null : null;
   const featuredAwayTeam = featuredGame ? teamsById.get(featuredGame.game.awayTeam) ?? null : null;
   const featuredHomeTeam = featuredGame ? teamsById.get(featuredGame.game.homeTeam) ?? null : null;
+  const activeMvpCandidates = mvpBoard === 'batting' ? battingMvpCandidates : pitchingMvpCandidates;
 
   return (
     <section className="space-y-6">
@@ -1244,41 +1347,48 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <article className="rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#161616,#202020,#111111)] p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Commissioner Console</p>
-                <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">Simulation Center</p>
+                <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Award Race</p>
+                <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">
+                  {mvpBoard === 'batting' ? 'Batting MVP Candidates' : 'Pitching MVP Candidates'}
+                </p>
               </div>
-              <ShieldAlert className="h-5 w-5 text-prestige" />
+              {mvpBoard === 'batting' ? <Crown className="h-5 w-5 text-[#d4bb6a]" /> : <Trophy className="h-5 w-5 text-platinum" />}
             </div>
 
-            <p className="mt-4 text-sm leading-6 text-zinc-400">
-              Simulation now runs from its own calendar-driven control room. Open the board, pick the window, and let the season move day by day until a trade or market event forces a commissioner stop.
-            </p>
-
-            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-              <label className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Queue Target Date</span>
-                <input
-                  type="date"
-                  value={selectedDate || currentDate}
-                  min={games[0]?.date}
-                  max={games[games.length - 1]?.date}
-                  onChange={(event) => onSelectDate(event.target.value)}
-                  className="mt-2 block w-full bg-transparent font-mono text-sm text-white outline-none"
-                />
-              </label>
-              <button onClick={() => onOpenSimulation(selectedDate || currentDate)} className="rounded-2xl border border-prestige/25 bg-prestige/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-prestige transition-colors hover:border-prestige/40">
-                Open
-              </button>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <button onClick={() => onOpenSimulation()} className="rounded-2xl border border-[#d4bb6a]/20 bg-[#d4bb6a]/10 px-4 py-4 text-left font-headline text-xl uppercase tracking-[0.08em] text-[#f1dea2] transition-colors hover:border-[#d4bb6a]/35">
-                Enter Simulation
-              </button>
-              <button onClick={onResetSeason} disabled={isSimulating} className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 py-4 font-headline text-xl uppercase tracking-[0.08em] text-white transition-colors hover:border-white/20 disabled:opacity-50">
-                <RefreshCcw className="h-4 w-4" />
-                Reset
-              </button>
+            <div className="mt-5 space-y-3">
+              {activeMvpCandidates.length > 0 ? (
+                activeMvpCandidates.map((candidate, index) => (
+                  <div key={`${mvpBoard}-${candidate.playerId}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="font-mono text-lg text-zinc-500">{index + 1}</span>
+                        {candidate.team ? <TeamLogo team={candidate.team} sizeClass="h-12 w-12" /> : <div className="h-12 w-12 rounded-xl border border-white/10 bg-white/[0.03]" />}
+                        <div className="min-w-0">
+                          <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white truncate">{candidate.playerName}</p>
+                          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500 truncate">
+                            {candidate.team ? `${candidate.team.city} ${candidate.team.name}` : 'Free Agent'}
+                          </p>
+                        </div>
+                      </div>
+                      <p className={`font-mono text-xl ${mvpBoard === 'batting' ? 'text-[#ecd693]' : 'text-platinum'}`}>{candidate.odds.toFixed(1)}%</p>
+                    </div>
+                    <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className={`h-full rounded-full ${mvpBoard === 'batting' ? 'bg-[linear-gradient(90deg,#d4bb6a,#f0e4b1)]' : 'bg-[linear-gradient(90deg,#0fe7d5,#9ff5ec)]'}`}
+                        style={{ width: `${Math.max(8, candidate.odds)}%` }}
+                      />
+                    </div>
+                    <p className="mt-3 text-sm text-zinc-400">{candidate.summary}</p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <p className="font-headline text-3xl uppercase tracking-[0.08em] text-white">No Candidates Yet</p>
+                  <p className="mt-3 text-sm leading-6 text-zinc-400">
+                    MVP candidates will appear after enough regular-season data is available.
+                  </p>
+                </div>
+              )}
             </div>
           </article>
         </div>
@@ -1375,10 +1485,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               <div>
                 <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Club Focus</p>
                 <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">Division Snapshot</p>
-              </div>
-              <div className="text-right">
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Auto rotation</p>
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[#d8c88b]">Every 7 seconds</p>
               </div>
             </div>
 

@@ -7,6 +7,8 @@ const normalizeEnv = (value: unknown): string =>
 
 const supabaseUrl = normalizeEnv(import.meta.env.VITE_SUPABASE_URL);
 const supabaseAnonKey = normalizeEnv(import.meta.env.VITE_SUPABASE_ANON_KEY);
+const localOnlyFlag = normalizeEnv(import.meta.env.VITE_LOCAL_ONLY).toLowerCase();
+const isLocalOnlyMode = localOnlyFlag === 'true' || localOnlyFlag === '1' || localOnlyFlag === 'yes';
 const supabaseOrigin = (() => {
   if (!supabaseUrl) {
     return '';
@@ -54,9 +56,12 @@ const proxyAwareFetch: typeof fetch = (input, init) => {
   return fetch(proxied, init);
 };
 
-export const isSupabaseConfigured = Boolean(supabaseOrigin && supabaseAnonKey);
+export const isLocalOnly = isLocalOnlyMode;
 
-export const supabase = isSupabaseConfigured
+const canUseSupabase = !isLocalOnlyMode && Boolean(supabaseOrigin && supabaseAnonKey);
+export const isSupabaseConfigured = canUseSupabase;
+
+export const supabase = canUseSupabase
   ? createClient(supabaseUrl, supabaseAnonKey, {
       global: {
         fetch: proxyAwareFetch,

@@ -29,6 +29,36 @@ const STORAGE_KEYS = {
   progress: 'glb_progress',
   seasonComplete: 'glb_season_complete',
 };
+const LOCAL_LEAGUE_STATE_KEYS = [
+  STORAGE_KEYS.teams,
+  STORAGE_KEYS.settings,
+  STORAGE_KEYS.games,
+  STORAGE_KEYS.currentDate,
+  STORAGE_KEYS.progress,
+  STORAGE_KEYS.seasonComplete,
+] as const;
+const LOCAL_PLAYER_STATE_KEYS = [
+  STORAGE_KEYS.players,
+  STORAGE_KEYS.battingStats,
+  STORAGE_KEYS.pitchingStats,
+  STORAGE_KEYS.battingRatings,
+  STORAGE_KEYS.pitchingRatings,
+  STORAGE_KEYS.rosterSlots,
+  STORAGE_KEYS.playerTransactions,
+] as const;
+const LOCAL_INDEXED_DB_NAME = 'gpb_local_state_v1';
+const LOCAL_INDEXED_DB_VERSION = 1;
+const LOCAL_INDEXED_DB_STORE = 'kv';
+let localStateDbPromise: Promise<IDBDatabase> | null = null;
+const LOCAL_SAFETY_SNAPSHOT_PREFIX = 'gpb_local_safety_snapshot_v1_';
+const LOCAL_SAFETY_SNAPSHOT_INDEX_KEY = 'gpb_local_safety_snapshot_index_v1';
+const LOCAL_SAFETY_SNAPSHOT_LIMIT = 5;
+const LOCAL_SAFETY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 1000;
+const LOCAL_EXPORT_FORMAT = 'gpb_local_state_export';
+const LOCAL_EXPORT_VERSION = 1;
+const LOCAL_DRAFT_CENTER_KEY = 'gpb_draft_center_v1';
+let localSafetySnapshotLastAt = 0;
+let localSafetySnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 
 const LEAGUE_SLUG = 'grand-league';
 const LEAGUE_NAME = 'Grand League Baseball';
@@ -43,6 +73,24 @@ const sanitizeDbRating = (value: number): number =>
 let cachedLeagueId: string | null = null;
 let ensureLeaguePromise: Promise<string> | null = null;
 let supabaseBackoffUntil = 0;
+
+export interface LocalStateExportBundle {
+  format: typeof LOCAL_EXPORT_FORMAT;
+  version: typeof LOCAL_EXPORT_VERSION;
+  exportedAt: string;
+  leagueState: {
+    teams: Team[] | null;
+    settings: SimulationSettings | null;
+    games: Game[] | null;
+    currentDate: string | null;
+    progress: number | null;
+    seasonComplete: boolean | null;
+  };
+  playerState: LeaguePlayerState;
+  extras?: {
+    draftCenterRaw: string | null;
+  };
+}
 
 interface TeamRow {
   team_id: string;
@@ -793,7 +841,122 @@ const ensureLeague = async (): Promise<string> => {
   }
 };
 
-export const loadLocalLeagueState = (): {
+const supportsIndexedDb = (): boolean => typeof indexedDB !== 'undefined';
+
+const openLocalStateDb = async (): Promise<IDBDatabase> => {
+  if (!supportsIndexedDb()) {
+    throw new Error('IndexedDB is not available in this runtime.');
+  }
+
+  if (localStateDbPromise) {
+    return localStateDbPromise;
+  }
+
+  localStateDbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(LOCAL_INDEXED_DB_NAME, LOCAL_INDEXED_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(LOCAL_INDEXED_DB_STORE)) {
+        db.createObjectStore(LOCAL_INDEXED_DB_STORE, { keyPath: 'id' });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Failed to open local IndexedDB store.'));
+  });
+
+  try {
+    return await localStateDbPromise;
+  } catch (error) {
+    localStateDbPromise = null;
+    throw error;
+  }
+};
+
+const readLocalStorageValues = (keys: readonly string[]): Record<string, string | null> =>
+  Object.fromEntries(keys.map((key) => [key, localStorage.getItem(key)]));
+
+const hasAnyStoredValue = (raw: Record<string, string | null>, keys: readonly string[]): boolean =>
+  keys.some((key) => raw[key] !== null);
+
+const readIndexedDbValues = async (keys: readonly string[]): Promise<Record<string, string | null>> => {
+  const values: Record<string, string | null> = Object.fromEntries(keys.map((key) => [key, null]));
+  if (!supportsIndexedDb()) {
+    return values;
+  }
+
+  try {
+    const db = await openLocalStateDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(LOCAL_INDEXED_DB_STORE, 'readonly');
+      const store = tx.objectStore(LOCAL_INDEXED_DB_STORE);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Failed reading local IndexedDB values.'));
+
+      keys.forEach((key) => {
+        const request = store.get(key);
+        request.onsuccess = () => {
+          const row = request.result as { id: string; value: string } | undefined;
+          values[key] = typeof row?.value === 'string' ? row.value : null;
+        };
+      });
+    });
+  } catch (error) {
+    console.warn('Failed to read from local IndexedDB. Falling back to localStorage.', error);
+  }
+
+  return values;
+};
+
+const writeIndexedDbValues = async (entries: Array<[string, string]>): Promise<void> => {
+  if (!supportsIndexedDb() || entries.length === 0) {
+    return;
+  }
+
+  try {
+    const db = await openLocalStateDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(LOCAL_INDEXED_DB_STORE, 'readwrite');
+      const store = tx.objectStore(LOCAL_INDEXED_DB_STORE);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Failed writing local IndexedDB values.'));
+
+      entries.forEach(([id, value]) => {
+        store.put({ id, value });
+      });
+    });
+  } catch (error) {
+    console.warn('Failed to write local IndexedDB values.', error);
+  }
+};
+
+const removeIndexedDbValues = async (keys: readonly string[]): Promise<void> => {
+  if (!supportsIndexedDb() || keys.length === 0) {
+    return;
+  }
+
+  try {
+    const db = await openLocalStateDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(LOCAL_INDEXED_DB_STORE, 'readwrite');
+      const store = tx.objectStore(LOCAL_INDEXED_DB_STORE);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Failed removing local IndexedDB values.'));
+
+      keys.forEach((key) => {
+        store.delete(key);
+      });
+    });
+  } catch (error) {
+    console.warn('Failed to remove local IndexedDB values.', error);
+  }
+};
+
+const parseLocalLeagueStateFromRaw = (raw: Record<string, string | null>): {
   teams: Team[] | null;
   settings: SimulationSettings | null;
   games: Game[] | null;
@@ -801,51 +964,46 @@ export const loadLocalLeagueState = (): {
   progress: number | null;
   seasonComplete: boolean | null;
 } => {
-  const parseJson = <T,>(raw: string | null): T | null => {
-    if (!raw) {
+  const parseJson = <T,>(value: string | null): T | null => {
+    if (!value) {
       return null;
     }
-
     try {
-      return JSON.parse(raw) as T;
+      return JSON.parse(value) as T;
     } catch (error) {
-      console.error('Failed to parse local league state JSON:', error);
+      console.error('Failed to parse local league-state JSON payload:', error);
       return null;
     }
   };
 
-  const savedTeams = parseJson<Team[]>(localStorage.getItem(STORAGE_KEYS.teams));
-  const savedSettings = parseJson<SimulationSettings>(localStorage.getItem(STORAGE_KEYS.settings));
-  const savedGames = parseJson<Game[]>(localStorage.getItem(STORAGE_KEYS.games));
-  const rawCurrentDate = localStorage.getItem(STORAGE_KEYS.currentDate);
-  const rawProgress = localStorage.getItem(STORAGE_KEYS.progress);
-  const rawSeasonComplete = localStorage.getItem(STORAGE_KEYS.seasonComplete);
+  const rawProgress = raw[STORAGE_KEYS.progress];
+  const rawSeasonComplete = raw[STORAGE_KEYS.seasonComplete];
 
   return {
-    teams: savedTeams,
-    settings: savedSettings,
-    games: savedGames,
-    currentDate: rawCurrentDate,
+    teams: parseJson<Team[]>(raw[STORAGE_KEYS.teams]),
+    settings: parseJson<SimulationSettings>(raw[STORAGE_KEYS.settings]),
+    games: parseJson<Game[]>(raw[STORAGE_KEYS.games]),
+    currentDate: raw[STORAGE_KEYS.currentDate],
     progress: rawProgress !== null ? Number(rawProgress) : null,
     seasonComplete: rawSeasonComplete === null ? null : rawSeasonComplete === 'true',
   };
 };
 
-export const loadLocalPlayerState = (): LeaguePlayerState => {
-  const parseJson = <T,>(raw: string | null, fallback: T): T => {
-    if (!raw) {
+const parseLocalPlayerStateFromRaw = (raw: Record<string, string | null>): LeaguePlayerState => {
+  const parseJson = <T,>(value: string | null, fallback: T): T => {
+    if (!value) {
       return fallback;
     }
 
     try {
-      return JSON.parse(raw) as T;
+      return JSON.parse(value) as T;
     } catch (error) {
-      console.error('Failed to parse local player state JSON:', error);
+      console.error('Failed to parse local player-state JSON payload:', error);
       return fallback;
     }
   };
 
-  const rawPlayers = parseJson<Player[]>(localStorage.getItem(STORAGE_KEYS.players), []);
+  const rawPlayers = parseJson<Player[]>(raw[STORAGE_KEYS.players], []);
   const normalizedPlayers = rawPlayers.map((player) => {
     const fallback = getFallbackPlayerBio(player.primaryPosition, player.status, player.age);
     return {
@@ -858,13 +1016,305 @@ export const loadLocalPlayerState = (): LeaguePlayerState => {
 
   return {
     players: normalizedPlayers,
-    battingStats: parseJson<PlayerSeasonBatting[]>(localStorage.getItem(STORAGE_KEYS.battingStats), []),
-    pitchingStats: parseJson<PlayerSeasonPitching[]>(localStorage.getItem(STORAGE_KEYS.pitchingStats), []),
-    battingRatings: parseJson<PlayerBattingRatings[]>(localStorage.getItem(STORAGE_KEYS.battingRatings), []),
-    pitchingRatings: parseJson<PlayerPitchingRatings[]>(localStorage.getItem(STORAGE_KEYS.pitchingRatings), []),
-    rosterSlots: parseJson<TeamRosterSlot[]>(localStorage.getItem(STORAGE_KEYS.rosterSlots), []),
-    transactions: parseJson<PlayerTransaction[]>(localStorage.getItem(STORAGE_KEYS.playerTransactions), []),
+    battingStats: parseJson<PlayerSeasonBatting[]>(raw[STORAGE_KEYS.battingStats], []),
+    pitchingStats: parseJson<PlayerSeasonPitching[]>(raw[STORAGE_KEYS.pitchingStats], []),
+    battingRatings: parseJson<PlayerBattingRatings[]>(raw[STORAGE_KEYS.battingRatings], []),
+    pitchingRatings: parseJson<PlayerPitchingRatings[]>(raw[STORAGE_KEYS.pitchingRatings], []),
+    rosterSlots: parseJson<TeamRosterSlot[]>(raw[STORAGE_KEYS.rosterSlots], []),
+    transactions: parseJson<PlayerTransaction[]>(raw[STORAGE_KEYS.playerTransactions], []),
   };
+};
+
+export const loadLocalLeagueStateAsync = async (): Promise<{
+  teams: Team[] | null;
+  settings: SimulationSettings | null;
+  games: Game[] | null;
+  currentDate: string | null;
+  progress: number | null;
+  seasonComplete: boolean | null;
+}> => {
+  const indexedDbRaw = await readIndexedDbValues(LOCAL_LEAGUE_STATE_KEYS);
+  if (hasAnyStoredValue(indexedDbRaw, LOCAL_LEAGUE_STATE_KEYS)) {
+    return parseLocalLeagueStateFromRaw(indexedDbRaw);
+  }
+
+  const localRaw = readLocalStorageValues(LOCAL_LEAGUE_STATE_KEYS);
+  if (hasAnyStoredValue(localRaw, LOCAL_LEAGUE_STATE_KEYS)) {
+    void writeIndexedDbValues(
+      Object.entries(localRaw)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+  }
+  return parseLocalLeagueStateFromRaw(localRaw);
+};
+
+export const loadLocalPlayerStateAsync = async (): Promise<LeaguePlayerState> => {
+  const indexedDbRaw = await readIndexedDbValues(LOCAL_PLAYER_STATE_KEYS);
+  if (hasAnyStoredValue(indexedDbRaw, LOCAL_PLAYER_STATE_KEYS)) {
+    return parseLocalPlayerStateFromRaw(indexedDbRaw);
+  }
+
+  const localRaw = readLocalStorageValues(LOCAL_PLAYER_STATE_KEYS);
+  if (hasAnyStoredValue(localRaw, LOCAL_PLAYER_STATE_KEYS)) {
+    void writeIndexedDbValues(
+      Object.entries(localRaw)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+  }
+  return parseLocalPlayerStateFromRaw(localRaw);
+};
+
+export const loadLocalLeagueState = (): {
+  teams: Team[] | null;
+  settings: SimulationSettings | null;
+  games: Game[] | null;
+  currentDate: string | null;
+  progress: number | null;
+  seasonComplete: boolean | null;
+} => parseLocalLeagueStateFromRaw(readLocalStorageValues(LOCAL_LEAGUE_STATE_KEYS));
+
+export const loadLocalPlayerState = (): LeaguePlayerState =>
+  parseLocalPlayerStateFromRaw(readLocalStorageValues(LOCAL_PLAYER_STATE_KEYS));
+
+const readSafetySnapshotIndex = (): string[] => {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return [];
+    }
+
+    const raw = localStorage.getItem(LOCAL_SAFETY_SNAPSHOT_INDEX_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch (error) {
+    console.warn('Failed to parse local safety snapshot index.', error);
+    return [];
+  }
+};
+
+const writeSafetySnapshotIndex = (snapshotIds: string[]): void => {
+  try {
+    if (typeof localStorage === 'undefined') {
+      return;
+    }
+
+    localStorage.setItem(LOCAL_SAFETY_SNAPSHOT_INDEX_KEY, JSON.stringify(snapshotIds));
+  } catch (error) {
+    console.warn('Failed to persist local safety snapshot index.', error);
+  }
+};
+
+const normalizeProgress = (progress: number | null): number =>
+  typeof progress === 'number' && Number.isFinite(progress) ? progress : 0;
+
+const normalizeSeasonComplete = (seasonComplete: boolean | null): boolean =>
+  typeof seasonComplete === 'boolean' ? seasonComplete : false;
+
+const queueLocalSafetySnapshot = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (localSafetySnapshotTimer) {
+    return;
+  }
+
+  const elapsed = Date.now() - localSafetySnapshotLastAt;
+  const delay = elapsed >= LOCAL_SAFETY_SNAPSHOT_MIN_INTERVAL_MS
+    ? 1500
+    : LOCAL_SAFETY_SNAPSHOT_MIN_INTERVAL_MS - elapsed;
+
+  localSafetySnapshotTimer = window.setTimeout(() => {
+    localSafetySnapshotTimer = null;
+    void (async () => {
+      try {
+        const [leagueState, playerState] = await Promise.all([
+          loadLocalLeagueStateAsync(),
+          loadLocalPlayerStateAsync(),
+        ]);
+        const snapshot: LocalStateExportBundle = {
+          format: LOCAL_EXPORT_FORMAT,
+          version: LOCAL_EXPORT_VERSION,
+          exportedAt: new Date().toISOString(),
+          leagueState: {
+            ...leagueState,
+            progress: normalizeProgress(leagueState.progress),
+            seasonComplete: normalizeSeasonComplete(leagueState.seasonComplete),
+          },
+          playerState,
+          extras: {
+            draftCenterRaw:
+              typeof localStorage !== 'undefined'
+                ? localStorage.getItem(LOCAL_DRAFT_CENTER_KEY)
+                : null,
+          },
+        };
+        const snapshotId = `${LOCAL_SAFETY_SNAPSHOT_PREFIX}${Date.now()}`;
+        await writeIndexedDbValues([[snapshotId, JSON.stringify(snapshot)]]);
+
+        const previousIndex = readSafetySnapshotIndex();
+        const nextIndex = [snapshotId, ...previousIndex].slice(0, LOCAL_SAFETY_SNAPSHOT_LIMIT);
+        writeSafetySnapshotIndex(nextIndex);
+        const trimmedKeys = previousIndex.slice(LOCAL_SAFETY_SNAPSHOT_LIMIT - 1);
+        if (trimmedKeys.length > 0) {
+          void removeIndexedDbValues(trimmedKeys);
+        }
+        localSafetySnapshotLastAt = Date.now();
+      } catch (error) {
+        console.warn('Failed to create local safety snapshot.', error);
+      }
+    })();
+  }, delay);
+};
+
+const asObjectRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+
+const assertStringOrNull = (value: unknown, label: string): string | null => {
+  if (typeof value === 'string' || value === null) {
+    return value;
+  }
+  throw new Error(`Invalid backup payload: ${label} must be a string or null.`);
+};
+
+const assertNumber = (value: unknown, label: string): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  throw new Error(`Invalid backup payload: ${label} must be a finite number.`);
+};
+
+const assertBoolean = (value: unknown, label: string): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  throw new Error(`Invalid backup payload: ${label} must be a boolean.`);
+};
+
+const assertArray = <T>(value: unknown, label: string): T[] => {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  throw new Error(`Invalid backup payload: ${label} must be an array.`);
+};
+
+const parseImportBundle = (payload: unknown): LocalStateExportBundle => {
+  const root = asObjectRecord(payload);
+  if (!root) {
+    throw new Error('Invalid backup payload: root must be an object.');
+  }
+
+  if (root.format !== LOCAL_EXPORT_FORMAT) {
+    throw new Error('Invalid backup payload: unsupported format.');
+  }
+  if (root.version !== LOCAL_EXPORT_VERSION) {
+    throw new Error('Invalid backup payload: unsupported version.');
+  }
+
+  const leagueStateRaw = asObjectRecord(root.leagueState);
+  const playerStateRaw = asObjectRecord(root.playerState);
+  if (!leagueStateRaw || !playerStateRaw) {
+    throw new Error('Invalid backup payload: missing leagueState or playerState.');
+  }
+
+  const settingsRaw = asObjectRecord(leagueStateRaw.settings);
+
+  return {
+    format: LOCAL_EXPORT_FORMAT,
+    version: LOCAL_EXPORT_VERSION,
+    exportedAt: typeof root.exportedAt === 'string' ? root.exportedAt : new Date().toISOString(),
+    leagueState: {
+      teams: leagueStateRaw.teams === null ? null : assertArray<Team>(leagueStateRaw.teams, 'leagueState.teams'),
+      settings: settingsRaw ? {
+        continuityWeight: assertNumber(settingsRaw.continuityWeight, 'leagueState.settings.continuityWeight'),
+        winLossVariance: assertNumber(settingsRaw.winLossVariance, 'leagueState.settings.winLossVariance'),
+        homeFieldAdvantage: assertNumber(settingsRaw.homeFieldAdvantage, 'leagueState.settings.homeFieldAdvantage'),
+        gameLuckFactor: assertNumber(settingsRaw.gameLuckFactor, 'leagueState.settings.gameLuckFactor'),
+        leagueEnvironmentBalance: assertNumber(settingsRaw.leagueEnvironmentBalance, 'leagueState.settings.leagueEnvironmentBalance'),
+        battingVarianceFactor: assertNumber(settingsRaw.battingVarianceFactor, 'leagueState.settings.battingVarianceFactor'),
+      } : null,
+      games: leagueStateRaw.games === null ? null : assertArray<Game>(leagueStateRaw.games, 'leagueState.games'),
+      currentDate: assertStringOrNull(leagueStateRaw.currentDate, 'leagueState.currentDate'),
+      progress: leagueStateRaw.progress === null
+        ? null
+        : assertNumber(leagueStateRaw.progress, 'leagueState.progress'),
+      seasonComplete: leagueStateRaw.seasonComplete === null
+        ? null
+        : assertBoolean(leagueStateRaw.seasonComplete, 'leagueState.seasonComplete'),
+    },
+    playerState: {
+      players: assertArray<Player>(playerStateRaw.players, 'playerState.players'),
+      battingStats: assertArray<PlayerSeasonBatting>(playerStateRaw.battingStats, 'playerState.battingStats'),
+      pitchingStats: assertArray<PlayerSeasonPitching>(playerStateRaw.pitchingStats, 'playerState.pitchingStats'),
+      battingRatings: assertArray<PlayerBattingRatings>(playerStateRaw.battingRatings, 'playerState.battingRatings'),
+      pitchingRatings: assertArray<PlayerPitchingRatings>(playerStateRaw.pitchingRatings, 'playerState.pitchingRatings'),
+      rosterSlots: assertArray<TeamRosterSlot>(playerStateRaw.rosterSlots, 'playerState.rosterSlots'),
+      transactions: assertArray<PlayerTransaction>(playerStateRaw.transactions, 'playerState.transactions'),
+    },
+    extras: (() => {
+      const extrasRaw = asObjectRecord(root.extras);
+      if (!extrasRaw) {
+        return undefined;
+      }
+      return {
+        draftCenterRaw: assertStringOrNull(extrasRaw.draftCenterRaw, 'extras.draftCenterRaw'),
+      };
+    })(),
+  };
+};
+
+export const exportLocalStateBundle = async (): Promise<LocalStateExportBundle> => {
+  const [leagueState, playerState] = await Promise.all([
+    loadLocalLeagueStateAsync(),
+    loadLocalPlayerStateAsync(),
+  ]);
+
+  return {
+    format: LOCAL_EXPORT_FORMAT,
+    version: LOCAL_EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    leagueState: {
+      ...leagueState,
+      progress: normalizeProgress(leagueState.progress),
+      seasonComplete: normalizeSeasonComplete(leagueState.seasonComplete),
+    },
+    playerState,
+    extras: {
+      draftCenterRaw:
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem(LOCAL_DRAFT_CENTER_KEY)
+          : null,
+    },
+  };
+};
+
+export const importLocalStateBundle = async (payload: unknown): Promise<void> => {
+  const bundle = parseImportBundle(payload);
+  const { leagueState, playerState } = bundle;
+
+  if (!leagueState.teams || !leagueState.settings || !leagueState.games || !leagueState.currentDate) {
+    throw new Error('Backup is missing required league state fields.');
+  }
+
+  saveLocalLeagueState(
+    leagueState.teams,
+    leagueState.settings,
+    leagueState.games,
+    leagueState.currentDate,
+    normalizeProgress(leagueState.progress),
+    normalizeSeasonComplete(leagueState.seasonComplete),
+  );
+  saveLocalPlayerState(playerState);
+  if (typeof localStorage !== 'undefined' && bundle.extras?.draftCenterRaw !== undefined) {
+    if (bundle.extras.draftCenterRaw === null) {
+      localStorage.removeItem(LOCAL_DRAFT_CENTER_KEY);
+    } else {
+      localStorage.setItem(LOCAL_DRAFT_CENTER_KEY, bundle.extras.draftCenterRaw);
+    }
+  }
+  queueLocalSafetySnapshot();
 };
 
 export const saveLocalLeagueState = (
@@ -875,32 +1325,68 @@ export const saveLocalLeagueState = (
   progress: number,
   seasonComplete: boolean,
 ): void => {
-  localStorage.setItem(STORAGE_KEYS.teams, JSON.stringify(teams));
-  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+  const serializedTeams = JSON.stringify(teams);
+  const serializedSettings = JSON.stringify(settings);
+  let serializedGames = JSON.stringify(games);
+
+  localStorage.setItem(STORAGE_KEYS.teams, serializedTeams);
+  localStorage.setItem(STORAGE_KEYS.settings, serializedSettings);
   try {
-    localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(games));
+    localStorage.setItem(STORAGE_KEYS.games, serializedGames);
   } catch (error) {
     // Quota fallback: keep structural game data and strip box score payloads.
     const compactGames = games.map((game) => ({
       ...game,
       stats: {},
     }));
-    localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(compactGames));
+    serializedGames = JSON.stringify(compactGames);
+    localStorage.setItem(STORAGE_KEYS.games, serializedGames);
     console.warn('Saved compact local game snapshot after quota pressure.', error);
   }
   localStorage.setItem(STORAGE_KEYS.currentDate, currentDate);
-  localStorage.setItem(STORAGE_KEYS.progress, String(progress));
-  localStorage.setItem(STORAGE_KEYS.seasonComplete, String(seasonComplete));
+  const serializedProgress = String(progress);
+  const serializedSeasonComplete = String(seasonComplete);
+  localStorage.setItem(STORAGE_KEYS.progress, serializedProgress);
+  localStorage.setItem(STORAGE_KEYS.seasonComplete, serializedSeasonComplete);
+
+  void writeIndexedDbValues([
+    [STORAGE_KEYS.teams, serializedTeams],
+    [STORAGE_KEYS.settings, serializedSettings],
+    [STORAGE_KEYS.games, serializedGames],
+    [STORAGE_KEYS.currentDate, currentDate],
+    [STORAGE_KEYS.progress, serializedProgress],
+    [STORAGE_KEYS.seasonComplete, serializedSeasonComplete],
+  ]);
+  queueLocalSafetySnapshot();
 };
 
 export const saveLocalPlayerState = (playerState: LeaguePlayerState): void => {
-  localStorage.setItem(STORAGE_KEYS.players, JSON.stringify(playerState.players));
-  localStorage.setItem(STORAGE_KEYS.battingStats, JSON.stringify(playerState.battingStats));
-  localStorage.setItem(STORAGE_KEYS.pitchingStats, JSON.stringify(playerState.pitchingStats));
-  localStorage.setItem(STORAGE_KEYS.battingRatings, JSON.stringify(playerState.battingRatings));
-  localStorage.setItem(STORAGE_KEYS.pitchingRatings, JSON.stringify(playerState.pitchingRatings));
-  localStorage.setItem(STORAGE_KEYS.rosterSlots, JSON.stringify(playerState.rosterSlots));
-  localStorage.setItem(STORAGE_KEYS.playerTransactions, JSON.stringify(playerState.transactions));
+  const serializedPlayers = JSON.stringify(playerState.players);
+  const serializedBattingStats = JSON.stringify(playerState.battingStats);
+  const serializedPitchingStats = JSON.stringify(playerState.pitchingStats);
+  const serializedBattingRatings = JSON.stringify(playerState.battingRatings);
+  const serializedPitchingRatings = JSON.stringify(playerState.pitchingRatings);
+  const serializedRosterSlots = JSON.stringify(playerState.rosterSlots);
+  const serializedTransactions = JSON.stringify(playerState.transactions);
+
+  localStorage.setItem(STORAGE_KEYS.players, serializedPlayers);
+  localStorage.setItem(STORAGE_KEYS.battingStats, serializedBattingStats);
+  localStorage.setItem(STORAGE_KEYS.pitchingStats, serializedPitchingStats);
+  localStorage.setItem(STORAGE_KEYS.battingRatings, serializedBattingRatings);
+  localStorage.setItem(STORAGE_KEYS.pitchingRatings, serializedPitchingRatings);
+  localStorage.setItem(STORAGE_KEYS.rosterSlots, serializedRosterSlots);
+  localStorage.setItem(STORAGE_KEYS.playerTransactions, serializedTransactions);
+
+  void writeIndexedDbValues([
+    [STORAGE_KEYS.players, serializedPlayers],
+    [STORAGE_KEYS.battingStats, serializedBattingStats],
+    [STORAGE_KEYS.pitchingStats, serializedPitchingStats],
+    [STORAGE_KEYS.battingRatings, serializedBattingRatings],
+    [STORAGE_KEYS.pitchingRatings, serializedPitchingRatings],
+    [STORAGE_KEYS.rosterSlots, serializedRosterSlots],
+    [STORAGE_KEYS.playerTransactions, serializedTransactions],
+  ]);
+  queueLocalSafetySnapshot();
 };
 
 export const clearLocalPlayerState = (): void => {
@@ -911,6 +1397,7 @@ export const clearLocalPlayerState = (): void => {
   localStorage.removeItem(STORAGE_KEYS.pitchingRatings);
   localStorage.removeItem(STORAGE_KEYS.rosterSlots);
   localStorage.removeItem(STORAGE_KEYS.playerTransactions);
+  void removeIndexedDbValues(LOCAL_PLAYER_STATE_KEYS);
 };
 
 export const loadSupabaseLeagueState = async (): Promise<{

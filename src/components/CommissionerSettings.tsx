@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { LeaguePlayerState, Team, SimulationSettings } from '../types';
-import { Save, RotateCcw, Search, AlertTriangle, Trash2, Image as ImageIcon, Users } from 'lucide-react';
+import { Save, RotateCcw, Search, AlertTriangle, Trash2, Image as ImageIcon, Users, Download, Upload } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../logic/simulation';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import {
   deleteSupabaseSliderPreset,
+  exportLocalStateBundle,
+  importLocalStateBundle,
   loadSupabaseSliderPresets,
   saveSupabaseSliderPreset,
   SliderPresetRecord,
@@ -56,6 +58,9 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
   const [sliderPresetStatus, setSliderPresetStatus] = useState<string | null>(null);
   const [isSavingSliderPreset, setIsSavingSliderPreset] = useState(false);
   const [deletingSliderPresetId, setDeletingSliderPresetId] = useState<number | null>(null);
+  const [localBackupStatus, setLocalBackupStatus] = useState<string | null>(null);
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
 
   // Validate on team change
   useEffect(() => {
@@ -418,6 +423,60 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     }
   };
 
+  const handleExportLocalBackup = async () => {
+    setIsExportingBackup(true);
+    setLocalBackupStatus(null);
+    try {
+      const bundle = await exportLocalStateBundle();
+      const serialized = JSON.stringify(bundle, null, 2);
+      const blob = new Blob([serialized], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const stamp = bundle.exportedAt
+        .replaceAll(':', '-')
+        .replaceAll('.', '-')
+        .replace('T', '_')
+        .replace('Z', '');
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `gpb-local-backup-${stamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      setLocalBackupStatus('Exported local backup JSON successfully.');
+    } catch (error) {
+      console.error('Failed to export local backup bundle:', error);
+      const reason = error instanceof Error ? error.message : 'Unknown export error';
+      setLocalBackupStatus(`Export failed: ${reason}`);
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  const handleImportLocalBackup = async (file: File | null) => {
+    if (!file) {
+      return;
+    }
+
+    setIsImportingBackup(true);
+    setLocalBackupStatus(null);
+    try {
+      const rawText = await file.text();
+      const parsed = JSON.parse(rawText);
+      await importLocalStateBundle(parsed);
+      setLocalBackupStatus('Backup imported. Reloading to apply it.');
+      window.setTimeout(() => {
+        window.location.reload();
+      }, 400);
+    } catch (error) {
+      console.error('Failed to import local backup bundle:', error);
+      const reason = error instanceof Error ? error.message : 'Unknown import error';
+      setLocalBackupStatus(`Import failed: ${reason}`);
+    } finally {
+      setIsImportingBackup(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between mb-6">
@@ -457,6 +516,11 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
       {sliderPresetStatus && (
         <div className="bg-white/5 border border-white/10 p-4 rounded-lg text-zinc-200">
           <span className="font-mono text-sm">{sliderPresetStatus}</span>
+        </div>
+      )}
+      {localBackupStatus && (
+        <div className="bg-white/5 border border-white/10 p-4 rounded-lg text-zinc-200">
+          <span className="font-mono text-sm">{localBackupStatus}</span>
         </div>
       )}
 
@@ -629,6 +693,42 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
 
         {/* Simulation Tuning (moved below Team Management) */}
         <div className="space-y-6">
+          <div className="bg-[#323232] rounded-xl border border-white/10 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-display text-xl uppercase text-white tracking-wide">Local Backup</h3>
+              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">JSON Export / Import</span>
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed mb-4">
+              Export your current local league save to a JSON file, then import it later on this machine or another browser.
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => void handleExportLocalBackup()}
+                disabled={isExportingBackup || isImportingBackup}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-platinum/90 hover:bg-platinum disabled:bg-white/10 disabled:text-slate-500 text-black font-display font-bold tracking-wide uppercase rounded-lg transition-all shadow-lg active:scale-95"
+              >
+                <Download className="w-4 h-4" />
+                {isExportingBackup ? 'Exporting...' : 'Export Backup'}
+              </button>
+              <label className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 border border-white/15 text-white font-display font-bold tracking-wide uppercase rounded-lg transition-all shadow-lg cursor-pointer">
+                <Upload className="w-4 h-4" />
+                {isImportingBackup ? 'Importing...' : 'Import Backup'}
+                <input
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  disabled={isExportingBackup || isImportingBackup}
+                  onChange={(e) => {
+                    const nextFile = e.target.files?.[0] ?? null;
+                    void handleImportLocalBackup(nextFile);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
           <div className="bg-[#323232] rounded-xl border border-white/10 p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="font-display text-xl uppercase text-white tracking-wide">Sim Engine</h3>

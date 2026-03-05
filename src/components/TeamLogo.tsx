@@ -7,7 +7,47 @@ interface TeamLogoProps {
   sizeClass?: string;
 }
 
+const LOCAL_LOGO_NAME_BY_TEAM_ID: Record<string, string> = {
+  hui: 'Huider Shepherds',
+};
+const LOCAL_LOGO_MODULES = import.meta.glob('../assets/cured logos/*.png', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>;
+const normalizeLogoKey = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9]/g, '');
+const LOCAL_LOGO_URL_BY_KEY = new Map<string, string>(
+  Object.entries(LOCAL_LOGO_MODULES)
+    .map(([modulePath, moduleUrl]) => {
+      const fileName = modulePath.split('/').pop() ?? '';
+      const baseName = fileName.replace(/\.png$/i, '');
+      return [normalizeLogoKey(baseName), moduleUrl] as const;
+    }),
+);
 const TEAM_LOGO_BASE_URL_CACHE = new Map<string, string | null>();
+const LOCAL_TEAM_LOGO_URL_CACHE = new Map<string, string | null>();
+
+const getLocalTeamLogoUrl = (team: Team): string | null => {
+  if (LOCAL_TEAM_LOGO_URL_CACHE.has(team.id)) {
+    return LOCAL_TEAM_LOGO_URL_CACHE.get(team.id) ?? null;
+  }
+
+  const candidates = [
+    LOCAL_LOGO_NAME_BY_TEAM_ID[team.id],
+    `${team.city} ${team.name}`,
+  ].filter((entry): entry is string => Boolean(entry));
+
+  for (const candidate of candidates) {
+    const matched = LOCAL_LOGO_URL_BY_KEY.get(normalizeLogoKey(candidate));
+    if (matched) {
+      LOCAL_TEAM_LOGO_URL_CACHE.set(team.id, matched);
+      return matched;
+    }
+  }
+
+  LOCAL_TEAM_LOGO_URL_CACHE.set(team.id, null);
+  return null;
+};
 
 const getTeamLogoBaseUrl = (teamId: string): string | null => {
   if (TEAM_LOGO_BASE_URL_CACHE.has(teamId)) {
@@ -28,16 +68,26 @@ const getTeamLogoBaseUrl = (teamId: string): string | null => {
 const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10' }) => {
   const [logoFailed, setLogoFailed] = useState(false);
   const [cacheVersion, setCacheVersion] = useState<number | null>(null);
+  const localLogoUrl = useMemo(() => getLocalTeamLogoUrl(team), [team]);
   const logoUrl = useMemo(() => {
+    if (localLogoUrl) {
+      return localLogoUrl;
+    }
+
     const baseUrl = getTeamLogoBaseUrl(team.id);
     if (!baseUrl) {
       return null;
     }
     return cacheVersion ? `${baseUrl}?v=${cacheVersion}` : baseUrl;
-  }, [team.id, cacheVersion]);
+  }, [cacheVersion, localLogoUrl, team.id]);
 
   useEffect(() => {
     setLogoFailed(false);
+    if (localLogoUrl) {
+      setCacheVersion(null);
+      return;
+    }
+
     const stored = localStorage.getItem(`teamlogo_refresh_${team.id}`);
     if (stored) {
       const parsed = Number(stored);
@@ -47,7 +97,7 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
       }
     }
     setCacheVersion(null);
-  }, [team.id]);
+  }, [localLogoUrl, team.id]);
 
   useEffect(() => {
     const handleLogoUpdated = (event: Event) => {

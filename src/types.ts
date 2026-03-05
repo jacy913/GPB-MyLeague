@@ -365,12 +365,22 @@ export interface SimulationSettings {
   battingVarianceFactor: number; // 0 = compressed averages, 1 = wider spread
 }
 
-export type SimulationScope = 'next_game' | 'day' | 'week' | 'month' | 'to_date' | 'regular_season' | 'season';
+export type SimulationScope =
+  | 'next_game'
+  | 'next_playoff_game'
+  | 'to_game'
+  | 'day'
+  | 'week'
+  | 'month'
+  | 'to_date'
+  | 'regular_season'
+  | 'season';
 
 export interface SimulationTarget {
   scope: SimulationScope;
   targetDate?: string;
   teamId?: string;
+  targetGameId?: string;
 }
 
 export interface SeasonState {

@@ -50,8 +50,8 @@ import {
   clearLocalPlayerState,
   clearSupabasePlayerState,
   clearSupabaseSeasonHistory,
-  loadLocalLeagueState,
-  loadLocalPlayerState,
+  loadLocalLeagueStateAsync,
+  loadLocalPlayerStateAsync,
   replaceSupabaseTeamsFromSource,
   loadSupabaseLeagueState,
   loadSupabasePlayerState,
@@ -221,6 +221,8 @@ const getSimulationScopeLabel = (target: SimulationTarget): string => {
   if (target.scope === 'regular_season') return 'Simulating regular season';
   if (target.scope === 'season') return 'Simulating full season';
   if (target.scope === 'next_game') return 'Simulating next team game';
+  if (target.scope === 'next_playoff_game') return 'Simulating next playoff game';
+  if (target.scope === 'to_game') return 'Simulating to selected game';
   return 'Simulating selected range';
 };
 
@@ -234,6 +236,8 @@ const getSimulationTargetLabel = (target: SimulationTarget, teams: Team[], targe
     const team = teams.find((entry) => entry.id === target.teamId) ?? null;
     return team ? `${team.city} Next Game` : 'Next Team Game';
   }
+  if (target.scope === 'next_playoff_game') return 'Next Playoff Game';
+  if (target.scope === 'to_game') return target.targetGameId ? `To Game ${target.targetGameId.toUpperCase()}` : 'To Selected Game';
   return targetDate ? `To ${targetDate}` : 'Selected Date';
 };
 
@@ -245,44 +249,70 @@ const buildSimulationDatePlan = (games: Game[], currentDate: string, target: Sim
 
   const startDate = uniqueDates.includes(currentDate)
     ? currentDate
-    : uniqueDates.find((date) => date >= currentDate) ?? uniqueDates[0];
+    : uniqueDates.find((date) => date >= currentDate) ?? currentDate;
 
-  const buildRange = (endDate: string) => uniqueDates.filter((date) => date >= startDate && date <= endDate);
+  const buildCalendarRange = (endDate: string): string[] => {
+    if (endDate <= startDate) {
+      return [startDate];
+    }
+    const range: string[] = [];
+    let cursor = startDate;
+    while (cursor <= endDate) {
+      range.push(cursor);
+      cursor = addDaysToISODate(cursor, 1);
+    }
+    return range;
+  };
 
   if (target.scope === 'day') {
-    return { dates: buildRange(startDate), targetDate: startDate };
+    return { dates: [startDate], targetDate: startDate };
   }
 
   if (target.scope === 'week') {
     const targetDate = addDaysToISODate(startDate, 6);
-    return { dates: buildRange(targetDate), targetDate };
+    return { dates: buildCalendarRange(targetDate), targetDate };
   }
 
   if (target.scope === 'month') {
     const targetDate = addDaysToISODate(startDate, 29);
-    return { dates: buildRange(targetDate), targetDate };
+    return { dates: buildCalendarRange(targetDate), targetDate };
   }
 
   if (target.scope === 'to_date') {
-    const targetDate = uniqueDates.find((date) => date >= (target.targetDate ?? startDate)) ?? uniqueDates[uniqueDates.length - 1];
-    return { dates: buildRange(targetDate), targetDate };
+    const requestedTarget = target.targetDate ?? startDate;
+    const targetDate = requestedTarget > startDate ? requestedTarget : startDate;
+    return { dates: buildCalendarRange(targetDate), targetDate };
+  }
+
+  if (target.scope === 'next_playoff_game') {
+    return { dates: [startDate], targetDate: startDate };
+  }
+
+  if (target.scope === 'to_game') {
+    const targetGame = games.find((game) => game.gameId === target.targetGameId) ?? null;
+    const targetDate = targetGame?.date ?? startDate;
+    return { dates: [startDate], targetDate };
   }
 
   if (target.scope === 'regular_season') {
     const regularDates = getSortedUniqueDates(games.filter(isRegularSeasonGame));
     const targetDate = regularDates[regularDates.length - 1] ?? startDate;
-    return { dates: regularDates.filter((date) => date >= startDate), targetDate };
+    const dates = regularDates.filter((date) => date >= startDate);
+    return { dates: dates.length > 0 ? dates : [startDate], targetDate };
   }
 
   if (target.scope === 'season') {
-    return { dates: uniqueDates.filter((date) => date >= startDate), targetDate: uniqueDates[uniqueDates.length - 1] ?? startDate };
+    const regularDates = getSortedUniqueDates(games.filter(isRegularSeasonGame));
+    const regularSeasonEnd = regularDates[regularDates.length - 1] ?? uniqueDates[uniqueDates.length - 1] ?? startDate;
+    const targetDate = addDaysToISODate(regularSeasonEnd, 70);
+    return { dates: buildCalendarRange(targetDate), targetDate };
   }
 
   const nextTeamGame = games
     .filter((game) => game.status === 'scheduled' && game.date >= startDate && (game.homeTeam === target.teamId || game.awayTeam === target.teamId))
     .sort((left, right) => (left.date === right.date ? left.gameId.localeCompare(right.gameId) : left.date.localeCompare(right.date)))[0];
   const targetDate = nextTeamGame?.date ?? startDate;
-  return { dates: buildRange(targetDate), targetDate };
+  return { dates: buildCalendarRange(targetDate), targetDate };
 };
 
 const PLAYOFF_ROUND_LIMITS = [
@@ -767,8 +797,8 @@ function App() {
           return;
         }
 
-        const localState = loadLocalLeagueState();
-        const localPlayerState = loadLocalPlayerState();
+        const localState = await loadLocalLeagueStateAsync();
+        const localPlayerState = await loadLocalPlayerStateAsync();
         const validLocalTeams = sanitizeTeams(localState.teams);
         const validLocalSettings = isValidSettingsShape(localState.settings) ? localState.settings : null;
         const validLocalGames = sanitizeGames(localState.games);
@@ -792,8 +822,8 @@ function App() {
       } catch (error) {
         console.error('Failed to load Supabase state, falling back to local storage:', error);
         const bootstrapErrorMessage = toErrorMessage(error);
-        const localState = loadLocalLeagueState();
-        const localPlayerState = loadLocalPlayerState();
+        const localState = await loadLocalLeagueStateAsync();
+        const localPlayerState = await loadLocalPlayerStateAsync();
         const validLocalTeams = sanitizeTeams(localState.teams);
         const validLocalSettings = isValidSettingsShape(localState.settings) ? localState.settings : null;
         const validLocalGames = sanitizeGames(localState.games);
@@ -1195,7 +1225,7 @@ function App() {
     destroySimulationWorker();
   }, [destroySimulationWorker]);
 
-  const runSimulationTarget = useCallback(async (target: SimulationTarget) => {
+  const runSimulationTarget = useCallback(async (target: SimulationTarget, options?: { keepCurrentView?: boolean }) => {
     if (isSimulating || isFinalizingSimulation || seasonResetStatus.isResetting || isDraftProcessing || games.length === 0) {
       if (isDraftProcessing) {
         pushNotice('Stop the active draft run before starting simulation.', 'warning');
@@ -1217,7 +1247,9 @@ function App() {
     const worker = new Worker(new URL('./workers/simulationWorker.ts', import.meta.url), { type: 'module' });
     simulationWorkerRef.current = worker;
 
-    setView('simulation');
+    if (!options?.keepCurrentView) {
+      setView('simulation');
+    }
     setIsSimulating(true);
     setIsFinalizingSimulation(false);
     setSimulationSaveStatus(IDLE_SIMULATION_SAVE_STATUS);
@@ -1524,6 +1556,24 @@ function App() {
 
   const quickSimSeason = useCallback(() => {
     void runSimulationTarget({ scope: 'season' });
+  }, [runSimulationTarget]);
+
+  const simulateInlineToDate = useCallback((targetDate: string) => {
+    if (!targetDate) {
+      return;
+    }
+    void runSimulationTarget({ scope: 'to_date', targetDate }, { keepCurrentView: true });
+  }, [runSimulationTarget]);
+
+  const simulateNextPlayoffGameInline = useCallback(() => {
+    void runSimulationTarget({ scope: 'next_playoff_game' }, { keepCurrentView: true });
+  }, [runSimulationTarget]);
+
+  const simulateToGameInline = useCallback((targetGameId: string) => {
+    if (!targetGameId) {
+      return;
+    }
+    void runSimulationTarget({ scope: 'to_game', targetGameId }, { keepCurrentView: true });
   }, [runSimulationTarget]);
 
   const simulateToDate = useCallback((targetDate: string) => {
@@ -3264,6 +3314,7 @@ function App() {
                   games={games}
                   players={playerState.players}
                   battingStats={playerState.battingStats}
+                  pitchingStats={playerState.pitchingStats}
                   battingRatings={playerState.battingRatings}
                   pitchingRatings={playerState.pitchingRatings}
                   transactions={playerState.transactions}
@@ -3472,6 +3523,11 @@ function App() {
                   currentDate={currentDate}
                   selectedDate={selectedDate}
                   onSelectDate={setSelectedDate}
+                  isSimulating={isSimulating || isFinalizingSimulation}
+                  onSimulateToDate={simulateInlineToDate}
+                  onSimulateNextPlayoffGame={simulateNextPlayoffGameInline}
+                  onSimulateToGame={simulateToGameInline}
+                  onCancelSimulation={cancelSimulationRun}
                 />
               )}
 

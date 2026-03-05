@@ -8,10 +8,12 @@ export default defineConfig(({ mode }) => {
   const normalizeEnv = (value: string | undefined): string =>
     typeof value === 'string' ? value.trim().replace(/^['"]|['"]$/g, '') : '';
   const supabaseUrl = normalizeEnv(env.VITE_SUPABASE_URL);
+  const localOnlyFlag = normalizeEnv(env.VITE_LOCAL_ONLY).toLowerCase();
+  const isLocalOnlyMode = localOnlyFlag === 'true' || localOnlyFlag === '1' || localOnlyFlag === 'yes';
 
   let supabaseOrigin = '';
   try {
-    supabaseOrigin = supabaseUrl ? new URL(supabaseUrl).origin : '';
+    supabaseOrigin = !isLocalOnlyMode && supabaseUrl ? new URL(supabaseUrl).origin : '';
   } catch {
     supabaseOrigin = '';
   }

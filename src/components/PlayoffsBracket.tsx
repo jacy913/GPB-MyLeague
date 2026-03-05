@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
-import { Crown, Sparkles, Trophy } from 'lucide-react';
+import { CalendarDays, Crown, PauseCircle, Play, SkipForward } from 'lucide-react';
 import { Game, PlayoffRoundKey, Team } from '../types';
 import { SeededPlayoffTeam, compareSeededTeams, getLeaguePlayoffSeeds, getRoundBestOf, isPlayoffGame } from '../logic/playoffs';
-import { SeasonCalendarStrip, formatHeaderDate } from './SeasonCalendarStrip';
+import { addDaysToISODate } from '../logic/simulation';
+import { formatHeaderDate } from './SeasonCalendarStrip';
 import { TeamLogo } from './TeamLogo';
 import worldSeriesLogo from '../assets/worldserieslogo.png';
 import gpbLogo from '../assets/gpb.png';
+import playoffsLogo from '../assets/playoffs.png';
 
 interface PlayoffsBracketProps {
   teams: Team[];
@@ -14,6 +16,11 @@ interface PlayoffsBracketProps {
   currentDate: string;
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  isSimulating: boolean;
+  onSimulateToDate: (targetDate: string) => void;
+  onSimulateNextPlayoffGame: () => void;
+  onSimulateToGame: (gameId: string) => void;
+  onCancelSimulation: () => void;
 }
 
 type LeagueKey = Team['league'];
@@ -142,7 +149,23 @@ const buildRegularSeasonSnapshot = (teams: Team[], games: Game[], snapshotDate: 
   return Array.from(snapshot.values());
 };
 
-const buildSeriesStateMap = (games: Game[], bracketDate: string): Map<string, SeriesStateSnapshot> => {
+const compareFallbackPlayoffTeams = (left: Team, right: Team): number => {
+  if (left.wins !== right.wins) {
+    return right.wins - left.wins;
+  }
+  const leftRunDiff = left.runsScored - left.runsAllowed;
+  const rightRunDiff = right.runsScored - right.runsAllowed;
+  if (leftRunDiff !== rightRunDiff) {
+    return rightRunDiff - leftRunDiff;
+  }
+  return left.id.localeCompare(right.id);
+};
+
+const buildSeriesStateMap = (
+  games: Game[],
+  bracketDate: string,
+  teamsById?: Map<string, Team>,
+): Map<string, SeriesStateSnapshot> => {
   const seriesMap = new Map<string, Game[]>();
   games
     .filter(isPlayoffGame)
@@ -166,12 +189,28 @@ const buildSeriesStateMap = (games: Game[], bracketDate: string): Map<string, Se
       return;
     }
 
-    const topSeedTeamId = typeof sample.stats.topSeedTeamId === 'string' ? sample.stats.topSeedTeamId : '';
-    const bottomSeedTeamId = typeof sample.stats.bottomSeedTeamId === 'string' ? sample.stats.bottomSeedTeamId : '';
-    const topSeed = typeof sample.stats.topSeed === 'number' ? sample.stats.topSeed : 0;
-    const bottomSeed = typeof sample.stats.bottomSeed === 'number' ? sample.stats.bottomSeed : 0;
+    let topSeedTeamId = typeof sample.stats.topSeedTeamId === 'string' ? sample.stats.topSeedTeamId : '';
+    let bottomSeedTeamId = typeof sample.stats.bottomSeedTeamId === 'string' ? sample.stats.bottomSeedTeamId : '';
+    let topSeed = typeof sample.stats.topSeed === 'number' ? sample.stats.topSeed : 0;
+    let bottomSeed = typeof sample.stats.bottomSeed === 'number' ? sample.stats.bottomSeed : 0;
 
-    if (!topSeedTeamId || !bottomSeedTeamId || topSeed <= 0 || bottomSeed <= 0) {
+    if ((!topSeedTeamId || !bottomSeedTeamId || topSeed <= 0 || bottomSeed <= 0) && teamsById) {
+      const home = teamsById.get(sample.homeTeam) ?? null;
+      const away = teamsById.get(sample.awayTeam) ?? null;
+      if (home && away) {
+        const sorted = [home, away].sort(compareFallbackPlayoffTeams);
+        topSeedTeamId = sorted[0]?.id ?? topSeedTeamId;
+        bottomSeedTeamId = sorted[1]?.id ?? bottomSeedTeamId;
+        if (topSeed <= 0) {
+          topSeed = 1;
+        }
+        if (bottomSeed <= 0) {
+          bottomSeed = 2;
+        }
+      }
+    }
+
+    if (!topSeedTeamId || !bottomSeedTeamId) {
       return;
     }
 
@@ -366,10 +405,18 @@ const buildLeagueBracketView = (
 ): LeagueBracketView => {
   const leagueSeeds = getLeaguePlayoffSeeds(snapshotTeams, games.filter((game) => game.date <= bracketDate), league);
   const seedLookup = getSeedLookup(leagueSeeds);
-  const seriesStates = buildSeriesStateMap(games, bracketDate);
+  const seriesStates = buildSeriesStateMap(games, bracketDate, allTeamsById);
 
   const getSeedByNumber = (seedNumber: number): SeededPlayoffTeam | null => leagueSeeds.find((seed) => seed.seed === seedNumber) ?? null;
   const findSeries = (seriesId: string): SeriesStateSnapshot | null => seriesStates.get(seriesId) ?? null;
+  const resolveSeededTeam = (teamId: string, seed: number): SeededPlayoffTeam | null => {
+    const seeded = seedLookup.get(teamId) ?? null;
+    if (seeded) {
+      return seeded;
+    }
+    const fallbackTeam = allTeamsById.get(teamId) ?? null;
+    return fallbackTeam ? makeFallbackSeededTeam(fallbackTeam, seed) : null;
+  };
 
   const wildCardAState = findSeries(`${league}-wc-a`);
   const wildCardBState = findSeries(`${league}-wc-b`);
@@ -380,10 +427,10 @@ const buildLeagueBracketView = (
     `${league}-wc-a`,
     `${league} Wild Card`,
     wildCardAState
-      ? seedLookup.get(wildCardAState.topSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(wildCardAState.topSeedTeamId)!, wildCardAState.topSeed)
+      ? resolveSeededTeam(wildCardAState.topSeedTeamId, wildCardAState.topSeed)
       : getSeedByNumber(3),
     wildCardAState
-      ? seedLookup.get(wildCardAState.bottomSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(wildCardAState.bottomSeedTeamId)!, wildCardAState.bottomSeed)
+      ? resolveSeededTeam(wildCardAState.bottomSeedTeamId, wildCardAState.bottomSeed)
       : getSeedByNumber(6),
     wildCardAState,
   );
@@ -394,10 +441,10 @@ const buildLeagueBracketView = (
     `${league}-wc-b`,
     `${league} Wild Card`,
     wildCardBState
-      ? seedLookup.get(wildCardBState.topSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(wildCardBState.topSeedTeamId)!, wildCardBState.topSeed)
+      ? resolveSeededTeam(wildCardBState.topSeedTeamId, wildCardBState.topSeed)
       : getSeedByNumber(4),
     wildCardBState
-      ? seedLookup.get(wildCardBState.bottomSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(wildCardBState.bottomSeedTeamId)!, wildCardBState.bottomSeed)
+      ? resolveSeededTeam(wildCardBState.bottomSeedTeamId, wildCardBState.bottomSeed)
       : getSeedByNumber(5),
     wildCardBState,
   );
@@ -410,19 +457,19 @@ const buildLeagueBracketView = (
   const divisionalBState = findSeries(`${league}-ds-b`);
 
   const divisionalATop = divisionalAState
-    ? seedLookup.get(divisionalAState.topSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(divisionalAState.topSeedTeamId)!, divisionalAState.topSeed)
+    ? resolveSeededTeam(divisionalAState.topSeedTeamId, divisionalAState.topSeed)
     : getSeedByNumber(1);
   const divisionalABottom = divisionalAState
-    ? seedLookup.get(divisionalAState.bottomSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(divisionalAState.bottomSeedTeamId)!, divisionalAState.bottomSeed)
+    ? resolveSeededTeam(divisionalAState.bottomSeedTeamId, divisionalAState.bottomSeed)
     : resolvedWildCardWinners.length === 2
       ? resolvedWildCardWinners[0]
       : null;
 
   const divisionalBTop = divisionalBState
-    ? seedLookup.get(divisionalBState.topSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(divisionalBState.topSeedTeamId)!, divisionalBState.topSeed)
+    ? resolveSeededTeam(divisionalBState.topSeedTeamId, divisionalBState.topSeed)
     : getSeedByNumber(2);
   const divisionalBBottom = divisionalBState
-    ? seedLookup.get(divisionalBState.bottomSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(divisionalBState.bottomSeedTeamId)!, divisionalBState.bottomSeed)
+    ? resolveSeededTeam(divisionalBState.bottomSeedTeamId, divisionalBState.bottomSeed)
     : resolvedWildCardWinners.length === 2
       ? resolvedWildCardWinners[1]
       : null;
@@ -436,10 +483,10 @@ const buildLeagueBracketView = (
     .sort(compareSeededTeams);
 
   const leagueSeriesTop = leagueSeriesState
-    ? seedLookup.get(leagueSeriesState.topSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(leagueSeriesState.topSeedTeamId)!, leagueSeriesState.topSeed)
+    ? resolveSeededTeam(leagueSeriesState.topSeedTeamId, leagueSeriesState.topSeed)
     : leagueSeriesParticipants[0] ?? null;
   const leagueSeriesBottom = leagueSeriesState
-    ? seedLookup.get(leagueSeriesState.bottomSeedTeamId) ?? makeFallbackSeededTeam(allTeamsById.get(leagueSeriesState.bottomSeedTeamId)!, leagueSeriesState.bottomSeed)
+    ? resolveSeededTeam(leagueSeriesState.bottomSeedTeamId, leagueSeriesState.bottomSeed)
     : leagueSeriesParticipants[1] ?? null;
 
   const leagueSeries = buildSeriesView(
@@ -468,15 +515,31 @@ const buildPlayoffBracketView = (
   currentDate: string,
   selectedDate: string,
 ): PlayoffBracketView => {
-  const bracketDate = selectedDate && selectedDate <= currentDate ? selectedDate : currentDate || selectedDate || games[0]?.date || '';
+  const latestCompletedPlayoffDate = games
+    .filter((game) => isPlayoffGame(game) && game.status === 'completed')
+    .map((game) => game.date)
+    .sort((left, right) => left.localeCompare(right))
+    .at(-1) ?? '';
+  const baseDate = selectedDate && selectedDate <= currentDate ? selectedDate : currentDate || selectedDate || games[0]?.date || '';
+  const bracketDate = latestCompletedPlayoffDate && latestCompletedPlayoffDate > baseDate ? latestCompletedPlayoffDate : baseDate;
   const snapshotTeams = buildRegularSeasonSnapshot(teams, games, bracketDate);
   const allTeamsById = new Map(snapshotTeams.map((team) => [team.id, team]));
   const platinum = buildLeagueBracketView('Platinum', snapshotTeams, games, bracketDate, allTeamsById);
   const prestige = buildLeagueBracketView('Prestige', snapshotTeams, games, bracketDate, allTeamsById);
-  const worldSeriesState = buildSeriesStateMap(games, bracketDate).get('GPB-world-series') ?? null;
+  const worldSeriesState = buildSeriesStateMap(games, bracketDate, allTeamsById).get('GPB-world-series') ?? null;
   const worldSeriesParticipants = [platinum.champion, prestige.champion]
     .filter((team): team is SeededPlayoffTeam => Boolean(team))
     .sort(compareSeededTeams);
+  const resolveWorldSeriesSeededTeam = (teamId: string, seed: number): SeededPlayoffTeam | null => {
+    const seeded = platinum.seeds.find((entry) => entry.team.id === teamId)
+      ?? prestige.seeds.find((entry) => entry.team.id === teamId)
+      ?? null;
+    if (seeded) {
+      return seeded;
+    }
+    const fallbackTeam = allTeamsById.get(teamId) ?? null;
+    return fallbackTeam ? makeFallbackSeededTeam(fallbackTeam, seed) : null;
+  };
 
   const worldSeries = buildSeriesView(
     'world_series',
@@ -484,14 +547,10 @@ const buildPlayoffBracketView = (
     'GPB-world-series',
     'GPB World Series',
     worldSeriesState
-      ? platinum.seeds.find((seed) => seed.team.id === worldSeriesState.topSeedTeamId) ??
-        prestige.seeds.find((seed) => seed.team.id === worldSeriesState.topSeedTeamId) ??
-        makeFallbackSeededTeam(allTeamsById.get(worldSeriesState.topSeedTeamId)!, worldSeriesState.topSeed)
+      ? resolveWorldSeriesSeededTeam(worldSeriesState.topSeedTeamId, worldSeriesState.topSeed)
       : worldSeriesParticipants[0] ?? null,
     worldSeriesState
-      ? platinum.seeds.find((seed) => seed.team.id === worldSeriesState.bottomSeedTeamId) ??
-        prestige.seeds.find((seed) => seed.team.id === worldSeriesState.bottomSeedTeamId) ??
-        makeFallbackSeededTeam(allTeamsById.get(worldSeriesState.bottomSeedTeamId)!, worldSeriesState.bottomSeed)
+      ? resolveWorldSeriesSeededTeam(worldSeriesState.bottomSeedTeamId, worldSeriesState.bottomSeed)
       : worldSeriesParticipants[1] ?? null,
     worldSeriesState,
   );
@@ -925,45 +984,215 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
   currentDate,
   selectedDate,
   onSelectDate,
+  isSimulating,
+  onSimulateToDate,
+  onSimulateNextPlayoffGame,
+  onSimulateToGame,
+  onCancelSimulation,
 }) => {
   const bracket = useMemo(
     () => buildPlayoffBracketView(teams, games, currentDate, selectedDate),
     [teams, games, currentDate, selectedDate],
   );
+  const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const playoffGames = useMemo(() => games.filter((game) => isPlayoffGame(game)).sort(compareGameOrder), [games]);
+  const playbackAnchorDate = useMemo(() => {
+    const latestCompletedPlayoffDate = playoffGames
+      .filter((game) => game.status === 'completed')
+      .map((game) => game.date)
+      .sort((left, right) => left.localeCompare(right))
+      .at(-1) ?? '';
+    if (!currentDate) {
+      return latestCompletedPlayoffDate || selectedDate || '';
+    }
+    return latestCompletedPlayoffDate && latestCompletedPlayoffDate > currentDate ? latestCompletedPlayoffDate : currentDate;
+  }, [currentDate, playoffGames, selectedDate]);
+  const upcomingPlayoffGames = useMemo(
+    () => playoffGames.filter((game) => game.status === 'scheduled' && (!playbackAnchorDate || game.date >= playbackAnchorDate)),
+    [playoffGames, playbackAnchorDate],
+  );
+  const allScheduleDates = useMemo<string[]>(() => {
+    const dates: string[] = games.map((game) => game.date);
+    return Array.from<string>(new Set(dates)).sort((left: string, right: string) => left.localeCompare(right));
+  }, [games]);
+  const maxSelectableDate = useMemo(() => {
+    const existingMax = allScheduleDates[allScheduleDates.length - 1] ?? '';
+    const horizonBase = playbackAnchorDate || bracket.bracketDate || existingMax;
+    if (!horizonBase) {
+      return existingMax;
+    }
+
+    const horizon = addDaysToISODate(horizonBase, 70);
+    if (!existingMax) {
+      return horizon;
+    }
+    return horizon > existingMax ? horizon : existingMax;
+  }, [allScheduleDates, bracket.bracketDate, playbackAnchorDate]);
+  const activeTargetDate = selectedDate || playbackAnchorDate || bracket.bracketDate || allScheduleDates[0] || '';
+  const canSimToTargetDate = Boolean(activeTargetDate) && (!playbackAnchorDate || activeTargetDate >= playbackAnchorDate);
+  const nextPlayoffDate = upcomingPlayoffGames[0]?.date ?? null;
+  const gameQueue = upcomingPlayoffGames.slice(0, 12);
+  const firstScheduledPlayoffDate = useMemo(() => {
+    return (
+      playoffGames
+        .filter((game) => game.status === 'scheduled')
+        .map((game) => game.date as string)
+        .sort((left: string, right: string) => left.localeCompare(right))[0] ?? null
+    );
+  }, [playoffGames]);
+  const completedPlayoffGames = useMemo(
+    () => playoffGames.filter((game) => game.status === 'completed' && game.date <= bracket.bracketDate).length,
+    [playoffGames, bracket.bracketDate],
+  );
+  const bracketStatusCopy = useMemo(() => {
+    if (bracket.champion) {
+      return `Bracket completed through ${formatHeaderDate(bracket.bracketDate)}.`;
+    }
+
+    if (completedPlayoffGames > 0) {
+      return `Bracket live through ${formatHeaderDate(bracket.bracketDate)}.`;
+    }
+
+    if (firstScheduledPlayoffDate) {
+      return `Playoffs scheduled to open ${formatHeaderDate(firstScheduledPlayoffDate)}.`;
+    }
+
+    return seasonComplete
+      ? 'Regular season complete. Generate or schedule playoff games to start the bracket.'
+      : 'Playoff field projected. Simulate forward to begin bracket games.';
+  }, [bracket.champion, bracket.bracketDate, completedPlayoffGames, firstScheduledPlayoffDate, seasonComplete]);
+  const simControlsLocked = isSimulating;
 
   return (
     <section className="space-y-8">
-      <div className="rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(23,182,144,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(167,155,0,0.12),transparent_30%),linear-gradient(135deg,#1b1b1b,#232323,#171717)] p-5 md:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+      <article className="rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(23,182,144,0.12),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(167,155,0,0.12),transparent_32%),linear-gradient(135deg,#1a1a1a,#232323,#171717)] p-4 md:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-zinc-100" />
-              <h1 className="font-display text-4xl md:text-5xl uppercase tracking-widest text-white">Playoffs</h1>
+            <div className="flex items-center gap-3">
+              <img src={gpbLogo} alt="GPB" className="h-10 w-auto object-contain md:h-12" />
+              <img src={playoffsLogo} alt="Playoffs" className="h-12 w-auto object-contain md:h-16" />
             </div>
-            <p className="font-mono text-xs uppercase text-zinc-400 mt-2">
-              {seasonComplete
-                ? `Bracket completed through ${formatHeaderDate(bracket.bracketDate)}.`
-                : `Bracket live through ${formatHeaderDate(bracket.bracketDate)}.`}
+            <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+              {bracketStatusCopy}
             </p>
           </div>
           <div className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-platinum" />
-              <p className="font-mono text-[11px] uppercase text-zinc-400">Tiebreak Logic</p>
-            </div>
-            <p className="font-mono text-xs text-zinc-500 mt-2">W-L, run differential, then home record.</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Next playoff date</p>
+            <p className="mt-1 font-display text-xl uppercase tracking-[0.08em] text-zinc-100">
+              {nextPlayoffDate ? formatHeaderDate(nextPlayoffDate) : 'None Scheduled'}
+            </p>
           </div>
         </div>
-      </div>
 
-      <SeasonCalendarStrip
-        games={games}
-        currentDate={currentDate}
-        selectedDate={selectedDate}
-        onSelectDate={onSelectDate}
-        title="League Calendar"
-        currentDateLabel="Bracket Date"
-      />
+        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
+          <label className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Sim target date</span>
+            <input
+              type="date"
+              value={activeTargetDate}
+              min={allScheduleDates[0]}
+              max={maxSelectableDate}
+              onChange={(event) => onSelectDate(event.target.value)}
+              className="mt-2 block w-full bg-transparent font-mono text-sm text-white outline-none"
+            />
+          </label>
+
+          <button
+            onClick={onSimulateNextPlayoffGame}
+            disabled={simControlsLocked}
+            className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
+          >
+            <div className="flex items-center gap-2">
+              <Play className="h-4 w-4 text-prestige" />
+              <p className="font-headline text-xl uppercase tracking-[0.08em] text-white">Sim Next Game</p>
+            </div>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Advance one playoff game</p>
+          </button>
+
+          <button
+            onClick={() => onSimulateToDate(activeTargetDate)}
+            disabled={simControlsLocked || !canSimToTargetDate}
+            className="rounded-xl border border-prestige/25 bg-prestige/10 px-4 py-3 text-left transition-colors hover:border-prestige/40 disabled:opacity-50"
+          >
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-prestige" />
+              <p className="font-headline text-xl uppercase tracking-[0.08em] text-prestige">Sim To Date</p>
+            </div>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+              {activeTargetDate ? formatHeaderDate(activeTargetDate) : 'Select a target'}
+            </p>
+          </button>
+
+          <button
+            onClick={() => nextPlayoffDate && onSimulateToDate(nextPlayoffDate)}
+            disabled={simControlsLocked || !nextPlayoffDate}
+            className="rounded-xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-3 text-left transition-colors hover:border-[#d4bb6a]/40 disabled:opacity-50"
+          >
+            <div className="flex items-center gap-2">
+              <SkipForward className="h-4 w-4 text-[#ecd693]" />
+              <p className="font-headline text-xl uppercase tracking-[0.08em] text-[#ecd693]">Next Playoff Day</p>
+            </div>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+              {nextPlayoffDate ? formatHeaderDate(nextPlayoffDate) : 'No upcoming playoff date'}
+            </p>
+          </button>
+
+          <button
+            onClick={onCancelSimulation}
+            disabled={!isSimulating}
+            className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
+          >
+            <div className="flex items-center gap-2">
+              <PauseCircle className="h-4 w-4 text-zinc-300" />
+              <p className="font-headline text-xl uppercase tracking-[0.08em] text-zinc-100">Stop</p>
+            </div>
+            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+              {isSimulating ? 'Stop after active day' : 'Idle'}
+            </p>
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Playoff game queue</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+              {upcomingPlayoffGames.length} scheduled
+            </p>
+          </div>
+          {gameQueue.length > 0 ? (
+            <div className="mt-3 flex gap-3 overflow-x-auto pb-1 scrollbar-subtle">
+              {gameQueue.map((game) => {
+                const awayTeam = teamsById.get(game.awayTeam) ?? null;
+                const homeTeam = teamsById.get(game.homeTeam) ?? null;
+                const seriesLabel = game.playoff?.seriesLabel ?? 'Playoff';
+                const gameNumberLabel = game.playoff?.gameNumber ? `G${game.playoff.gameNumber}` : 'G?';
+                return (
+                  <button
+                    key={game.gameId}
+                    type="button"
+                    onClick={() => onSimulateToGame(game.gameId)}
+                    disabled={simControlsLocked}
+                    className="min-w-[240px] rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
+                  >
+                    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                      {formatHeaderDate(game.date)} | {gameNumberLabel}
+                    </p>
+                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-[#d8c88b]">{seriesLabel}</p>
+                    <p className="mt-2 font-headline text-xl uppercase tracking-[0.06em] text-white">
+                      {(awayTeam?.city ?? game.awayTeam)} @ {(homeTeam?.city ?? game.homeTeam)}
+                    </p>
+                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Sim Through This Game</p>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
+              No playoff games are currently scheduled.
+            </p>
+          )}
+        </div>
+      </article>
 
       <LeagueSection
         bracket={bracket.platinum}

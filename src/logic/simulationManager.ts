@@ -197,7 +197,7 @@ export class SimulationManager {
     }
 
     const onOrAfter = dates.find((date) => date >= rawDate);
-    return onOrAfter ?? dates[dates.length - 1];
+    return onOrAfter ?? rawDate;
   }
 
   private getScheduledGames(predicate?: (game: Game) => boolean): Game[] {
@@ -233,11 +233,43 @@ export class SimulationManager {
     const topSeed = typeof game.stats.topSeed === 'number' ? game.stats.topSeed : 0;
     const bottomSeed = typeof game.stats.bottomSeed === 'number' ? game.stats.bottomSeed : 0;
 
-    if (!topSeedTeamId || !bottomSeedTeamId || topSeed <= 0 || bottomSeed <= 0) {
+    if (topSeedTeamId && bottomSeedTeamId && topSeed > 0 && bottomSeed > 0) {
+      return { topSeedTeamId, bottomSeedTeamId, topSeed, bottomSeed };
+    }
+
+    // Backward-compat fallback for legacy playoff games that were saved without seed metadata.
+    const homeSeed =
+      game.playoff.league === 'Platinum'
+        ? this.getSeedMap('Platinum').get(game.homeTeam) ?? null
+        : game.playoff.league === 'Prestige'
+          ? this.getSeedMap('Prestige').get(game.homeTeam) ?? null
+          : this.getSeedMap('Platinum').get(game.homeTeam) ?? this.getSeedMap('Prestige').get(game.homeTeam) ?? null;
+    const awaySeed =
+      game.playoff.league === 'Platinum'
+        ? this.getSeedMap('Platinum').get(game.awayTeam) ?? null
+        : game.playoff.league === 'Prestige'
+          ? this.getSeedMap('Prestige').get(game.awayTeam) ?? null
+          : this.getSeedMap('Platinum').get(game.awayTeam) ?? this.getSeedMap('Prestige').get(game.awayTeam) ?? null;
+
+    if (!homeSeed || !awaySeed) {
       return null;
     }
 
-    return { topSeedTeamId, bottomSeedTeamId, topSeed, bottomSeed };
+    const top = compareSeededTeams(homeSeed, awaySeed) <= 0 ? homeSeed : awaySeed;
+    const bottom = top.team.id === homeSeed.team.id ? awaySeed : homeSeed;
+    game.stats = {
+      ...game.stats,
+      topSeedTeamId: top.team.id,
+      bottomSeedTeamId: bottom.team.id,
+      topSeed: top.seed,
+      bottomSeed: bottom.seed,
+    };
+    return {
+      topSeedTeamId: top.team.id,
+      bottomSeedTeamId: bottom.team.id,
+      topSeed: top.seed,
+      bottomSeed: bottom.seed,
+    };
   }
 
   private buildSeriesState(games: Game[]): SeriesState | null {
@@ -642,7 +674,7 @@ export class SimulationManager {
 
     game.status = completedGame.status;
     game.score = { ...completedGame.score };
-    game.stats = { ...completedGame.stats };
+    game.stats = { ...game.stats, ...completedGame.stats };
 
     applyPlayerGameStatDeltaToAccumulator(
       this.playerStatAccumulator,
@@ -681,6 +713,35 @@ export class SimulationManager {
       return this.getNextScheduledGame((game) => game.date >= normalizedCurrent && (game.homeTeam === teamId || game.awayTeam === teamId));
     }
 
+    if (target.scope === 'next_playoff_game') {
+      return this.getNextScheduledGame((game) => isPlayoffGame(game) && game.date >= normalizedCurrent);
+    }
+
+    if (target.scope === 'to_game') {
+      const targetGameId = target.targetGameId ?? '';
+      if (!targetGameId) {
+        return undefined;
+      }
+
+      const targetGame = this.games.find((game) => game.gameId === targetGameId && game.status === 'scheduled');
+      if (!targetGame) {
+        return undefined;
+      }
+
+      return this.getNextScheduledGame((game) => {
+        if (game.date < normalizedCurrent) {
+          return false;
+        }
+        if (game.date > targetGame.date) {
+          return false;
+        }
+        if (game.date === targetGame.date && game.gameId.localeCompare(targetGame.gameId) > 0) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     if (!targetEndDate) {
       return undefined;
     }
@@ -707,6 +768,12 @@ export class SimulationManager {
     if (target.scope === 'next_game') {
       return 'Simulating next team game';
     }
+    if (target.scope === 'next_playoff_game') {
+      return 'Simulating next playoff game';
+    }
+    if (target.scope === 'to_game') {
+      return 'Simulating to selected game';
+    }
 
     return 'Simulating selected range';
   }
@@ -725,6 +792,36 @@ export class SimulationManager {
       return this.getScheduledGames(
         (game) => game.date >= normalizedCurrent && (game.homeTeam === teamId || game.awayTeam === teamId),
       ).length;
+    }
+
+    if (target.scope === 'next_playoff_game') {
+      const nextPlayoffGame = this.getNextScheduledGame((game) => isPlayoffGame(game) && game.date >= normalizedCurrent);
+      return nextPlayoffGame ? 1 : 0;
+    }
+
+    if (target.scope === 'to_game') {
+      const targetGameId = target.targetGameId ?? '';
+      if (!targetGameId) {
+        return 0;
+      }
+
+      const targetGame = this.games.find((game) => game.gameId === targetGameId && game.status === 'scheduled');
+      if (!targetGame) {
+        return 0;
+      }
+
+      return this.getScheduledGames((game) => {
+        if (game.date < normalizedCurrent) {
+          return false;
+        }
+        if (game.date > targetGame.date) {
+          return false;
+        }
+        if (game.date === targetGame.date && game.gameId.localeCompare(targetGame.gameId) > 0) {
+          return false;
+        }
+        return true;
+      }).length;
     }
 
     if (!targetEndDate) {
@@ -787,6 +884,9 @@ export class SimulationManager {
       }
 
       if (target.scope === 'next_game') {
+        break;
+      }
+      if (target.scope === 'next_playoff_game') {
         break;
       }
     }

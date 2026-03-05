@@ -155,9 +155,34 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         return;
       }
 
-      const scheduledGames = working.games.filter(
-        (game) => game.status === 'scheduled' && game.date === working.currentDate,
-      ).length;
+      const useTargetScopeForStep = index === 0 && (startPayload.target.scope === 'next_playoff_game' || startPayload.target.scope === 'to_game');
+      const stepTarget = useTargetScopeForStep ? startPayload.target : ({ scope: 'day' } as const);
+      const scheduledGames = stepTarget.scope === 'next_playoff_game'
+        ? working.games.filter((game) => game.status === 'scheduled' && Boolean(game.playoff)).length
+        : stepTarget.scope === 'to_game'
+          ? (() => {
+            const targetGameId = stepTarget.targetGameId ?? '';
+            const targetGame = working.games.find((game) => game.gameId === targetGameId && game.status === 'scheduled');
+            if (!targetGame) {
+              return 0;
+            }
+            return working.games.filter((game) => {
+              if (game.status !== 'scheduled') {
+                return false;
+              }
+              if (game.date < working.currentDate) {
+                return false;
+              }
+              if (game.date > targetGame.date) {
+                return false;
+              }
+              if (game.date === targetGame.date && game.gameId.localeCompare(targetGame.gameId) > 0) {
+                return false;
+              }
+              return true;
+            }).length;
+          })()
+          : working.games.filter((game) => game.status === 'scheduled' && game.date === working.currentDate).length;
       postMessageToMain({
         type: 'day_started',
         payload: {
@@ -167,7 +192,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         },
       });
 
-      const result = await manager.run({ scope: 'day' });
+      const result = await manager.run(stepTarget);
       const complete = result.games.every((game) => game.status === 'completed');
       const finalizedTeams = complete
         ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
@@ -251,6 +276,10 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
           },
         });
         return;
+      }
+
+      if (useTargetScopeForStep) {
+        break;
       }
     }
 
