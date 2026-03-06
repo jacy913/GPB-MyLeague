@@ -22,6 +22,7 @@ import { PlayersHub } from './PlayersHub';
 import { FreeAgencyHub } from './FreeAgencyHub';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
+import { LotteryHub } from './LotteryHub';
 import { GameScreen } from './GameScreen';
 import { StandingsHub } from './StandingsHub';
 import { LeadersHub } from './LeadersHub';
@@ -66,6 +67,7 @@ type FreeAgencyAssignment = {
   teamId: string;
   slotCode: RosterSlotCode;
   contractYearsLeft: number;
+  isQualifyingOffer?: boolean;
 };
 
 type SeasonResetStatus = {
@@ -73,6 +75,8 @@ type SeasonResetStatus = {
   progress: number;
   label: string;
 };
+
+type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
 
 interface AppViewRouterProps {
   view: AppView;
@@ -83,12 +87,22 @@ interface AppViewRouterProps {
   selectedDate: string;
   selectedTeamId: string;
   seasonComplete: boolean;
+  offseasonStage: OffseasonStage;
+  hasPendingSeasonAwards: boolean;
+  awardsUnlockDate: string;
+  lotteryOpenDate: string;
+  draftOpenDate: string;
+  freeAgencyOpenDate: string;
+  isDraftOpen: boolean;
+  isFreeAgencyMarketOpen: boolean;
+  freeAgencyMarketStatusMessage: string;
   isSimulating: boolean;
   isFinalizingSimulation: boolean;
   simulationProgress: SimulationProgressUpdate | null;
   simulationRunState: SimulationRunState | null;
   simulationSaveStatus: SimulationSaveStatus;
   seasonResetStatus: SeasonResetStatus;
+  isTerminatingUniverse: boolean;
   selectedGame: Game | null;
   blockingGamesForSelected: Game[];
   activeDateHasPlayoffs: boolean;
@@ -137,6 +151,7 @@ interface AppViewRouterProps {
   onSimulateNextTeamGame: () => void;
   onQuickSimSeason: () => void;
   onResetSeason: () => void;
+  onTerminateUniverse: () => void;
   onSimulateToDate: (targetDate: string) => void;
   onProposeTrade: (trade: TradeProposal) => void;
   onApprovePendingTrade: (proposalId: string) => void;
@@ -173,12 +188,22 @@ export const AppViewRouter = ({
   selectedDate,
   selectedTeamId,
   seasonComplete,
+  offseasonStage,
+  hasPendingSeasonAwards,
+  awardsUnlockDate,
+  lotteryOpenDate,
+  draftOpenDate,
+  freeAgencyOpenDate,
+  isDraftOpen,
+  isFreeAgencyMarketOpen,
+  freeAgencyMarketStatusMessage,
   isSimulating,
   isFinalizingSimulation,
   simulationProgress,
   simulationRunState,
   simulationSaveStatus,
   seasonResetStatus,
+  isTerminatingUniverse,
   selectedGame,
   blockingGamesForSelected,
   activeDateHasPlayoffs,
@@ -222,6 +247,7 @@ export const AppViewRouter = ({
   onSimulateNextTeamGame,
   onQuickSimSeason,
   onResetSeason,
+  onTerminateUniverse,
   onSimulateToDate,
   onProposeTrade,
   onApprovePendingTrade,
@@ -320,17 +346,27 @@ export const AppViewRouter = ({
           selectedTeamId={selectedTeamId}
           isSimulating={isSimulating}
           seasonComplete={seasonComplete}
+          offseasonStage={offseasonStage}
+          hasPendingSeasonAwards={hasPendingSeasonAwards}
+          awardsUnlockDate={awardsUnlockDate}
+          lotteryOpenDate={lotteryOpenDate}
+          draftOpenDate={draftOpenDate}
+          freeAgencyOpenDate={freeAgencyOpenDate}
           simulationProgress={simulationProgress}
           simulationRunState={simulationRunState}
           simulationSaveStatus={simulationSaveStatus}
+          isTerminatingUniverse={isTerminatingUniverse}
           onSelectDate={onSetSelectedDate}
           onSelectTeamId={onSetSelectedTeamId}
           onStartSimulation={onStartSimulation}
           onCancelSimulation={onCancelSimulation}
           onResetSeason={onResetSeason}
+          onTerminateUniverse={onTerminateUniverse}
           seasonResetStatus={seasonResetStatus}
           onOpenTrades={() => onSetView('trades')}
           onOpenFreeAgency={() => onSetView('free_agency')}
+          onOpenLottery={() => onSetView('lottery')}
+          onOpenDraft={() => onSetView('draft')}
         />
       )}
 
@@ -383,7 +419,11 @@ export const AppViewRouter = ({
           battingStats={playerState.battingStats}
           pitchingStats={playerState.pitchingStats}
           rosterSlots={playerState.rosterSlots}
+          transactions={playerState.transactions}
           currentDate={currentDate}
+          freeAgencyOpenDate={freeAgencyOpenDate}
+          isMarketOpen={isFreeAgencyMarketOpen}
+          marketStatusMessage={freeAgencyMarketStatusMessage}
           seasonComplete={seasonComplete}
           onAssignPlayer={onAssignFreeAgent}
           onExit={() => onSetView('dashboard')}
@@ -405,14 +445,29 @@ export const AppViewRouter = ({
         />
       )}
 
+      {view === 'lottery' && (
+        <LotteryHub
+          teams={teams}
+          currentDate={currentDate}
+          offseasonStage={offseasonStage}
+          lotteryOpenDate={lotteryOpenDate}
+          draftClass={draftClass}
+          isDraftProcessing={isDraftProcessing}
+          onGenerateDraftClass={onGenerateDraftClass}
+          onOpenDraft={() => onSetView('draft')}
+        />
+      )}
+
       {view === 'draft' && (
         <DraftHub
           teams={teams}
           currentDate={currentDate}
+          draftOpenDate={draftOpenDate}
           draftClass={draftClass}
           draftHistory={draftHistory}
           isDraftProcessing={isDraftProcessing}
-          onGenerateDraftClass={onGenerateDraftClass}
+          isDraftOpen={isDraftOpen}
+          onOpenLottery={() => onSetView('lottery')}
           onDraftNextPick={onDraftNextPick}
           onAutoDraftRound={onAutoDraftRound}
           onAutoDraftAll={onAutoDraftAll}

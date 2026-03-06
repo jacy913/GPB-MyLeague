@@ -12,6 +12,9 @@ interface UseRosterTransactionsArgs {
   teams: Team[];
   playerState: LeaguePlayerState;
   pendingTrades: PendingTradeProposal[];
+  freeAgencyOpenDate: string;
+  isFreeAgencyMarketOpen: boolean;
+  freeAgencyMarketStatusMessage: string;
   isSupabaseConfigured: boolean;
   setPlayerState: Dispatch<SetStateAction<LeaguePlayerState>>;
   setSelectedTeamId: Dispatch<SetStateAction<string>>;
@@ -35,6 +38,7 @@ interface FreeAgencyAssignment {
   teamId: string;
   slotCode: RosterSlotCode;
   contractYearsLeft: number;
+  isQualifyingOffer?: boolean;
 }
 
 interface UseRosterTransactionsResult {
@@ -58,6 +62,9 @@ export const useRosterTransactions = ({
   teams,
   playerState,
   pendingTrades,
+  freeAgencyOpenDate,
+  isFreeAgencyMarketOpen,
+  freeAgencyMarketStatusMessage,
   isSupabaseConfigured,
   setPlayerState,
   setSelectedTeamId,
@@ -215,6 +222,14 @@ export const useRosterTransactions = ({
   const handleFreeAgencyAssignment = useCallback(async (
     assignment: FreeAgencyAssignment,
   ) => {
+    if (!isFreeAgencyMarketOpen) {
+      pushNotice(
+        freeAgencyMarketStatusMessage || `Free agency is closed until ${freeAgencyOpenDate}.`,
+        'warning',
+      );
+      return;
+    }
+
     const freeAgent = playerState.players.find((player) => player.playerId === assignment.playerId) ?? null;
     const team = teams.find((candidate) => candidate.id === assignment.teamId) ?? null;
     if (!freeAgent || !team) {
@@ -283,10 +298,12 @@ export const useRosterTransactions = ({
       {
         playerId: assignment.playerId,
         eventType: 'signed' as const,
-        fromTeamId: null,
+        fromTeamId: assignment.isQualifyingOffer ? assignment.teamId : null,
         toTeamId: assignment.teamId,
         effectiveDate,
-        notes: `${team.city} signed into ${assignment.slotCode}.`,
+        notes: assignment.isQualifyingOffer
+          ? `${team.city} retained first-dibs rights and signed into ${assignment.slotCode}.`
+          : `${team.city} signed into ${assignment.slotCode}.`,
       },
       ...repairedRoster.promotions.map((promotion) => ({
         playerId: promotion.playerId,
@@ -339,6 +356,9 @@ export const useRosterTransactions = ({
     }
   }, [
     currentDate,
+    freeAgencyMarketStatusMessage,
+    isFreeAgencyMarketOpen,
+    freeAgencyOpenDate,
     games,
     isSupabaseConfigured,
     playerState,

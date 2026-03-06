@@ -8,12 +8,13 @@ import {
   PlayerPitchingRatings,
   PlayerSeasonBatting,
   PlayerSeasonPitching,
+  PlayerTransaction,
   RosterSlotCode,
   STARTING_PITCHER_SLOTS,
   Team,
   TeamRosterSlot,
 } from '../types';
-import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
+import { buildFreeAgencyMarketEntries, FreeAgentMarketEntry, FreeAgencyOfferCard } from '../logic/freeAgencyLogic';
 import { TeamLogo } from './TeamLogo';
 
 interface FreeAgencyHubProps {
@@ -24,33 +25,24 @@ interface FreeAgencyHubProps {
   battingStats: PlayerSeasonBatting[];
   pitchingStats: PlayerSeasonPitching[];
   rosterSlots: TeamRosterSlot[];
+  transactions: PlayerTransaction[];
   currentDate: string;
+  freeAgencyOpenDate: string;
+  isMarketOpen: boolean;
+  marketStatusMessage: string;
   seasonComplete: boolean;
-  onAssignPlayer: (assignment: { playerId: string; teamId: string; slotCode: RosterSlotCode; contractYearsLeft: number }) => void;
+  onAssignPlayer: (assignment: {
+    playerId: string;
+    teamId: string;
+    slotCode: RosterSlotCode;
+    contractYearsLeft: number;
+    isQualifyingOffer?: boolean;
+  }) => void;
   onExit: () => void;
 }
 
-type OfferCard = {
-  team: Team;
-  slotCode: RosterSlotCode;
-  slotLabel: string;
-  interest: number;
-  contractYears: number;
-  incumbentName: string | null;
-  incumbentOverall: number | null;
-  note: string;
-};
-
-type FreeAgentEntry = {
-  player: Player;
-  overall: number;
-  batting: PlayerBattingRatings | null;
-  pitching: PlayerPitchingRatings | null;
-  battingStat: PlayerSeasonBatting | null;
-  pitchingStat: PlayerSeasonPitching | null;
-  marketValue: number;
-  offers: OfferCard[];
-};
+type OfferCard = FreeAgencyOfferCard;
+type FreeAgentEntry = FreeAgentMarketEntry;
 
 type PreviewSlot = {
   slotCode: RosterSlotCode;
@@ -63,15 +55,8 @@ type PreviewSlot = {
 
 const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#171717,#242424,#101010)]';
 
-const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
-
 const getLatestSeasonYear = (rosterSlots: TeamRosterSlot[]): number =>
   rosterSlots.length > 0 ? Math.max(...rosterSlots.map((slot) => slot.seasonYear)) : new Date().getUTCFullYear();
-
-const getWinPct = (team: Team): number => {
-  const gamesPlayed = team.wins + team.losses;
-  return gamesPlayed > 0 ? team.wins / gamesPlayed : 0;
-};
 
 const getLatestBattingRatings = (ratings: PlayerBattingRatings[]): Map<string, PlayerBattingRatings> => {
   const next = new Map<string, PlayerBattingRatings>();
@@ -89,47 +74,10 @@ const getLatestPitchingRatings = (ratings: PlayerPitchingRatings[]): Map<string,
   return next;
 };
 
-const getRosterSlotLabel = (slotCode: RosterSlotCode): string => {
-  if (slotCode.startsWith('SP')) return 'Rotation';
-  if (slotCode.startsWith('RP')) return 'Bullpen';
-  if (slotCode === 'CL') return 'Closer';
-  return `${slotCode} lineup`;
-};
-
-const getBattingFormValue = (stat: PlayerSeasonBatting | null): number => {
-  if (!stat || stat.atBats < 25) return 0;
-  const avgBoost = clamp((stat.avg - 0.245) * 220, -10, 14);
-  const opsBoost = clamp((stat.ops - 0.72) * 30, -8, 12);
-  const powerBoost = clamp(stat.homeRuns * 0.35, 0, 8);
-  return avgBoost + opsBoost + powerBoost;
-};
-
-const getPitchingFormValue = (stat: PlayerSeasonPitching | null): number => {
-  if (!stat || stat.inningsPitched < 12) return 0;
-  const eraBoost = clamp((4.15 - stat.era) * 3.2, -10, 14);
-  const whipBoost = clamp((1.28 - stat.whip) * 16, -8, 10);
-  const strikeoutBoost = clamp(stat.strikeouts / Math.max(stat.inningsPitched, 1) * 6 - 4.5, -4, 6);
-  return eraBoost + whipBoost + strikeoutBoost;
-};
-
-const getMarketValue = (entry: Omit<FreeAgentEntry, 'marketValue' | 'offers'>): number =>
-  entry.player.playerType === 'pitcher'
-    ? entry.overall + getPitchingFormValue(entry.pitchingStat) - Math.max(entry.player.age - 32, 0) * 0.6
-    : entry.overall + getBattingFormValue(entry.battingStat) - Math.max(entry.player.age - 33, 0) * 0.55;
-
 const getPreviewOrder = (slotCode: RosterSlotCode): RosterSlotCode[] => {
   if (slotCode.startsWith('SP')) return [...STARTING_PITCHER_SLOTS];
   if (slotCode === 'CL' || slotCode.startsWith('RP')) return [...BULLPEN_ROSTER_SLOTS];
   return [...BATTING_ROSTER_SLOTS];
-};
-
-const getOfferContractYears = (player: Player, overall: number): number => {
-  if (player.age <= 24) return overall >= 80 ? 5 : 4;
-  if (player.age <= 27) return overall >= 78 ? 5 : 4;
-  if (player.age <= 30) return overall >= 82 ? 4 : 3;
-  if (player.age <= 33) return overall >= 80 ? 3 : 2;
-  if (player.age <= 36) return 2;
-  return 1;
 };
 
 const buildPreviewSlots = (
@@ -161,72 +109,6 @@ const buildPreviewSlots = (
     };
   });
 
-const buildOfferBoard = (
-  freeAgent: Omit<FreeAgentEntry, 'marketValue' | 'offers'> & { marketValue: number },
-  teams: Team[],
-  activeRosterSlots: TeamRosterSlot[],
-  playersById: Map<string, Player>,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): OfferCard[] => {
-  if (freeAgent.marketValue < 72 || freeAgent.overall < 68) return [];
-
-  const candidateSlots =
-    freeAgent.player.primaryPosition === 'SP'
-      ? STARTING_PITCHER_SLOTS
-      : freeAgent.player.primaryPosition === 'RP'
-        ? BULLPEN_ROSTER_SLOTS.filter((slot) => slot !== 'CL')
-        : freeAgent.player.primaryPosition === 'CL'
-          ? ['CL']
-          : [freeAgent.player.primaryPosition];
-
-  const results: OfferCard[] = [];
-
-  teams.forEach((team) => {
-    let bestOffer: OfferCard | null = null;
-
-    candidateSlots.forEach((slotCode) => {
-      const slot = activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode === slotCode) ?? null;
-      const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
-      const incumbentOverall = incumbent
-        ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
-        : 0;
-      const vacancyBonus = slot ? 0 : 26;
-      const weaknessBonus = Math.max(0, 76 - incumbentOverall) * 1.7;
-      const upgradeBonus = Math.max(0, freeAgent.overall - incumbentOverall) * 2.35;
-      const marketBonus = Math.max(0, freeAgent.marketValue - 72) * 1.25;
-      const competitiveBonus = getWinPct(team) * 12;
-      const score = vacancyBonus + weaknessBonus + upgradeBonus + marketBonus + competitiveBonus;
-
-      if (score < 34) return;
-
-      const interest = clamp(Math.round(28 + score * 0.82), 0, 99);
-      const note = vacancyBonus > 0
-        ? `${team.city} have an open ${getRosterSlotLabel(slotCode).toLowerCase()} and can move immediately.`
-        : incumbentOverall <= 70
-          ? `${team.city} see a weak spot at ${slotCode} and would cut the current option for an upgrade.`
-          : `${team.city} view ${freeAgent.player.lastName} as a meaningful talent bump over ${incumbent?.lastName ?? 'their current option'} at ${slotCode}.`;
-
-      const candidate: OfferCard = {
-        team,
-        slotCode,
-        slotLabel: getRosterSlotLabel(slotCode),
-        interest,
-        contractYears: getOfferContractYears(freeAgent.player, freeAgent.overall),
-        incumbentName: incumbent ? `${incumbent.firstName} ${incumbent.lastName}` : null,
-        incumbentOverall: incumbent ? incumbentOverall : null,
-        note,
-      };
-
-      if (!bestOffer || candidate.interest > bestOffer.interest) bestOffer = candidate;
-    });
-
-    if (bestOffer) results.push(bestOffer);
-  });
-
-  return results.sort((left, right) => right.interest - left.interest).slice(0, 6);
-};
-
 export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
   teams,
   players,
@@ -235,7 +117,11 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
   battingStats,
   pitchingStats,
   rosterSlots,
+  transactions,
   currentDate,
+  freeAgencyOpenDate,
+  isMarketOpen,
+  marketStatusMessage,
   seasonComplete,
   onAssignPlayer,
   onExit,
@@ -246,34 +132,23 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
   const playersById = useMemo(() => new Map(players.map((player) => [player.playerId, player])), [players]);
   const battingRatingsByPlayerId = useMemo(() => getLatestBattingRatings(battingRatings), [battingRatings]);
   const pitchingRatingsByPlayerId = useMemo(() => getLatestPitchingRatings(pitchingRatings), [pitchingRatings]);
-  const battingStatsByPlayerId = useMemo(() => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'), [battingStats]);
-  const pitchingStatsByPlayerId = useMemo(() => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'), [pitchingStats]);
   const latestSeasonYear = useMemo(() => getLatestSeasonYear(rosterSlots), [rosterSlots]);
   const activeRosterSlots = useMemo(() => rosterSlots.filter((slot) => slot.seasonYear === latestSeasonYear), [latestSeasonYear, rosterSlots]);
 
-  const freeAgents = useMemo<FreeAgentEntry[]>(() => {
-    const baseEntries = players.filter((player) => player.status === 'free_agent').map((player) => {
-      const batting = battingRatingsByPlayerId.get(player.playerId) ?? null;
-      const pitching = pitchingRatingsByPlayerId.get(player.playerId) ?? null;
-      const overall = batting?.overall ?? pitching?.overall ?? 0;
-      const battingStat = battingStatsByPlayerId.get(player.playerId) ?? null;
-      const pitchingStat = pitchingStatsByPlayerId.get(player.playerId) ?? null;
-      return { player, overall, batting, pitching, battingStat, pitchingStat };
-    });
-
-    return baseEntries.map((entry) => {
-      const marketValue = getMarketValue(entry);
-      return {
-        ...entry,
-        marketValue,
-        offers: buildOfferBoard({ ...entry, marketValue }, teams, activeRosterSlots, playersById, battingRatingsByPlayerId, pitchingRatingsByPlayerId),
-      };
-    }).sort((left, right) => {
-      const offerGap = right.offers.length - left.offers.length;
-      if (offerGap !== 0) return offerGap;
-      return right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName);
-    });
-  }, [activeRosterSlots, battingRatingsByPlayerId, battingStatsByPlayerId, pitchingRatingsByPlayerId, pitchingStatsByPlayerId, players, playersById, teams]);
+  const freeAgents = useMemo<FreeAgentEntry[]>(
+    () =>
+      buildFreeAgencyMarketEntries(
+        teams,
+        players,
+        battingRatings,
+        pitchingRatings,
+        battingStats,
+        pitchingStats,
+        rosterSlots,
+        transactions,
+      ),
+    [battingRatings, battingStats, pitchingRatings, pitchingStats, players, rosterSlots, teams, transactions],
+  );
 
   useEffect(() => {
     if (freeAgents.length === 0) {
@@ -466,6 +341,11 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                             <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
                               {offer.team.league} {offer.team.division} | {offer.slotCode} | {offer.slotLabel}
                             </p>
+                            {offer.isQualifyingOffer && (
+                              <p className="mt-2 inline-flex rounded-full border border-cyan-300/35 bg-cyan-500/15 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-cyan-100">
+                                Qualifying Offer
+                              </p>
+                            )}
                           </div>
                         </div>
                         <div className="text-right">
@@ -490,7 +370,8 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                         <button
                           type="button"
                           onClick={() => setPendingOffer(offer)}
-                          className="inline-flex items-center gap-2 rounded-2xl border border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.22),rgba(212,187,106,0.08))] px-5 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white transition-colors hover:border-[#d4bb6a]/60 hover:bg-[linear-gradient(135deg,rgba(212,187,106,0.3),rgba(212,187,106,0.12))]"
+                          disabled={!isMarketOpen}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.22),rgba(212,187,106,0.08))] px-5 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white transition-colors hover:border-[#d4bb6a]/60 hover:bg-[linear-gradient(135deg,rgba(212,187,106,0.3),rgba(212,187,106,0.12))] disabled:opacity-50"
                         >
                           Sign
                           <ArrowRight className="h-4 w-4" />
@@ -593,6 +474,11 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                     </div>
                   </div>
                   <p className="mt-4 text-sm leading-6 text-zinc-300">{pendingOffer.note}</p>
+                  {pendingOffer.isQualifyingOffer && (
+                    <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-cyan-200">
+                      This is a qualifying-offer reunion path.
+                    </p>
+                  )}
                   <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
                     Proposed term: {pendingOffer.contractYears} year{pendingOffer.contractYears === 1 ? '' : 's'}
                   </p>
@@ -618,10 +504,12 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                       teamId: pendingOffer.team.id,
                       slotCode: pendingOffer.slotCode,
                       contractYearsLeft: pendingOffer.contractYears,
+                      isQualifyingOffer: pendingOffer.isQualifyingOffer,
                     });
                     setPendingOffer(null);
                   }}
-                  className="flex w-full items-center justify-center gap-2 rounded-[1.5rem] border border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.26),rgba(212,187,106,0.1))] px-5 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-[#d4bb6a]/60 hover:bg-[linear-gradient(135deg,rgba(212,187,106,0.34),rgba(212,187,106,0.14))]"
+                  disabled={!isMarketOpen}
+                  className="flex w-full items-center justify-center gap-2 rounded-[1.5rem] border border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.26),rgba(212,187,106,0.1))] px-5 py-4 font-headline text-2xl uppercase tracking-[0.08em] text-white transition-colors hover:border-[#d4bb6a]/60 hover:bg-[linear-gradient(135deg,rgba(212,187,106,0.34),rgba(212,187,106,0.14))] disabled:opacity-50"
                 >
                   Sign Player
                   <ArrowRight className="h-5 w-5" />
@@ -630,6 +518,16 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {!isMarketOpen && (
+        <section className={`${sectionClass} p-5`}>
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Market Status</p>
+          <p className="mt-2 font-headline text-2xl uppercase tracking-[0.06em] text-white">Free Agency Locked</p>
+          <p className="mt-3 text-sm leading-6 text-zinc-400">
+            {marketStatusMessage || `Free agency opens on ${freeAgencyOpenDate}. This screen is view-only until then.`}
+          </p>
+        </section>
       )}
 
       {freeAgents.length > 0 && (

@@ -505,6 +505,8 @@ const getTeamNeedValue = (
 const chooseProspectForPick = (
   team: Team,
   round: number,
+  overallPick: number,
+  teamsPerRound: number,
   prospects: DraftProspect[],
   rosterSlots: TeamRosterSlot[],
   overallByPlayerId: Map<string, number>,
@@ -513,43 +515,116 @@ const chooseProspectForPick = (
     return null;
   }
 
+  const getConsensusTalentScore = (prospect: DraftProspect): number => {
+    const upside = prospect.potentialOverall - prospect.overall;
+    const ageUpside = clamp(21 - prospect.age, 0, 4);
+    return prospect.overall * 1.15 + prospect.potentialOverall * 0.42 + upside * 0.22 + ageUpside * 0.35;
+  };
+
+  const getAllowedReach = (pick: number): number => {
+    if (pick <= 3) return 2;
+    if (pick <= 10) return 4;
+    if (pick <= 20) return 6;
+    if (pick <= 32) return 9;
+    if (pick <= 64) return 14;
+    if (pick <= 96) return 20;
+    return 28;
+  };
+
+  const getOverallFloorForPick = (pick: number): number => {
+    if (pick <= 5) return 73;
+    if (pick <= 10) return 71;
+    if (pick <= 20) return 68;
+    if (pick <= 32) return 66;
+    if (pick <= 64) return 63;
+    return 60;
+  };
+
+  const getCandidatePoolSize = (pick: number): number => {
+    if (pick <= 10) return 6;
+    if (pick <= 32) return 10;
+    if (pick <= 64) return 14;
+    if (pick <= 96) return 18;
+    return 24;
+  };
+
+  const getSelectionTemperature = (pick: number): number => {
+    if (pick <= 10) return 2.2;
+    if (pick <= 32) return 3.4;
+    if (pick <= 64) return 4.5;
+    return 5.8;
+  };
+
+  const consensusBoard = [...prospects].sort(
+    (left, right) => getConsensusTalentScore(right) - getConsensusTalentScore(left),
+  );
+  const consensusRankByPlayerId = new Map<string, number>();
+  consensusBoard.forEach((prospect, index) => {
+    consensusRankByPlayerId.set(prospect.playerId, index + 1);
+  });
+
+  const allowedReach = getAllowedReach(overallPick);
+  const firstAllowedRank = 1;
+  const lastAllowedRank = Math.min(consensusBoard.length, overallPick + allowedReach);
+  const realisticWindow = consensusBoard.slice(firstAllowedRank - 1, lastAllowedRank);
+  const fallbackWindow = consensusBoard.slice(0, Math.min(consensusBoard.length, overallPick + allowedReach + 6));
+  const evaluationPool = realisticWindow.length > 0 ? realisticWindow : fallbackWindow;
+
   const direction = getTeamDirection(team);
-  const scored = prospects.map((prospect) => {
+  const scored = evaluationPool.map((prospect) => {
     const need = getTeamNeedValue(team.id, prospect.primaryPosition, rosterSlots, overallByPlayerId);
     const upside = prospect.potentialOverall - prospect.overall;
     const ageUpside = clamp(21 - prospect.age, 0, 4);
+    const consensusRank = consensusRankByPlayerId.get(prospect.playerId) ?? prospects.length;
+    const projectedPick = (prospect.projectedRound - 1) * teamsPerRound + 1;
 
-    let score = prospect.overall * 1.25 + prospect.potentialOverall * 0.4 + need * 1.35 + ageUpside * 1.7;
+    let score = prospect.overall * 1.85 + prospect.potentialOverall * 0.58 + need * 0.72 + ageUpside * 0.8;
     if (direction === 'rebuild') {
-      score += upside * 1.4 + ageUpside * 1.2;
+      score += upside * 0.95 + prospect.potentialOverall * 0.14;
     } else if (direction === 'contend') {
-      score += prospect.overall * 0.55 + need * 0.55;
+      score += prospect.overall * 0.52 + need * 0.22 - upside * 0.18;
     } else {
-      score += upside * 0.75 + need * 0.35;
+      score += upside * 0.45 + need * 0.28;
     }
 
     if (round === 1) {
-      score += prospect.potentialOverall * 0.32;
+      score += prospect.overall * 0.42 + prospect.potentialOverall * 0.24;
     } else if (round >= 3) {
-      score += need * 0.45;
+      score += need * 0.62;
+    }
+
+    const reachDelta = consensusRank - (overallPick + allowedReach);
+    if (reachDelta > 0) {
+      score -= reachDelta * 10.5;
+    }
+
+    const overallFloor = getOverallFloorForPick(overallPick);
+    if (prospect.overall < overallFloor) {
+      const floorGap = overallFloor - prospect.overall;
+      score -= floorGap * floorGap * 4.2;
+    }
+
+    if (round <= 2 && projectedPick - overallPick > teamsPerRound) {
+      score -= (projectedPick - overallPick - teamsPerRound) * 1.8;
     }
 
     return {
       prospect,
-      score: score + (Math.random() * 4 - 2),
+      score: score + (Math.random() * 1.8 - 0.9),
     };
   });
 
   scored.sort((left, right) => right.score - left.score);
-  const candidates = scored.slice(0, Math.min(10, scored.length));
+  const candidates = scored.slice(0, Math.min(getCandidatePoolSize(overallPick), scored.length));
   if (candidates.length === 0) {
-    return prospects[0] ?? null;
+    return consensusBoard[0] ?? null;
   }
 
   const maxScore = candidates[0].score;
+  const temperature = getSelectionTemperature(overallPick);
   const weightedCandidates = candidates.map((entry) => ({
     ...entry,
-    weight: Math.exp((entry.score - maxScore) / 6),
+    weight: Math.exp((entry.score - maxScore) / temperature),
   }));
   const totalWeight = weightedCandidates.reduce((sum, entry) => sum + entry.weight, 0);
   let roll = Math.random() * totalWeight;
@@ -628,7 +703,15 @@ export const applyNextDraftPick = (
   const seasonRosterSlots = playerState.rosterSlots.filter((slot) => slot.seasonYear === seasonYear);
   const overallByPlayerId = getLatestOverallByPlayerId(playerState.battingRatings, playerState.pitchingRatings);
 
-  const selectedProspect = chooseProspectForPick(team, round, draftClass.prospects, seasonRosterSlots, overallByPlayerId);
+  const selectedProspect = chooseProspectForPick(
+    team,
+    round,
+    completedPickCount + 1,
+    draftClass.draftOrder.length,
+    draftClass.prospects,
+    seasonRosterSlots,
+    overallByPlayerId,
+  );
   if (!selectedProspect) {
     return null;
   }

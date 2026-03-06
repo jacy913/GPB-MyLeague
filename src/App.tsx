@@ -39,6 +39,7 @@ import {
   resetPlayerSeasonStats,
 } from './logic/playerStats';
 import { repairRosterSlotsForTeams } from './logic/rosterManagement';
+import { applyOffseasonFreeAgencyRollover, parseOffseasonMeta } from './logic/offseasonFreeAgency';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -57,6 +58,7 @@ import { useDraftCenterActions, type DraftCenterState } from './hooks/useDraftCe
 import { useRosterTransactions } from './hooks/useRosterTransactions';
 import { useScheduleDerivedState } from './hooks/useScheduleDerivedState';
 import { useSeasonLifecycle } from './hooks/useSeasonLifecycle';
+import { buildOffseasonEventSchedule } from './logic/offseasonSchedule';
 
 type NoticeLevel = 'info' | 'success' | 'warning' | 'error';
 
@@ -92,6 +94,7 @@ const EXPECTED_TEAM_COUNT = 32;
 const DRAFT_CENTER_STORAGE_KEY = 'gpb_draft_center_v1';
 const SEASON_HISTORY_STORAGE_KEY = 'gpb_season_history_v1';
 const OFFSEASON_WORKFLOW_STORAGE_KEY = 'gpb_offseason_workflow_v1';
+const OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY = 'gpb_offseason_rollover_markers_v1';
 const MAX_SEASON_HISTORY_ENTRIES = 60;
 const IDLE_SEASON_RESET_STATUS: SeasonResetStatus = {
   isResetting: false,
@@ -108,6 +111,16 @@ type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
 interface OffseasonWorkflowState {
   seasonYear: number | null;
   stage: OffseasonStage;
+}
+
+type BlockingOffseasonEventKey = 'awards' | 'lottery' | 'draft';
+
+interface BlockingOffseasonEvent {
+  key: BlockingOffseasonEventKey;
+  date: string;
+  label: string;
+  view: AppView | null;
+  isComplete: boolean;
 }
 
 const LEAGUE_ORDER: Team['league'][] = ['Platinum', 'Prestige'];
@@ -905,6 +918,37 @@ const compareGamesByDateThenId = (left: Game, right: Game): number =>
 const resolveEffectiveActionDate = (currentDate: string, selectedDate: string, games: Game[]): string =>
   currentDate || selectedDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
 
+const loadOffseasonRolloverMarkers = (): number[] => {
+  try {
+    const serialized = localStorage.getItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY);
+    if (!serialized) {
+      return [];
+    }
+    const parsed = JSON.parse(serialized) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((value) => Number(value))
+      .filter((value): value is number => Number.isFinite(value) && value > 0)
+      .map((value) => Math.round(value));
+  } catch (error) {
+    console.error('Failed to read offseason rollover markers:', error);
+    return [];
+  }
+};
+
+const saveOffseasonRolloverMarkers = (markers: number[]): void => {
+  try {
+    const uniqueSorted = Array.from(new Set(markers.map((value) => Math.round(value))))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((left, right) => left - right);
+    localStorage.setItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY, JSON.stringify(uniqueSorted));
+  } catch (error) {
+    console.error('Failed to save offseason rollover markers:', error);
+  }
+};
+
 const removePlayersFromStateByIdSet = (
   playerState: LeaguePlayerState,
   playerIdsToRemove: Set<string>,
@@ -1154,10 +1198,12 @@ function App() {
   const [dataSource, setDataSource] = useState<'supabase' | 'local'>('local');
   const [isClearingHistory, setIsClearingHistory] = useState(false);
   const [isWipingPlayers, setIsWipingPlayers] = useState(false);
+  const [isTerminatingUniverse, setIsTerminatingUniverse] = useState(false);
   const [isGeneratingPlayers, setIsGeneratingPlayers] = useState(false);
   const [seasonResetStatus, setSeasonResetStatus] = useState<SeasonResetStatus>(IDLE_SEASON_RESET_STATUS);
   const [draftCenter, setDraftCenter] = useState<DraftCenterState>({ activeClass: null, history: [] });
   const [seasonHistory, setSeasonHistory] = useState<SeasonHistoryEntry[]>([]);
+  const [isSeasonHistoryLoaded, setIsSeasonHistoryLoaded] = useState(false);
   const [offseasonWorkflow, setOffseasonWorkflow] = useState<OffseasonWorkflowState>(IDLE_OFFSEASON_WORKFLOW_STATE);
   const [isDraftProcessing, setIsDraftProcessing] = useState(false);
   const [playerGenerationPreview, setPlayerGenerationPreview] = useState<LeaguePlayerState | null>(null);
@@ -1165,6 +1211,7 @@ function App() {
   const draftCenterRef = useRef<DraftCenterState>({ activeClass: null, history: [] });
   const playerStateRef = useRef<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const rosterAutoOptimizedRef = useRef(false);
+  const offseasonRolloverAppliedRef = useRef<Set<number>>(new Set());
   const gameStatsSignatureCacheRef = useRef<Map<string, GameStatsSignatureCacheEntry>>(new Map());
 
   const getCachedGameStatsSignature = useCallback((game: Game): GameStatsSignature => {
@@ -1299,6 +1346,8 @@ function App() {
       setSeasonHistory(sanitizeSeasonHistory(parsed));
     } catch (error) {
       console.error('Failed to load season history state:', error);
+    } finally {
+      setIsSeasonHistoryLoaded(true);
     }
   }, []);
 
@@ -1389,8 +1438,11 @@ function App() {
     return recalculateTeamRatings(zeroedTeams, settingsToUse);
   }, []);
 
-  const createMasterSchedule = useCallback((seasonTeams: Team[]): Game[] => {
-    const seasonStartDate = getDefaultSeasonStartDate(new Date().getFullYear());
+  const createMasterSchedule = useCallback((seasonTeams: Team[], seasonYear?: number): Game[] => {
+    const normalizedSeasonYear = typeof seasonYear === 'number' && Number.isFinite(seasonYear) && seasonYear > 0
+      ? Math.round(seasonYear)
+      : new Date().getFullYear();
+    const seasonStartDate = getDefaultSeasonStartDate(normalizedSeasonYear);
     return generateSchedule(seasonTeams, { seasonStartDate, seasonDays: 180 });
   }, []);
 
@@ -1476,11 +1528,20 @@ function App() {
     setDataSource,
   });
 
+  const latestArchivedSeasonYear = useMemo(
+    () => seasonHistory.reduce((latest, entry) => Math.max(latest, entry.seasonYear), 0),
+    [seasonHistory],
+  );
+
   // Initialize schedule on mount (or when teams change structure, but we handle that in save)
   useEffect(() => {
-    if (!isBootstrapping && games.length === 0) {
-      const schedule = createMasterSchedule(teams);
-      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+    if (!isBootstrapping && isSeasonHistoryLoaded && games.length === 0) {
+      const fallbackSeasonYear = resolveSeasonYear(currentDate, games);
+      const inferredSeasonYear = latestArchivedSeasonYear > 0
+        ? Math.max(fallbackSeasonYear, latestArchivedSeasonYear + 1)
+        : fallbackSeasonYear;
+      const schedule = createMasterSchedule(teams, inferredSeasonYear);
+      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(inferredSeasonYear);
       setGames(schedule);
       setCurrentDate(firstDate);
       setSelectedDate(firstDate);
@@ -1495,7 +1556,18 @@ function App() {
         }
       })();
     }
-  }, [teams, settings, games.length, isBootstrapping, createMasterSchedule, persistLeagueState]);
+  }, [
+    teams,
+    settings,
+    games,
+    games.length,
+    isBootstrapping,
+    isSeasonHistoryLoaded,
+    currentDate,
+    latestArchivedSeasonYear,
+    createMasterSchedule,
+    persistLeagueState,
+  ]);
 
   useEffect(() => {
     if (teams.length === 0) {
@@ -1513,6 +1585,21 @@ function App() {
     }
   }, [pendingTrades.length, view]);
 
+  const offseasonEventSeasonYear = useMemo(() => (
+    seasonComplete
+      ? (offseasonWorkflow.seasonYear ?? resolveSeasonYear(currentDate, games))
+      : resolveSeasonYear(currentDate, games)
+  ), [currentDate, games, offseasonWorkflow.seasonYear, seasonComplete]);
+
+  const offseasonEventSchedule = useMemo(
+    () => buildOffseasonEventSchedule(offseasonEventSeasonYear),
+    [offseasonEventSeasonYear],
+  );
+  const awardsUnlockDate = offseasonEventSchedule.awardsDate;
+  const lotteryOpenDate = offseasonEventSchedule.lotteryDate;
+  const draftOpenDate = offseasonEventSchedule.draftDate;
+  const freeAgencyOpenDate = offseasonEventSchedule.freeAgencyDate;
+
   const {
     seasonAwardsSelection,
     setSeasonAwardsSelection,
@@ -1522,6 +1609,7 @@ function App() {
   } = useSeasonLifecycle({
     seasonComplete,
     currentDate,
+    awardsUnlockDate,
     games,
     teams,
     playerState,
@@ -1538,7 +1626,7 @@ function App() {
     computePitchingMvpCandidates,
     computeWorldSeriesMvpCandidates,
     onOpenDraftView: () => {
-      setView('draft');
+      setView('lottery');
     },
     onOpenFreeAgencyView: () => {
       setView('free_agency');
@@ -1551,7 +1639,7 @@ function App() {
     simulationSaveStatus,
     simulationProgress,
     simulationRunState,
-    runSimulationTarget,
+    runSimulationTarget: runSimulationTargetEngine,
     cancelSimulationRun,
     resetSimulationState,
   } = useSimulationEngine({
@@ -1595,6 +1683,9 @@ function App() {
     games,
     teams,
     seasonComplete,
+    offseasonStage,
+    lotteryOpenDate,
+    draftOpenDate,
     isSimulating,
     isFinalizingSimulation,
     isSupabaseConfigured,
@@ -1618,6 +1709,187 @@ function App() {
     },
   });
 
+  const awardsSavedForCurrentOffseason = useMemo(
+    () => seasonHistory.some((entry) => entry.seasonYear === offseasonEventSeasonYear),
+    [offseasonEventSeasonYear, seasonHistory],
+  );
+  const regularSeasonDates = useMemo(
+    () => getSortedUniqueDates(games.filter((game) => isRegularSeasonGame(game))),
+    [games],
+  );
+  const regularSeasonFinaleDate = regularSeasonDates[regularSeasonDates.length - 1] ?? '';
+  const isFreeAgencyFreezeWindow = Boolean(currentDate)
+    && Boolean(regularSeasonFinaleDate)
+    && currentDate >= regularSeasonFinaleDate
+    && currentDate < freeAgencyOpenDate;
+  const lotteryCompletedForCurrentOffseason = Boolean(draftCenter.activeClass);
+  const draftCompletedForCurrentOffseason = Boolean(draftCenter.activeClass?.isComplete);
+  const isDraftOpen = seasonComplete && offseasonStage === 'draft' && currentDate >= draftOpenDate;
+  const isFreeAgencyMarketOpen = Boolean(currentDate) && !isFreeAgencyFreezeWindow;
+  const freeAgencyMarketStatusMessage = isFreeAgencyFreezeWindow
+    ? `Free agency is closed from the regular-season finale through ${freeAgencyOpenDate}.`
+    : `Free agency is currently unavailable.`;
+
+  const blockingOffseasonEvents = useMemo<BlockingOffseasonEvent[]>(() => {
+    if (!seasonComplete) {
+      return [];
+    }
+
+    return [
+      {
+        key: 'awards',
+        date: awardsUnlockDate,
+        label: 'Awards',
+        view: null,
+        isComplete: awardsSavedForCurrentOffseason,
+      },
+      {
+        key: 'lottery',
+        date: lotteryOpenDate,
+        label: 'Lottery',
+        view: 'lottery',
+        isComplete: lotteryCompletedForCurrentOffseason,
+      },
+      {
+        key: 'draft',
+        date: draftOpenDate,
+        label: 'Draft',
+        view: 'draft',
+        isComplete: draftCompletedForCurrentOffseason,
+      },
+    ];
+  }, [
+    awardsSavedForCurrentOffseason,
+    awardsUnlockDate,
+    draftCompletedForCurrentOffseason,
+    draftOpenDate,
+    lotteryCompletedForCurrentOffseason,
+    lotteryOpenDate,
+    seasonComplete,
+  ]);
+
+  const nextBlockingOffseasonEvent = useMemo(
+    () => blockingOffseasonEvents.find((event) => !event.isComplete) ?? null,
+    [blockingOffseasonEvents],
+  );
+
+  useEffect(() => {
+    if (!seasonComplete || offseasonWorkflow.stage !== 'draft') {
+      return;
+    }
+
+    if (!draftCenter.activeClass?.isComplete) {
+      return;
+    }
+
+    if (currentDate < freeAgencyOpenDate) {
+      return;
+    }
+
+    setOffseasonWorkflow((current) => {
+      if (current.stage !== 'draft') {
+        return current;
+      }
+      return {
+        seasonYear: current.seasonYear ?? draftCenter.activeClass?.seasonYear ?? null,
+        stage: 'free_agency',
+      };
+    });
+    pushNotice('Draft complete. Free agency is now open.', 'info');
+  }, [
+    currentDate,
+    draftCenter.activeClass?.isComplete,
+    draftCenter.activeClass?.seasonYear,
+    freeAgencyOpenDate,
+    offseasonWorkflow.stage,
+    pushNotice,
+    seasonComplete,
+    setOffseasonWorkflow,
+  ]);
+
+  useEffect(() => {
+    if (!seasonComplete || offseasonStage !== 'free_agency') {
+      return;
+    }
+
+    if (currentDate < freeAgencyOpenDate) {
+      return;
+    }
+
+    const rolloverSeasonYear = offseasonWorkflow.seasonYear ?? resolveSeasonYear(currentDate, games);
+    if (!Number.isFinite(rolloverSeasonYear) || rolloverSeasonYear <= 0) {
+      return;
+    }
+
+    if (offseasonRolloverAppliedRef.current.has(rolloverSeasonYear)) {
+      return;
+    }
+
+    const existingMarkers = loadOffseasonRolloverMarkers();
+    if (existingMarkers.includes(rolloverSeasonYear)) {
+      offseasonRolloverAppliedRef.current.add(rolloverSeasonYear);
+      return;
+    }
+
+    const rolloutRecordedInTransactions = playerState.transactions.some((transaction) => {
+      const meta = parseOffseasonMeta(transaction.notes);
+      return meta?.seasonYear === rolloverSeasonYear;
+    });
+    if (rolloutRecordedInTransactions) {
+      offseasonRolloverAppliedRef.current.add(rolloverSeasonYear);
+      saveOffseasonRolloverMarkers([...existingMarkers, rolloverSeasonYear]);
+      return;
+    }
+
+    const effectiveDate = resolveEffectiveActionDate(currentDate, selectedDate, games);
+    const result = applyOffseasonFreeAgencyRollover({
+      playerState,
+      teams,
+      seasonYear: rolloverSeasonYear,
+      effectiveDate,
+    });
+
+    offseasonRolloverAppliedRef.current.add(rolloverSeasonYear);
+    saveOffseasonRolloverMarkers([...existingMarkers, rolloverSeasonYear]);
+    setPlayerState(result.nextPlayerState);
+    playerStateRef.current = result.nextPlayerState;
+    saveLocalPlayerStateSafely(result.nextPlayerState);
+
+    void (async () => {
+      try {
+        if (isSupabaseConfigured) {
+          await saveSupabasePlayerState(result.nextPlayerState);
+        }
+      } catch (error) {
+        console.error('Failed to persist offseason free-agency rollover:', error);
+        pushNotice('Offseason rollover applied locally, but Supabase sync failed.', 'warning');
+      }
+    })();
+
+    const qoSummary = result.summary.qualifyingOffersMade > 0
+      ? `${result.summary.qualifyingOffersMade} qualifying offers made (${result.summary.qualifyingOffersAccepted} accepted, ${result.summary.qualifyingOffersDeclined} declined).`
+      : 'No qualifying offers were made.';
+    pushNotice(
+      `Free agency opened for ${result.summary.seasonYear}: ${result.summary.decrementedContracts} contracts rolled over, ${result.summary.releasedToMarket} players reached the market. ${qoSummary}`,
+      'info',
+    );
+  }, [
+    currentDate,
+    freeAgencyOpenDate,
+    games,
+    isSupabaseConfigured,
+    offseasonStage,
+    offseasonWorkflow.seasonYear,
+    playerState,
+    pushNotice,
+    saveSupabasePlayerState,
+    saveLocalPlayerStateSafely,
+    seasonComplete,
+    selectedDate,
+    setPlayerState,
+    teams,
+  ]);
+
   const resetSeason = useCallback(async (teamsToReset = teams, settingsToUse = settings) => {
     if (seasonResetStatus.isResetting) {
       return;
@@ -1633,7 +1905,7 @@ function App() {
         ? 'Run the draft lottery first.'
         : 'Finish the draft before moving to free agency.';
       pushNotice(`${nextStepMessage} Offseason order is Draft Lottery -> Draft -> Free Agency.`, 'warning');
-      setView('draft');
+      setView(offseasonStage === 'draft_lottery' ? 'lottery' : 'draft');
       return;
     }
 
@@ -1660,8 +1932,11 @@ function App() {
       updateResetProgress(24, 'Building clean schedule and records');
 
       const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
-      const schedule = createMasterSchedule(freshTeams);
-      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(new Date().getFullYear());
+      const activeSeasonYear = resolveSeasonYear(currentDate, games);
+      const latestKnownSeasonYear = Math.max(activeSeasonYear, latestArchivedSeasonYear || activeSeasonYear);
+      const nextSeasonYear = seasonComplete ? latestKnownSeasonYear + 1 : latestKnownSeasonYear;
+      const schedule = createMasterSchedule(freshTeams, nextSeasonYear);
+      const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(nextSeasonYear);
       const resetSeasonYear = resolveSeasonYear(firstDate, schedule);
       const seasonResetPlayerState = resetPlayerSeasonStats(playerState, resetSeasonYear);
       const nextPlayerState: LeaguePlayerState = {
@@ -1686,6 +1961,14 @@ function App() {
         setOffseasonWorkflow(IDLE_OFFSEASON_WORKFLOW_STATE);
         setSelectedGameId(null);
       });
+
+      offseasonRolloverAppliedRef.current.clear();
+
+      try {
+        localStorage.removeItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY);
+      } catch (error) {
+        console.error('Failed to clear offseason rollover markers during reset:', error);
+      }
 
       saveLocalPlayerStateSafely(nextPlayerState);
       saveLocalLeagueStateSafely(freshTeams, settingsToUse, schedule, firstDate, 0, false);
@@ -1724,6 +2007,9 @@ function App() {
     isFinalizingSimulation,
     seasonComplete,
     offseasonStage,
+    currentDate,
+    games,
+    latestArchivedSeasonYear,
     pushNotice,
     buildFreshSeasonTeams,
     createMasterSchedule,
@@ -1797,6 +2083,112 @@ function App() {
       setIsWipingPlayers(false);
     }
   }, [pushNotice]);
+
+  const handleTerminateUniverse = useCallback(async () => {
+    if (isTerminatingUniverse || seasonResetStatus.isResetting) {
+      return;
+    }
+
+    if (isSimulating || isFinalizingSimulation) {
+      pushNotice('Stop the active simulation run before terminating the universe.', 'warning');
+      return;
+    }
+
+    setIsTerminatingUniverse(true);
+
+    try {
+      resetSimulationState();
+      stopDraftAutoRun();
+      offseasonRolloverAppliedRef.current.clear();
+
+      const baselineTeams = INITIAL_TEAMS.map((team) => ({ ...team }));
+      const baselineSettings = { ...DEFAULT_SETTINGS };
+      const baselineSeasonYear = resolveSeasonYear(
+        currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
+        games,
+      );
+      const baselineSchedule = createMasterSchedule(baselineTeams, baselineSeasonYear);
+      const firstDate = baselineSchedule[0]?.date ?? getDefaultSeasonStartDate(baselineSeasonYear);
+      const wipedPlayerState: LeaguePlayerState = {
+        players: [],
+        battingStats: [],
+        pitchingStats: [],
+        battingRatings: [],
+        pitchingRatings: [],
+        rosterSlots: [],
+        transactions: [],
+      };
+
+      React.startTransition(() => {
+        setTeams(baselineTeams);
+        setSettings(baselineSettings);
+        setGames(baselineSchedule);
+        setCurrentDate(firstDate);
+        setSelectedDate(firstDate);
+        setProgress(0);
+        setSeasonComplete(false);
+        setPlayerState(wipedPlayerState);
+        setPendingTrades([]);
+        setTradeBoardDate('');
+        setTradeInterruptionPrompt(null);
+        setSeasonAwardsSelection(null);
+        setSeasonHistory([]);
+        setDraftCenter({ activeClass: null, history: [] });
+        setOffseasonWorkflow(IDLE_OFFSEASON_WORKFLOW_STATE);
+        setSelectedGameId(null);
+        setPlayerGenerationPreview(null);
+      });
+
+      clearLocalPlayerState();
+      saveLocalPlayerStateSafely(wipedPlayerState);
+      saveLocalLeagueStateSafely(baselineTeams, baselineSettings, baselineSchedule, firstDate, 0, false);
+
+      localStorage.removeItem(SEASON_HISTORY_STORAGE_KEY);
+      localStorage.removeItem(DRAFT_CENTER_STORAGE_KEY);
+      localStorage.removeItem(OFFSEASON_WORKFLOW_STORAGE_KEY);
+      localStorage.removeItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY);
+      setIsSeasonHistoryLoaded(true);
+
+      if (isSupabaseConfigured) {
+        await clearSupabasePlayerState();
+        await clearSupabaseSeasonHistory();
+        await persistLeagueState(
+          baselineTeams,
+          baselineSettings,
+          baselineSchedule,
+          firstDate,
+          0,
+          false,
+          { pruneMissingGames: true },
+        );
+        await saveSupabasePlayerState(wipedPlayerState);
+        setDataSource('supabase');
+        pushNotice('Universe terminated. League, players, and history were fully reset.', 'success');
+      } else {
+        setDataSource('local');
+        pushNotice('Universe terminated locally. Supabase is not configured.', 'warning');
+      }
+    } catch (error) {
+      console.error('Failed to terminate universe:', error);
+      pushNotice('Terminate Universe failed. Some data may still be present.', 'error');
+    } finally {
+      setIsTerminatingUniverse(false);
+    }
+  }, [
+    createMasterSchedule,
+    currentDate,
+    games,
+    isFinalizingSimulation,
+    isSimulating,
+    isTerminatingUniverse,
+    persistLeagueState,
+    pushNotice,
+    resetSimulationState,
+    saveLocalLeagueStateSafely,
+    saveLocalPlayerStateSafely,
+    seasonResetStatus.isResetting,
+    stopDraftAutoRun,
+  ]);
 
   const handlePreviewGeneratePlayers = useCallback(() => {
     const seasonYear = resolveSeasonYear(currentDate, games);
@@ -1937,6 +2329,51 @@ function App() {
     });
   }
 
+  const runSimulationTarget = useCallback(async (
+    target: SimulationTarget,
+    options?: { keepCurrentView?: boolean },
+  ) => {
+    const startingDate = currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
+    const plan = buildSimulationDatePlan(games, startingDate, target);
+
+    if (seasonComplete && nextBlockingOffseasonEvent) {
+      if (startingDate >= nextBlockingOffseasonEvent.date) {
+        pushNotice(
+          `${nextBlockingOffseasonEvent.label} must be completed before advancing beyond ${nextBlockingOffseasonEvent.date}.`,
+          'warning',
+        );
+        if (!options?.keepCurrentView && nextBlockingOffseasonEvent.view) {
+          setView(nextBlockingOffseasonEvent.view);
+        }
+        return;
+      }
+
+      if (plan.targetDate > nextBlockingOffseasonEvent.date) {
+        pushNotice(
+          `Simulation capped at ${nextBlockingOffseasonEvent.date} for ${nextBlockingOffseasonEvent.label}.`,
+          'info',
+        );
+        await runSimulationTargetEngine(
+          { scope: 'to_date', targetDate: nextBlockingOffseasonEvent.date },
+          options,
+        );
+        return;
+      }
+    }
+
+    await runSimulationTargetEngine(target, options);
+  }, [
+    buildSimulationDatePlan,
+    currentDate,
+    games,
+    getDefaultSeasonStartDate,
+    nextBlockingOffseasonEvent,
+    pushNotice,
+    runSimulationTargetEngine,
+    seasonComplete,
+    setView,
+  ]);
+
   const simulateToSelectedDate = useCallback(() => {
     if (!selectedDate) {
       return;
@@ -2011,6 +2448,9 @@ function App() {
     teams,
     playerState,
     pendingTrades,
+    freeAgencyOpenDate,
+    isFreeAgencyMarketOpen,
+    freeAgencyMarketStatusMessage,
     isSupabaseConfigured,
     setPlayerState,
     setSelectedTeamId,
@@ -2340,6 +2780,10 @@ function App() {
     void handleHardWipePlayers();
   }, [handleHardWipePlayers]);
 
+  const terminateUniverseFromRouter = useCallback(() => {
+    void handleTerminateUniverse();
+  }, [handleTerminateUniverse]);
+
   const routerActions = useMemo(() => ({
     onSetView: setView,
     onSetSelectedDate: setSelectedDate,
@@ -2356,6 +2800,7 @@ function App() {
     onSimulateNextTeamGame: simulateNextTeamGame,
     onQuickSimSeason: quickSimSeason,
     onResetSeason: resetSeasonFromRouter,
+    onTerminateUniverse: terminateUniverseFromRouter,
     onSimulateToDate: simulateToDate,
     onProposeTrade: proposeTradeFromRouter,
     onApprovePendingTrade: approvePendingTradeFromRouter,
@@ -2398,6 +2843,7 @@ function App() {
     handleSaveSettings,
     handleVetoPendingTrade,
     hardWipePlayersFromRouter,
+    terminateUniverseFromRouter,
     openGameScreen,
     openSimulationCenter,
     openTeamPage,
@@ -2511,12 +2957,22 @@ function App() {
             selectedDate={selectedDate}
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
+            offseasonStage={offseasonStage}
+            hasPendingSeasonAwards={Boolean(seasonAwardsSelection)}
+            awardsUnlockDate={awardsUnlockDate}
+            lotteryOpenDate={lotteryOpenDate}
+            draftOpenDate={draftOpenDate}
+            freeAgencyOpenDate={freeAgencyOpenDate}
+            isDraftOpen={isDraftOpen}
+            isFreeAgencyMarketOpen={isFreeAgencyMarketOpen}
+            freeAgencyMarketStatusMessage={freeAgencyMarketStatusMessage}
             isSimulating={isSimulating}
             isFinalizingSimulation={isFinalizingSimulation}
             simulationProgress={simulationProgress}
             simulationRunState={simulationRunState}
             simulationSaveStatus={simulationSaveStatus}
             seasonResetStatus={seasonResetStatus}
+            isTerminatingUniverse={isTerminatingUniverse}
             selectedGame={selectedGame}
             blockingGamesForSelected={blockingGamesForSelected}
             activeDateHasPlayoffs={activeDateHasPlayoffs}

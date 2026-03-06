@@ -23,6 +23,9 @@ interface UseDraftCenterActionsArgs {
   games: Game[];
   teams: Team[];
   seasonComplete: boolean;
+  offseasonStage: 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+  lotteryOpenDate: string;
+  draftOpenDate: string;
   isSimulating: boolean;
   isFinalizingSimulation: boolean;
   isSupabaseConfigured: boolean;
@@ -56,6 +59,9 @@ export const useDraftCenterActions = ({
   games,
   teams,
   seasonComplete,
+  offseasonStage,
+  lotteryOpenDate,
+  draftOpenDate,
   isSimulating,
   isFinalizingSimulation,
   isSupabaseConfigured,
@@ -173,17 +179,25 @@ export const useDraftCenterActions = ({
       return;
     }
 
+    if (offseasonStage !== 'draft_lottery') {
+      pushNotice('Lottery is view-only. You can only run it during the Draft Lottery stage.', 'warning');
+      return;
+    }
+
+    if (currentDate < lotteryOpenDate) {
+      pushNotice(`Lottery opens on ${lotteryOpenDate}.`, 'warning');
+      return;
+    }
+
     if (isDraftProcessing) {
       pushNotice('Stop the current draft auto-run before generating a new class.', 'warning');
       return;
     }
 
     const existingClass = draftCenterRef.current.activeClass;
-    if (existingClass && !existingClass.isComplete) {
-      const approved = window.confirm('An active draft class already exists. Replace it with a new class?');
-      if (!approved) {
-        return;
-      }
+    if (existingClass) {
+      pushNotice('Draft lottery already completed. This screen is now view-only for this offseason.', 'warning');
+      return;
     }
 
     const seasonYear = resolveSeasonYear(currentDate, games);
@@ -241,6 +255,8 @@ export const useDraftCenterActions = ({
     isFinalizingSimulation,
     isSimulating,
     isSupabaseConfigured,
+    offseasonStage,
+    lotteryOpenDate,
     onAdvanceOffseasonToDraft,
     playerStateRef,
     pushNotice,
@@ -256,6 +272,10 @@ export const useDraftCenterActions = ({
 
   const handleDraftNextPick = useCallback(async () => {
     if (isDraftProcessing) {
+      return;
+    }
+    if (currentDate < draftOpenDate) {
+      pushNotice(`Draft opens on ${draftOpenDate}.`, 'warning');
       return;
     }
     const result = executeDraftBatch(1);
@@ -275,9 +295,13 @@ export const useDraftCenterActions = ({
     }
 
     pushNotice(result.completed ? 'Draft complete.' : 'Draft pick processed.', 'success');
-  }, [executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState]);
+  }, [currentDate, draftOpenDate, executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState]);
 
   const runDraftAuto = useCallback((scope: 'round' | 'full') => {
+    if (currentDate < draftOpenDate) {
+      pushNotice(`Draft opens on ${draftOpenDate}.`, 'warning');
+      return;
+    }
     const activeClass = draftCenterRef.current.activeClass;
     if (!activeClass || activeClass.isComplete || isDraftProcessing) {
       return;
@@ -335,7 +359,7 @@ export const useDraftCenterActions = ({
     };
 
     step();
-  }, [draftCenterRef, executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState, stopDraftAutoRun]);
+  }, [currentDate, draftCenterRef, draftOpenDate, executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState, stopDraftAutoRun]);
 
   const handleResetDraftBoard = useCallback(async () => {
     if (isDraftProcessing) {

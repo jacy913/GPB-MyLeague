@@ -34,6 +34,7 @@ const getSimulationFreeAgencyAlerts = (payload: SimulationWorkerStartPayload): S
     payload.playerState.battingStats,
     payload.playerState.pitchingStats,
     payload.playerState.rosterSlots,
+    payload.playerState.transactions,
   )
     .filter((entry) => entry.marketValue >= 78)
     .flatMap((entry) =>

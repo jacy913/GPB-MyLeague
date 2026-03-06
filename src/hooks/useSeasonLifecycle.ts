@@ -29,6 +29,7 @@ interface WorldSeriesCandidateBundleLike {
 interface UseSeasonLifecycleArgs {
   seasonComplete: boolean;
   currentDate: string;
+  awardsUnlockDate: string;
   games: Game[];
   teams: Team[];
   playerState: LeaguePlayerState;
@@ -75,6 +76,7 @@ interface UseSeasonLifecycleResult {
 export const useSeasonLifecycle = ({
   seasonComplete,
   currentDate,
+  awardsUnlockDate,
   games,
   teams,
   playerState,
@@ -194,8 +196,9 @@ export const useSeasonLifecycle = ({
     const justEnteredOffseason = seasonComplete && !previousSeasonCompleteRef.current;
     if (justEnteredOffseason) {
       const selection = buildSeasonAwardsSelection();
-      if (selection) {
+      if (selection && currentDate >= awardsUnlockDate) {
         setSeasonAwardsSelection(selection);
+        pushNotice(`Awards voting opened on ${awardsUnlockDate}.`, 'info');
       }
 
       if (offseasonWorkflow.stage === 'idle') {
@@ -214,6 +217,7 @@ export const useSeasonLifecycle = ({
     }
     previousSeasonCompleteRef.current = seasonComplete;
   }, [
+    awardsUnlockDate,
     buildSeasonAwardsSelection,
     currentDate,
     games,
@@ -224,6 +228,31 @@ export const useSeasonLifecycle = ({
     resolveSeasonYear,
     seasonComplete,
     setOffseasonWorkflow,
+  ]);
+
+  useEffect(() => {
+    if (!seasonComplete || seasonAwardsSelection) {
+      return;
+    }
+
+    if (!currentDate || currentDate < awardsUnlockDate) {
+      return;
+    }
+
+    const selection = buildSeasonAwardsSelection();
+    if (!selection) {
+      return;
+    }
+
+    setSeasonAwardsSelection(selection);
+    pushNotice(`Awards voting opened on ${awardsUnlockDate}.`, 'info');
+  }, [
+    awardsUnlockDate,
+    buildSeasonAwardsSelection,
+    currentDate,
+    pushNotice,
+    seasonAwardsSelection,
+    seasonComplete,
   ]);
 
   useEffect(() => {

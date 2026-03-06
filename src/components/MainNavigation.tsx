@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   ScrollText,
   Settings,
+  Shuffle,
   Table2,
   Trophy,
   UserRound,
@@ -30,6 +31,7 @@ export type AppView =
   | 'teams'
   | 'players'
   | 'trades'
+  | 'lottery'
   | 'draft'
   | 'free_agency'
   | 'playoffs'
@@ -78,25 +80,61 @@ const NAV_ITEMS: NavigationItem[] = [
     mobileActiveClass: 'bg-prestige text-black',
   },
   {
+    view: 'league_standings',
+    label: 'Standings',
+    icon: Table2,
+    desktopActiveClass: 'bg-platinum text-black',
+    mobileActiveClass: 'bg-platinum text-black',
+  },
+  {
     view: 'team_calendar',
-    label: 'Calendar',
+    label: 'Schedule',
     icon: CalendarRange,
     desktopActiveClass: 'bg-white text-black',
     mobileActiveClass: 'bg-white text-black',
   },
   {
     view: 'simulation',
-    label: 'Simulation',
+    label: 'Simulate',
     icon: Activity,
     desktopActiveClass: 'bg-[#d4bb6a] text-black',
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },
   {
-    view: 'league_standings',
-    label: 'Standings',
-    icon: Table2,
-    desktopActiveClass: 'bg-platinum text-black',
-    mobileActiveClass: 'bg-platinum text-black',
+    view: 'playoffs',
+    label: 'Playoffs',
+    icon: Trophy,
+    desktopActiveClass: 'bg-white text-black',
+    mobileActiveClass: 'bg-white text-black',
+  },
+  {
+    view: 'teams',
+    label: 'Rosters',
+    icon: Users,
+    desktopActiveClass: 'bg-white text-black',
+    mobileActiveClass: 'bg-white text-black',
+    onClickAction: 'random_team',
+  },
+  {
+    view: 'players',
+    label: 'Players',
+    icon: UserRound,
+    desktopActiveClass: 'bg-white text-black',
+    mobileActiveClass: 'bg-white text-black',
+  },
+  {
+    view: 'free_agency',
+    label: 'Free Agents',
+    icon: BriefcaseBusiness,
+    desktopActiveClass: 'bg-[#d4bb6a] text-black',
+    mobileActiveClass: 'bg-[#d4bb6a] text-black',
+  },
+  {
+    view: 'trades',
+    label: 'Trades',
+    icon: ArrowLeftRight,
+    desktopActiveClass: 'bg-[#d4bb6a] text-black',
+    mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },
   {
     view: 'leaders',
@@ -113,24 +151,9 @@ const NAV_ITEMS: NavigationItem[] = [
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },
   {
-    view: 'teams',
-    label: 'Teams',
-    icon: Users,
-    desktopActiveClass: 'bg-white text-black',
-    mobileActiveClass: 'bg-white text-black',
-    onClickAction: 'random_team',
-  },
-  {
-    view: 'free_agency',
-    label: 'Free Agency',
-    icon: BriefcaseBusiness,
-    desktopActiveClass: 'bg-[#d4bb6a] text-black',
-    mobileActiveClass: 'bg-[#d4bb6a] text-black',
-  },
-  {
-    view: 'trades',
-    label: 'Trades',
-    icon: ArrowLeftRight,
+    view: 'lottery',
+    label: 'Lottery',
+    icon: Shuffle,
     desktopActiveClass: 'bg-[#d4bb6a] text-black',
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },
@@ -142,20 +165,6 @@ const NAV_ITEMS: NavigationItem[] = [
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },
   {
-    view: 'playoffs',
-    label: 'Playoffs',
-    icon: Trophy,
-    desktopActiveClass: 'bg-white text-black',
-    mobileActiveClass: 'bg-white text-black',
-  },
-  {
-    view: 'players',
-    label: 'Rosters',
-    icon: UserRound,
-    desktopActiveClass: 'bg-white text-black',
-    mobileActiveClass: 'bg-white text-black',
-  },
-  {
     view: 'gpb_book',
     label: 'GPB Engine',
     mobileLabel: 'Engine',
@@ -165,8 +174,8 @@ const NAV_ITEMS: NavigationItem[] = [
   },
   {
     view: 'notifications',
-    label: 'Notifications',
-    mobileLabel: 'Notices',
+    label: 'System Logs',
+    mobileLabel: 'Logs',
     icon: Bell,
     desktopActiveClass: 'bg-white text-black',
     mobileActiveClass: 'bg-white text-black',

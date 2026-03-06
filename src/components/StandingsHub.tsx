@@ -81,7 +81,15 @@ const getLatestPitchingRatingsMap = (ratings: PlayerPitchingRatings[]): Map<stri
   return next;
 };
 
-const formatPct = (pct: number): string => pct.toFixed(3).replace(/^0/, '.');
+const formatPct = (pct: number): string => {
+  if (!Number.isFinite(pct)) {
+    return '.000';
+  }
+  if (pct > -1 && pct < 1) {
+    return pct.toFixed(3).replace(/^(-?)0\./, '$1.');
+  }
+  return pct.toFixed(3).replace(/^\.\./, '.');
+};
 const formatEra = (value: number | null): string => (value === null ? '--' : value.toFixed(2));
 const formatWhip = (value: number | null): string => (value === null ? '--' : value.toFixed(2));
 
@@ -404,32 +412,60 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <article className={`${sectionClass} p-4`}>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Rank Leader</p>
-          <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">
-            {topByRankMetric ? `${topByRankMetric.team.city} ${topByRankMetric.team.name}` : 'No Data'}
-          </p>
+          {topByRankMetric ? (
+            <div className="mt-2 flex items-center gap-3">
+              <TeamLogo team={topByRankMetric.team} sizeClass="h-11 w-11" />
+              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
+                {topByRankMetric.team.city} {topByRankMetric.team.name}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
+          )}
           <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">
             {getMetricLabel(rankKey)}: {topByRankMetric ? getMetricValue(topByRankMetric, rankKey) : '--'}
           </p>
         </article>
         <article className={`${sectionClass} p-4`}>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Best Team ERA</p>
-          <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">
-            {bestEra ? `${bestEra.team.city} ${bestEra.team.name}` : 'No Data'}
-          </p>
+          {bestEra ? (
+            <div className="mt-2 flex items-center gap-3">
+              <TeamLogo team={bestEra.team} sizeClass="h-11 w-11" />
+              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
+                {bestEra.team.city} {bestEra.team.name}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
+          )}
           <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">{bestEra ? formatEra(bestEra.teamEra) : '--'} ERA</p>
         </article>
         <article className={`${sectionClass} p-4`}>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Most Team RBI</p>
-          <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">
-            {mostRbi ? `${mostRbi.team.city} ${mostRbi.team.name}` : 'No Data'}
-          </p>
+          {mostRbi ? (
+            <div className="mt-2 flex items-center gap-3">
+              <TeamLogo team={mostRbi.team} sizeClass="h-11 w-11" />
+              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
+                {mostRbi.team.city} {mostRbi.team.name}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
+          )}
           <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">{mostRbi ? mostRbi.teamRbi : '--'} RBI</p>
         </article>
         <article className={`${sectionClass} p-4`}>
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Strongest Core</p>
-          <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">
-            {strongestRoster ? `${strongestRoster.team.city} ${strongestRoster.team.name}` : 'No Data'}
-          </p>
+          {strongestRoster ? (
+            <div className="mt-2 flex items-center gap-3">
+              <TeamLogo team={strongestRoster.team} sizeClass="h-11 w-11" />
+              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
+                {strongestRoster.team.city} {strongestRoster.team.name}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
+          )}
           <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">
             {strongestRoster?.rosterStrength ?? '--'} OVR | {strongestRoster?.rosterStrengthCoverage ?? 0}/{rosterStrengthSlots.length}
           </p>
@@ -495,4 +531,3 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({
     </section>
   );
 };
-

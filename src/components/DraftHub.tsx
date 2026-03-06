@@ -7,10 +7,12 @@ import { TeamLogo } from './TeamLogo';
 interface DraftHubProps {
   teams: Team[];
   currentDate: string;
+  draftOpenDate: string;
   draftClass: DraftClassState | null;
   draftHistory: DraftHistoryEntry[];
   isDraftProcessing: boolean;
-  onGenerateDraftClass: () => void;
+  isDraftOpen: boolean;
+  onOpenLottery: () => void;
   onDraftNextPick: () => void;
   onAutoDraftRound: () => void;
   onAutoDraftAll: () => void;
@@ -23,16 +25,19 @@ const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(
 export const DraftHub: React.FC<DraftHubProps> = ({
   teams,
   currentDate,
+  draftOpenDate,
   draftClass,
   draftHistory,
   isDraftProcessing,
-  onGenerateDraftClass,
+  isDraftOpen,
+  onOpenLottery,
   onDraftNextPick,
   onAutoDraftRound,
   onAutoDraftAll,
   onStopAutoDraft,
   onResetDraftBoard,
 }) => {
+  const draftIsViewOnly = !isDraftOpen;
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
@@ -122,16 +127,15 @@ export const DraftHub: React.FC<DraftHubProps> = ({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={onGenerateDraftClass}
-                disabled={isDraftProcessing}
+                onClick={onOpenLottery}
                 className="rounded-2xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-[#f3dea1] disabled:opacity-50"
               >
-                Generate Class
+                Open Lottery
               </button>
               <button
                 type="button"
                 onClick={onResetDraftBoard}
-                disabled={isDraftProcessing || !draftClass}
+                disabled={draftIsViewOnly || isDraftProcessing || !draftClass}
                 className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-white disabled:opacity-50"
               >
                 <span className="inline-flex items-center gap-2">
@@ -145,10 +149,17 @@ export const DraftHub: React.FC<DraftHubProps> = ({
           {!draftClass ? (
             <div className="mt-6 rounded-[1.75rem] border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center">
               <Users className="mx-auto h-8 w-8 text-zinc-500" />
-              <p className="mt-4 font-headline text-3xl uppercase tracking-[0.08em] text-white">Generate a Draft Class</p>
+              <p className="mt-4 font-headline text-3xl uppercase tracking-[0.08em] text-white">Run Lottery First</p>
               <p className="mt-3 text-sm leading-6 text-zinc-400">
-                This creates an expanded draft class (ages 17-20) and adds it to the player pool as prospects.
+                Use the Lottery screen to generate the class, lock draft order, and review projections before the first pick.
               </p>
+              <button
+                type="button"
+                onClick={onOpenLottery}
+                className="mt-4 rounded-2xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-[#f3dea1]"
+              >
+                Go To Lottery
+              </button>
             </div>
           ) : (
             <>
@@ -189,7 +200,7 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                   <button
                     type="button"
                     onClick={onDraftNextPick}
-                    disabled={isDraftProcessing || draftClass.isComplete}
+                    disabled={draftIsViewOnly || isDraftProcessing || draftClass.isComplete}
                     className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-white disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-2"><SkipForward className="h-4 w-4" />Next Pick</span>
@@ -197,7 +208,7 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                   <button
                     type="button"
                     onClick={onAutoDraftRound}
-                    disabled={isDraftProcessing || draftClass.isComplete}
+                    disabled={draftIsViewOnly || isDraftProcessing || draftClass.isComplete}
                     className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-white disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-2"><Play className="h-4 w-4" />Auto Round</span>
@@ -205,7 +216,7 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                   <button
                     type="button"
                     onClick={onAutoDraftAll}
-                    disabled={isDraftProcessing || draftClass.isComplete}
+                    disabled={draftIsViewOnly || isDraftProcessing || draftClass.isComplete}
                     className="rounded-2xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-[#f3dea1] disabled:opacity-50"
                   >
                     <span className="inline-flex items-center gap-2"><Clock3 className="h-4 w-4" />Auto Full Draft</span>
@@ -219,6 +230,13 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                     Stop
                   </button>
                 </div>
+
+                {draftIsViewOnly && (
+                  <div className="mt-4 rounded-2xl border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 px-4 py-3">
+                    <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-200">Draft Locked</p>
+                    <p className="mt-2 text-sm text-zinc-300">Draft actions unlock on {draftOpenDate}. Until then this screen is view-only.</p>
+                  </div>
+                )}
 
                 {isDraftProcessing && (
                   <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3">

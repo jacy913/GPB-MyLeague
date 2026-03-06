@@ -33,6 +33,29 @@ export interface SimulationRunState {
   interruptionCount?: number;
 }
 
+type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type TimelineStatus = 'complete' | 'active' | 'upcoming';
+
+interface TimelineStep {
+  key: string;
+  label: string;
+  description: string;
+  status: TimelineStatus;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionDisabled?: boolean;
+}
+
+type CalendarMilestoneTone = 'regular' | 'playoffs' | 'awards' | 'offseason';
+
+interface CalendarMilestone {
+  key: string;
+  date: string;
+  label: string;
+  shortLabel: string;
+  tone: CalendarMilestoneTone;
+}
+
 interface SimulationHubProps {
   teams: Team[];
   games: Game[];
@@ -41,23 +64,75 @@ interface SimulationHubProps {
   selectedTeamId: string;
   isSimulating: boolean;
   seasonComplete: boolean;
+  offseasonStage: OffseasonStage;
+  hasPendingSeasonAwards: boolean;
+  awardsUnlockDate: string;
+  lotteryOpenDate: string;
+  draftOpenDate: string;
+  freeAgencyOpenDate: string;
   simulationProgress: { completedGames: number; totalGames: number; currentDate: string; label: string } | null;
   simulationRunState: SimulationRunState | null;
   seasonResetStatus: { isResetting: boolean; progress: number; label: string };
   simulationSaveStatus: { isSaving: boolean; progress: number; label: string };
+  isTerminatingUniverse: boolean;
   onSelectDate: (date: string) => void;
   onSelectTeamId: (teamId: string) => void;
   onStartSimulation: (target: SimulationTarget) => void;
   onCancelSimulation: () => void;
   onResetSeason: () => void;
+  onTerminateUniverse: () => void;
   onOpenTrades: () => void;
   onOpenFreeAgency: () => void;
+  onOpenLottery: () => void;
+  onOpenDraft: () => void;
 }
 
 const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#121212,#202020,#0e0e0e)]';
 
 const getUniqueDates = (games: Game[]): string[] =>
   Array.from(new Set<string>(games.map((game) => game.date))).sort((left, right) => left.localeCompare(right));
+
+const buildCalendarMilestones = (
+  games: Game[],
+  awardsUnlockDate: string,
+  lotteryOpenDate: string,
+  draftOpenDate: string,
+  freeAgencyOpenDate: string,
+): CalendarMilestone[] => {
+  const orderedDates = getUniqueDates(games);
+  const regularSeasonDates = getUniqueDates(games.filter((game) => isRegularSeasonGame(game)));
+  const playoffDates = getUniqueDates(games.filter((game) => isPlayoffGame(game)));
+
+  if (orderedDates.length === 0) {
+    return [];
+  }
+
+  const openingDay = regularSeasonDates[0] ?? orderedDates[0];
+  const regularSeasonFinale = regularSeasonDates[regularSeasonDates.length - 1] ?? orderedDates[orderedDates.length - 1];
+  const playoffsBegin = playoffDates[0] ?? addDaysToISODate(regularSeasonFinale, 2);
+  const playoffsFinale = playoffDates[playoffDates.length - 1] ?? orderedDates[orderedDates.length - 1];
+  const awardsDay = awardsUnlockDate || addDaysToISODate(playoffsFinale, 1);
+  const lotteryDay = lotteryOpenDate || addDaysToISODate(playoffsFinale, 4);
+  const draftDay = draftOpenDate || addDaysToISODate(playoffsFinale, 5);
+  const freeAgencyDay = freeAgencyOpenDate || addDaysToISODate(playoffsFinale, 10);
+
+  const milestones: CalendarMilestone[] = [
+    { key: 'opening_day', date: openingDay, label: 'Opening Day', shortLabel: 'OPEN', tone: 'regular' },
+    { key: 'reg_finale', date: regularSeasonFinale, label: 'Regular Season Finale', shortLabel: 'REG', tone: 'regular' },
+    { key: 'playoffs_begin', date: playoffsBegin, label: 'Playoffs Begin', shortLabel: 'PO', tone: 'playoffs' },
+    { key: 'playoffs_finale', date: playoffsFinale, label: 'Playoffs End', shortLabel: 'END', tone: 'playoffs' },
+    { key: 'awards', date: awardsDay, label: 'Awards', shortLabel: 'AWD', tone: 'awards' },
+    { key: 'lottery', date: lotteryDay, label: 'Lottery', shortLabel: 'LOT', tone: 'offseason' },
+    { key: 'draft', date: draftDay, label: 'Draft', shortLabel: 'DRFT', tone: 'offseason' },
+    { key: 'free_agency', date: freeAgencyDay, label: 'Free Agency Opens', shortLabel: 'FA', tone: 'offseason' },
+  ];
+
+  const uniqueByKey = new Map<string, CalendarMilestone>();
+  milestones.forEach((milestone) => {
+    uniqueByKey.set(`${milestone.date}:${milestone.key}`, milestone);
+  });
+  return Array.from(uniqueByKey.values());
+};
 
 const formatLongDate = (isoDate: string): string =>
   new Date(`${isoDate}T00:00:00Z`).toLocaleDateString(undefined, {
@@ -119,17 +194,27 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   selectedTeamId,
   isSimulating,
   seasonComplete,
+  offseasonStage,
+  hasPendingSeasonAwards,
+  awardsUnlockDate,
+  lotteryOpenDate,
+  draftOpenDate,
+  freeAgencyOpenDate,
   simulationProgress,
   simulationRunState,
   seasonResetStatus,
   simulationSaveStatus,
+  isTerminatingUniverse,
   onSelectDate,
   onSelectTeamId,
   onStartSimulation,
   onCancelSimulation,
   onResetSeason,
+  onTerminateUniverse,
   onOpenTrades,
   onOpenFreeAgency,
+  onOpenLottery,
+  onOpenDraft,
 }) => {
   const uniqueDates = useMemo(() => getUniqueDates(games), [games]);
   const activeDate = selectedDate || currentDate || uniqueDates[0] || '';
@@ -138,6 +223,19 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
     () => games.filter((game) => isRegularSeasonGame(game)).every((game) => game.status === 'completed'),
     [games],
   );
+  const calendarMilestones = useMemo(
+    () => buildCalendarMilestones(games, awardsUnlockDate, lotteryOpenDate, draftOpenDate, freeAgencyOpenDate),
+    [awardsUnlockDate, draftOpenDate, freeAgencyOpenDate, games, lotteryOpenDate],
+  );
+  const milestonesByDate = useMemo(() => {
+    const next = new Map<string, CalendarMilestone[]>();
+    calendarMilestones.forEach((milestone) => {
+      const bucket = next.get(milestone.date) ?? [];
+      bucket.push(milestone);
+      next.set(milestone.date, bucket);
+    });
+    return next;
+  }, [calendarMilestones]);
   const seasonProgress = useMemo(() => {
     const completedGames = games.filter((game) => game.status === 'completed').length;
     return {
@@ -150,9 +248,12 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   const planProgress = simulationRunState && simulationRunState.queuedDates.length > 0
     ? (simulationRunState.currentIndex / simulationRunState.queuedDates.length) * 100
     : 0;
-  const controlsLocked = isSimulating || seasonResetStatus.isResetting || simulationSaveStatus.isSaving;
+  const controlsLocked = isSimulating || seasonResetStatus.isResetting || simulationSaveStatus.isSaving || isTerminatingUniverse;
 
   const [focusedMonth, setFocusedMonth] = useState(getMonthKey(cursorDate || activeDate || uniqueDates[0] || new Date().toISOString().slice(0, 7)));
+  const [terminateModalOpen, setTerminateModalOpen] = useState(false);
+  const [terminateLeverValue, setTerminateLeverValue] = useState(0);
+  const terminateLeverArmed = terminateLeverValue >= 98;
 
   useEffect(() => {
     const sourceDate = simulationRunState?.currentDate || cursorDate || activeDate || uniqueDates[0] || simulationRunState?.targetDate || '';
@@ -160,6 +261,12 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
       setFocusedMonth(getMonthKey(sourceDate));
     }
   }, [activeDate, cursorDate, simulationRunState, uniqueDates]);
+
+  useEffect(() => {
+    if (!terminateModalOpen) {
+      setTerminateLeverValue(0);
+    }
+  }, [terminateModalOpen]);
 
   const calendarCells = useMemo(() => buildCalendarCells(focusedMonth), [focusedMonth]);
   const monthLabel = useMemo(
@@ -194,6 +301,147 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
         : simulationRunState?.status === 'cancelled'
           ? 'border-zinc-400/20 bg-zinc-500/10 text-zinc-200'
           : 'border-cyan-400/30 bg-cyan-500/10 text-cyan-100';
+  const effectiveOffseasonStage: OffseasonStage = seasonComplete
+    ? (offseasonStage === 'idle' ? 'draft_lottery' : offseasonStage)
+    : 'idle';
+
+  const timelineStatuses = useMemo(() => {
+    let lottery: TimelineStatus = 'upcoming';
+    let draft: TimelineStatus = 'upcoming';
+    let freeAgency: TimelineStatus = 'upcoming';
+    let regularSeason: TimelineStatus = 'upcoming';
+    let playoffs: TimelineStatus = 'upcoming';
+    let awards: TimelineStatus = 'upcoming';
+
+    if (!seasonComplete) {
+      lottery = 'complete';
+      draft = 'complete';
+      freeAgency = 'complete';
+      regularSeason = regularSeasonComplete ? 'complete' : 'active';
+      playoffs = regularSeasonComplete ? 'active' : 'upcoming';
+      awards = 'upcoming';
+    } else {
+      regularSeason = 'complete';
+      playoffs = 'complete';
+      const awardsDateReached = currentDate >= awardsUnlockDate;
+      const lotteryDateReached = currentDate >= lotteryOpenDate;
+      const draftDateReached = currentDate >= draftOpenDate;
+      const freeAgencyDateReached = currentDate >= freeAgencyOpenDate;
+
+      awards = !awardsDateReached ? 'upcoming' : (hasPendingSeasonAwards ? 'active' : 'complete');
+
+      if (awards === 'complete') {
+        if (effectiveOffseasonStage === 'draft_lottery') {
+          lottery = lotteryDateReached ? 'active' : 'upcoming';
+          draft = 'upcoming';
+          freeAgency = 'upcoming';
+        } else if (effectiveOffseasonStage === 'draft') {
+          lottery = 'complete';
+          draft = draftDateReached ? 'active' : 'upcoming';
+          freeAgency = 'upcoming';
+        } else {
+          lottery = 'complete';
+          draft = 'complete';
+          freeAgency = freeAgencyDateReached ? 'active' : 'upcoming';
+        }
+      }
+    }
+
+    return {
+      lottery,
+      draft,
+      freeAgency,
+      regularSeason,
+      playoffs,
+      awards,
+    };
+  }, [
+    awardsUnlockDate,
+    currentDate,
+    draftOpenDate,
+    effectiveOffseasonStage,
+    freeAgencyOpenDate,
+    hasPendingSeasonAwards,
+    lotteryOpenDate,
+    regularSeasonComplete,
+    seasonComplete,
+  ]);
+
+  const phaseToneByStatus: Record<TimelineStatus, string> = {
+    complete: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-100',
+    active: 'border-[#d4bb6a]/45 bg-[#d4bb6a]/12 text-[#f3dfa2]',
+    upcoming: 'border-white/10 bg-black/20 text-zinc-300',
+  };
+
+  const phaseLabelByStatus: Record<TimelineStatus, string> = {
+    complete: 'Complete',
+    active: 'Active',
+    upcoming: 'Upcoming',
+  };
+
+  const milestoneToneClass: Record<CalendarMilestoneTone, string> = {
+    regular: 'border-cyan-300/35 bg-cyan-500/12 text-cyan-100',
+    playoffs: 'border-[#d4bb6a]/35 bg-[#d4bb6a]/12 text-[#f3dfa2]',
+    awards: 'border-fuchsia-300/35 bg-fuchsia-500/12 text-fuchsia-100',
+    offseason: 'border-emerald-300/35 bg-emerald-500/12 text-emerald-100',
+  };
+
+  const seasonTimeline: TimelineStep[] = [
+    {
+      key: 'lottery',
+      label: 'Lottery',
+      description: 'Run lottery and lock the full draft order.',
+      status: timelineStatuses.lottery,
+      actionLabel: 'Open Lottery',
+      onAction: onOpenLottery,
+    },
+    {
+      key: 'draft',
+      label: 'Draft',
+      description: 'Execute picks after lottery order is locked.',
+      status: timelineStatuses.draft,
+      actionLabel: 'Open Draft',
+      onAction: onOpenDraft,
+    },
+    {
+      key: 'free_agency',
+      label: 'Free Agency',
+      description: 'Review offers and place free agents on rosters.',
+      status: timelineStatuses.freeAgency,
+      actionLabel: 'Open Free Agency',
+      onAction: onOpenFreeAgency,
+    },
+    {
+      key: 'regular_season',
+      label: 'Regular Season',
+      description: 'Advance the calendar to the regular-season finale.',
+      status: timelineStatuses.regularSeason,
+      actionLabel: 'Sim To Reg Finale',
+      onAction: () => onStartSimulation({ scope: 'regular_season' }),
+      actionDisabled: controlsLocked || regularSeasonComplete,
+    },
+    {
+      key: 'playoffs',
+      label: 'Playoffs',
+      description: 'Run postseason games through the championship.',
+      status: timelineStatuses.playoffs,
+      actionLabel: 'Sim Full Season',
+      onAction: () => onStartSimulation({ scope: 'season' }),
+      actionDisabled: controlsLocked || seasonComplete,
+    },
+    {
+      key: 'awards',
+      label: 'Awards',
+      description: seasonComplete && currentDate < awardsUnlockDate
+        ? `Awards voting opens on ${awardsUnlockDate}.`
+        : hasPendingSeasonAwards
+        ? 'Awards ballot is ready. Save winners to archive the season.'
+        : 'Awards are archived once winners are saved.',
+      status: timelineStatuses.awards,
+    },
+  ];
+
+  const nextSeasonReady = seasonComplete && !hasPendingSeasonAwards && effectiveOffseasonStage === 'free_agency';
 
   return (
     <section className="space-y-6">
@@ -222,6 +470,61 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
                 {simulationRunState ? simulationRunState.status : 'Idle'}
               </p>
             </div>
+          </div>
+        </div>
+      </article>
+
+      <article className={`${sectionClass} p-5`}>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Season Timeline</p>
+            <p className="mt-1 font-headline text-3xl uppercase tracking-[0.06em] text-white">League Flow</p>
+          </div>
+          <div className={`rounded-full border px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] ${
+            nextSeasonReady
+              ? 'border-emerald-400/35 bg-emerald-500/12 text-emerald-100'
+              : 'border-white/10 bg-black/25 text-zinc-300'
+          }`}>
+            {nextSeasonReady ? 'Ready For Next Season Reset' : 'Complete Active Phase To Progress'}
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          {seasonTimeline.map((step) => (
+            <div key={step.key} className={`rounded-2xl border p-4 ${phaseToneByStatus[step.status]}`}>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em]">{phaseLabelByStatus[step.status]}</p>
+              <p className="mt-2 font-headline text-2xl uppercase tracking-[0.06em]">{step.label}</p>
+              <p className="mt-3 text-xs leading-5">{step.description}</p>
+              {step.status === 'active' && step.onAction && step.actionLabel && (
+                <button
+                  type="button"
+                  onClick={step.onAction}
+                  disabled={step.actionDisabled}
+                  className="mt-4 rounded-xl border border-white/15 bg-black/20 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.16em] text-white hover:border-white/30 disabled:opacity-50"
+                >
+                  {step.actionLabel}
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Start Next Season</p>
+              <p className="mt-1 text-sm text-zinc-300">
+                Use Reset after Awards are saved and the offseason reaches Free Agency.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onResetSeason}
+              disabled={controlsLocked || !nextSeasonReady}
+              className="rounded-2xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-[#f3dea1] hover:border-[#d4bb6a]/50 disabled:opacity-50"
+            >
+              Start Next Season
+            </button>
           </div>
         </div>
       </article>
@@ -260,6 +563,8 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
 
             {calendarCells.map((date) => {
               const counts = gameCountsByDate.get(date) ?? { scheduled: 0, completed: 0, playoff: 0 };
+              const dayMilestones = milestonesByDate.get(date) ?? [];
+              const primaryMilestone = dayMilestones[0] ?? null;
               const inMonth = getMonthKey(date) === focusedMonth;
               const isActive = date === activeDate;
               const isCursor = date === cursorDate;
@@ -316,6 +621,18 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
                       ) : null}
                     </div>
 
+                    {primaryMilestone && (
+                      <div className="mt-1 space-y-1">
+                        <div className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] ${milestoneToneClass[primaryMilestone.tone]}`}>
+                          <span>{primaryMilestone.shortLabel}</span>
+                          {dayMilestones.length > 1 && <span>+{dayMilestones.length - 1}</span>}
+                        </div>
+                        <p className="truncate font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-400">
+                          {primaryMilestone.label}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         {visualCompleted && <span className="h-2 w-2 rounded-full bg-emerald-400" />}
@@ -336,7 +653,32 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-cyan-300" /> Sim cursor</span>
             <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#d4bb6a]" /> Pending slate</span>
             <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-400" /> Completed day</span>
+            <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-cyan-200" /> Regular event</span>
+            <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#e4d08c]" /> Playoff event</span>
+            <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-fuchsia-300" /> Awards event</span>
+            <span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-emerald-300" /> Offseason event</span>
           </div>
+
+          {calendarMilestones.length > 0 && (
+            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Important Dates</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {calendarMilestones.map((milestone) => (
+                  <button
+                    key={`${milestone.date}-${milestone.key}`}
+                    type="button"
+                    onClick={() => {
+                      onSelectDate(milestone.date);
+                      setFocusedMonth(getMonthKey(milestone.date));
+                    }}
+                    className={`rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors hover:border-white/40 ${milestoneToneClass[milestone.tone]}`}
+                  >
+                    {formatShortDate(milestone.date)} | {milestone.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="space-y-6">
@@ -350,19 +692,19 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <button onClick={() => onStartSimulation({ scope: 'day' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'day' })} disabled={controlsLocked} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Day</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Resolve the current slate and advance the calendar one step.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'week' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'week' })} disabled={controlsLocked} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Week</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Walk forward through each day until the next full week closes.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'month' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'month' })} disabled={controlsLocked} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Sim Month</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Run a longer stretch while staying interruptible for market events.</p>
               </button>
-              <button onClick={() => onStartSimulation({ scope: 'next_game', teamId: selectedTeamId })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
+              <button onClick={() => onStartSimulation({ scope: 'next_game', teamId: selectedTeamId })} disabled={controlsLocked} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-left hover:border-white/20 disabled:opacity-50">
                 <p className="font-headline text-2xl uppercase tracking-[0.08em] text-white">Next Team Game</p>
                 <p className="mt-2 text-xs leading-5 text-zinc-400">Stop the sim at the next date involving the selected club.</p>
               </button>
@@ -429,6 +771,15 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
                 Reset
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setTerminateModalOpen(true)}
+              disabled={controlsLocked}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-red-200 hover:border-red-400/45 hover:bg-red-500/15 disabled:opacity-50"
+            >
+              Terminate Universe
+            </button>
 
             {seasonResetStatus.isResetting && (
               <div className="mt-4 rounded-2xl border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 p-4">
@@ -607,6 +958,64 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
           </article>
         </section>
       </div>
+
+      {terminateModalOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-[1.75rem] border border-red-500/35 bg-[linear-gradient(135deg,#1a0b0b,#220f0f,#120808)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-red-300">Danger Zone</p>
+            <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">Terminate Universe</p>
+            <p className="mt-4 text-sm leading-6 text-zinc-300">
+              This will hard wipe all players, all season history, and the current league season state.
+              This action is irreversible.
+            </p>
+
+            <div className="mt-6 rounded-2xl border border-red-500/25 bg-black/25 p-4">
+              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-red-200">Safety Lever</p>
+              <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
+                Slide fully right to arm termination.
+              </p>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={terminateLeverValue}
+                onChange={(event) => setTerminateLeverValue(Number(event.target.value))}
+                className="mt-4 w-full accent-red-500"
+              />
+              <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em]">
+                <span className="text-zinc-500">Safe</span>
+                <span className={terminateLeverArmed ? 'text-red-200' : 'text-zinc-500'}>
+                  {terminateLeverArmed ? 'Armed' : 'Not Armed'}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setTerminateModalOpen(false)}
+                className="rounded-2xl border border-white/10 bg-black/25 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white hover:border-white/20"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!terminateLeverArmed) {
+                    return;
+                  }
+                  setTerminateModalOpen(false);
+                  onTerminateUniverse();
+                }}
+                disabled={!terminateLeverArmed || controlsLocked}
+                className="rounded-2xl border border-red-500/35 bg-red-500/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-red-100 hover:border-red-400/45 disabled:opacity-50"
+              >
+                Confirm Termination
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 };

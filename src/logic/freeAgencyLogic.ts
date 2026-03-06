@@ -5,12 +5,14 @@ import {
   PlayerPitchingRatings,
   PlayerSeasonBatting,
   PlayerSeasonPitching,
+  PlayerTransaction,
   RosterSlotCode,
   STARTING_PITCHER_SLOTS,
   Team,
   TeamRosterSlot,
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from './playerStats';
+import { parseOffseasonMeta } from './offseasonFreeAgency';
 
 export interface FreeAgencyOfferCard {
   team: Team;
@@ -20,6 +22,7 @@ export interface FreeAgencyOfferCard {
   contractYears: number;
   incumbentName: string | null;
   incumbentOverall: number | null;
+  isQualifyingOffer: boolean;
   note: string;
 }
 
@@ -97,8 +100,117 @@ const getOfferContractYears = (player: Player, overall: number): number => {
   return 1;
 };
 
+interface PersistedQualifyingOffer {
+  teamId: string;
+  contractYears: number;
+}
+
+const resolvePersistedQualifyingOffer = (
+  playerId: string,
+  transactions: PlayerTransaction[],
+): PersistedQualifyingOffer | null => {
+  const candidateReleases = transactions.filter(
+    (transaction) => transaction.playerId === playerId && transaction.eventType === 'released',
+  );
+  if (candidateReleases.length === 0) {
+    return null;
+  }
+
+  const latestRelease = [...candidateReleases].sort((left, right) => right.effectiveDate.localeCompare(left.effectiveDate))[0] ?? null;
+
+  if (!latestRelease) {
+    return null;
+  }
+
+  const meta = parseOffseasonMeta(latestRelease.notes);
+  if (!meta || meta.qoDecision !== 'declined') {
+    return null;
+  }
+
+  const previousTeamId = latestRelease.fromTeamId;
+  if (!previousTeamId || !meta.qoTeamId || meta.qoTeamId !== previousTeamId) {
+    return null;
+  }
+
+  return {
+    teamId: previousTeamId,
+    contractYears: meta.qoYears && meta.qoYears > 0 ? meta.qoYears : 1,
+  };
+};
+
+const upsertQualifyingOffer = (
+  offers: FreeAgencyOfferCard[],
+  freeAgent: Omit<FreeAgentMarketEntry, 'offers'> & { marketValue: number },
+  persistedQualifyingOffer: PersistedQualifyingOffer | null,
+  teams: Team[],
+  activeRosterSlots: TeamRosterSlot[],
+  playersById: Map<string, Player>,
+  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
+  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
+): FreeAgencyOfferCard[] => {
+  if (!persistedQualifyingOffer) {
+    return offers.map((offer) => ({ ...offer, isQualifyingOffer: false }));
+  }
+
+  const qualifyingTeam = teams.find((team) => team.id === persistedQualifyingOffer.teamId) ?? null;
+  if (!qualifyingTeam) {
+    return offers.map((offer) => ({ ...offer, isQualifyingOffer: false }));
+  }
+
+  const candidateSlots =
+    freeAgent.player.primaryPosition === 'SP'
+      ? STARTING_PITCHER_SLOTS
+      : freeAgent.player.primaryPosition === 'RP'
+        ? BULLPEN_ROSTER_SLOTS.filter((slot) => slot !== 'CL')
+        : freeAgent.player.primaryPosition === 'CL'
+          ? ['CL']
+          : [freeAgent.player.primaryPosition];
+
+  const slotCode = candidateSlots[0];
+  if (!slotCode) {
+    return offers;
+  }
+  const slot = activeRosterSlots.find((entry) => entry.teamId === qualifyingTeam.id && entry.slotCode === slotCode) ?? null;
+  const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
+  const incumbentOverall = incumbent
+    ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
+    : 0;
+
+  const qualifyingOfferInterest = clamp(
+    Math.round(70 + Math.max(freeAgent.overall - 70, 0) * 1.1 + Math.max(freeAgent.marketValue - 72, 0) * 0.65),
+    72,
+    99,
+  );
+
+  const qualifyingOffer: FreeAgencyOfferCard = {
+    team: qualifyingTeam,
+    slotCode: slotCode as RosterSlotCode,
+    slotLabel: getRosterSlotLabel(slotCode as RosterSlotCode),
+    interest: qualifyingOfferInterest,
+    contractYears: persistedQualifyingOffer.contractYears,
+    incumbentName: incumbent ? `${incumbent.firstName} ${incumbent.lastName}` : null,
+    incumbentOverall: incumbent ? incumbentOverall : null,
+    isQualifyingOffer: true,
+    note: `${qualifyingTeam.city} hold qualifying-offer rights as ${freeAgent.player.lastName}'s previous club.`,
+  };
+
+  const sanitizedOffers = offers.map((offer) => ({ ...offer, isQualifyingOffer: false }));
+  const nonQualifyingOffers = sanitizedOffers.filter((offer) => offer.team.id !== qualifyingOffer.team.id);
+  const merged = [qualifyingOffer, ...nonQualifyingOffers]
+    .sort((left, right) => right.interest - left.interest);
+
+  const topSix = merged.slice(0, 6);
+  if (topSix.some((offer) => offer.isQualifyingOffer)) {
+    return topSix;
+  }
+
+  return [...topSix.slice(0, 5), qualifyingOffer]
+    .sort((left, right) => right.interest - left.interest);
+};
+
 const buildOfferBoard = (
   freeAgent: Omit<FreeAgentMarketEntry, 'offers'> & { marketValue: number },
+  persistedQualifyingOffer: PersistedQualifyingOffer | null,
   teams: Team[],
   activeRosterSlots: TeamRosterSlot[],
   playersById: Map<string, Player>,
@@ -121,7 +233,8 @@ const buildOfferBoard = (
   teams.forEach((team) => {
     let bestOffer: FreeAgencyOfferCard | null = null;
 
-    candidateSlots.forEach((slotCode) => {
+    candidateSlots.forEach((rawSlotCode) => {
+      const slotCode = rawSlotCode as RosterSlotCode;
       const slot = activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode === slotCode) ?? null;
       const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
       const incumbentOverall = incumbent
@@ -151,6 +264,7 @@ const buildOfferBoard = (
         contractYears: getOfferContractYears(freeAgent.player, freeAgent.overall),
         incumbentName: incumbent ? `${incumbent.firstName} ${incumbent.lastName}` : null,
         incumbentOverall: incumbent ? incumbentOverall : null,
+        isQualifyingOffer: false,
         note,
       };
 
@@ -160,7 +274,17 @@ const buildOfferBoard = (
     if (bestOffer) results.push(bestOffer);
   });
 
-  return results.sort((left, right) => right.interest - left.interest).slice(0, 6);
+  const rankedOffers = results.sort((left, right) => right.interest - left.interest).slice(0, 6);
+  return upsertQualifyingOffer(
+    rankedOffers,
+    freeAgent,
+    persistedQualifyingOffer,
+    teams,
+    activeRosterSlots,
+    playersById,
+    battingRatingsByPlayerId,
+    pitchingRatingsByPlayerId,
+  );
 };
 
 export const buildFreeAgencyMarketEntries = (
@@ -171,6 +295,7 @@ export const buildFreeAgencyMarketEntries = (
   battingStats: PlayerSeasonBatting[],
   pitchingStats: PlayerSeasonPitching[],
   rosterSlots: TeamRosterSlot[],
+  transactions: PlayerTransaction[] = [],
 ): FreeAgentMarketEntry[] => {
   const playersById = new Map(players.map((player) => [player.playerId, player]));
   const battingRatingsByPlayerId = getLatestBattingRatings(battingRatings);
@@ -197,6 +322,7 @@ export const buildFreeAgencyMarketEntries = (
         marketValue,
         offers: buildOfferBoard(
           { ...entry, marketValue },
+          resolvePersistedQualifyingOffer(entry.player.playerId, transactions),
           teams,
           activeRosterSlots,
           playersById,
