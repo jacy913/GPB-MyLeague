@@ -19,6 +19,7 @@ import { repairRosterSlotsForTeams } from './rosterManagement';
 
 export const DRAFT_ROUNDS = 4;
 export const DRAFT_CLASS_SIZE = 160;
+export const DRAFT_LOTTERY_TEAM_COUNT = 16;
 
 type ProspectRatings = PlayerBattingRatings | PlayerPitchingRatings;
 
@@ -141,22 +142,42 @@ const getPitcherArchetype = (position: PlayerPosition): string => {
   return 'Bullpen weapon';
 };
 
-const getDraftOrder = (teams: Team[]): string[] =>
-  [...teams]
-    .sort((left, right) => {
-      const leftGames = left.wins + left.losses;
-      const rightGames = right.wins + right.losses;
-      const leftPct = leftGames > 0 ? left.wins / leftGames : 0.5;
-      const rightPct = rightGames > 0 ? right.wins / rightGames : 0.5;
-      if (leftPct !== rightPct) return leftPct - rightPct;
+const compareTeamsForDraftOrder = (left: Team, right: Team): number => {
+  const leftGames = left.wins + left.losses;
+  const rightGames = right.wins + right.losses;
+  const leftPct = leftGames > 0 ? left.wins / leftGames : 0.5;
+  const rightPct = rightGames > 0 ? right.wins / rightGames : 0.5;
+  if (leftPct !== rightPct) return leftPct - rightPct;
 
-      const leftDiff = left.runsScored - left.runsAllowed;
-      const rightDiff = right.runsScored - right.runsAllowed;
-      if (leftDiff !== rightDiff) return leftDiff - rightDiff;
+  const leftDiff = left.runsScored - left.runsAllowed;
+  const rightDiff = right.runsScored - right.runsAllowed;
+  if (leftDiff !== rightDiff) return leftDiff - rightDiff;
 
-      return left.city.localeCompare(right.city);
-    })
-    .map((team) => team.id);
+  return left.city.localeCompare(right.city);
+};
+
+const shuffleTeams = (teams: Team[]): Team[] => {
+  const shuffled = [...teams];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomInt(0, index);
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+  }
+  return shuffled;
+};
+
+const getDraftOrder = (teams: Team[]): string[] => {
+  const orderedTeams = [...teams].sort(compareTeamsForDraftOrder);
+  if (orderedTeams.length <= 1) {
+    return orderedTeams.map((team) => team.id);
+  }
+
+  const lotteryTeamCount = Math.min(DRAFT_LOTTERY_TEAM_COUNT, orderedTeams.length);
+  const lotteryPool = orderedTeams.slice(0, lotteryTeamCount);
+  const nonLotteryTeams = orderedTeams.slice(lotteryTeamCount);
+  const lotteryOrder = shuffleTeams(lotteryPool);
+
+  return [...lotteryOrder, ...nonLotteryTeams].map((team) => team.id);
+};
 
 const createBattingProspectRatings = (player: Player, seasonYear: number): PlayerBattingRatings => {
   const ceiling = clamp(player.potential + randomInt(3, 12), 64, 97);

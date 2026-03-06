@@ -1,7 +1,7 @@
 import React, { useDeferredValue, useMemo, useState } from 'react';
 import { AlertTriangle, Clock3, Play, RotateCcw, Search, ShieldAlert, SkipForward, Users } from 'lucide-react';
 import { Team } from '../types';
-import { DraftClassState, DraftHistoryEntry } from '../logic/draftLogic';
+import { DRAFT_LOTTERY_TEAM_COUNT, DraftClassState, DraftHistoryEntry } from '../logic/draftLogic';
 import { TeamLogo } from './TeamLogo';
 
 interface DraftHubProps {
@@ -88,7 +88,8 @@ export const DraftHub: React.FC<DraftHubProps> = ({
             <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Draft Room</p>
             <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-white">Draft Center</p>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-              Four rounds, one board, and automatic roster management after each pick. Draft is enabled year-round for testing.
+              Four rounds, one board, and automatic roster management after each pick. The bottom {DRAFT_LOTTERY_TEAM_COUNT} teams enter a
+              draft lottery, and all other teams keep pure record order.
             </p>
           </div>
 

@@ -390,3 +390,35 @@ export interface SeasonState {
   isSimulated: boolean;
   progress: number;
 }
+
+export interface SeasonHistoryTeamRecord {
+  teamId: string;
+  teamCity: string;
+  teamName: string;
+  wins: number;
+  losses: number;
+}
+
+export interface SeasonHistoryDivisionWinner extends SeasonHistoryTeamRecord {
+  league: Team['league'];
+  division: Team['division'];
+}
+
+export interface SeasonHistoryAwardWinner {
+  playerId: string;
+  playerName: string;
+  teamId: string | null;
+  teamCity: string | null;
+  teamName: string | null;
+  summary: string;
+}
+
+export interface SeasonHistoryEntry {
+  seasonYear: number;
+  completedAt: string;
+  champion: SeasonHistoryTeamRecord | null;
+  worldSeriesMvp: SeasonHistoryAwardWinner | null;
+  battingMvp: SeasonHistoryAwardWinner | null;
+  pitchingMvp: SeasonHistoryAwardWinner | null;
+  divisionWinners: SeasonHistoryDivisionWinner[];
+}
