@@ -10,6 +10,7 @@ import {
   CalendarRange,
   Clock3,
   LayoutDashboard,
+  Map as MapIcon,
   ScrollText,
   Settings,
   Shuffle,
@@ -33,6 +34,7 @@ export type AppView =
   | 'trades'
   | 'lottery'
   | 'draft'
+  | 'map'
   | 'free_agency'
   | 'playoffs'
   | 'gpb_book'
@@ -163,6 +165,13 @@ const NAV_ITEMS: NavigationItem[] = [
     icon: Clock3,
     desktopActiveClass: 'bg-[#d4bb6a] text-black',
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
+  },
+  {
+    view: 'map',
+    label: 'Map',
+    icon: MapIcon,
+    desktopActiveClass: 'bg-white text-black',
+    mobileActiveClass: 'bg-white text-black',
   },
   {
     view: 'gpb_book',

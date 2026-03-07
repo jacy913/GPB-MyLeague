@@ -23,6 +23,7 @@ import { FreeAgencyHub } from './FreeAgencyHub';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
 import { LotteryHub } from './LotteryHub';
+import { MapHub } from './MapHub';
 import { GameScreen } from './GameScreen';
 import { StandingsHub } from './StandingsHub';
 import { LeadersHub } from './LeadersHub';
@@ -475,6 +476,8 @@ export const AppViewRouter = ({
           onResetDraftBoard={onResetDraftBoard}
         />
       )}
+
+      {view === 'map' && <MapHub teams={teams} />}
 
       {view === 'game_screen' && selectedGame && (
         <GameScreen
