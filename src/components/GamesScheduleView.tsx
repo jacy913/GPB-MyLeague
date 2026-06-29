@@ -1,5 +1,4 @@
-import React from 'react';
-import { Clock3 } from 'lucide-react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { Game, Team } from '../types';
 import { formatHeaderDate } from './SeasonCalendarStrip';
@@ -62,8 +61,50 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
   getFallbackHits,
   onSelectDate,
   onOpenGame,
-}) => (
-  <div className="space-y-6">
+}) => {
+  const calendarStripRef = useRef<HTMLDivElement | null>(null);
+  const dateButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  const scrollCalendarDateIntoView = useCallback((targetDate: string, behavior: ScrollBehavior = 'smooth') => {
+    const calendarStrip = calendarStripRef.current;
+    const targetButton = dateButtonRefs.current.get(targetDate);
+    if (!calendarStrip || !targetButton) {
+      return;
+    }
+
+    const containerRect = calendarStrip.getBoundingClientRect();
+    const buttonRect = targetButton.getBoundingClientRect();
+    const centeredLeft =
+      calendarStrip.scrollLeft + (buttonRect.left - containerRect.left) - (containerRect.width / 2) + (buttonRect.width / 2);
+
+    calendarStrip.scrollTo({
+      left: Math.max(centeredLeft, 0),
+      behavior,
+    });
+  }, []);
+
+  const handleJumpToCurrentDate = useCallback(() => {
+    const targetDate = currentDate || activeDate || allScheduleDates[0];
+    if (!targetDate) {
+      return;
+    }
+
+    onSelectDate(targetDate);
+    requestAnimationFrame(() => {
+      scrollCalendarDateIntoView(targetDate);
+    });
+  }, [activeDate, allScheduleDates, currentDate, onSelectDate, scrollCalendarDateIntoView]);
+
+  useEffect(() => {
+    if (!activeDate) {
+      return;
+    }
+
+    scrollCalendarDateIntoView(activeDate, 'auto');
+  }, [activeDate, scrollCalendarDateIntoView]);
+
+  return (
+    <div className="space-y-6">
     <section className="overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(167,155,0,0.12),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(23,182,144,0.12),transparent_28%),linear-gradient(135deg,#1c1c1c,#252525 42%,#171717)] p-4 md:p-6">
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -120,6 +161,17 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
               <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Selected Slate</p>
               <p className="mt-2 font-display text-lg uppercase text-white">{formatHeaderDate(activeDate)}</p>
             </div>
+            <button
+              type="button"
+              onClick={handleJumpToCurrentDate}
+              disabled={!currentDate}
+              className="rounded-xl border border-prestige/35 bg-prestige/12 px-4 py-3 text-left transition-colors hover:border-prestige/55 hover:bg-prestige/18 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/20"
+            >
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Jump to Current</span>
+              <span className="mt-2 block font-display text-lg uppercase text-white">
+                {currentDate ? formatHeaderDate(currentDate) : 'Unavailable'}
+              </span>
+            </button>
             <label className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
               <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Jump To Date</span>
               <input
@@ -134,7 +186,7 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
           </div>
         </div>
 
-        <div className="overflow-x-auto pb-2 scrollbar-subtle">
+        <div ref={calendarStripRef} className="overflow-x-auto pb-2 scrollbar-subtle">
           <div className="flex min-w-max gap-3">
             {allScheduleDates.map((date) => {
               const daySummary = calendarSummaryByDate.get(date) ?? { total: 0, completed: 0, scheduled: 0, playoff: 0 };
@@ -145,6 +197,13 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
               return (
                 <button
                   key={date}
+                  ref={(element) => {
+                    if (element) {
+                      dateButtonRefs.current.set(date, element);
+                    } else {
+                      dateButtonRefs.current.delete(date);
+                    }
+                  }}
                   onClick={() => onSelectDate(date)}
                   className={`group min-w-[150px] rounded-2xl border px-4 py-4 text-left transition-all ${
                     isSelected
@@ -254,22 +313,23 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
                 onClick={() => onOpenGame(game.gameId)}
                 className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5 cursor-pointer transition-colors hover:border-white/20"
               >
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4">
                   <div>
-                    <span
-                      className={`font-mono text-[11px] uppercase ${
-                        gameWindowStatus === 'final'
-                          ? 'text-platinum'
-                          : gameWindowStatus === 'live_window'
-                            ? 'text-prestige'
-                            : 'text-zinc-500'
-                      }`}
-                    >
-                      {cardStatusLabel}
-                    </span>
-                    <div className="mt-1 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wide text-zinc-500">
-                      <Clock3 className="h-3 w-3" />
-                      {scheduledTimeLabel}
+                    <div className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide">
+                      <span
+                        className={
+                          gameWindowStatus === 'final'
+                            ? 'text-platinum'
+                            : gameWindowStatus === 'live_window'
+                              ? 'text-prestige'
+                              : 'text-zinc-500'
+                        }
+                      >
+                        {cardStatusLabel}
+                      </span>
+                      <span className="text-zinc-500">
+                        {scheduledTimeLabel}
+                      </span>
                     </div>
                     {playoffLabel && (
                       <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-500 mt-1">
@@ -277,7 +337,6 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
                       </div>
                     )}
                   </div>
-                  <span className="font-mono text-[11px] text-zinc-500">{game.gameId.toUpperCase()}</span>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-5 items-center">
@@ -334,13 +393,6 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
                 <div className="h-px bg-gradient-to-r from-transparent via-white/15 to-transparent my-4" />
 
                 <div className="rounded-xl border border-white/10 bg-[#121212] px-4 py-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500">Box Score (R/H/E)</p>
-                    <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500">
-                      {game.status === 'completed' ? 'Final' : 'Scheduled'}
-                    </p>
-                  </div>
-
                   <div className="grid grid-cols-[52px_minmax(0,1fr)_48px_48px_48px] gap-x-2 text-sm font-mono items-center">
                     <span className="text-zinc-500"></span>
                     <span className="text-zinc-500 uppercase">Team</span>
@@ -368,4 +420,5 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
       </div>
     </section>
   </div>
-);
+  );
+};

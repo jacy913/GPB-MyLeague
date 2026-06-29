@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRightLeft,
   ChevronRight,
@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import {
   Game,
-  PlayLogEvent,
   Player,
   PlayerBattingRatings,
   PlayerPitchingRatings,
@@ -20,6 +19,18 @@ import {
   PlayerTransaction,
   Team,
 } from '../types';
+import {
+  buildGameIndexes,
+  buildGameStoryCandidates,
+  buildTransactionIndexes,
+  buildTransactionStoryCandidates,
+  formatTickerGame,
+  formatTickerTransaction,
+  generateHeadlineDeck,
+  getFeaturedGame,
+  type GameStoryCacheEntry,
+  type StoryCandidate,
+} from '../logic/headlineEngine';
 import { isPlayoffGame, isRegularSeasonGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
@@ -80,58 +91,6 @@ type Milestone = {
   phase: 'regular' | 'playoffs' | 'offseason';
 };
 
-type HeadlineCard = {
-  headline: string;
-  summary: string;
-  accent: string;
-  game: Game | null;
-};
-
-type HeadlineDeck = {
-  primary: HeadlineCard;
-  secondary: HeadlineCard[];
-  sourceDate: string | null;
-};
-
-type StoryCandidate = HeadlineCard & {
-  priority: number;
-};
-
-type TransactionStoryCandidate = HeadlineCard & {
-  priority: number;
-  key: string;
-};
-
-type DerivedBattingLine = {
-  playerId: string;
-  playerName: string;
-  teamId: string;
-  plateAppearances: number;
-  atBats: number;
-  hits: number;
-  homeRuns: number;
-  walks: number;
-  strikeouts: number;
-  rbi: number;
-};
-
-type DerivedPitchingLine = {
-  playerId: string;
-  playerName: string;
-  teamId: string;
-  outsRecorded: number;
-  hitsAllowed: number;
-  walks: number;
-  strikeouts: number;
-  runsAllowed: number;
-};
-
-type FeaturedGameCard = {
-  game: Game;
-  lore: string;
-  angle: string;
-};
-
 type MvpCandidate = {
   playerId: string;
   playerName: string;
@@ -139,9 +98,6 @@ type MvpCandidate = {
   odds: number;
   summary: string;
 };
-
-const compareGameOrder = (left: Game, right: Game): number =>
-  left.date === right.date ? left.gameId.localeCompare(right.gameId) : left.date.localeCompare(right.date);
 
 const addDays = (isoDate: string, days: number): string => {
   const date = new Date(`${isoDate}T00:00:00Z`);
@@ -181,681 +137,6 @@ const normalizeOdds = (
     ...entry,
     odds: total > 0 ? Number(((positiveScores[index] / total) * 100).toFixed(1)) : 0,
   }));
-};
-
-const formatTickerTransaction = (
-  transaction: PlayerTransaction,
-  playersById: Map<string, Player>,
-  teamsById: Map<string, Team>,
-): string => {
-  const player = playersById.get(transaction.playerId);
-  const playerLabel = player ? `${player.firstName} ${player.lastName}` : 'Unknown Player';
-  const fromTeam = transaction.fromTeamId ? teamsById.get(transaction.fromTeamId) : null;
-  const toTeam = transaction.toTeamId ? teamsById.get(transaction.toTeamId) : null;
-  const fromLabel = fromTeam ? fromTeam.city : 'FA Pool';
-  const toLabel = toTeam ? toTeam.city : 'FA Pool';
-
-  if (transaction.eventType === 'traded') {
-    return `TRADE | ${playerLabel} shipped from ${fromLabel} to ${toLabel}`;
-  }
-
-  if (transaction.eventType === 'signed') {
-    return `SIGNING | ${playerLabel} joins ${toLabel}`;
-  }
-
-  if (transaction.eventType === 'released') {
-    return `RELEASE | ${playerLabel} departs ${fromLabel}`;
-  }
-
-  return `${transaction.eventType.toUpperCase()} | ${playerLabel}`;
-};
-
-const formatTickerGame = (game: Game, teamsById: Map<string, Team>): string => {
-  const awayTeam = teamsById.get(game.awayTeam);
-  const homeTeam = teamsById.get(game.homeTeam);
-  const awayLabel = awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase();
-  const homeLabel = homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase();
-  const gameTag = isPlayoffGame(game) ? 'PL' : 'REG';
-  return `${gameTag} | ${awayLabel} ${game.score.away} - ${homeLabel} ${game.score.home}`;
-};
-
-const parseStoredLogs = (game: Game): PlayLogEvent[] => {
-  const raw = typeof game.stats.playLog === 'string' ? game.stats.playLog : null;
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    return JSON.parse(raw) as PlayLogEvent[];
-  } catch {
-    return [];
-  }
-};
-
-const formatInningsPitched = (outsRecorded: number): string => `${Math.floor(outsRecorded / 3)}.${outsRecorded % 3}`;
-
-const createStory = (
-  priority: number,
-  headline: string,
-  summary: string,
-  accent: string,
-  game: Game,
-): StoryCandidate => ({
-  priority,
-  headline,
-  summary,
-  accent,
-  game,
-});
-
-const createTransactionStory = (
-  priority: number,
-  key: string,
-  headline: string,
-  summary: string,
-  accent: string,
-): TransactionStoryCandidate => ({
-  priority,
-  key,
-  headline,
-  summary,
-  accent,
-  game: null,
-});
-
-const buildGameStoryCandidates = (
-  game: Game,
-  teamsById: Map<string, Team>,
-  battingStatsByPlayerId: Map<string, PlayerSeasonBatting>,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): StoryCandidate[] => {
-  const fallback = createGameHeadline(game, teamsById);
-  const logs = parseStoredLogs(game);
-  if (logs.length === 0) {
-    return [{ ...fallback, priority: getHeadlinePriorityScore(game) }];
-  }
-
-  const battingByPlayer = new Map<string, DerivedBattingLine>();
-  const pitchingByPlayer = new Map<string, DerivedPitchingLine>();
-  let previousInning = logs[0]?.inning ?? 1;
-  let previousHalf = logs[0]?.half ?? 'top';
-  let previousOuts = 0;
-  let awayLargestDeficit = 0;
-  let homeLargestDeficit = 0;
-
-  const getBattingLine = (log: PlayLogEvent): DerivedBattingLine | null => {
-    if (!log.batterId) {
-      return null;
-    }
-
-    const existing = battingByPlayer.get(log.batterId);
-    if (existing) {
-      return existing;
-    }
-
-    const next: DerivedBattingLine = {
-      playerId: log.batterId,
-      playerName: log.batterName ?? 'Unknown Batter',
-      teamId: log.battingTeamId,
-      plateAppearances: 0,
-      atBats: 0,
-      hits: 0,
-      homeRuns: 0,
-      walks: 0,
-      strikeouts: 0,
-      rbi: 0,
-    };
-    battingByPlayer.set(log.batterId, next);
-    return next;
-  };
-
-  const getPitchingLine = (log: PlayLogEvent): DerivedPitchingLine | null => {
-    if (!log.pitcherId) {
-      return null;
-    }
-
-    const existing = pitchingByPlayer.get(log.pitcherId);
-    if (existing) {
-      return existing;
-    }
-
-    const next: DerivedPitchingLine = {
-      playerId: log.pitcherId,
-      playerName: log.pitcherName ?? 'Unknown Pitcher',
-      teamId: log.battingTeamId === game.awayTeam ? game.homeTeam : game.awayTeam,
-      outsRecorded: 0,
-      hitsAllowed: 0,
-      walks: 0,
-      strikeouts: 0,
-      runsAllowed: 0,
-    };
-    pitchingByPlayer.set(log.pitcherId, next);
-    return next;
-  };
-
-  for (const log of logs) {
-    if (log.outcome === 'HALF_END') {
-      previousInning = log.inning;
-      previousHalf = log.half;
-      previousOuts = 0;
-      continue;
-    }
-
-    if (log.outcome === 'GAME_END' || log.outcome === 'PITCHING_CHANGE') {
-      continue;
-    }
-
-    awayLargestDeficit = Math.max(awayLargestDeficit, log.scoreHome - log.scoreAway);
-    homeLargestDeficit = Math.max(homeLargestDeficit, log.scoreAway - log.scoreHome);
-
-    const battingLine = getBattingLine(log);
-    if (battingLine) {
-      battingLine.plateAppearances += 1;
-      if (log.outcome !== 'BB') {
-        battingLine.atBats += 1;
-      }
-      if (log.outcome === '1B' || log.outcome === '2B' || log.outcome === '3B' || log.outcome === 'HR') {
-        battingLine.hits += 1;
-      }
-      if (log.outcome === 'HR') {
-        battingLine.homeRuns += 1;
-      }
-      if (log.outcome === 'BB') {
-        battingLine.walks += 1;
-      }
-      if (log.outcome === 'SO') {
-        battingLine.strikeouts += 1;
-      }
-      battingLine.rbi += log.rbi;
-    }
-
-    const pitchingLine = getPitchingLine(log);
-    if (pitchingLine) {
-      const outsRecorded =
-        log.inning === previousInning && log.half === previousHalf
-          ? Math.max(0, log.outs - previousOuts)
-          : Math.max(0, log.outs);
-      pitchingLine.outsRecorded += outsRecorded;
-      if (log.outcome === '1B' || log.outcome === '2B' || log.outcome === '3B' || log.outcome === 'HR') {
-        pitchingLine.hitsAllowed += 1;
-      }
-      if (log.outcome === 'BB') {
-        pitchingLine.walks += 1;
-      }
-      if (log.outcome === 'SO') {
-        pitchingLine.strikeouts += 1;
-      }
-      pitchingLine.runsAllowed += log.runsScored;
-    }
-
-    previousInning = log.inning;
-    previousHalf = log.half;
-    previousOuts = log.outs;
-  }
-
-  const stories: StoryCandidate[] = [];
-  const awayTeam = teamsById.get(game.awayTeam);
-  const homeTeam = teamsById.get(game.homeTeam);
-  const winnerTeam = game.score.away > game.score.home ? awayTeam : homeTeam;
-  const loserTeam = game.score.away > game.score.home ? homeTeam : awayTeam;
-  const noHitOpponentId =
-    typeof game.stats.awayHits === 'number' && game.stats.awayHits === 0
-      ? game.awayTeam
-      : typeof game.stats.homeHits === 'number' && game.stats.homeHits === 0
-        ? game.homeTeam
-        : null;
-
-  if (noHitOpponentId) {
-    const pitchingTeamId = noHitOpponentId === game.awayTeam ? game.homeTeam : game.awayTeam;
-    const pitchingTeam = teamsById.get(pitchingTeamId);
-    const opponentTeam = teamsById.get(noHitOpponentId);
-    const leadPitcher = [...pitchingByPlayer.values()]
-      .filter((line) => line.teamId === pitchingTeamId)
-      .sort((left, right) => right.outsRecorded - left.outsRecorded || right.strikeouts - left.strikeouts)[0];
-
-    stories.push(
-      createStory(
-        180,
-        'NO-HIT IMMORTALITY',
-        `${leadPitcher?.playerName ?? pitchingTeam?.city ?? 'The staff'} erased ${opponentTeam?.city ?? 'the lineup'} from the hit column and authored the day's loudest statement.`,
-        'from-[#61470a] via-[#191919] to-[#0f3a39]',
-        game,
-      ),
-    );
-  }
-
-  const topSlugger = [...battingByPlayer.values()].sort(
-    (left, right) =>
-      right.homeRuns - left.homeRuns ||
-      right.rbi - left.rbi ||
-      right.hits - left.hits ||
-      left.playerName.localeCompare(right.playerName),
-  )[0];
-  if (topSlugger?.homeRuns >= 3) {
-    const sluggerTeam = teamsById.get(topSlugger.teamId);
-    stories.push(
-      createStory(
-        165,
-        'THREE-HOMER INFERNO',
-        `${topSlugger.playerName} launched ${topSlugger.homeRuns} balls out of the yard and carried ${sluggerTeam?.city ?? 'his club'} through a volcanic offensive night.`,
-        'from-[#5f2f09] via-[#1a1a1a] to-[#3b190c]',
-        game,
-      ),
-    );
-  }
-
-  const topRunProducer = [...battingByPlayer.values()].sort(
-    (left, right) => right.rbi - left.rbi || right.hits - left.hits || left.playerName.localeCompare(right.playerName),
-  )[0];
-  if (topRunProducer?.rbi >= 6) {
-    const producerTeam = teamsById.get(topRunProducer.teamId);
-    stories.push(
-      createStory(
-        150,
-        'RBI BARRAGE',
-        `${topRunProducer.playerName} drove in ${topRunProducer.rbi} runs for ${producerTeam?.city ?? 'his club'} and turned every traffic jam into damage.`,
-        'from-[#5d3008] via-[#1a1a1a] to-[#0f372d]',
-        game,
-      ),
-    );
-  }
-
-  const topHitCollector = [...battingByPlayer.values()].sort(
-    (left, right) => right.hits - left.hits || right.rbi - left.rbi || left.playerName.localeCompare(right.playerName),
-  )[0];
-  if (topHitCollector?.hits >= 4) {
-    const hitTeam = teamsById.get(topHitCollector.teamId);
-    stories.push(
-      createStory(
-        140,
-        'FOUR-HIT FURY',
-        `${topHitCollector.playerName} stacked ${topHitCollector.hits} hits for ${hitTeam?.city ?? 'his club'} and never let the game breathe.`,
-        'from-[#4f3509] via-[#1c1c1c] to-[#14352f]',
-        game,
-      ),
-    );
-  }
-
-  const topArm = [...pitchingByPlayer.values()].sort(
-    (left, right) =>
-      right.strikeouts - left.strikeouts ||
-      right.outsRecorded - left.outsRecorded ||
-      left.playerName.localeCompare(right.playerName),
-  )[0];
-  if (topArm && topArm.strikeouts >= 12 && topArm.runsAllowed <= 2) {
-    const armTeam = teamsById.get(topArm.teamId);
-    stories.push(
-      createStory(
-        155,
-        'BAT-MISSING CLINIC',
-        `${topArm.playerName} carved through ${loserTeam?.city ?? 'the opposition'} with ${topArm.strikeouts} strikeouts across ${formatInningsPitched(topArm.outsRecorded)} innings.`,
-        'from-[#69550d] via-[#1a1a1a] to-[#0d2f3f]',
-        game,
-      ),
-    );
-    if ((pitchingRatingsByPlayerId.get(topArm.playerId)?.overall ?? 0) >= 90) {
-      stories.push(
-        createStory(
-          148,
-          'THE ACE LOOKED UNTAMED',
-          `${topArm.playerName} played to his rating for ${armTeam?.city ?? 'his club'} and made an elite outing feel routine.`,
-          'from-[#5c460c] via-[#1b1b1b] to-[#163229]',
-          game,
-        ),
-      );
-    }
-  }
-
-  if ((game.score.away > game.score.home && awayLargestDeficit >= 4) || (game.score.home > game.score.away && homeLargestDeficit >= 4)) {
-    stories.push(
-      createStory(
-        145,
-        'COMEBACK THUNDER',
-        `${winnerTeam?.city ?? 'The winner'} clawed back from a deep hole and flipped the script on ${loserTeam?.city ?? 'its rival'} before the final out.`,
-        'from-[#563a08] via-[#1c1c1c] to-[#0f3a31]',
-        game,
-      ),
-    );
-  }
-
-  const coldStar = [...battingByPlayer.values()]
-    .filter((line) => {
-      const rating = battingRatingsByPlayerId.get(line.playerId);
-      const stat = battingStatsByPlayerId.get(line.playerId);
-      return Boolean(
-        rating &&
-          rating.overall >= 88 &&
-          line.atBats >= 4 &&
-          line.hits === 0 &&
-          line.strikeouts >= 2 &&
-          ((stat?.avg ?? 0) >= 0.29 || (stat?.ops ?? 0) >= 0.85),
-      );
-    })
-    .sort(
-      (left, right) =>
-        (battingRatingsByPlayerId.get(right.playerId)?.overall ?? 0) - (battingRatingsByPlayerId.get(left.playerId)?.overall ?? 0) ||
-        right.strikeouts - left.strikeouts,
-    )[0];
-
-  if (coldStar) {
-    const coldTeam = teamsById.get(coldStar.teamId);
-    const rating = battingRatingsByPlayerId.get(coldStar.playerId);
-    stories.push(
-      createStory(
-        142,
-        'STAR GOES COLD',
-        `${coldStar.playerName} came in swinging like an ${rating?.overall ?? 0}-OVR force, then went 0-for-${coldStar.atBats} with ${coldStar.strikeouts} strikeouts for ${coldTeam?.city ?? 'his club'}.`,
-        'from-[#4b2c10] via-[#1b1b1b] to-[#252525]',
-        game,
-      ),
-    );
-  }
-
-  const crackedAce = [...pitchingByPlayer.values()]
-    .filter((line) => (pitchingRatingsByPlayerId.get(line.playerId)?.overall ?? 0) >= 90 && line.runsAllowed >= 5 && line.outsRecorded <= 15)
-    .sort(
-      (left, right) =>
-        right.runsAllowed - left.runsAllowed ||
-        (pitchingRatingsByPlayerId.get(right.playerId)?.overall ?? 0) - (pitchingRatingsByPlayerId.get(left.playerId)?.overall ?? 0),
-    )[0];
-
-  if (crackedAce) {
-    const aceTeam = teamsById.get(crackedAce.teamId);
-    stories.push(
-      createStory(
-        138,
-        'THE ACE CRACKED',
-        `${crackedAce.playerName} never settled for ${aceTeam?.city ?? 'his club'}, allowing ${crackedAce.runsAllowed} runs before the game could breathe.`,
-        'from-[#492a0d] via-[#1c1c1c] to-[#311516]',
-        game,
-      ),
-    );
-  }
-
-  stories.push({ ...fallback, priority: getHeadlinePriorityScore(game) + (isPlayoffGame(game) ? 12 : 0) });
-
-  return stories;
-};
-
-const getHeadlinePriorityScore = (game: Game): number => {
-  const margin = Math.abs(game.score.away - game.score.home);
-  const totalRuns = game.score.away + game.score.home;
-  let score = totalRuns * 2 + margin * 5;
-
-  if (isPlayoffGame(game)) {
-    score += 40;
-  }
-
-  if (game.score.away === 0 || game.score.home === 0) {
-    score += 18;
-  }
-
-  if (margin <= 1) {
-    score += 10;
-  }
-
-  return score;
-};
-
-const createGameHeadline = (game: Game, teamsById: Map<string, Team>): HeadlineCard => {
-  const awayTeam = teamsById.get(game.awayTeam);
-  const homeTeam = teamsById.get(game.homeTeam);
-  const margin = Math.abs(game.score.away - game.score.home);
-  const totalRuns = game.score.away + game.score.home;
-  const awayWon = game.score.away > game.score.home;
-  const winner = awayWon ? awayTeam : homeTeam;
-  const loser = awayWon ? homeTeam : awayTeam;
-
-  if (game.score.away === 0 || game.score.home === 0 || totalRuns <= 2) {
-    return {
-      headline: 'A MASTERCLASS ON THE MOUND',
-      summary: `${winner?.city ?? 'A contender'} smothered ${loser?.city ?? 'the opposition'} in a low-scoring showcase that sent shockwaves through the league.`,
-      accent: 'from-[#6a560d] via-[#1d1d1d] to-[#132f2a]',
-      game,
-    };
-  }
-
-  if (margin >= 7) {
-    return {
-      headline: 'TOTAL DOMINATION',
-      summary: `${winner?.city ?? 'The winner'} turned the latest slate into a statement, rolling to a ${game.score.away}-${game.score.home} finish that shifted the tone of the season.`,
-      accent: 'from-[#4a3408] via-[#191919] to-[#12352d]',
-      game,
-    };
-  }
-
-  if (isPlayoffGame(game)) {
-    return {
-      headline: 'OCTOBER PRESSURE RISING',
-      summary: `${winner?.city ?? 'The winner'} tightened its grip on the postseason spotlight and forced the bracket to react.`,
-      accent: 'from-[#5a450b] via-[#1f1f1f] to-[#0d2f43]',
-      game,
-    };
-  }
-
-  return {
-    headline: 'THE RACE TIGHTENS',
-    summary: `${winner?.city ?? 'The victor'} edged ${loser?.city ?? 'its rival'} and added another layer of drama to the standings chase.`,
-    accent: 'from-[#45340c] via-[#1d1d1d] to-[#10362f]',
-    game,
-  };
-};
-
-const buildTransactionStoryCandidates = (
-  transactions: PlayerTransaction[],
-  playersById: Map<string, Player>,
-  teamsById: Map<string, Team>,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-  timelineDate: string,
-): TransactionStoryCandidate[] => {
-  const targetDate = timelineDate || transactions[0]?.effectiveDate || '';
-  const sourceTransactions = [...transactions]
-    .filter((transaction) => (transaction.eventType === 'signed' || transaction.eventType === 'traded') && (!targetDate || transaction.effectiveDate === targetDate))
-    .sort((left, right) => right.effectiveDate.localeCompare(left.effectiveDate));
-
-  return sourceTransactions.map((transaction) => {
-    const player = playersById.get(transaction.playerId);
-    const team = transaction.toTeamId ? teamsById.get(transaction.toTeamId) ?? null : null;
-    const overall = player
-      ? battingRatingsByPlayerId.get(player.playerId)?.overall ?? pitchingRatingsByPlayerId.get(player.playerId)?.overall ?? 0
-      : 0;
-    const playerName = player ? `${player.firstName} ${player.lastName}` : 'Unknown Player';
-    const teamCity = team?.city ?? 'A contender';
-    const years = player?.contractYearsLeft ?? 0;
-
-    if (transaction.eventType === 'traded' && overall >= 86) {
-      return createTransactionStory(
-        235,
-        `trade:${transaction.playerId}:${transaction.effectiveDate}:${transaction.toTeamId ?? 'na'}`,
-        'SHAKEUP IN THE LEAGUE',
-        `${teamCity} acquired superstar ${playerName}${overall > 0 ? `, an ${overall}-OVR force,` : ''} in a blockbuster trade that could bend the pennant race.`,
-        'from-[#6b500c] via-[#1a1a1a] to-[#10383a]',
-      );
-    }
-
-    if (overall >= 88) {
-      return createTransactionStory(
-        220,
-        `signing:${transaction.playerId}:${transaction.effectiveDate}`,
-        'THE MARKET JUST SHOOK',
-        `${teamCity} landed ${playerName}, an ${overall}-OVR prize, on a ${years}-year swing that instantly changes the league map.`,
-        'from-[#6a560d] via-[#1b1b1b] to-[#0d3b34]',
-      );
-    }
-
-    if (overall >= 80) {
-      return createTransactionStory(
-        185,
-        `signing:${transaction.playerId}:${transaction.effectiveDate}`,
-        'A FRANCHISE BET IN FREE AGENCY',
-        `${teamCity} moved aggressively for ${playerName}, locking in a ${years}-year commitment to patch a real roster need.`,
-        'from-[#5c430a] via-[#1a1a1a] to-[#153531]',
-      );
-    }
-
-    return createTransactionStory(
-      150,
-      `signing:${transaction.playerId}:${transaction.effectiveDate}`,
-      'FREE AGENCY BOARD MOVES',
-      `${teamCity} brought in ${playerName} on a ${years}-year deal, signaling a fresh roster direction before the next slate.`,
-      'from-[#4e3908] via-[#1c1c1c] to-[#12312d]',
-    );
-  });
-};
-
-const generateHeadlineDeck = (
-  games: Game[],
-  teamsById: Map<string, Team>,
-  timelineDate: string,
-  transactions: PlayerTransaction[],
-  playersById: Map<string, Player>,
-  battingStatsByPlayerId: Map<string, PlayerSeasonBatting>,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): HeadlineDeck => {
-  const recentCompleted = [...games]
-    .filter((game) => game.status === 'completed')
-    .sort((left, right) => compareGameOrder(right, left));
-
-  const transactionStories = buildTransactionStoryCandidates(
-    transactions,
-    playersById,
-    teamsById,
-    battingRatingsByPlayerId,
-    pitchingRatingsByPlayerId,
-    timelineDate,
-  );
-
-  if (recentCompleted.length === 0 && transactionStories.length === 0) {
-    return {
-      primary: {
-        headline: 'THE PENNANT RACE BEGINS',
-        summary: 'The GPB calendar is live. Storylines, rivalries, and title pressure will build as the season unfolds.',
-        accent: 'from-[#3d2f09] via-[#1f1f1f] to-[#0d3a33]',
-        game: null,
-      },
-      secondary: [],
-      sourceDate: null,
-    };
-  }
-
-  if (recentCompleted.length === 0 && transactionStories.length > 0) {
-    return {
-      primary: transactionStories[0],
-      secondary: transactionStories.slice(1, 4),
-      sourceDate: timelineDate || transactions[0]?.effectiveDate || null,
-    };
-  }
-
-  const targetDate = timelineDate ? addDays(timelineDate, -1) : recentCompleted[0].date;
-  let sourceDate = targetDate;
-  let sourceGames = recentCompleted.filter((game) => game.date === sourceDate);
-
-  if (sourceGames.length === 0) {
-    sourceDate = recentCompleted[0].date;
-    sourceGames = recentCompleted.filter((game) => game.date === sourceDate);
-  }
-
-  const rankedStories = sourceGames
-    .flatMap((game) =>
-      buildGameStoryCandidates(game, teamsById, battingStatsByPlayerId, battingRatingsByPlayerId, pitchingRatingsByPlayerId),
-    )
-    .sort((left, right) => right.priority - left.priority || compareGameOrder(right.game ?? recentCompleted[0], left.game ?? recentCompleted[0]));
-
-  const uniqueStories: StoryCandidate[] = [];
-  const seen = new Set<string>();
-  for (const story of transactionStories) {
-    if (seen.has(story.key)) {
-      continue;
-    }
-    seen.add(story.key);
-    uniqueStories.push(story);
-  }
-  for (const story of rankedStories) {
-    const key = `${story.game?.gameId ?? 'none'}:${story.headline}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    uniqueStories.push(story);
-  }
-
-  if (uniqueStories.length < 4) {
-    for (const game of recentCompleted) {
-      const key = `${game.gameId}:fallback`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      uniqueStories.push({ ...createGameHeadline(game, teamsById), priority: getHeadlinePriorityScore(game) });
-      if (uniqueStories.length >= 4) {
-        break;
-      }
-    }
-  }
-
-  return {
-    primary: uniqueStories[0],
-    secondary: uniqueStories.slice(1, 4),
-    sourceDate,
-  };
-};
-
-const getFeaturedGame = (todaysGames: Game[], teamsById: Map<string, Team>): FeaturedGameCard | null => {
-  const candidates = todaysGames
-    .map((game) => {
-      const awayTeam = teamsById.get(game.awayTeam);
-      const homeTeam = teamsById.get(game.homeTeam);
-      if (!awayTeam || !homeTeam) {
-        return null;
-      }
-
-      const awayPct = getWinPct(awayTeam);
-      const homePct = getWinPct(homeTeam);
-      const sameDivision = awayTeam.league === homeTeam.league && awayTeam.division === homeTeam.division;
-      const sameLeague = awayTeam.league === homeTeam.league;
-      const ratingGap = Math.abs(awayTeam.rating - homeTeam.rating);
-
-      let score = (awayPct + homePct) * 100;
-      score += sameDivision ? 35 : 0;
-      score += sameLeague ? 10 : 0;
-      score += awayPct >= 0.58 && homePct >= 0.58 ? 20 : 0;
-      score += ratingGap <= 3 ? 8 : 0;
-      score += isPlayoffGame(game) ? 45 : 0;
-
-      let angle = 'Spotlight Game';
-      let lore = `${awayTeam.city} and ${homeTeam.city} square off in a meaningful test.`;
-
-      if (isPlayoffGame(game)) {
-        angle = 'Postseason Pressure';
-        lore = `${game.playoff?.seriesLabel ?? 'Playoff baseball'} intensifies as every inning starts to shape the bracket.`;
-      } else if (sameDivision) {
-        angle = 'Division Rivalry';
-        lore = `A crucial ${awayTeam.league} ${awayTeam.division} clash with massive playoff implications.`;
-      } else if (awayPct >= 0.58 && homePct >= 0.58) {
-        angle = 'Title Contenders';
-        lore = 'Two contenders collide in a measuring-stick matchup that could echo into October.';
-      } else if (sameLeague) {
-        angle = `${awayTeam.league} Spotlight`;
-        lore = `League positioning is on the line as ${awayTeam.city} and ${homeTeam.city} fight for ground.`;
-      }
-
-      return { game, score, angle, lore };
-    })
-    .filter((entry): entry is { game: Game; score: number; angle: string; lore: string } => Boolean(entry))
-    .sort((left, right) => right.score - left.score || compareGameOrder(left.game, right.game));
-
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  return {
-    game: candidates[0].game,
-    angle: candidates[0].angle,
-    lore: candidates[0].lore,
-  };
 };
 
 const getMilestones = (games: Game[]): Milestone[] => {
@@ -956,8 +237,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const [tradeFromPlayerId, setTradeFromPlayerId] = useState('');
   const [tradeToPlayerId, setTradeToPlayerId] = useState('');
 
+  const gameStoryCacheRef = useRef<Map<string, GameStoryCacheEntry>>(new Map());
+  const gameStoryCacheDependenciesRef = useRef<{
+    teamsById: Map<string, Team> | null;
+    battingStatsByPlayerId: Map<string, PlayerSeasonBatting> | null;
+    battingRatingsByPlayerId: Map<string, PlayerBattingRatings> | null;
+    pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings> | null;
+  }>({
+    teamsById: null,
+    battingStatsByPlayerId: null,
+    battingRatingsByPlayerId: null,
+    pitchingRatingsByPlayerId: null,
+  });
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const playersById = useMemo(() => new Map(players.map((player) => [player.playerId, player])), [players]);
+  const gameIndexes = useMemo(() => buildGameIndexes(games), [games]);
+  const transactionIndexes = useMemo(() => buildTransactionIndexes(transactions), [transactions]);
   const battingStatsByPlayerId = useMemo(() => {
     const next = new Map<string, PlayerSeasonBatting>();
     battingStats.forEach((stat) => {
@@ -982,25 +277,105 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     () => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
     [pitchingStats],
   );
+  if (
+    gameStoryCacheDependenciesRef.current.teamsById !== teamsById ||
+    gameStoryCacheDependenciesRef.current.battingStatsByPlayerId !== battingStatsByPlayerId ||
+    gameStoryCacheDependenciesRef.current.battingRatingsByPlayerId !== battingRatingsByPlayerId ||
+    gameStoryCacheDependenciesRef.current.pitchingRatingsByPlayerId !== pitchingRatingsByPlayerId
+  ) {
+    gameStoryCacheRef.current.clear();
+    gameStoryCacheDependenciesRef.current = {
+      teamsById,
+      battingStatsByPlayerId,
+      battingRatingsByPlayerId,
+      pitchingRatingsByPlayerId,
+    };
+  }
+
   const timelineDate = currentDate || selectedDate || games[0]?.date || '';
   const todaysGames = useMemo(
-    () => games.filter((game) => game.date === timelineDate).sort(compareGameOrder),
-    [games, timelineDate],
+    () => gameIndexes.gamesByDate.get(timelineDate) ?? [],
+    [gameIndexes, timelineDate],
   );
-  const headlineDeck = useMemo(
+  const headlineTransactionDate = timelineDate || transactionIndexes.spotlightTransactionsDesc[0]?.effectiveDate || '';
+  const headlineTransactionStories = useMemo(
     () =>
-      generateHeadlineDeck(
-        games,
-        teamsById,
-        timelineDate,
-        transactions,
+      buildTransactionStoryCandidates(
+        headlineTransactionDate
+          ? transactionIndexes.spotlightTransactionsByDate.get(headlineTransactionDate) ?? []
+          : transactionIndexes.spotlightTransactionsDesc,
         playersById,
-        battingStatsByPlayerId,
+        teamsById,
         battingRatingsByPlayerId,
         pitchingRatingsByPlayerId,
       ),
-    [games, teamsById, timelineDate, transactions, playersById, battingStatsByPlayerId, battingRatingsByPlayerId, pitchingRatingsByPlayerId],
+    [
+      battingRatingsByPlayerId,
+      headlineTransactionDate,
+      pitchingRatingsByPlayerId,
+      playersById,
+      teamsById,
+      transactionIndexes,
+    ],
   );
+  const headlineDeck = useMemo(() => {
+    const getGameStoryCandidates = (game: Game): StoryCandidate[] => {
+      const rawPlayLog = typeof game.stats.playLog === 'string' ? game.stats.playLog : null;
+      const awayHits = typeof game.stats.awayHits === 'number' ? game.stats.awayHits : null;
+      const homeHits = typeof game.stats.homeHits === 'number' ? game.stats.homeHits : null;
+      const isPlayoff = isPlayoffGame(game);
+      const cached = gameStoryCacheRef.current.get(game.gameId);
+
+      if (
+        cached &&
+        cached.rawPlayLog === rawPlayLog &&
+        cached.awayScore === game.score.away &&
+        cached.homeScore === game.score.home &&
+        cached.awayHits === awayHits &&
+        cached.homeHits === homeHits &&
+        cached.isPlayoff === isPlayoff
+      ) {
+        return cached.stories;
+      }
+
+      const stories = buildGameStoryCandidates(
+        game,
+        teamsById,
+        battingStatsByPlayerId,
+        battingRatingsByPlayerId,
+        pitchingRatingsByPlayerId,
+      );
+      gameStoryCacheRef.current.set(game.gameId, {
+        rawPlayLog,
+        awayScore: game.score.away,
+        homeScore: game.score.home,
+        awayHits,
+        homeHits,
+        isPlayoff,
+        stories,
+      });
+
+      return stories;
+    };
+
+    return generateHeadlineDeck(
+      gameIndexes,
+      teamsById,
+      timelineDate,
+      headlineTransactionStories,
+      getGameStoryCandidates,
+      headlineTransactionDate || null,
+    );
+  }, [
+    battingStatsByPlayerId,
+    battingRatingsByPlayerId,
+    gameIndexes,
+    headlineTransactionDate,
+    headlineTransactionStories,
+    pitchingRatingsByPlayerId,
+    teamsById,
+    timelineDate,
+  ]);
   const headline = headlineDeck.primary;
   const featuredGame = useMemo(() => getFeaturedGame(todaysGames, teamsById), [todaysGames, teamsById]);
   const battingMvpCandidates = useMemo(() => {
@@ -1079,19 +454,16 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     [games, milestones, timelineDate],
   );
   const recentTickerItems = useMemo(() => {
-    const recentGames = [...games]
-      .filter((game) => game.status === 'completed')
-      .sort((left, right) => compareGameOrder(right, left))
+    const recentGames = gameIndexes.completedGamesDesc
       .slice(0, 10)
       .map((game) => formatTickerGame(game, teamsById));
-    const recentTransactions = [...transactions]
-      .sort((left, right) => right.effectiveDate.localeCompare(left.effectiveDate))
+    const recentTransactions = transactionIndexes.sortedTransactionsDesc
       .slice(0, 6)
       .map((transaction) => formatTickerTransaction(transaction, playersById, teamsById));
 
     const items = [...recentGames, ...recentTransactions];
     return items.length > 0 ? items : ['LEAGUE OFFICE | Headlines, scores, and transactions will stream here as the season develops.'];
-  }, [games, playersById, teamsById, transactions]);
+  }, [gameIndexes, playersById, teamsById, transactionIndexes]);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? teams[0] ?? null;
   const divisionSnapshots = useMemo(() => {

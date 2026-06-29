@@ -1900,6 +1900,11 @@ function App() {
       return;
     }
 
+    if (seasonComplete && !awardsSavedForCurrentOffseason) {
+      pushNotice('Save the season award winners before resetting. History is only archived after awards are saved.', 'warning');
+      return;
+    }
+
     if (seasonComplete && offseasonStage !== 'free_agency') {
       const nextStepMessage = offseasonStage === 'draft_lottery'
         ? 'Run the draft lottery first.'
@@ -2006,6 +2011,7 @@ function App() {
     isSimulating,
     isFinalizingSimulation,
     seasonComplete,
+    awardsSavedForCurrentOffseason,
     offseasonStage,
     currentDate,
     games,
@@ -2022,6 +2028,20 @@ function App() {
   ]);
 
   const handleSaveSettings = (newTeams: Team[], newSettings: SimulationSettings) => {
+    if (seasonComplete && !awardsSavedForCurrentOffseason) {
+      pushNotice('Save the season award winners before resetting. History is only archived after awards are saved.', 'warning');
+      return;
+    }
+
+    if (seasonComplete && offseasonStage !== 'free_agency') {
+      const nextStepMessage = offseasonStage === 'draft_lottery'
+        ? 'Run the draft lottery first.'
+        : 'Finish the draft before moving to free agency.';
+      pushNotice(`${nextStepMessage} Offseason order is Draft Lottery -> Draft -> Free Agency.`, 'warning');
+      setView(offseasonStage === 'draft_lottery' ? 'lottery' : 'draft');
+      return;
+    }
+
     setSettings(newSettings);
     void resetSeason(newTeams, newSettings);
     pushNotice(
