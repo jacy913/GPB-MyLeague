@@ -351,7 +351,10 @@ const trackOffseason = (
       tracked.exit = {
         reason: 'aged_out',
         seasonYear,
-        age: beforeRow.age,
+        // Aged before removal, exactly like the retirement path below. Without
+        // the +1 every age-out reports a year under the FREE_AGENT_AGE_OUT it
+        // actually tripped, which put the whole spike on 34 instead of 35.
+        age: beforeRow.age + 1,
         overall: beforeRow.overall,
         yearsPro: beforeRow.yearsPro,
       };
