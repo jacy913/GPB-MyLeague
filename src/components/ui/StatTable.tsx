@@ -25,6 +25,15 @@ interface StatTableProps {
   sortColumn?: string;
   sortDirection?: 'asc' | 'desc';
   onSort?: (key: string) => void;
+  /**
+   * Makes every row a selectable target. A master-detail board -- pick a player,
+   * see their offers -- cannot be expressed by a plain table, and a separate
+   * list of divs would forfeit the column alignment this primitive exists to
+   * provide. Rows become real buttons for keyboard and screen-reader users
+   * rather than clickable table rows.
+   */
+  onRowSelect?: (id: string | number) => void;
+  selectedRowId?: string | number;
   playoffLineIndex?: number; // index after which to draw the playoff line
   wildCardLineIndex?: number; // index for wild card cut (dashed)
   className?: string;
@@ -50,6 +59,8 @@ export const StatTable: React.FC<StatTableProps> = ({
   sortColumn,
   sortDirection = 'desc',
   onSort,
+  onRowSelect,
+  selectedRowId,
   playoffLineIndex,
   wildCardLineIndex,
   className = '',
@@ -129,11 +140,26 @@ export const StatTable: React.FC<StatTableProps> = ({
           {rows.map((row, rowIndex) => (
             <React.Fragment key={row.id}>
               <tr
-                className={`border-b border-[color:color-mix(in_srgb,var(--color-chrome-lo)_40%,transparent)] ${row.className ?? ''}`}
+                className={`border-b border-[color:color-mix(in_srgb,var(--color-chrome-lo)_40%,transparent)] ${row.className ?? ''} ${
+                  onRowSelect ? 'cursor-pointer transition-colors hover:bg-[var(--color-panel-2)]' : ''
+                }`}
                 style={{
                   height: rowHeight,
-                  backgroundColor: rowIndex % 2 === 1 ? 'rgba(11,17,32,0.5)' : 'transparent',
+                  backgroundColor: selectedRowId === row.id
+                    ? 'var(--color-panel-3)'
+                    : rowIndex % 2 === 1 ? 'rgba(11,17,32,0.5)' : 'transparent',
                 }}
+                onClick={onRowSelect ? () => onRowSelect(row.id) : undefined}
+                onKeyDown={onRowSelect ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onRowSelect(row.id);
+                  }
+                } : undefined}
+                tabIndex={onRowSelect ? 0 : undefined}
+                role={onRowSelect ? 'button' : undefined}
+                aria-pressed={onRowSelect ? selectedRowId === row.id : undefined}
+                aria-selected={onRowSelect ? selectedRowId === row.id : undefined}
               >
                 {columns.map((col) => (
                   <td

@@ -8,7 +8,7 @@ import {
   PlayerTransaction,
   Team,
 } from '../types';
-import { TeamLogo } from './ui';
+import { Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 interface TradesHubProps {
   teams: Team[];
@@ -42,9 +42,8 @@ type TradeHistoryEntry = {
   detail: string;
 };
 
-const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#171717,#232323,#0f0f0f)]';
 const ACTION_FLASH_MS = 260;
-const CARD_INTRINSIC_SIZE = '980px';
+const CARD_INTRINSIC_SIZE = '760px';
 const TRADE_HISTORY_LIMIT = 18;
 
 const getCategoryLabel = (category: PendingTradeProposal['category']): string => {
@@ -141,6 +140,59 @@ const stripSwapPrefix = (notes: string | null): string | null => {
   return notes.slice('Swap return: '.length).trim() || null;
 };
 
+const playerColumns: StatTableColumn[] = [
+  { key: 'player', header: 'PLAYER' },
+  { key: 'pos', header: 'POS', align: 'right', isNumeric: true, width: '4ch' },
+  { key: 'age', header: 'AGE', align: 'right', isNumeric: true, width: '4ch' },
+  { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '4ch' },
+  { key: 'pot', header: 'POT', align: 'right', isNumeric: true, width: '4ch' },
+  { key: 'yrs', header: 'YRS', align: 'right', isNumeric: true, width: '4ch' },
+];
+
+const SidePanel: React.FC<{
+  role: string;
+  team: Team | null;
+  player: Player | null;
+  overall: number;
+  potential: number;
+  reason: string;
+}> = ({ role, team, player, overall, potential, reason }) => {
+  const rows: StatTableRow[] = [{
+    id: player?.playerId ?? 'unknown',
+    cells: {
+      player: player
+        ? <span className="truncate t-stat-sm">{player.firstName} {player.lastName}</span>
+        : <span className="t-stat-sm text-[var(--color-ink-faint)]">Roster data unavailable</span>,
+      pos: player?.primaryPosition ?? '--',
+      age: player?.age ?? '--',
+      ovr: <StatValue size="sm" variant="accent">{overall}</StatValue>,
+      pot: potential,
+      yrs: player?.contractYearsLeft ?? '--',
+    },
+  }];
+
+  return (
+    <Panel variant="sunken" className="flex flex-col gap-3 p-3">
+      <div className="flex items-center gap-3">
+        {team
+          ? <TeamLogo team={team} sizeClass="h-12 w-12" />
+          : <span className="flex h-12 w-12 items-center justify-center border border-dashed border-[var(--color-chrome-lo)]">
+              <UserRound className="h-5 w-5 text-[var(--color-ink-faint)]" aria-hidden="true" />
+            </span>}
+        <div className="min-w-0">
+          <p className="t-caption text-[var(--color-ink-faint)]">{role}</p>
+          <p className="truncate t-h3">{team ? `${team.city} ${team.name}` : 'Unknown Team'}</p>
+        </div>
+      </div>
+      <StatTable columns={playerColumns} rows={rows} density="dense" aria-label={`${role} player`} />
+      <p className="t-caption text-[var(--color-ink-dim)]">
+        {player ? `${player.bats}/${player.throws} · Age ${player.age}` : 'No active roster player.'}
+      </p>
+      <p className="t-caption text-[var(--color-ink-faint)]">{reason}</p>
+    </Panel>
+  );
+};
+
 const TradeProposalCard = React.memo(({
   trade,
   onApproveTrade,
@@ -192,136 +244,99 @@ const TradeProposalCard = React.memo(({
   const isActionLocked = resolvingAction !== null;
   const approveArmed = armedAction === 'approve';
   const vetoArmed = armedAction === 'veto';
-  const cardTone = isApproving
-    ? 'border-emerald-400/45 bg-[linear-gradient(135deg,rgba(16,185,129,0.18),#232323,#0f0f0f)]'
+
+  const tone = isApproving
+    ? 'border-[var(--color-pos)]'
     : isVetoing
-      ? 'border-rose-400/45 bg-[linear-gradient(135deg,rgba(244,63,94,0.16),#232323,#0f0f0f)]'
-      : sectionClass;
+      ? 'border-[var(--color-neg)]'
+      : '';
 
   return (
-    <article
-      className={`${cardTone} overflow-hidden p-6 transition-[border-color,background] duration-300`}
+    <Panel
+      className={`overflow-hidden ${tone}`}
       style={{ contentVisibility: 'auto', containIntrinsicSize: CARD_INTRINSIC_SIZE }}
     >
-      <div className="flex flex-col gap-4 border-b border-white/10 pb-5 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={`rounded-full border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-chrome-lo)] px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`border px-2 py-0.5 t-caption ${
               proposal.isBlockbuster
-                ? 'border-[#d4bb6a]/35 bg-[#d4bb6a]/12 text-[#ecd693]'
-                : 'border-white/10 bg-black/20 text-zinc-300'
+                ? 'border-[var(--color-gold)] bg-[var(--color-gold)] text-[var(--color-ink-invert)]'
+                : 'border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] text-[var(--color-ink-dim)]'
             }`}>
               {getCategoryLabel(proposal.category)}
             </span>
-            <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-              Need: {proposal.needSlot}
+            <span className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-0.5 t-caption text-[var(--color-ink-faint)]">
+              NEED {proposal.needSlot}
             </span>
           </div>
-          <p className="mt-3 font-headline text-4xl uppercase tracking-[0.06em] text-white">{proposal.summary}</p>
+          <h2 className="t-h2 mt-1 truncate">{proposal.summary}</h2>
         </div>
-
-        <div className="rounded-[1.5rem] border border-white/10 bg-black/20 px-5 py-4 text-center">
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Synergy</p>
-          <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-[#ecd693]">{proposal.synergy}%</p>
+        <div className="shrink-0 text-right">
+          <p className="t-caption text-[var(--color-ink-faint)]">SYNERGY</p>
+          <StatValue size="lg" variant="accent">{proposal.synergy}%</StatValue>
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)]">
-        <section className="rounded-[1.75rem] border border-white/10 bg-black/20 p-5">
-          <div className="flex items-center gap-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              {fromTeam ? <TeamLogo team={fromTeam} sizeClass="h-16 w-16" /> : <UserRound className="h-16 w-16 text-zinc-500" />}
+      <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_240px_minmax(0,1fr)]">
+        <SidePanel
+          role="SELLER SENDS"
+          team={fromTeam}
+          player={fromPlayer}
+          overall={fromOverall}
+          potential={fromPotential}
+          reason={proposal.fromTeamReason}
+        />
+
+        <Panel variant="sunken" className="flex flex-col gap-3 p-3">
+          {/* Proportional bar rather than the segmented Meter. The exact figure
+              is set beside it in display type, so a 20-cell gauge would add a
+              coarse second reading of a number already given to the point. */}
+          <div
+            className="h-2 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)]"
+            role="img"
+            aria-label={`Trade synergy ${proposal.synergy} percent`}
+          >
+            <div
+              className="h-full bg-[var(--color-gold)] transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-snap)]"
+              style={{ width: `${proposal.synergy}%` }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] p-2 text-center">
+              <p className="t-caption text-[var(--color-ink-faint)]">SELLER EASE</p>
+              <StatValue size="sm">{proposal.fromTeamInterest}%</StatValue>
             </div>
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Seller Sends</p>
-              <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">
-                {fromTeam ? `${fromTeam.city} ${fromTeam.name}` : 'Unknown Team'}
-              </p>
+            <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] p-2 text-center">
+              <p className="t-caption text-[var(--color-ink-faint)]">BUYER EASE</p>
+              <StatValue size="sm">{proposal.toTeamInterest}%</StatValue>
             </div>
           </div>
 
-          <div className="mt-5 grid gap-5 md:grid-cols-[120px_minmax(0,1fr)]">
-            <div className="flex items-center justify-center rounded-[1.5rem] border border-white/10 bg-gradient-to-br from-[#242424] to-[#111111] p-5">
-              <UserRound className="h-16 w-16 text-zinc-500" />
-            </div>
-            <div>
-              <p className="font-headline text-4xl uppercase tracking-[0.06em] text-white">
-                {fromPlayer ? `${fromPlayer.firstName} ${fromPlayer.lastName}` : 'Unknown Player'}
-              </p>
-              <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                {fromPlayer ? `${fromPlayer.primaryPosition} | Age ${fromPlayer.age} | ${fromPlayer.bats}/${fromPlayer.throws}` : 'Roster data unavailable'}
-              </p>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">OVR</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{fromOverall}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Potential</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{fromPotential}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Years Left</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{fromPlayer?.contractYearsLeft ?? '--'}</p>
-                </div>
-              </div>
-              <p className="mt-4 text-sm leading-6 text-zinc-300">{proposal.fromTeamReason}</p>
-            </div>
+          <div className="mt-auto flex flex-col gap-2">
+            <RetroButton
+              variant={approveArmed || isApproving ? 'primary' : 'default'}
+              onClick={() => { void triggerTradeAction('approve'); }}
+              disabled={isActionLocked}
+            >
+              <Check className="h-4 w-4" aria-hidden="true" />
+              {isApproving ? 'Approved' : approveArmed ? 'Confirm Approve' : 'Approve'}
+            </RetroButton>
+            <RetroButton
+              variant={vetoArmed || isVetoing ? 'danger' : 'ghost'}
+              onClick={() => { void triggerTradeAction('veto'); }}
+              disabled={isActionLocked}
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+              {isVetoing ? 'Vetoed' : vetoArmed ? 'Confirm Veto' : 'Veto'}
+            </RetroButton>
           </div>
-        </section>
 
-        <section className="flex flex-col items-center justify-center gap-5 rounded-[1.75rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(212,187,106,0.18),transparent_45%),rgba(0,0,0,0.22)] p-5">
-          <div className="w-full rounded-full border border-white/10 bg-black/30 p-2">
-            <div className="h-4 rounded-full bg-[linear-gradient(90deg,#ef4444_0%,#d4bb6a_55%,#10b981_100%)]" style={{ width: `${proposal.synergy}%` }} />
-          </div>
-          <div className="grid w-full gap-3">
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-center">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Seller Ease</p>
-              <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">{proposal.fromTeamInterest}%</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-center">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Buyer Ease</p>
-              <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">{proposal.toTeamInterest}%</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              void triggerTradeAction('approve');
-            }}
-            disabled={isActionLocked}
-            className={`flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] transition-all ${
-              isApproving
-                ? 'border-emerald-400/55 bg-emerald-500/20 text-emerald-100'
-                : approveArmed
-                  ? 'border-emerald-400/45 bg-emerald-500/14 text-emerald-100'
-                  : 'border-[#d4bb6a]/35 bg-[linear-gradient(135deg,rgba(212,187,106,0.25),rgba(212,187,106,0.09))] text-white hover:border-[#d4bb6a]/55'
-            } disabled:cursor-not-allowed disabled:opacity-80`}
-          >
-            <Check className="h-5 w-5" />
-            {isApproving ? 'Approved' : approveArmed ? 'Confirm Approve' : 'Approve'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              void triggerTradeAction('veto');
-            }}
-            disabled={isActionLocked}
-            className={`flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-4 font-headline text-2xl uppercase tracking-[0.08em] transition-all ${
-              isVetoing
-                ? 'border-rose-400/55 bg-rose-500/20 text-rose-100'
-                : vetoArmed
-                  ? 'border-rose-400/35 bg-rose-500/10 text-rose-100'
-                  : 'border-white/10 bg-black/20 text-zinc-300 hover:border-white/20 hover:text-white'
-            } disabled:cursor-not-allowed disabled:opacity-80`}
-          >
-            <X className="h-5 w-5" />
-            {isVetoing ? 'Vetoed' : vetoArmed ? 'Confirm Veto' : 'Veto'}
-          </button>
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-center">
-            <ShieldAlert className="mx-auto h-5 w-5 text-[#ecd693]" />
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Commissioner Call</p>
-            <p className="mt-2 text-sm leading-6 text-zinc-300">
+          <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] p-2 text-center">
+            <ShieldAlert className="mx-auto h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+            <p className="mt-1 t-caption text-[var(--color-ink-faint)]">COMMISSIONER CALL</p>
+            <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
               {isActionLocked
                 ? 'Decision locked in. Finalizing the trade call now.'
                 : approveArmed
@@ -335,52 +350,18 @@ const TradeProposalCard = React.memo(({
                         : 'Both sides are reluctant, but still listening.'}
             </p>
           </div>
-        </section>
+        </Panel>
 
-        <section className="rounded-[1.75rem] border border-white/10 bg-black/20 p-5">
-          <div className="flex items-center gap-4">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              {toTeam ? <TeamLogo team={toTeam} sizeClass="h-16 w-16" /> : <UserRound className="h-16 w-16 text-zinc-500" />}
-            </div>
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Buyer Sends</p>
-              <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">
-                {toTeam ? `${toTeam.city} ${toTeam.name}` : 'Unknown Team'}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-5 md:grid-cols-[120px_minmax(0,1fr)]">
-            <div className="flex items-center justify-center rounded-[1.5rem] border border-white/10 bg-gradient-to-br from-[#242424] to-[#111111] p-5">
-              <UserRound className="h-16 w-16 text-zinc-500" />
-            </div>
-            <div>
-              <p className="font-headline text-4xl uppercase tracking-[0.06em] text-white">
-                {toPlayer ? `${toPlayer.firstName} ${toPlayer.lastName}` : 'Unknown Player'}
-              </p>
-              <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                {toPlayer ? `${toPlayer.primaryPosition} | Age ${toPlayer.age} | ${toPlayer.bats}/${toPlayer.throws}` : 'Roster data unavailable'}
-              </p>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">OVR</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{toOverall}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Potential</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{toPotential}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Years Left</p>
-                  <p className="mt-2 font-headline text-3xl uppercase tracking-[0.08em] text-white">{toPlayer?.contractYearsLeft ?? '--'}</p>
-                </div>
-              </div>
-              <p className="mt-4 text-sm leading-6 text-zinc-300">{proposal.toTeamReason}</p>
-            </div>
-          </div>
-        </section>
+        <SidePanel
+          role="BUYER SENDS"
+          team={toTeam}
+          player={toPlayer}
+          overall={toOverall}
+          potential={toPotential}
+          reason={proposal.toTeamReason}
+        />
       </div>
-    </article>
+    </Panel>
   );
 });
 
@@ -504,60 +485,51 @@ export const TradesHub: React.FC<TradesHubProps> = ({
   }, [playersById, teamsById, transactions]);
 
   return (
-    <section className="space-y-6">
-      <article className={`${sectionClass} p-6`}>
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Desk</p>
-            <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-white">Trades</p>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-              This board is for approvals only. Clubs float one-for-one deals, the market heats up toward the deadline, and you decide which swaps actually reshape the league.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-full border border-white/10 bg-black/25 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300">
-              {currentDate || 'League Office'}
-            </div>
-            <button
-              type="button"
-              onClick={onRefreshBoard}
-              className="inline-flex items-center gap-2 rounded-full border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-[#ecd693] transition-colors hover:border-[#d4bb6a]/45"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Refresh Board
-            </button>
+    <section className="space-y-5">
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <h1 className="t-h2">Trades</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="t-caption text-[var(--color-ink-dim)]">{currentDate || 'LEAGUE OFFICE'}</span>
+            <RetroButton variant="primary" onClick={onRefreshBoard}>
+              <RefreshCcw className="h-4 w-4" aria-hidden="true" /> Refresh Board
+            </RetroButton>
           </div>
         </div>
-      </article>
+        <p className="p-4 t-body text-[var(--color-ink-dim)]">
+          This board is for approvals only. Clubs float one-for-one deals, the market heats up
+          toward the deadline, and you decide which swaps actually reshape the league.
+        </p>
+      </Panel>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <div className={`${sectionClass} p-5`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Pending Deals</p>
-          <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">{pendingTrades.length}</p>
-        </div>
-        <div className={`${sectionClass} p-5`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Blockbusters</p>
-          <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-[#ecd693]">{blockbusterCount}</p>
-        </div>
-        <div className={`${sectionClass} p-5`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Commissioner Notes</p>
-          <p className="mt-2 text-sm leading-6 text-zinc-300">Buyers chase upgrades. Sellers chase upside. Stars only move when the market pressure is real.</p>
-        </div>
-      </section>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Panel className="p-4">
+          <p className="t-caption text-[var(--color-ink-faint)]">PENDING DEALS</p>
+          <StatValue size="lg" className="mt-1 block">{pendingTrades.length}</StatValue>
+        </Panel>
+        <Panel className="p-4">
+          <p className="t-caption text-[var(--color-ink-faint)]">BLOCKBUSTERS</p>
+          <StatValue size="lg" variant="accent" className="mt-1 block">{blockbusterCount}</StatValue>
+        </Panel>
+        <Panel className="p-4">
+          <p className="t-caption text-[var(--color-ink-faint)]">COMMISSIONER NOTES</p>
+          <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
+            Buyers chase upgrades. Sellers chase upside. Stars only move when the market pressure is real.
+          </p>
+        </Panel>
+      </div>
 
       {enrichedTrades.length === 0 ? (
-        <section className={`${sectionClass} p-10 text-center`}>
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border border-white/10 bg-black/20">
-            <ArrowLeftRight className="h-9 w-9 text-[#ecd693]" />
-          </div>
-          <p className="mt-6 font-headline text-4xl uppercase tracking-[0.06em] text-white">Quiet Trade Market</p>
-          <p className="mt-3 text-sm leading-6 text-zinc-400">
-            No clubs have reached the commissioner with a strong enough one-for-one proposal right now. That is normal early in the season.
+        <Panel className="flex flex-col items-center gap-3 p-10 text-center">
+          <ArrowLeftRight className="h-9 w-9 text-[var(--color-gold)]" aria-hidden="true" />
+          <p className="t-h2">Quiet Trade Market</p>
+          <p className="t-body max-w-md text-[var(--color-ink-dim)]">
+            No clubs have reached the commissioner with a strong enough one-for-one proposal right
+            now. That is normal early in the season.
           </p>
-        </section>
+        </Panel>
       ) : (
-        <div className="space-y-6">
+        <div className="flex flex-col gap-5">
           {enrichedTrades.map((trade) => (
             <TradeProposalCard
               key={trade.proposal.proposalId}
@@ -569,37 +541,34 @@ export const TradesHub: React.FC<TradesHubProps> = ({
         </div>
       )}
 
-      <section className={`${sectionClass} p-6`}>
-        <div className="flex flex-col gap-2 border-b border-white/10 pb-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Recent Ledger</p>
-            <p className="mt-2 font-headline text-4xl uppercase tracking-[0.06em] text-white">Trade History</p>
-          </div>
-          <p className="text-sm leading-6 text-zinc-400">Approved swaps are logged here so you can review the market without leaving the desk.</p>
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-end justify-between gap-3 px-4">
+          <h2 className="t-h3">Trade History</h2>
+          <p className="t-caption text-[var(--color-ink-faint)]">
+            Approved swaps are logged here so you can review the market without leaving the desk.
+          </p>
         </div>
-
         {tradeHistory.length === 0 ? (
-          <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-black/20 px-5 py-6 text-sm leading-6 text-zinc-400">
+          <p className="p-4 t-body text-[var(--color-ink-dim)]">
             No trades have been approved yet. Once a deal goes through, it will appear here.
-          </div>
+          </p>
         ) : (
-          <div className="mt-5 space-y-3">
+          <div className="flex flex-col gap-1 p-3">
             {tradeHistory.map((entry) => (
-              <article key={entry.id} className="rounded-[1.5rem] border border-white/10 bg-black/20 px-5 py-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="font-headline text-2xl uppercase tracking-[0.05em] text-white">{entry.headline}</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-400">{entry.detail}</p>
-                  </div>
-                  <div className="rounded-full border border-white/10 bg-black/30 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-300">
-                    {formatTradeDate(entry.effectiveDate)}
-                  </div>
+              <div
+                key={entry.id}
+                className="flex flex-wrap items-baseline justify-between gap-3 border-b border-[var(--color-chrome-lo)] px-2 py-2 last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <p className="t-stat-sm">{entry.headline}</p>
+                  <p className="t-caption text-[var(--color-ink-faint)]">{entry.detail}</p>
                 </div>
-              </article>
+                <span className="t-caption shrink-0 text-[var(--color-ink-dim)]">{formatTradeDate(entry.effectiveDate)}</span>
+              </div>
             ))}
           </div>
         )}
-      </section>
+      </Panel>
     </section>
   );
 };
