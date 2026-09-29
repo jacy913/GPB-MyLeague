@@ -28,7 +28,7 @@ import { INITIAL_TEAMS } from '../src/data/teams';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings } from '../src/logic/simulation';
 import { SimulationManager } from '../src/logic/simulationManager';
 import { buildNewUniverse } from '../src/logic/universeBootstrap';
-import { completeRosterVacancies } from '../src/logic/rosterCompletion';
+import { completeRosterVacancies, getOpenSlots } from '../src/logic/rosterCompletion';
 import { applyOffseasonFreeAgencyRollover, applyOffseasonRetirements } from '../src/logic/offseasonFreeAgency';
 import {
   applyNextDraftPick,
@@ -38,12 +38,21 @@ import {
   generateDraftClassBundle,
 } from '../src/logic/draftLogic';
 import { applyPlayerDevelopment } from '../src/logic/playerDevelopment';
+import { repairRosterSlotsForTeams } from '../src/logic/rosterManagement';
 import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../src/logic/automaticMarket';
 import { generatePendingTradeProposals } from '../src/logic/tradeLogic';
 import { isRegularSeasonGame } from '../src/logic/playoffs';
 import { readGameEngineProbe, startGameEngineProbe, stopGameEngineProbe } from '../src/logic/gameEngine';
 import type { GameEngineProbe } from '../src/logic/gameEngine';
-import type { Game, LeaguePlayerState, PendingTradeProposal, PlayerStatus, Team } from '../src/types';
+import type {
+  Game,
+  LeaguePlayerState,
+  PendingTradeProposal,
+  PlayerBattingRatings,
+  PlayerPitchingRatings,
+  PlayerStatus,
+  Team,
+} from '../src/types';
 
 // ---------------------------------------------------------------------------
 // Deterministic RNG
@@ -215,7 +224,16 @@ interface PlayerTracking {
   playerId: string;
   playerType: 'batter' | 'pitcher';
   draftClassYear: number | null;
+  /**
+   * True only for a player who was actually selected in a draft. The generator
+   * fabricates a `draftClassYear` for free agents by backfilling
+   * `seasonYear - yearsPro`, so that field cannot be used to identify a draftee:
+   * an unsigned veteran carries a draftClassYear just as a first-rounder does.
+   */
+  actuallyDrafted: boolean;
   firstSeenYear: number;
+  /** Seasons the player was unsigned before holding a roster slot, for real. */
+  unsignedBeforeFirstContract: number;
   firstContractYear: number | null;
   seasonsOnRoster: number;
   seasonsUnsigned: number;
@@ -233,6 +251,7 @@ interface PlayerSnapshotRow {
   overall: number;
   playerType: 'batter' | 'pitcher';
   draftClassYear: number | null;
+  draftRound: number | null;
 }
 
 /**
@@ -279,6 +298,7 @@ const snapshotPlayers = (playerState: LeaguePlayerState): Map<string, PlayerSnap
       overall: overalls.get(player.playerId) ?? 0,
       playerType: player.playerType,
       draftClassYear: player.draftClassYear,
+      draftRound: player.draftRound,
     });
   }
   return rows;
@@ -306,7 +326,9 @@ const trackOffseason = (
         playerId,
         playerType: beforeRow.playerType,
         draftClassYear: beforeRow.draftClassYear,
+        actuallyDrafted: beforeRow.draftRound !== null,
         firstSeenYear: seasonYear,
+        unsignedBeforeFirstContract: 0,
         firstContractYear: null,
         seasonsOnRoster: 0,
         seasonsUnsigned: 0,
@@ -318,6 +340,9 @@ const trackOffseason = (
     }
 
     tracked.draftClassYear = beforeRow.draftClassYear ?? tracked.draftClassYear;
+    // Sticky: a player keeps the fact that a club drafted him even after the
+    // roster rows that recorded the round fall out of history.
+    if (beforeRow.draftRound !== null) tracked.actuallyDrafted = true;
     tracked.peakOverall = Math.max(tracked.peakOverall, beforeRow.overall);
 
     const afterRow = afterRows.get(playerId);
@@ -352,6 +377,10 @@ const trackOffseason = (
       tracked.seasonsOnRoster += 1;
     } else if (afterRow.status === 'free_agent') {
       tracked.seasonsUnsigned += 1;
+      // Captured before any signing so it stays true even if the player signs in
+      // the same offseason that created the record. Counting unsigned seasons and
+      // then deriving a year difference loses that case entirely.
+      if (tracked.firstContractYear === null) tracked.unsignedBeforeFirstContract += 1;
     }
 
     if ((paByPlayerId.get(playerId) ?? 0) > 0) tracked.seasonsWithPAs += 1;
@@ -398,7 +427,54 @@ interface SeasonSnapshot {
   retirements: number;
   activeCount: number;
   freeAgentCount: number;
+  pipeline: OffseasonPipeline | null;
 }
+
+/**
+ * The unsigned-player ledger for one offseason. Every number here is a count of
+ * something the offseason actually did, read off the return values of the real
+ * functions rather than inferred from pool sizes. Without this the free agent
+ * pool's growth could be attributed to any of four different causes.
+ */
+interface OffseasonPipeline {
+  /** Slots vacant when the offseason began, i.e. what there is to fill. */
+  openSlotsEntering: number;
+  /** Contracts that ran out and put a player on the market. */
+  releasedToMarket: number;
+  /** Players the market's rules sent to free agency (qualifying offer declined). */
+  qualifiersDeclined: number;
+  /** Existing free agents the offseason market signed. */
+  freeAgentsSigned: number;
+  /** Open slots the offseason market could not fill, and drafted a rookie instead. */
+  rookiesAdded: number;
+  /** Vacancies left over after the market and the rookie class both ran out. */
+  openSlotsLeft: number;
+  /** Free agents removed by the age-out backstop. */
+  agedOutFreeAgents: number;
+  /** Draft class size actually consumed by picks. */
+  draftPicks: number;
+  /** Of this class's picks, how many ended the offseason still unsigned. */
+  drafteesUnsigned: number;
+  /** Of this class's picks, how many kept a roster slot into the new season. */
+  drafteesOnRoster: number;
+  /** Age of the unsigned pool, median. Low means the surplus is young and cheap. */
+  unsignedMedianAge: number;
+  /** Free agents still unsigned when the next season begins. */
+  unsignedRemaining: number;
+  /** Of those, how many are good enough that any club should have taken them. */
+  unsigned78Plus: number;
+  /** Median overall of the unsigned pool. Low means the pool is surplus depth. */
+  unsignedMedianOverall: number;
+  /** Signings made by the in-season daily market, which runs on different rules. */
+  inSeasonMarketSignings: number;
+}
+
+/**
+ * The ledger from the most recent offseason. Held outside runSeason because the
+ * snapshot is taken before the offseason runs, so the report has to read it
+ * after the fact.
+ */
+let lastPipeline: OffseasonPipeline | null = null;
 
 const snapshots: SeasonSnapshot[] = [];
 
@@ -453,6 +529,12 @@ const runSeason = async (
   let playerState = initialPlayerState;
   let currentDate = games[0]?.date ?? getDefaultSeasonStartDate(seasonYear);
 
+  // The in-season market works on completely different rules from the offseason
+  // one (strict upgrade, capped signings, incumbents protected), so its signings
+  // are counted separately. Without a separate count there is no way to tell an
+  // offseason market failure from an offseason market that was never needed.
+  let inSeasonMarketSignings = 0;
+
   const manager = new SimulationManager({
     teams,
     games,
@@ -477,7 +559,13 @@ const runSeason = async (
 
   const applyMarket = () => {
     if (!RUN_MARKET) return;
+    // Counted from the resulting free agent roster rather than from the market's
+    // return value, which the game does not expose. A signing always moves one
+    // player from free_agent to active, so the drop is the count.
+    const freeAgentsBefore = playerState.players.filter((player) => player.status === 'free_agent').length;
     playerState = automaticallySignFreeAgents(teams, playerState, currentDate);
+    const freeAgentsAfter = playerState.players.filter((player) => player.status === 'free_agent').length;
+    inSeasonMarketSignings += Math.max(0, freeAgentsBefore - freeAgentsAfter);
     const proposals = generatePendingTradeProposals(teams, playerState, games.filter(isRegularSeasonGame), currentDate);
     const fresh = proposals.filter((proposal) => !knownTradeKeys.has(stableTradeKey(proposal)));
     for (const proposal of proposals) knownTradeKeys.add(stableTradeKey(proposal));
@@ -552,6 +640,9 @@ const runSeason = async (
     seasonYear,
     effectiveDate: `${seasonYear + 1}-11-01`,
   });
+
+  const nextYear = seasonYear + 1;
+
   const rollover = applyOffseasonFreeAgencyRollover({
     playerState: retirementResult.nextPlayerState,
     teams,
@@ -560,8 +651,6 @@ const runSeason = async (
     rng,
     skipAgeAndRetirements: true,
   });
-
-  const nextYear = seasonYear + 1;
 
   // Ageing and retirements have already happened, so players now carry the age
   // they will be next season. Development writes a fresh ratings row for that
@@ -588,7 +677,63 @@ const runSeason = async (
     `${nextYear}-12-15`,
   );
 
+  // Vacancy has to be counted on the repaired next-season slot rows, not on the
+  // state as it stands beforehand. The new season owns no rows yet, so counting
+  // slots before repair reports all 928 as open and tells you nothing. This
+  // replicates the repair the filler performs first, then reads the vacancies it
+  // left behind: the real size of the job the market was given.
+  const repairedForMeasure = repairRosterSlotsForTeams(draft.playerState, teams.map((team) => team.id), nextYear);
+  const openSlotsEntering = getOpenSlots(repairedForMeasure.rosterSlots, teams, nextYear).length;
+
   const retirements = retirementResult.retiredPlayers;
+
+  // --- free agent ledger ---------------------------------------------------
+  // Rated from the ratings rows development just wrote for nextYear, so the
+  // unsigned pool is judged on the talent it has now, not the talent it had
+  // when it last held a roster slot.
+  const latestBatting = new Map<string, PlayerBattingRatings>();
+  const latestPitching = new Map<string, PlayerPitchingRatings>();
+  for (const row of nextRoster.playerState.battingRatings) {
+    const held = latestBatting.get(row.playerId);
+    if (!held || row.seasonYear > held.seasonYear) latestBatting.set(row.playerId, row);
+  }
+  for (const row of nextRoster.playerState.pitchingRatings) {
+    const held = latestPitching.get(row.playerId);
+    if (!held || row.seasonYear > held.seasonYear) latestPitching.set(row.playerId, row);
+  }
+  const unsignedOverall = (playerId: string): number =>
+    latestBatting.get(playerId)?.overall ?? latestPitching.get(playerId)?.overall ?? 0;
+
+  const unsignedPool = nextRoster.playerState.players.filter((p) => p.status === 'free_agent');
+  const unsignedOveralls = unsignedPool.map((p) => unsignedOverall(p.playerId)).sort((a, b) => a - b);
+
+  const signedPlayerIds = new Set(
+    nextRoster.playerState.players.filter((p) => p.status === 'active').map((p) => p.playerId),
+  );
+  const unsignedDrafted = draft.draftedPlayerIds.filter((playerId) => {
+    const player = nextRoster.playerState.players.find((entry) => entry.playerId === playerId);
+    return player ? player.status === 'free_agent' : false;
+  }).length;
+  const unsignedAges = unsignedPool.map((p) => p.age).sort((a, b) => a - b);
+
+  const pipeline: OffseasonPipeline = {
+    openSlotsEntering,
+    releasedToMarket: rollover.summary.releasedToMarket,
+    qualifiersDeclined: rollover.summary.qualifyingOffersDeclined,
+    freeAgentsSigned: nextRoster.freeAgentsSigned,
+    rookiesAdded: nextRoster.rookiesAdded,
+    openSlotsLeft: nextRoster.remainingOpenSlots,
+    agedOutFreeAgents: nextRoster.agedOutFreeAgents,
+    draftPicks: draft.picks,
+    drafteesUnsigned: unsignedDrafted,
+    drafteesOnRoster: draft.draftedPlayerIds.filter((id) => signedPlayerIds.has(id)).length,
+    unsignedMedianAge: unsignedAges.length > 0 ? percentile(unsignedAges, 0.5) : 0,
+    unsignedRemaining: unsignedPool.length,
+    unsigned78Plus: unsignedPool.filter((p) => unsignedOverall(p.playerId) >= 78).length,
+    unsignedMedianOverall: unsignedOveralls.length > 0 ? percentile(unsignedOveralls, 0.5) : 0,
+    inSeasonMarketSignings,
+  };
+  lastPipeline = pipeline;
 
   // Lifecycle tracking needs both sides of the offseason boundary: who was in
   // the league going in, and who is still there coming out. Everything that
@@ -608,7 +753,17 @@ const runSeason = async (
         `  (active ${pool - prospects - freeAgents}, FA ${freeAgents}, prospect ${prospects})` +
         `  aged out ${nextRoster.agedOutFreeAgents}\n`,
     );
+    process.stdout.write(
+      `         FA: ${pipeline.openSlotsEntering} open` +
+      `  ->  signed ${pipeline.freeAgentsSigned} FA / drafted ${pipeline.rookiesAdded}` +
+      `  ->  left ${pipeline.openSlotsLeft}  |  unsigned ${pipeline.unsignedRemaining}` +
+      `  (med OVR ${pipeline.unsignedMedianOverall.toFixed(1)}, ${pipeline.unsigned78Plus} at 78+)\n`,
+    );
   }
+
+  // The snapshot is collected before the offseason mutates anything, so this
+  // ledger belongs to the season that snapshot will report on.
+  if (snapshots.length > 0) snapshots[snapshots.length - 1].pipeline = pipeline;
 
   return {
     teams,
@@ -627,10 +782,11 @@ const runDraft = (
   inputPlayerState: LeaguePlayerState,
   teams: Team[],
   seasonYear: number,
-): { playerState: LeaguePlayerState; picks: number } => {
+): { playerState: LeaguePlayerState; picks: number; draftedPlayerIds: string[] } => {
   const effectiveDate = `${seasonYear}-12-12`;
   const targetProspectCount = Math.max(DRAFT_CLASS_SIZE, teams.length * DRAFT_ROUNDS + 32);
   const bundle = generateDraftClassBundle(seasonYear, targetProspectCount);
+  const draftedPlayerIds: string[] = [];
 
   const existingPlayerIds = new Set(inputPlayerState.players.map((player) => player.playerId));
   let playerState: LeaguePlayerState = {
@@ -648,12 +804,20 @@ const runDraft = (
   while (!draftClass.isComplete) {
     const step = applyNextDraftPick(draftClass, playerState, teams, effectiveDate);
     if (!step) break;
+    // A pick removes its prospect from the board, so the ones that disappeared
+    // are exactly the players drafted. Watching this is the only way to tell a
+    // drafted player who kept a roster spot all offseason from one the market
+    // pushed straight back out.
+    const after = new Set(step.draftClass.prospects.map((prospect) => prospect.playerId));
+    for (const prospect of draftClass.prospects) {
+      if (!after.has(prospect.playerId)) draftedPlayerIds.push(prospect.playerId);
+    }
     draftClass = step.draftClass;
     playerState = step.playerState;
     picks += 1;
   }
 
-  return { playerState, picks };
+  return { playerState, picks, draftedPlayerIds };
 };
 
 // ---------------------------------------------------------------------------
@@ -829,6 +993,7 @@ const collectSnapshot = (
     retirements: 0,
     activeCount: playerState.players.filter((player) => player.status === 'active').length,
     freeAgentCount: playerState.players.filter((player) => player.status === 'free_agent').length,
+    pipeline: null,
   };
 };
 
@@ -1484,19 +1649,26 @@ const reportCareerFlow = () => {
   console.log('\n  FREE AGENT EXPOSURE');
   const neverSigned = all.filter((entry) => entry.firstContractYear === null && entry.seasonsUnsigned > 0);
   const unsignedSeasons = neverSigned.map((entry) => entry.seasonsUnsigned);
-  const waitToSign = all
-    .filter((entry) => entry.firstContractYear !== null)
-    .map((entry) => {
-      const origin = entry.draftClassYear ?? entry.firstSeenYear;
-      return entry.firstContractYear! - origin;
-    })
-    .filter((value) => Number.isFinite(value));
+
+  // Only real draftees. The generator backfills a synthetic draftClassYear for
+  // every free agent (`seasonYear - yearsPro`), so measuring the wait over all
+  // players charges unsigned veterans for a draft class they never had. The old
+  // "5.0 years" figure was that artifact: it was mostly measuring free agents
+  // against invented dates, not drafted players against the draft.
+  const draftees = all.filter((entry) => entry.actuallyDrafted);
+  const drafteeWait = draftees.map((entry) => entry.unsignedBeforeFirstContract);
+
   console.log(`  players who spent time unsigned  ${neverSigned.length}   of ${all.length}`);
+  console.log(`  actually drafted (real picks)    ${draftees.length}   of ${all.length}`);
   if (unsignedSeasons.length > 0) {
     console.log(`  seasons unsigned (median/p90)    ${percentile(unsignedSeasons, 0.5).toFixed(0)} / ${percentile(unsignedSeasons, 0.9).toFixed(0)}`);
   }
-  if (waitToSign.length > 0) {
-    console.log(`  years from draft to first contract ${percentile(waitToSign, 0.5).toFixed(1)} median   (real MLB ~0.7 for drafted players)`);
+  if (drafteeWait.length > 0) {
+    console.log(`  draftees: unsigned seasons before first roster spot`);
+    console.log(`    (median/p90)                    ${percentile(drafteeWait, 0.5).toFixed(1)} / ${percentile(drafteeWait, 0.9).toFixed(1)}` +
+      `   (real MLB ~0.05; almost every pick signs)`);
+    const signedImmediately = drafteeWait.filter((value) => value === 0).length;
+    console.log(`    signed in their first season    ${signedImmediately} (${(signedImmediately / drafteeWait.length * 100).toFixed(0)}%)`);
   }
   const unsignedAndGood = neverSigned.filter((entry) => entry.peakOverall >= 78);
   if (unsignedAndGood.length > 0) {
@@ -1510,6 +1682,61 @@ const reportCareerFlow = () => {
   if (ageOutBands.size > 0) {
     const ages = [...ageOutBands.keys()].sort((left, right) => left - right);
     console.log(`  age-outs by age  ${ages.map((age) => `${age}:${ageOutBands.get(age)}`).join('  ')}`);
+  }
+
+  // --- the unsigned ledger, per offseason ---------------------------------
+  // The exposure numbers above are symptoms measured over careers. These are the
+  // causes, counted off the offseason's own return values, so a growing unsigned
+  // pool can be attributed to vacancies, to contracts ending, or to the market
+  // refusing to sign, rather than guessed at.
+  const withPipeline = snapshots.filter((snapshot) => snapshot.pipeline !== null);
+  if (withPipeline.length > 0) {
+    console.log('\n  UNSIGNED LEDGER (mean per offseason)');
+    const p = withPipeline.map((snapshot) => snapshot.pipeline!);
+    const avg = (pick: (ledger: OffseasonPipeline) => number): number =>
+      mean(p.map(pick));
+    const slotsOpen = avg((l) => l.openSlotsEntering);
+    const signed = avg((l) => l.freeAgentsSigned);
+    const drafted = avg((l) => l.rookiesAdded);
+    const leftOpen = avg((l) => l.openSlotsLeft);
+    const unsigned = avg((l) => l.unsignedRemaining);
+
+    console.log(`  slots vacant at offseason start   ${slotsOpen.toFixed(1)}`);
+    console.log(`  contracts ended -> market         ${avg((l) => l.releasedToMarket).toFixed(1)}`);
+    console.log(`  qualifying offers declined        ${avg((l) => l.qualifiersDeclined).toFixed(1)}`);
+    console.log(`  free agents signed                 ${signed.toFixed(1)}`);
+    console.log(`  rookies drafted instead            ${drafted.toFixed(1)}`);
+    console.log(`  vacancies left unfilled            ${leftOpen.toFixed(1)}`);
+    console.log(`  in-season market signings          ${avg((l) => l.inSeasonMarketSignings).toFixed(1)}`);
+    console.log(`  still unsigned after offseason     ${unsigned.toFixed(0)}`);
+
+    // The signings are the point. A market that signs nearly nothing while
+    // vacancies exist is not a healthy market, it is a market that has no
+    // entries, and the unsigned pool then only ever grows.
+    const fillRate = slotsOpen > 0 ? (signed + drafted) / slotsOpen : 1;
+    const demandVsSupply = unsigned > 0 ? signed / unsigned : 0;
+    console.log('');
+    console.log(`  vacancy fill rate                 ${(fillRate * 100).toFixed(0)}%`);
+    console.log(`  signings vs unsigned pool         ${(demandVsSupply * 100).toFixed(0)}%`);
+    const draftPicks = avg((l) => l.draftPicks);
+    const drafteesUnsigned = avg((l) => l.drafteesUnsigned);
+    console.log(`  draft picks                       ${draftPicks.toFixed(0)}`);
+    console.log(`  draftees still unsigned           ${drafteesUnsigned.toFixed(0)}   (${(drafteesUnsigned / Math.max(1, draftPicks) * 100).toFixed(0)}% of the class)`);
+    console.log(`  unsigned pool median overall      ${avg((l) => l.unsignedMedianOverall).toFixed(1)}`);
+    console.log(`  unsigned pool median age          ${avg((l) => l.unsignedMedianAge).toFixed(1)}`);
+    console.log(`  unsigned at 78+                   ${avg((l) => l.unsigned78Plus).toFixed(0)}`);
+
+    // Two different failures look identical from the pool size alone. A market
+    // that fills its vacancies but is outrun by supply grows the pool; a market
+    // that refuses to fill them stalls drafted players. Both are reported.
+    const marketWorks = fillRate >= 0.98;
+    const supplyBalanced = drafteesUnsigned / Math.max(1, draftPicks) <= 0.15;
+    const verdict = !marketWorks
+      ? 'offseason market is NOT filling its vacancies'
+      : !supplyBalanced
+        ? 'market fills every vacancy, but supply outruns demand'
+        : 'offseason market fills its vacancies AND absorbs the class';
+    console.log(`  VERDICT                           ${verdict}`);
   }
 };
 

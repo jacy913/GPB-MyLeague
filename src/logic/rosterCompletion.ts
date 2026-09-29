@@ -46,7 +46,7 @@ const removePlayersFromState = (playerState: LeaguePlayerState, playerIds: Set<s
   rosterSlots: playerState.rosterSlots.filter((slot) => !slot.playerId || !playerIds.has(slot.playerId)),
 });
 
-type OpenSlot = {
+export type OpenSlot = {
   teamId: string;
   slotCode: RosterSlotCode;
 };
@@ -105,7 +105,12 @@ const getFitScore = (
   return overall * 16 + positionBonus + team.rating * 0.25;
 };
 
-const getOpenSlots = (rosterSlots: TeamRosterSlot[], teams: Team[], seasonYear: number): OpenSlot[] => {
+/**
+ * Slots with no occupant for a season. Exported so a caller can measure the
+ * vacancy count without re-deriving the roster shape; if this changes, both the
+ * filler and any report of vacancies have to change together.
+ */
+export const getOpenSlots = (rosterSlots: TeamRosterSlot[], teams: Team[], seasonYear: number): OpenSlot[] => {
   const occupied = new Set(
     rosterSlots
       .filter((slot) => slot.seasonYear === seasonYear)
