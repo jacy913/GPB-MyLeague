@@ -1,8 +1,7 @@
 import React from 'react';
 import type { Team } from '../types';
 import { fmtRecord } from '../logic/statFormatting';
-import { LeagueBadge, StatValue } from './ui';
-import { TeamLogo } from './TeamLogo';
+import { LeagueBadge, StatValue, TeamLogo } from './ui';
 
 interface TeamContextStripProps {
   team: Team | null;

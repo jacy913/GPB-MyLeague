@@ -5,8 +5,7 @@ import { SeededPlayoffTeam, compareSeededTeams, getLeaguePlayoffSeeds, getRoundB
 import { addDaysToISODate } from '../logic/simulation';
 import { fmtDiff, fmtRecord } from '../logic/statFormatting';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { Panel, RetroButton, StatValue } from './ui';
-import { TeamLogo } from './TeamLogo';
+import { Panel, RetroButton, StatValue, TeamLogo } from './ui';
 import worldSeriesLogo from '../assets/worldserieslogo.png';
 import gpbLogo from '../assets/gpb.png';
 import playoffsLogo from '../assets/playoffs.png';

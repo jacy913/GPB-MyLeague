@@ -15,7 +15,7 @@ import {
   TeamRosterSlot,
 } from '../types';
 import { buildFreeAgencyMarketEntries, FreeAgentMarketEntry, FreeAgencyOfferCard } from '../logic/freeAgencyLogic';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface FreeAgencyHubProps {
   teams: Team[];

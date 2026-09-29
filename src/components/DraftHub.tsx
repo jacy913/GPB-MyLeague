@@ -2,7 +2,7 @@ import React, { useDeferredValue, useMemo, useState } from 'react';
 import { AlertTriangle, Clock3, Play, RotateCcw, Search, ShieldAlert, SkipForward, Users } from 'lucide-react';
 import { Team } from '../types';
 import { DRAFT_LOTTERY_TEAM_COUNT, DraftClassState, DraftHistoryEntry } from '../logic/draftLogic';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface DraftHubProps {
   teams: Team[];

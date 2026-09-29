@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 import { formatHeaderDate } from './SeasonCalendarStrip';
 import {
   SeasonHistoryAwardWinner,

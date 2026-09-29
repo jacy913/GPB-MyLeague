@@ -37,6 +37,7 @@ import { CommissionerNotificationsPanel } from './CommissionerNotificationsPanel
 import { CommissionerSettings } from './CommissionerSettings';
 import type { AppView } from '../types';
 import { UiKitGallery } from './UiKitGallery';
+import { Panel } from './ui';
 import { SimulationSaveStatus } from '../hooks/useSimulationEngine';
 
 type CalendarDateSummary = {
@@ -470,10 +471,12 @@ export const AppViewRouter = ({
         />
       )}
       {view === 'offseason' && !seasonComplete && (
-        <section className="rounded-[2rem] border border-white/10 bg-[#171717] p-10 text-center">
-          <p className="font-headline text-4xl uppercase tracking-[0.06em] text-white">Offseason Locked</p>
-          <p className="mt-3 text-sm text-zinc-400">The checklist opens automatically when the World Series champion is announced.</p>
-        </section>
+        <Panel className="flex flex-col items-center gap-3 p-10 text-center">
+          <p className="t-h1 text-[var(--color-ink)]">Offseason Locked</p>
+          <p className="t-body max-w-md text-[var(--color-ink-dim)]">
+            The checklist opens automatically when the World Series champion is announced.
+          </p>
+        </Panel>
       )}
 
       {view === 'trades' && (

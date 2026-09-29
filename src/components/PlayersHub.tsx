@@ -12,7 +12,7 @@ import {
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
 import { AttributeRadar } from './AttributeRadar';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface PlayersHubProps {
   teams: Team[];
@@ -615,10 +615,7 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
             </div>
             {selectedPlayer ? (
               selectedAttributePoints.length > 0 ? (
-                <AttributeRadar
-                  points={selectedAttributePoints}
-                  accent={selectedPlayer.playerType === 'pitcher' ? '#0fe7d5' : '#d4bb6a'}
-                />
+                <AttributeRadar points={selectedAttributePoints} />
               ) : (
                 <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">No ratings loaded for this player yet.</p>
               )

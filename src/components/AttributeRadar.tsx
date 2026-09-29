@@ -1,4 +1,5 @@
 import React from 'react';
+import { Panel } from './ui';
 
 type AttributePoint = {
   label: string;
@@ -7,15 +8,21 @@ type AttributePoint = {
 
 interface AttributeRadarProps {
   points: AttributePoint[];
-  accent?: string;
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
-export const AttributeRadar: React.FC<AttributeRadarProps> = ({
-  points,
-  accent = '#14d7c5',
-}) => {
+/**
+ * Attribute radar, chrome-framed.
+ *
+ * The stroke is gold unconditionally. The previous version took an `accent`
+ * prop and both call sites passed a raw hex to tint pitchers teal and batters
+ * gold -- which is the same mistake the design system exists to prevent, just
+ * applied to a chart instead of a panel. Gold is the product's chrome colour
+ * and the radar is chrome; the player's role is already carried by the axis
+ * labels and the surrounding panel.
+ */
+export const AttributeRadar: React.FC<AttributeRadarProps> = ({ points }) => {
   const size = 260;
   const center = size / 2;
   const radius = 78;
@@ -47,14 +54,14 @@ export const AttributeRadar: React.FC<AttributeRadarProps> = ({
 
   return (
     <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)] lg:items-center">
-      <div className="flex justify-center">
-        <svg viewBox={`0 0 ${size} ${size}`} className="h-[260px] w-[260px]" aria-label="Attribute radar chart">
+      <Panel variant="sunken" className="flex items-center justify-center p-3">
+        <svg viewBox={`0 0 ${size} ${size}`} className="h-[248px] w-[248px]" role="img" aria-label="Attribute radar chart">
           {ringPolygons.map((polygon, index) => (
             <polygon
               key={`ring-${rings[index]}`}
               points={polygon}
-              fill="rgba(255,255,255,0.02)"
-              stroke="rgba(255,255,255,0.08)"
+              fill="var(--color-panel-2)"
+              stroke="var(--color-chrome-lo)"
               strokeWidth="1"
             />
           ))}
@@ -66,15 +73,16 @@ export const AttributeRadar: React.FC<AttributeRadarProps> = ({
               y1={center}
               x2={point.axisX}
               y2={point.axisY}
-              stroke="rgba(255,255,255,0.08)"
+              stroke="var(--color-chrome-lo)"
               strokeWidth="1"
             />
           ))}
 
           <polygon
             points={valuePolygon}
-            fill={`${accent}33`}
-            stroke={accent}
+            fill="var(--color-gold)"
+            fillOpacity="0.18"
+            stroke="var(--color-gold)"
             strokeWidth="2"
           />
 
@@ -84,7 +92,7 @@ export const AttributeRadar: React.FC<AttributeRadarProps> = ({
               cx={point.valueX}
               cy={point.valueY}
               r="3"
-              fill={accent}
+              fill="var(--color-gold)"
             />
           ))}
 
@@ -95,19 +103,19 @@ export const AttributeRadar: React.FC<AttributeRadarProps> = ({
               y={point.labelY}
               textAnchor={point.labelX < center - 8 ? 'end' : point.labelX > center + 8 ? 'start' : 'middle'}
               dominantBaseline="middle"
-              className="fill-zinc-500 text-[10px] uppercase tracking-[0.18em]"
+              className="fill-[var(--color-ink-faint)] t-caption"
             >
               {point.label}
             </text>
           ))}
         </svg>
-      </div>
+      </Panel>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2">
         {points.map((point) => (
-          <div key={point.label} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{point.label}</p>
-            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">{point.value}</p>
+          <div key={point.label} className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">
+            <p className="t-caption text-[var(--color-ink-faint)]">{point.label}</p>
+            <p className="t-stat-lg mt-1 text-[var(--color-ink)]">{point.value}</p>
           </div>
         ))}
       </div>

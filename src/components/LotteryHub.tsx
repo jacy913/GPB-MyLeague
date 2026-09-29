@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { ArrowRight, ListOrdered, Sparkles, Ticket } from 'lucide-react';
 import { Team } from '../types';
 import { DRAFT_ROUNDS, DraftClassState, DraftPickRecord } from '../logic/draftLogic';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 

@@ -23,7 +23,7 @@ import {
 import { buildGameParticipants } from '../logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { formatBattingAverage } from '../logic/statFormatting';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface GameScreenProps {
   game: Game;

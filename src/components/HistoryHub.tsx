@@ -6,7 +6,7 @@ import {
   SeasonHistoryEntry,
   Team,
 } from '../types';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 import mvpBeltImage from '../assets/mvpbelt.png';
 import trophyImage from '../assets/trophy.png';
 import worldSeriesMvpImage from '../assets/worldseriesmvp.png';

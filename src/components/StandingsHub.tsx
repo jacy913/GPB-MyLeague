@@ -13,8 +13,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtDiff, fmtEra, fmtGb, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
-import { Panel, SegmentedControl, SkewedPanel, StatTable, type StatTableColumn, type StatTableRow } from './ui';
-import { TeamLogo } from './TeamLogo';
+import { Panel, SegmentedControl, SkewedPanel, StatTable, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 type StandingsViewMode = 'league' | 'division';
 type StandingsRankKey = 'record' | 'win_pct' | 'run_diff' | 'runs_scored' | 'runs_allowed' | 'team_era' | 'team_rbi' | 'roster_strength' | 'team_whip';

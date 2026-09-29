@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Crosshair, Move, Minus, Plus, RotateCcw } from 'lucide-react';
 import { Team } from '../types';
 import mapBackground from '../assets/glorestdarkmodewithnamesHD.png';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 import { TEAM_MAP_LOGO_POSITIONS, type MapTeamLogoPosition } from '../data/mapTeamLogoPositions';
 
 const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#121212,#202020,#0e0e0e)]';

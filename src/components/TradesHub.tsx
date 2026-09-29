@@ -8,7 +8,7 @@ import {
   PlayerTransaction,
   Team,
 } from '../types';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface TradesHubProps {
   teams: Team[];

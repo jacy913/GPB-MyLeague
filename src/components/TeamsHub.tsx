@@ -19,7 +19,7 @@ import { getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
 import { AttributeRadar } from './AttributeRadar';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface TeamsHubProps {
   teams: Team[];
@@ -942,7 +942,6 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
                   selectedRosterAttributePoints.length > 0 ? (
                     <AttributeRadar
                       points={selectedRosterAttributePoints}
-                      accent={selectedRosterPlayer.player.playerType === 'pitcher' ? '#0fe7d5' : '#d4bb6a'}
                     />
                   ) : (
                     <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">No ratings loaded for this player yet.</p>

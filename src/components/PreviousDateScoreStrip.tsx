@@ -1,6 +1,6 @@
 import React from 'react';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 import { isPlayoffGame } from '../logic/playoffs';
 import { Game, Team } from '../types';
 

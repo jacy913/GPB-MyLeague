@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { Game, Team } from '../types';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface SeasonProgressSummary {
   completedGames: number;

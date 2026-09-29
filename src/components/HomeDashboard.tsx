@@ -34,7 +34,7 @@ import {
 import { isPlayoffGame, isRegularSeasonGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { formatBattingAverage } from '../logic/statFormatting';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 
 interface TradeProposal {
   fromTeamId: string;

@@ -17,10 +17,12 @@ export { Meter, type MeterProps } from './Meter';
 export { LeagueBadge, type LeagueBadgeVariant } from './LeagueBadge';
 export { SectionTitle, type SectionTitleProps } from './SectionTitle';
 
-// TeamLogo is deliberately absent. §9.2 moves the existing
-// src/components/TeamLogo.tsx into this directory during Phase 3.2, but that
-// file owns real asset resolution -- import.meta.glob over src/assets/cured
-// logos, a Supabase storage fallback, cache-busting, and a teamlogo-updated
-// event listener. A plate-only primitive here would have to fabricate a URL
-// path that does not exist, because the assets are bundled through the glob
-// rather than served from public/. It is added when the resolver moves with it.
+/**
+ * TeamLogo moved here in Phase 3.2 with its asset resolution intact -- the
+ * import.meta.glob over src/assets/cured logos, the Supabase storage fallback,
+ * cache-busting, and the teamlogo-updated listener. An earlier plate-only
+ * primitive here was removed precisely because it could not resolve an image
+ * path: there is no public/ directory, the assets are bundled through the glob.
+ * The chrome plate travels with the resolver or not at all.
+ */
+export { TeamLogo, type TeamLogoProps } from './TeamLogo';

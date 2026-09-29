@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Game, Team } from '../types';
 import { getLeaguePlayoffSeeds, isPlayoffGame } from '../logic/playoffs';
-import { TeamLogo } from './TeamLogo';
+import { TeamLogo } from './ui';
 import { formatHeaderDate } from './SeasonCalendarStrip';
 
 interface TeamCalendarProps {

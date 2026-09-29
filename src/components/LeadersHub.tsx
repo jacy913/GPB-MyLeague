@@ -10,8 +10,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtAvg, fmtDiff, fmtEra, fmtIp, fmtOdds, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
-import { Panel, SegmentedControl, StatTable, StatValue, type StatTableColumn, type StatTableRow } from './ui';
-import { TeamLogo } from './TeamLogo';
+import { Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 interface LeadersHubProps {
   teams: Team[];
