@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Clock3, FastForward, Play, SkipForward } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FastForward, Play, SkipForward } from 'lucide-react';
 import {
   CompletedGameResult,
   Game,
@@ -22,8 +22,9 @@ import {
 } from '../logic/gameEngine';
 import { buildGameParticipants } from '../logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
-import { formatBattingAverage } from '../logic/statFormatting';
-import { TeamLogo } from './ui';
+import { Panel, RetroButton } from './ui';
+import { BaseDiamond, CountTile, LineScore, SidePanel } from './game/shared';
+import { GameClock, LineupList, MatchupCard, PlayLog } from './game/GamePanels';
 
 interface GameScreenProps {
   game: Game;
@@ -189,16 +190,6 @@ const buildBroadcastSession = (
 
   return snapshot;
 };
-
-const BasesDiamond: React.FC<{ first: boolean; second: boolean; third: boolean }> = ({ first, second, third }) => (
-  <div className="relative mx-auto h-40 w-40">
-    <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-md border border-white/10 bg-white/[0.03]" />
-    <div className={`absolute bottom-3 left-1/2 h-5 w-5 -translate-x-1/2 rotate-45 rounded-sm border ${first ? 'border-platinum bg-platinum' : 'border-white/15 bg-[#191919]'}`} />
-    <div className={`absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 rotate-45 rounded-sm border ${third ? 'border-platinum bg-platinum' : 'border-white/15 bg-[#191919]'}`} />
-    <div className={`absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 rotate-45 rounded-sm border ${second ? 'border-platinum bg-platinum' : 'border-white/15 bg-[#191919]'}`} />
-    <div className="absolute left-1/2 top-5 h-5 w-5 -translate-x-1/2 rotate-45 rounded-sm border border-white/10 bg-white/10" />
-  </div>
-);
 
 const getCurrentBatterForDisplay = (session: GameSessionState): GameParticipantBatter | null => {
   if (!session.participants) {
@@ -391,419 +382,181 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   if (!awayTeam || !homeTeam || !session) {
     return (
-      <section className="rounded-2xl border border-white/10 bg-[#191919] p-6">
-        <button onClick={onBack} className="mb-4 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white">
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </button>
-        <p className="font-mono text-sm text-zinc-400">Unable to load this game.</p>
+      <section className="space-y-3">
+        <RetroButton variant="ghost" size="sm" onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+        </RetroButton>
+        <Panel variant="sunken" className="p-4">
+          <p className="t-body text-[var(--color-ink-dim)]">Unable to load this game.</p>
+        </Panel>
       </section>
     );
   }
 
+  const isTopHalf = displaySession.half === 'top';
+  const battingTeam = isTopHalf ? awayTeam : homeTeam;
+  const pitchingTeam = isTopHalf ? homeTeam : awayTeam;
+  const pitchCount = isTopHalf ? activeSession.homePitching.pitchCount : activeSession.awayPitching.pitchCount;
+
   return (
-    <section className="space-y-6">
-      <button onClick={onBack} className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white">
-        <ArrowLeft className="w-4 h-4" />
-        Back to Schedule
-      </button>
+    <section className="space-y-5">
+      <RetroButton variant="ghost" size="sm" onClick={onBack}>
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Schedule
+      </RetroButton>
 
       {blockingGames.length > 0 && game.status === 'scheduled' && (
-        <div className="rounded-2xl border border-prestige/20 bg-prestige/8 p-5">
+        <Panel className="border-l-[3px] border-l-[var(--color-warn)] p-4">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-prestige shrink-0 mt-0.5" />
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-warn)]" aria-hidden="true" />
             <div className="min-w-0">
-              <h2 className="font-display text-2xl uppercase tracking-[0.12em] text-white">Earlier Games Need Resolution</h2>
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-400 mt-2">
-                This game is not the earliest unresolved game on {game.date}. Resolve the earlier slate first to preserve day order.
+              <h2 className="t-h3">Earlier Games Need Resolution</h2>
+              <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
+                This game is not the earliest unresolved game on {game.date}. Resolve the earlier
+                slate first to preserve day order.
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-2 flex flex-wrap gap-1">
                 {blockingGames.map((blockingGame) => (
-                  <span key={blockingGame.gameId} className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-zinc-200">
+                  <span
+                    key={blockingGame.gameId}
+                    className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] px-2 py-1 t-stat-sm"
+                  >
                     {blockingGame.awayTeam.toUpperCase()} @ {blockingGame.homeTeam.toUpperCase()}
                   </span>
                 ))}
               </div>
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={onSimulateBlockingGames}
-                  className="inline-flex items-center gap-2 rounded-xl bg-prestige px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black"
-                >
-                  <FastForward className="w-4 h-4" />
-                  Sim Earlier Games First
-                </button>
-                <button
-                  onClick={onBack}
-                  className="rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-200"
-                >
-                  Back
-                </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <RetroButton variant="primary" size="sm" onClick={onSimulateBlockingGames}>
+                  <FastForward className="h-4 w-4" aria-hidden="true" /> Sim Earlier Games First
+                </RetroButton>
+                <RetroButton variant="ghost" size="sm" onClick={onBack}>Back</RetroButton>
               </div>
             </div>
           </div>
-        </div>
+        </Panel>
       )}
 
       {noParticipants && (
-        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-5">
-          <p className="font-display text-2xl uppercase tracking-[0.12em] text-white">Player Snapshot Missing</p>
-          <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-300">
+        <Panel className="border-l-[3px] border-l-[var(--color-warn)] p-4">
+          <p className="t-h3">Player Snapshot Missing</p>
+          <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
             Generate or assign rostered players before using the interactive player-driven game screen.
           </p>
-        </div>
+        </Panel>
       )}
 
-      <div className="rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_38%),linear-gradient(135deg,#161616,#1f1f1f,#141414)] p-5 md:p-6">
-        <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)_260px] gap-5 items-start">
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Batting Side</p>
-            <div className="mt-4 flex items-center gap-3">
-              <TeamLogo
-                team={displaySession.half === 'top' ? awayTeam : homeTeam}
-                sizeClass="w-20 h-20"
-              />
-              <div>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white leading-none">
-                  {displaySession.half === 'top' ? awayTeam.city : homeTeam.city}
-                </p>
-                <p className="font-display text-lg uppercase tracking-[0.1em] text-zinc-400 mt-1">
-                  {displaySession.half === 'top' ? awayTeam.name : homeTeam.name}
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">R</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayAwayRuns : displayHomeRuns}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">H</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayAwayHits : displayHomeHits}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">E</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayAwayErrors : displayHomeErrors}
-                </p>
-              </div>
-            </div>
+      <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)_260px]">
+        <SidePanel
+          role="BATTING SIDE"
+          team={battingTeam}
+          runs={isTopHalf ? displayAwayRuns : displayHomeRuns}
+          hits={isTopHalf ? displayAwayHits : displayHomeHits}
+          errors={isTopHalf ? displayAwayErrors : displayHomeErrors}
+        />
+
+        <Panel variant="hero" className="flex flex-col gap-4 p-4">
+          <GameClock
+            date={`${awayTeam.city} at ${homeTeam.city} · ${game.date}`}
+            scheduledTime={scheduledTimeLabel}
+            simTime={currentSimTimeLabel}
+            windowLabel={gameWindowLabel}
+            statusLabel={statusLabel}
+            isBroadcasting={isBroadcasting}
+          />
+
+          {activeSession.participants && (
+            <MatchupCard batter={currentBatter} pitcher={currentPitcher} pitchCount={pitchCount} />
+          )}
+
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
+            <LineScore
+              awayTeam={awayTeam}
+              homeTeam={homeTeam}
+              lineScore={lineScore}
+              away={{ runs: displayAwayRuns, hits: displayAwayHits, errors: displayAwayErrors }}
+              home={{ runs: displayHomeRuns, hits: displayHomeHits, errors: displayHomeErrors }}
+              half={displaySession.half}
+              outs={displaySession.outs}
+            />
+            <BaseDiamond
+              first={Boolean(displaySession.bases.first)}
+              second={Boolean(displaySession.bases.second)}
+              third={Boolean(displaySession.bases.third)}
+            />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{game.date}</p>
-                <h1 className="font-display text-4xl uppercase tracking-[0.12em] text-white mt-1">
-                  {awayTeam.city} at {homeTeam.city}
-                </h1>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">First Pitch</p>
-                    <p className="mt-1 inline-flex items-center gap-2 font-mono text-sm text-zinc-100">
-                      <Clock3 className="h-3.5 w-3.5 text-platinum" />
-                      {scheduledTimeLabel}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Sim Clock</p>
-                    <p className="mt-1 font-mono text-sm text-zinc-100">{currentSimTimeLabel}</p>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Window</p>
-                    <p className="mt-1 font-display text-sm uppercase tracking-[0.1em] text-zinc-100">{gameWindowLabel}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3 text-right min-w-[180px]">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Status</p>
-                <p className="font-display text-2xl uppercase tracking-[0.1em] text-white mt-1">{statusLabel}</p>
-                {isBroadcasting && (
-                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-platinum">
-                    Broadcast Feed Live
-                  </p>
-                )}
-              </div>
-            </div>
+          <div className="grid grid-cols-3 gap-2">
+            <CountTile label="First Base" accent><span className="t-stat-sm">{runnerLabels.first}</span></CountTile>
+            <CountTile label="Second Base" accent><span className="t-stat-sm">{runnerLabels.second}</span></CountTile>
+            <CountTile label="Third Base" accent><span className="t-stat-sm">{runnerLabels.third}</span></CountTile>
+          </div>
 
-            {activeSession.participants && (
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Batter</p>
-                  <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">{currentBatter?.fullName ?? '---'}</p>
-                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
-                    {currentBatter ? `${currentBatter.primaryPosition} | Bats ${currentBatter.bats} | CON ${currentBatter.battingRatings.contact} | PWR ${currentBatter.battingRatings.power}` : 'Awaiting matchup'}
-                  </p>
-                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                    {currentBatter?.battingStat
-                      ? `${formatBattingAverage(currentBatter.battingStat.avg)} AVG | ${currentBatter.battingStat.atBats} AB | ${currentBatter.battingStat.homeRuns} HR`
-                      : 'No season batting line loaded'}
-                  </p>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Pitcher</p>
-                  <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">{currentPitcher?.fullName ?? '---'}</p>
-                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
-                    {currentPitcher
-                      ? `${currentPitcher.role} | Throws ${currentPitcher.throws} | STF ${currentPitcher.pitchingRatings.stuff} | CMD ${currentPitcher.pitchingRatings.command} | PC ${displaySession.half === 'top' ? activeSession.homePitching.pitchCount : activeSession.awayPitching.pitchCount}`
-                      : 'Awaiting matchup'}
-                  </p>
-                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                    {currentPitcher?.pitchingStat
-                      ? `${currentPitcher.pitchingStat.era.toFixed(2)} ERA | ${currentPitcher.pitchingStat.whip.toFixed(2)} WHIP | ${currentPitcher.pitchingStat.strikeouts} K`
-                      : 'No season pitching line loaded'}
-                  </p>
-                </div>
-              </div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <CountTile label="Away"><span className="t-stat-lg">{displayAwayRuns}</span></CountTile>
+            <CountTile label="Home"><span className="t-stat-lg">{displayHomeRuns}</span></CountTile>
+            <CountTile label="Outs"><span className="t-stat-lg">{displaySession.outs}</span></CountTile>
+            <CountTile label="Active Half"><span className="t-stat-lg">{isTopHalf ? 'Top' : 'Bot'}</span></CountTile>
+          </div>
+
+          {activeSession.participants && (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <LineupList
+                title="AWAY LINEUP"
+                entries={activeSession.participants.awayLineup}
+                activePlayerId={isTopHalf ? currentBatter?.playerId ?? null : null}
+              />
+              <LineupList
+                title="HOME LINEUP"
+                entries={activeSession.participants.homeLineup}
+                activePlayerId={isTopHalf ? null : currentBatter?.playerId ?? null}
+              />
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {session.status === 'pregame' && blockingGames.length === 0 && game.status !== 'completed' && (
+              <RetroButton variant="primary" onClick={handleStart} disabled={noParticipants}>
+                <Play className="h-4 w-4" aria-hidden="true" /> Start Game
+              </RetroButton>
             )}
-
-            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_180px] gap-4 items-center">
-              <div className="overflow-x-auto scrollbar-subtle">
-                <table className="min-w-full font-mono text-sm">
-                  <thead>
-                    <tr className="text-zinc-500">
-                      <th className="px-2 py-1 text-left uppercase">Team</th>
-                      {Array.from({ length: Math.max(9, lineScore.length) }, (_, index) => (
-                        <th key={index} className="px-2 py-1 text-center">{index + 1}</th>
-                      ))}
-                      <th className="px-2 py-1 text-center">R</th>
-                      <th className="px-2 py-1 text-center">H</th>
-                      <th className="px-2 py-1 text-center">E</th>
-                      <th className="px-2 py-1 text-center">O</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="text-zinc-100">
-                      <td className="px-2 py-2 uppercase">{awayTeam.id}</td>
-                      {Array.from({ length: Math.max(9, lineScore.length) }, (_, index) => (
-                        <td key={index} className="px-2 py-2 text-center">{lineScore[index]?.away ?? ''}</td>
-                      ))}
-                      <td className="px-2 py-2 text-center">{displayAwayRuns}</td>
-                      <td className="px-2 py-2 text-center">{displayAwayHits}</td>
-                      <td className="px-2 py-2 text-center">{displayAwayErrors}</td>
-                      <td className="px-2 py-2 text-center">{displaySession.half === 'top' ? displaySession.outs : ''}</td>
-                    </tr>
-                    <tr className="text-zinc-100">
-                      <td className="px-2 py-2 uppercase">{homeTeam.id}</td>
-                      {Array.from({ length: Math.max(9, lineScore.length) }, (_, index) => (
-                        <td key={index} className="px-2 py-2 text-center">{lineScore[index]?.home ?? ''}</td>
-                      ))}
-                      <td className="px-2 py-2 text-center">{displayHomeRuns}</td>
-                      <td className="px-2 py-2 text-center">{displayHomeHits}</td>
-                      <td className="px-2 py-2 text-center">{displayHomeErrors}</td>
-                      <td className="px-2 py-2 text-center">{displaySession.half === 'bottom' ? displaySession.outs : ''}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <BasesDiamond
-                first={Boolean(displaySession.bases.first)}
-                second={Boolean(displaySession.bases.second)}
-                third={Boolean(displaySession.bases.third)}
-              />
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">First Base</p>
-                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.first}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Second Base</p>
-                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.second}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Third Base</p>
-                <p className="mt-1 text-sm text-zinc-100">{runnerLabels.third}</p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Away</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-1">{displayAwayRuns}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Home</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-1">{displayHomeRuns}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Outs</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-1">{displaySession.outs}</p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">Active Half</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-1">
-                  {displaySession.half === 'top' ? 'Top' : 'Bot'}
-                </p>
-              </div>
-            </div>
-
-            {activeSession.participants && (
-              <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Away Lineup</p>
-                  <div className="mt-3 space-y-1.5">
-                    {activeSession.participants.awayLineup.map((participant, index) => (
-                      <div
-                        key={participant.playerId}
-                        className={`flex items-center justify-between rounded-lg px-3 py-2 ${displaySession.half === 'top' && currentBatter?.playerId === participant.playerId ? 'bg-white/10' : 'bg-black/20'}`}
-                      >
-                        <span className="text-sm text-zinc-100">{index + 1}. {participant.fullName}</span>
-                        <span className="font-mono text-xs uppercase text-zinc-500">{participant.primaryPosition}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-white/10 bg-[#111] px-4 py-3">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Home Lineup</p>
-                  <div className="mt-3 space-y-1.5">
-                    {activeSession.participants.homeLineup.map((participant, index) => (
-                      <div
-                        key={participant.playerId}
-                        className={`flex items-center justify-between rounded-lg px-3 py-2 ${displaySession.half === 'bottom' && currentBatter?.playerId === participant.playerId ? 'bg-white/10' : 'bg-black/20'}`}
-                      >
-                        <span className="text-sm text-zinc-100">{index + 1}. {participant.fullName}</span>
-                        <span className="font-mono text-xs uppercase text-zinc-500">{participant.primaryPosition}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            {session.status === 'in_progress' && (
+              <>
+                <RetroButton variant="primary" onClick={handleNextAtBat} disabled={isBroadcasting || noParticipants}>
+                  <Play className="h-4 w-4" aria-hidden="true" /> Next At-Bat
+                </RetroButton>
+                <RetroButton variant="default" onClick={handleNextHalf} disabled={isBroadcasting || noParticipants}>
+                  <SkipForward className="h-4 w-4" aria-hidden="true" /> Next Half Inning
+                </RetroButton>
+                <RetroButton variant="default" onClick={handleSimToFinal} disabled={isBroadcasting || noParticipants}>
+                  <FastForward className="h-4 w-4" aria-hidden="true" /> Sim To Final
+                </RetroButton>
+              </>
             )}
-
-            <div className="mt-5 flex flex-wrap gap-2">
-              {session.status === 'pregame' && blockingGames.length === 0 && game.status !== 'completed' && (
-                <button
-                  onClick={handleStart}
-                  disabled={noParticipants}
-                  className="inline-flex items-center gap-2 rounded-xl bg-platinum px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  Start Game
-                </button>
-              )}
-              {session.status === 'in_progress' && (
-                <>
-                  <button
-                    onClick={handleNextAtBat}
-                    disabled={isBroadcasting || noParticipants}
-                    className="inline-flex items-center gap-2 rounded-xl bg-platinum px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-black disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    Next At-Bat
-                  </button>
-                  <button
-                    onClick={handleNextHalf}
-                    disabled={isBroadcasting || noParticipants}
-                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <SkipForward className="w-4 h-4" />
-                    Next Half Inning
-                  </button>
-                  <button
-                    onClick={handleSimToFinal}
-                    disabled={isBroadcasting || noParticipants}
-                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <FastForward className="w-4 h-4" />
-                    Sim To Final
-                  </button>
-                </>
-              )}
-              {session.status === 'completed' && (
-                <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-2 font-mono text-sm text-zinc-200">
-                  {isBroadcasting
-                    ? `Broadcast finishing. ${visibleLogs.length}/${logs.length} plays on screen.`
-                    : `Game complete. Final score ${displayAwayRuns}-${displayHomeRuns}.`}
-                </div>
-              )}
-            </div>
+            {session.status === 'completed' && (
+              <p className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 t-caption text-[var(--color-ink-dim)]">
+                {isBroadcasting
+                  ? `Broadcast finishing. ${visibleLogs.length}/${logs.length} plays on screen.`
+                  : `Game complete. Final score ${displayAwayRuns}-${displayHomeRuns}.`}
+              </p>
+            )}
           </div>
+        </Panel>
 
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Pitching Side</p>
-            <div className="mt-4 flex items-center gap-3">
-              <TeamLogo
-                team={displaySession.half === 'top' ? homeTeam : awayTeam}
-                sizeClass="w-20 h-20"
-              />
-              <div>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white leading-none">
-                  {displaySession.half === 'top' ? homeTeam.city : awayTeam.city}
-                </p>
-                <p className="font-display text-lg uppercase tracking-[0.1em] text-zinc-400 mt-1">
-                  {displaySession.half === 'top' ? homeTeam.name : awayTeam.name}
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 grid grid-cols-3 gap-2">
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">R</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayHomeRuns : displayAwayRuns}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">H</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayHomeHits : displayAwayHits}
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                <p className="font-mono text-[10px] uppercase text-zinc-500">E</p>
-                <p className="font-mono text-xl text-zinc-100 mt-1">
-                  {displaySession.half === 'top' ? displayHomeErrors : displayAwayErrors}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="xl:col-span-3">
-            <div className="mx-auto max-w-5xl rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Play Log</p>
-                  <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    {visibleLogs.length}/{logs.length} events shown
-                  </p>
-                </div>
-                {isBroadcasting && (
-                  <button
-                    onClick={handleSkipBroadcast}
-                    className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-[#111] px-4 py-2 font-display text-sm uppercase tracking-[0.12em] text-zinc-100 hover:border-white/20"
-                  >
-                    <FastForward className="h-4 w-4" />
-                    Skip Broadcast
-                  </button>
-                )}
-              </div>
-              <div ref={logViewportRef} className="mt-4 max-h-[420px] overflow-y-auto scrollbar-subtle space-y-2 pr-1">
-                {visibleLogs.length === 0 ? (
-                  <p className="font-mono text-xs text-zinc-500">No play log available yet.</p>
-                ) : (
-                  visibleLogs.map((log) => (
-                    <div key={log.seq} className="rounded-xl border border-white/10 bg-[#111] px-3 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                          {log.half === 'top' ? 'Top' : 'Bot'} {log.inning}
-                        </p>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                          {log.scoreAway}-{log.scoreHome}
-                        </p>
-                      </div>
-                      <p className="mt-1 text-sm text-zinc-200">{log.description}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <SidePanel
+          role="PITCHING SIDE"
+          team={pitchingTeam}
+          runs={isTopHalf ? displayHomeRuns : displayAwayRuns}
+          hits={isTopHalf ? displayHomeHits : displayAwayHits}
+          errors={isTopHalf ? displayHomeErrors : displayAwayErrors}
+        />
       </div>
+
+      <PlayLog
+        logs={visibleLogs}
+        totalLogs={logs.length}
+        isBroadcasting={isBroadcasting}
+        viewportRef={logViewportRef}
+        onSkip={handleSkipBroadcast}
+      />
     </section>
   );
 };
