@@ -26,3 +26,5 @@ export { SectionTitle, type SectionTitleProps } from './SectionTitle';
  * The chrome plate travels with the resolver or not at all.
  */
 export { TeamLogo, type TeamLogoProps } from './TeamLogo';
+export { OddsBar, type OddsBarProps } from './OddsBar';
+export { MatchupStrip, type MatchupStripProps } from './MatchupStrip';

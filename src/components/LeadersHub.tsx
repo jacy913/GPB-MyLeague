@@ -9,8 +9,9 @@ import {
   type Team,
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
-import { fmtAvg, fmtDiff, fmtEra, fmtIp, fmtOdds, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
-import { Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import { fmtAvg, fmtDiff, fmtEra, fmtIp, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
+import { buildBattingAwards, buildPitchingAwards, type AwardEntry } from '../lib/awardRace';
+import { OddsBar, Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 interface LeadersHubProps {
   teams: Team[];
@@ -113,71 +114,9 @@ const CategoryPanel: React.FC<{
   </Panel>
 );
 
-/* ------------------------------------------------------------------ *
- * MVP scoring
- *
- * The weights below are the live formula, lifted verbatim from the
- * previous implementation. Each component is declared once here and both
- * the displayed total and the visible breakdown are computed from this one
- * list, so a weight cannot change in the total without changing in the
- * breakdown. That was the failure mode the design proposal called out: an
- * award race whose arithmetic the user cannot check.
- * ------------------------------------------------------------------ */
-
-interface MvpComponent {
-  label: string;
-  detail: string;
-  contribution: number;
-}
-
-const mvpTotal = (components: MvpComponent[]): number =>
-  components.reduce((sum, component) => sum + component.contribution, 0);
-
-const battingMvpComponents = (stat: PlayerSeasonBatting, overall: number, winPct: number): MvpComponent[] => [
-  { label: 'AVG', detail: fmtAvg(stat.avg), contribution: stat.avg * 700 },
-  { label: 'OPS', detail: stat.ops.toFixed(3), contribution: stat.ops * 260 },
-  { label: 'HR', detail: String(stat.homeRuns), contribution: stat.homeRuns * 4 },
-  { label: 'RBI', detail: String(stat.rbi), contribution: stat.rbi * 1.75 },
-  { label: 'H', detail: String(stat.hits), contribution: stat.hits * 0.5 },
-  { label: 'R', detail: String(stat.runsScored), contribution: stat.runsScored * 0.7 },
-  { label: 'OVR', detail: String(overall), contribution: overall * 0.45 },
-  { label: 'TEAM', detail: fmtPct(winPct), contribution: winPct * 60 },
-];
-
-const pitchingMvpComponents = (stat: PlayerSeasonPitching, overall: number, winPct: number): MvpComponent[] => [
-  { label: 'ERA', detail: fmtEra(stat.era), contribution: clamp(6 - stat.era, 0, 6) * 40 },
-  { label: 'WHIP', detail: fmtWhip(stat.whip), contribution: clamp(2 - stat.whip, 0, 2) * 70 },
-  { label: 'K', detail: String(stat.strikeouts), contribution: stat.strikeouts * 0.9 },
-  { label: 'W', detail: String(stat.wins), contribution: stat.wins * 4.5 },
-  { label: 'SV', detail: String(stat.saves), contribution: stat.saves * 2.25 },
-  { label: 'IP', detail: fmtIp(stat.inningsPitched), contribution: stat.inningsPitched * 1.1 },
-  { label: 'OVR', detail: String(overall), contribution: overall * 0.45 },
-  { label: 'TEAM', detail: fmtPct(winPct), contribution: winPct * 55 },
-];
-
-interface AwardEntry {
-  playerId: string;
-  name: string;
-  team: Team | null;
-  components: MvpComponent[];
-  total: number;
-  odds: number;
-}
-
-const toAwardEntries = (candidates: Array<Omit<AwardEntry, 'total' | 'odds'>>): AwardEntry[] => {
-  const ranked = candidates
-    .map((candidate) => ({ ...candidate, total: mvpTotal(candidate.components) }))
-    .sort((left, right) => right.total - left.total)
-    .slice(0, 8);
-
-  const floored = ranked.map((entry) => Math.max(0.1, entry.total));
-  const sum = floored.reduce((acc, value) => acc + value, 0);
-
-  return ranked.map((entry, index) => ({
-    ...entry,
-    odds: sum > 0 ? Number(((floored[index] / sum) * 100).toFixed(1)) : 0,
-  }));
-};
+/* MVP scoring lives in lib/awardRace, shared with the front page. The weights
+   are the live formula, unchanged; the comment there explains why it is not
+   duplicated per screen. */
 
 const AwardRace: React.FC<{
   title: string;
@@ -239,29 +178,7 @@ const AwardRace: React.FC<{
                 ))}
               </dl>
 
-              {/* Proportional bar, not the 20-cell segmented Meter. With eight
-                  candidates sharing the field, a leader typically holds ~20% of
-                  the total, which fills 4 of 20 cells -- the whole top half of
-                  the race lands in the same 1-4 cell band, so the cells cannot
-                  separate the candidates the panel exists to compare. The exact
-                  figure is printed beside the bar and both read from the same
-                  `odds` value, so the bar adds a sense of proportion without
-                  claiming a precision it does not have. */}
-              <div className="mt-3 flex items-center gap-3">
-                <div
-                  className="h-2 flex-1 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)]"
-                  role="img"
-                  aria-label={`${entry.name} at ${fmtOdds(entry.odds)} of the field`}
-                >
-                  <div
-                    className="h-full bg-[var(--color-gold)] transition-[width] duration-[var(--dur-slow)] ease-[var(--ease-snap)]"
-                    style={{ width: `${entry.odds}%` }}
-                  />
-                </div>
-                <StatValue size="sm" variant="accent" className="w-[6ch] text-right">
-                  {fmtOdds(entry.odds)}
-                </StatValue>
-              </div>
+              <OddsBar odds={entry.odds} label={entry.name} className="mt-3" />
             </li>
           );
         })}
@@ -519,35 +436,19 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   }), [teamCategories, teams]);
 
   // -- award races --------------------------------------------------------
-  const battingAwards = useMemo<AwardEntry[]>(() => toAwardEntries(players
-    .map((player) => {
-      const stat = battingByPlayerId.get(player.playerId);
-      const rating = battingRatingsByPlayerId.get(player.playerId);
-      if (!stat || !rating || stat.atBats < 120) return null;
-      const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
-      return {
-        playerId: player.playerId,
-        name: displayName(player),
-        team,
-        components: battingMvpComponents(stat, rating.overall, team ? getWinPct(team) : 0),
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))), [battingByPlayerId, battingRatingsByPlayerId, players, teamsById]);
+  // Scoring lives in lib/awardRace so the front page and this board cannot
+  // disagree about who leads the race.
+  const awardInputs = useMemo(() => ({
+    players,
+    teamsById,
+    battingStats: battingByPlayerId,
+    pitchingStats: pitchingByPlayerId,
+    battingRatings: battingRatingsByPlayerId,
+    pitchingRatings: pitchingRatingsByPlayerId,
+  }), [battingByPlayerId, battingRatingsByPlayerId, pitchingByPlayerId, pitchingRatingsByPlayerId, players, teamsById]);
 
-  const pitchingAwards = useMemo<AwardEntry[]>(() => toAwardEntries(players
-    .map((player) => {
-      const stat = pitchingByPlayerId.get(player.playerId);
-      const rating = pitchingRatingsByPlayerId.get(player.playerId);
-      if (!stat || !rating || (stat.inningsPitched < 50 && stat.saves < 12)) return null;
-      const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
-      return {
-        playerId: player.playerId,
-        name: displayName(player),
-        team,
-        components: pitchingMvpComponents(stat, rating.overall, team ? getWinPct(team) : 0),
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))), [pitchingByPlayerId, pitchingRatingsByPlayerId, players, teamsById]);
+  const battingAwards = useMemo<AwardEntry[]>(() => buildBattingAwards(awardInputs), [awardInputs]);
+  const pitchingAwards = useMemo<AwardEntry[]>(() => buildPitchingAwards(awardInputs), [awardInputs]);
 
   const activeBoards = mode === 'teams' ? teamBoards : playerBoard === 'pitching' ? pitchingBoards : battingBoards;
   const selectedKey = mode === 'teams' ? selectedTeam : playerBoard === 'pitching' ? selectedPitching : selectedBatting;
