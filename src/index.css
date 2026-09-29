@@ -36,6 +36,10 @@
   /* League identity — role-clamped, never chrome */
   --color-prestige:    #a79b00;
   --color-platinum:    #17b690;
+  /* Brightest tier of the Platinum ramp, mirroring gold-hi. Chosen to sit at
+     1.56:1 from --color-platinum, matching the 1.55:1 that gold-hi sits from
+     --color-gold, so the two ramps escalate by the same visible step. */
+  --color-platinum-hi: #6fdcc0;
 
   /* Text ramp */
   --color-ink:         #f2f5ff;

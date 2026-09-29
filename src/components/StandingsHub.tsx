@@ -252,8 +252,26 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, batt
     (['North', 'South', 'East', 'West'] as const).map((division) => ({ league, division, rows: standingsRows.filter((row) => row.team.league === league && row.team.division === division) })),
   ), [standingsRows]);
 
+  // The screen's primary colour follows the league on screen. One league is
+  // shown at a time, so the accent cannot be ambiguous about what it means, and
+  // remapping the token on the subtree catches the primitives too rather than
+  // needing a colour prop threaded through StatTable, StatValue and TeamLogo.
+  //
+  // Platinum teal only, not both leagues: prestige yellow measures 1.52:1
+  // against the chrome gold, which is below the point where a person can tell
+  // them apart, so a Prestige accent would have been an invisible change. The
+  // flip to teal is unmistakable and therefore does real work: it tells the
+  // user they have moved league.
+  const accentVar = activeLeague === 'Platinum' ? 'var(--color-platinum)' : 'var(--color-gold)';
+  // The brightest tier is its own token, so it has to be remapped alongside the
+  // base or the division leader's name stays gold on a teal board.
+  const accentHiVar = activeLeague === 'Platinum' ? 'var(--color-platinum-hi)' : 'var(--color-gold-hi)';
+
   return (
-    <section className="space-y-5">
+    <section
+      className="space-y-5"
+      style={{ '--color-gold': accentVar, '--color-gold-hi': accentHiVar } as React.CSSProperties}
+    >
       <Panel className="overflow-hidden">
         <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
           <h1 className="t-h2">League Standings</h1>

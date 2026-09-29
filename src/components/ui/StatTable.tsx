@@ -7,7 +7,7 @@ const ROW_HEIGHT: Record<StatTableDensity, string> = {
   default: '30px',
   // For tables that are the reason the user opened the screen. The standings
   // board is the case: squeezed into two columns the rows were unreadable.
-  large: '42px',
+  large: '48px',
 };
 
 export interface StatTableColumn {
