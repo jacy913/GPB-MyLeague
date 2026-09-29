@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { ArrowRight, ListOrdered, Sparkles, Ticket } from 'lucide-react';
 import { Team } from '../types';
 import { DRAFT_ROUNDS, DraftClassState, DraftPickRecord } from '../logic/draftLogic';
-import { TeamLogo } from './ui';
+import { Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
@@ -36,8 +36,6 @@ interface ProjectedPick {
   overall: number;
   potential: number;
 }
-
-const sectionClass = 'rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#171717,#242424,#101010)]';
 
 export const LotteryHub: React.FC<LotteryHubProps> = ({
   teams,
@@ -109,175 +107,155 @@ export const LotteryHub: React.FC<LotteryHubProps> = ({
     });
   }, [draftClass]);
 
-  const draftProgress = draftClass
-    ? `${draftClass.picks.length}/${draftClass.totalPicks}`
-    : '0/0';
+  const draftProgress = draftClass ? `${draftClass.picks.length}/${draftClass.totalPicks}` : '0/0';
+
+  const orderColumns: StatTableColumn[] = [
+    { key: 'round', header: 'RND', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'pick', header: 'PICK', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'overall', header: 'OVERALL', align: 'right', isNumeric: true, width: '7ch' },
+    { key: 'team', header: 'TEAM' },
+    { key: 'result', header: 'RESULT' },
+  ];
+
+  const orderTableRows: StatTableRow[] = orderRows.map((row) => {
+    const team = teamsById.get(row.teamId) ?? null;
+    // The lottery itself reorders only the first round's top slots, so those rows
+    // are the ones the user came to this screen to see. Marking them is
+    // informational only; it does not change the order.
+    const isLotteryWindow = row.round === 1 && row.pickInRound <= 14;
+    return {
+      id: `${row.round}-${row.pickInRound}`,
+      className: isLotteryWindow ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
+      cells: {
+        round: row.round,
+        pick: row.pickInRound,
+        overall: <StatValue size="sm" variant={isLotteryWindow ? 'accent' : 'default'}>{row.overallPick}</StatValue>,
+        team: (
+          <span className="flex items-center gap-2">
+            {team && <TeamLogo team={team} sizeClass="h-6 w-6" />}
+            <span className="truncate t-stat-sm">{team ? `${team.city} ${team.name}` : row.teamId.toUpperCase()}</span>
+          </span>
+        ),
+        result: row.pickRecord
+          ? <span className="truncate t-stat-sm text-[var(--color-ink-dim)]">{row.pickRecord.playerName} · {row.pickRecord.primaryPosition} · {row.pickRecord.overall} OVR</span>
+          : <span className="t-stat-sm text-[var(--color-ink-faint)]">PENDING</span>,
+      },
+    };
+  });
+
+  const projectionColumns: StatTableColumn[] = [
+    { key: 'pick', header: 'PICK', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'player', header: 'PROSPECT' },
+    { key: 'pos', header: 'POS', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'team', header: 'DESTINATION' },
+    { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'pot', header: 'POT', align: 'right', isNumeric: true, width: '4ch' },
+  ];
+
+  const projectionRows: StatTableRow[] = projectedPicks.map((projection) => {
+    const team = teamsById.get(projection.teamId) ?? null;
+    return {
+      id: `proj-${projection.overallPick}`,
+      cells: {
+        pick: projection.overallPick,
+        player: <span className="truncate t-stat-sm">{projection.playerName}</span>,
+        pos: projection.position,
+        team: <span className="truncate t-stat-sm text-[var(--color-ink-dim)]">{team ? `${team.city} ${team.name}` : projection.teamId.toUpperCase()}</span>,
+        ovr: projection.overall,
+        pot: <StatValue size="sm" variant="accent">{projection.potential}</StatValue>,
+      },
+    };
+  });
 
   return (
-    <section className="space-y-6">
-      <article className={`${sectionClass} p-6`}>
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Lottery Desk</p>
-            <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-white">Lottery</p>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400">
-              Run the draft lottery and generate the class here. After that, this board doubles as the draft-order tracker and prediction screen.
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-[1.5rem] border border-[#d4bb6a]/30 bg-[#d4bb6a]/10 px-5 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-200">Lottery Status</p>
-              <p className="mt-2 font-headline text-2xl uppercase tracking-[0.06em] text-[#f3dea1]">
-                {draftClass ? 'Completed' : 'Pending'}
-              </p>
-            </div>
-            <div className="rounded-[1.5rem] border border-white/10 bg-black/20 px-5 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Current Date</p>
-              <p className="mt-2 font-headline text-2xl uppercase tracking-[0.06em] text-white">{currentDate || 'Offseason'}</p>
-            </div>
-            <div className="rounded-[1.5rem] border border-white/10 bg-black/20 px-5 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Draft Progress</p>
-              <p className="mt-2 font-headline text-2xl uppercase tracking-[0.06em] text-white">{draftProgress}</p>
-            </div>
+    <section className="space-y-5">
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <h1 className="t-h2">Lottery</h1>
+          <div className="flex flex-wrap gap-2">
+            <RetroButton
+              variant={lotteryIsViewOnly ? 'ghost' : 'primary'}
+              onClick={onGenerateDraftClass}
+              disabled={!canRunLottery}
+            >
+              <Ticket className="h-4 w-4" aria-hidden="true" />
+              {lotteryIsViewOnly ? 'Lottery Locked' : 'Run Lottery'}
+            </RetroButton>
+            <RetroButton variant="default" onClick={onOpenDraft} disabled={!draftClass}>
+              Open Draft
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </RetroButton>
           </div>
         </div>
-      </article>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-        <section className={`${sectionClass} p-6`}>
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Draft Lottery Board</p>
-              <p className="mt-1 font-headline text-4xl uppercase tracking-[0.06em] text-white">
-                {draftClass ? `Season ${draftClass.seasonYear} Order` : 'Run Lottery'}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onGenerateDraftClass}
-                disabled={!canRunLottery}
-                className="rounded-2xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-[#f3dea1] disabled:opacity-50"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Ticket className="h-4 w-4" />
-                  {lotteryIsViewOnly ? 'Lottery Locked' : 'Run Lottery'}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={onOpenDraft}
-                disabled={!draftClass}
-                className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 font-headline text-lg uppercase tracking-[0.08em] text-white disabled:opacity-50"
-              >
-                <span className="inline-flex items-center gap-2">
-                  Open Draft
-                  <ArrowRight className="h-4 w-4" />
-                </span>
-              </button>
-            </div>
+        <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <p className="t-body max-w-2xl text-[var(--color-ink-dim)]">
+            Run the draft lottery and generate the class here. After that this board doubles as the
+            draft-order tracker and prediction screen.
+          </p>
+          <div className="grid grid-cols-3 gap-2">
+            <StatTile label="Lottery" value={draftClass ? 'COMPLETED' : 'PENDING'} accent={!draftClass} />
+            <StatTile label="Date" value={currentDate || 'OFFSEASON'} />
+            <StatTile label="Progress" value={draftProgress} />
           </div>
+        </div>
+      </Panel>
 
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+        <Panel className="overflow-hidden">
+          <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+            <h2 className="t-h3">Draft Order</h2>
+            <span className="t-caption text-[var(--color-ink-faint)]">
+              {draftClass ? `SEASON ${draftClass.seasonYear}` : 'NOT RUN'}
+            </span>
+          </div>
           {!draftClass ? (
-            <div className="mt-6 rounded-[1.75rem] border border-dashed border-white/10 bg-black/20 px-5 py-8 text-center">
-              <ListOrdered className="mx-auto h-8 w-8 text-zinc-500" />
-              <p className="mt-4 font-headline text-3xl uppercase tracking-[0.08em] text-white">No Lottery Results Yet</p>
-              <p className="mt-3 text-sm leading-6 text-zinc-400">
+            <div className="flex flex-col items-center gap-3 p-8 text-center">
+              <ListOrdered className="h-8 w-8 text-[var(--color-ink-faint)]" aria-hidden="true" />
+              <p className="t-h3 text-[var(--color-ink)]">No Lottery Results Yet</p>
+              <p className="t-body max-w-md text-[var(--color-ink-dim)]">
                 {!lotteryDateReached
                   ? `Lottery unlocks on ${lotteryOpenDate}.`
                   : offseasonStage === 'draft_lottery'
-                  ? 'Run the lottery to lock the full draft order and generate the next class of prospects.'
-                  : 'Lottery generation is only available during the Draft Lottery offseason stage.'}
+                    ? 'Run the lottery to lock the full draft order and generate the next class of prospects.'
+                    : 'Lottery generation is only available during the Draft Lottery offseason stage.'}
               </p>
             </div>
           ) : (
-            <div className="mt-4 max-h-[64vh] overflow-auto rounded-[1.5rem] border border-white/10 bg-black/20">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 bg-[#141414]">
-                  <tr className="border-b border-white/10 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                    <th className="px-3 py-3 text-center">Rnd</th>
-                    <th className="px-3 py-3 text-center">Pick</th>
-                    <th className="px-3 py-3 text-center">Overall</th>
-                    <th className="px-3 py-3 text-left">Team</th>
-                    <th className="px-3 py-3 text-left">Result</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {orderRows.map((row) => {
-                    const team = teamsById.get(row.teamId) ?? null;
-                    return (
-                      <tr key={`${row.round}-${row.pickInRound}`} className="hover:bg-white/5">
-                        <td className="px-3 py-3 text-center font-mono text-zinc-200">{row.round}</td>
-                        <td className="px-3 py-3 text-center font-mono text-zinc-200">{row.pickInRound}</td>
-                        <td className="px-3 py-3 text-center font-mono text-[#ecd693]">{row.overallPick}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex items-center gap-2">
-                            {team && <TeamLogo team={team} sizeClass="h-8 w-8" />}
-                            <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-200">
-                              {team ? `${team.city} ${team.name}` : row.teamId.toUpperCase()}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-                          {row.pickRecord
-                            ? `${row.pickRecord.playerName} | ${row.pickRecord.primaryPosition} | ${row.pickRecord.overall} OVR`
-                            : 'Pending'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <StatTable
+              columns={orderColumns}
+              rows={orderTableRows}
+              density="dense"
+              aria-label="Draft order"
+              className="max-h-[64vh] overflow-y-auto"
+            />
           )}
-        </section>
+        </Panel>
 
-        <section className="space-y-6">
-          <article className={`${sectionClass} p-5`}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Draft Predictions</p>
-                <p className="mt-1 font-headline text-3xl uppercase tracking-[0.06em] text-white">Projected Next Picks</p>
-              </div>
-              <Sparkles className="h-5 w-5 text-[#d4bb6a]" />
-            </div>
-
-            <div className="mt-4 space-y-3 max-h-[500px] overflow-y-auto pr-1 scrollbar-subtle">
-              {projectedPicks.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-4 py-6 text-center">
-                  <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">Run lottery to unlock projections</p>
-                </div>
-              ) : (
-                projectedPicks.map((projection) => {
-                  const team = teamsById.get(projection.teamId) ?? null;
-                  return (
-                    <div key={`proj-${projection.overallPick}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                        Round {projection.round} | Pick {projection.pickInRound} | Overall {projection.overallPick}
-                      </p>
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <div>
-                          <p className="font-headline text-2xl uppercase tracking-[0.06em] text-white">{projection.playerName}</p>
-                          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-                            {team ? `${team.city} ${team.name}` : projection.teamId.toUpperCase()} | {projection.position} | {projection.playerType}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-3 py-2 text-center">
-                          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-[#f3dea1]">OVR/POT</p>
-                          <p className="mt-1 font-headline text-2xl uppercase tracking-[0.06em] text-[#f6e6ae]">
-                            {projection.overall}/{projection.potential}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </article>
-        </section>
+        <Panel className="overflow-hidden">
+          <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+            <h2 className="t-h3">Projected Picks</h2>
+            <Sparkles className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+          </div>
+          {projectedPicks.length === 0 ? (
+            <p className="p-6 text-center t-caption text-[var(--color-ink-faint)]">Run lottery to unlock projections</p>
+          ) : (
+            <StatTable
+              columns={projectionColumns}
+              rows={projectionRows}
+              density="dense"
+              aria-label="Projected draft picks"
+              className="max-h-[64vh] overflow-y-auto"
+            />
+          )}
+        </Panel>
       </div>
     </section>
   );
 };
+
+const StatTile: React.FC<{ label: string; value: string; accent?: boolean }> = ({ label, value, accent }) => (
+  <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">
+    <p className="t-caption text-[var(--color-ink-faint)]">{label}</p>
+    <p className={`t-stat mt-1 ${accent ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink)]'}`}>{value}</p>
+  </div>
+);

@@ -1,5 +1,6 @@
 import React from 'react';
-import { Check, ChevronRight, Circle, FastForward, Trophy } from 'lucide-react';
+import { Check, Circle, Crown, FastForward, Trophy } from 'lucide-react';
+import { Panel, RetroButton, SkewedTab } from './ui';
 
 export type OffseasonChecklistStage = 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
@@ -32,29 +33,99 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
   onAwards, onRetirements, onLottery, onDraft, onFreeAgency, onStartSeason,
 }) => {
   const activeIndex = steps.findIndex((entry) => entry.key === stage);
+  const activeStep = steps[activeIndex] ?? steps[0];
+
   const isComplete = (key: OffseasonChecklistStage, index: number): boolean =>
     key === 'awards' ? awardsComplete : key === 'draft_lottery' ? lotteryComplete : key === 'draft' ? draftComplete : index < activeIndex;
+
   const handlers: Record<OffseasonChecklistStage, () => void> = {
-    awards: onAwards, retirements: onRetirements, draft_lottery: onLottery, draft: onDraft, free_agency: onFreeAgency, start_next_season: onStartSeason,
+    awards: onAwards, retirements: onRetirements, draft_lottery: onLottery,
+    draft: onDraft, free_agency: onFreeAgency, start_next_season: onStartSeason,
   };
 
-  return <section className="mx-auto max-w-5xl space-y-6">
-    <article className="rounded-[2rem] border border-[#d4bb6a]/25 bg-[radial-gradient(circle_at_top_left,rgba(212,187,106,0.22),transparent_42%),linear-gradient(135deg,#1c1c1c,#101010)] p-8">
-      <div className="flex items-start gap-4">
-        <Trophy className="mt-1 h-8 w-8 text-[#ecd693]" />
-        <div><p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Offseason Checklist</p>
-          <h1 className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-white">{seasonYear} Offseason</h1>
-          <p className="mt-3 text-sm text-zinc-300">World Series champion: {championLabel}. Complete each event in order, or quick-sim the active event.</p>
+  const activeComplete = isComplete(activeStep.key, activeIndex);
+  const actionLabel = activeStep.key === 'start_next_season' ? 'Confirm Start' : 'Simulate Event';
+
+  return (
+    <section className="mx-auto max-w-5xl space-y-5">
+      <Panel className="overflow-hidden">
+        <div className="flex items-start gap-4 p-5">
+          <Trophy className="mt-1 h-8 w-8 shrink-0 text-[var(--color-gold)]" aria-hidden="true" />
+          <div>
+            <p className="t-label text-[var(--color-gold)]">Offseason Checklist</p>
+            <h1 className="t-display mt-1">{seasonYear} Offseason</h1>
+            <p className="t-body mt-2 text-[var(--color-ink-dim)]">
+              World Series champion: <span className="text-[var(--color-ink)]">{championLabel}</span>.
+              Complete each event in order, or quick-sim the active event.
+            </p>
+          </div>
         </div>
+      </Panel>
+
+      {/* Step rail. Six identical cards gave no sense of where you were in the
+          sequence; a single rail shows the whole offseason at once and the
+          active segment is unambiguous. */}
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <ol className="flex min-w-max items-stretch gap-1">
+          {steps.map((entry, index) => {
+            const complete = isComplete(entry.key, index);
+            const active = entry.key === stage;
+            const locked = index > activeIndex;
+            return (
+              <li key={entry.key} className="flex">
+                <SkewedTab
+                  direction={index % 2 === 0 ? 'skew-r' : 'skew-l'}
+                  variant={active ? 'active' : 'inactive'}
+                  disabled={locked || complete}
+                  onClick={() => !locked && !complete && handlers[entry.key]()}
+                  aria-current={active ? 'step' : undefined}
+                  className={`flex items-center gap-2 whitespace-nowrap ${
+                    complete ? 'opacity-60' : locked ? 'opacity-35' : ''
+                  }`}
+                >
+                  {complete
+                    ? <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    : locked
+                      ? <Circle className="h-2.5 w-2.5" aria-hidden="true" />
+                      : <FastForward className="h-3.5 w-3.5" aria-hidden="true" />}
+                  <span className="t-caption text-[var(--color-ink-faint)]">{index + 1}</span>
+                  {entry.title}
+                </SkewedTab>
+              </li>
+            );
+          })}
+        </ol>
       </div>
-    </article>
-    <div className="space-y-3">{steps.map((entry, index) => {
-      const complete = isComplete(entry.key, index); const active = entry.key === stage; const locked = index > activeIndex;
-      return <article key={entry.key} className={`flex flex-col gap-4 rounded-[1.5rem] border p-5 md:flex-row md:items-center ${active ? 'border-[#d4bb6a]/45 bg-[#d4bb6a]/10' : 'border-white/10 bg-[#171717]'}`}>
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/25">{complete ? <Check className="h-5 w-5 text-emerald-300" /> : active ? <FastForward className="h-5 w-5 text-[#ecd693]" /> : <Circle className="h-4 w-4 text-zinc-600" />}</div>
-        <div className="min-w-0 flex-1"><p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Event {index + 1}</p><h2 className="mt-1 font-headline text-2xl uppercase tracking-[0.06em] text-white">{entry.title}</h2><p className="mt-1 text-sm text-zinc-400">{entry.description}</p></div>
-        <button type="button" disabled={locked || complete} onClick={handlers[entry.key]} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-3 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693] hover:bg-[#d4bb6a]/20 disabled:cursor-not-allowed disabled:opacity-45">{complete ? 'Complete' : active ? (entry.key === 'start_next_season' ? 'Confirm Start' : 'Simulate Event') : 'Locked'} {!complete && active && <ChevronRight className="h-4 w-4" />}</button>
-      </article>;
-    })}</div>
-  </section>;
+
+      <Panel variant={activeComplete ? 'default' : 'hero'} className={`overflow-hidden ${activeComplete ? '' : 'border-[var(--color-gold)]'}`}>
+        <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+          <h2 className="t-h3">{activeStep.title}</h2>
+          <span className="t-caption text-[var(--color-ink-faint)]">EVENT {activeIndex + 1} OF {steps.length}</span>
+        </div>
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="t-body text-[var(--color-ink-dim)]">{activeStep.description}</p>
+          <RetroButton
+            variant={activeComplete ? 'ghost' : 'primary'}
+            disabled={activeComplete}
+            onClick={handlers[activeStep.key]}
+          >
+            {activeComplete ? 'Complete' : actionLabel}
+            {!activeComplete && <FastForward className="h-4 w-4" aria-hidden="true" />}
+          </RetroButton>
+        </div>
+      </Panel>
+
+      {/* What the active event will change. A checklist that only says "do the
+          next thing" leaves a new user with nothing to orient by. */}
+      <Panel variant="sunken" className="flex items-start gap-3 p-4">
+        <Crown className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />
+        <div>
+          <p className="t-label text-[var(--color-ink-dim)]">Remaining</p>
+          <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
+            {steps.filter((entry, index) => !isComplete(entry.key, index)).length} of {steps.length} events outstanding
+          </p>
+        </div>
+      </Panel>
+    </section>
+  );
 };
