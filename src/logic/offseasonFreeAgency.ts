@@ -127,7 +127,7 @@ const getRecentUsage = (
   return pitchingStatsByPlayerId.get(player.playerId)?.inningsPitched ?? 0;
 };
 
-const getRetirementChance = (player: Player, overall: number, recentUsage: number): number => {
+const getRetirementChance = (player: Player, overall: number, recentUsage: number, wasRostered: boolean): number => {
   if (player.status === 'retired' || player.status === 'prospect' || player.age < 30) {
     return 0;
   }
@@ -141,7 +141,11 @@ const getRetirementChance = (player: Player, overall: number, recentUsage: numbe
 
   chance += Math.max(0, player.yearsPro - 14) * 0.018;
   chance += Math.max(0, 72 - overall) * 0.012;
-  if (recentUsage < (player.playerType === 'batter' ? 90 : 20)) {
+  // Only a player who was actually on a roster can be "underused". A free agent
+  // with no plate appearances was not benched, they were unsigned, and treating
+  // that as reduced usage charged them for a season the roster pipeline failed to
+  // give them. Unsigned players are bounded separately by the free-agent age-out.
+  if (wasRostered && recentUsage < (player.playerType === 'batter' ? 90 : 20)) {
     chance += 0.08;
   }
   if (overall >= 86) chance -= 0.18;
@@ -277,13 +281,32 @@ export const applyOffseasonRetirements = ({
   let retiredPlayers = 0;
   const retiredPlayerIds = new Set<string>();
   const transactions: PlayerTransaction[] = [];
+  // yearsPro is years of service, so it may only advance for a player who
+  // occupied a roster slot in the season that just finished. Counting offseason
+  // time instead let unsigned free agents bank service they never performed:
+  // median yearsPro at retirement reached 11 with a p90 of 17, against a median
+  // of one season actually spent on a roster. That fed straight into
+  // getRetirementChance, which adds a service-based penalty above 14 years, so
+  // the longer a good player sat unsigned the more likely the model was to age
+  // him out -- pushing out exactly the players the retirement curve is supposed
+  // to protect.
+  const rosteredPlayerIds = new Set(
+    playerState.rosterSlots.filter((slot) => slot.seasonYear === seasonYear).map((slot) => slot.playerId),
+  );
   const players = playerState.players.map((player) => {
     if (player.status === 'retired') return { ...player };
-    const agedPlayer = { ...player, age: player.age + 1, yearsPro: player.status === 'prospect' ? player.yearsPro : player.yearsPro + 1 };
+    const wasRostered = rosteredPlayerIds.has(player.playerId);
+    const agedPlayer = {
+      ...player,
+      age: player.age + 1,
+      yearsPro: wasRostered ? player.yearsPro + 1 : player.yearsPro,
+    };
     agedPlayers += 1;
     const overall = getPlayerOverall(agedPlayer, battingRatingsByPlayerId, pitchingRatingsByPlayerId);
     const usage = getRecentUsage(agedPlayer, battingStatsByPlayerId, pitchingStatsByPlayerId);
-    if (stableRoll(`${agedPlayer.playerId}:${seasonYear}:retirement`) >= getRetirementChance(agedPlayer, overall, usage)) return agedPlayer;
+    if (stableRoll(`${agedPlayer.playerId}:${seasonYear}:retirement`) >= getRetirementChance(agedPlayer, overall, usage, wasRostered)) {
+      return agedPlayer;
+    }
     retiredPlayers += 1;
     retiredPlayerIds.add(agedPlayer.playerId);
     transactions.push({
@@ -330,21 +353,28 @@ export const applyOffseasonFreeAgencyRollover = ({
   const retiredPlayerIds = new Set<string>();
   const offseasonTransactions: PlayerTransaction[] = [];
 
+  // See applyOffseasonRetirements: yearsPro is years of service, so it only
+  // advances for a player who held a roster slot in the completed season.
+  const rosteredPlayerIds = new Set(
+    playerState.rosterSlots.filter((slot) => slot.seasonYear === seasonYear).map((slot) => slot.playerId),
+  );
+
   const nextPlayers = playerState.players.map((player) => {
     if (player.status === 'retired') {
       return { ...player };
     }
 
+    const wasRostered = rosteredPlayerIds.has(player.playerId);
     const agedPlayer = skipAgeAndRetirements ? { ...player } : {
       ...player,
       age: player.age + 1,
-      yearsPro: player.status === 'prospect' ? player.yearsPro : player.yearsPro + 1,
+      yearsPro: wasRostered ? player.yearsPro + 1 : player.yearsPro,
     };
     if (!skipAgeAndRetirements) agedPlayers += 1;
 
     const overall = getPlayerOverall(agedPlayer, battingRatingsByPlayerId, pitchingRatingsByPlayerId);
     const recentUsage = getRecentUsage(agedPlayer, battingStatsByPlayerId, pitchingStatsByPlayerId);
-    const retirementChance = getRetirementChance(agedPlayer, overall, recentUsage);
+    const retirementChance = getRetirementChance(agedPlayer, overall, recentUsage, wasRostered);
     const shouldRetire = !skipAgeAndRetirements && stableRoll(`${agedPlayer.playerId}:${seasonYear}:retirement`) < retirementChance;
     if (shouldRetire) {
       retiredPlayers += 1;

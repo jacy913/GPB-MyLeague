@@ -1459,7 +1459,22 @@ const reportCareerFlow = () => {
   };
   fmtLengths('seasons with a PA', statBased, 'undercounts bench players');
   fmtLengths('seasons on a roster', rosterBased, 'the honest one');
-  fmtLengths('yearsPro at retirement', yearsProBased, 'matches MLB ~5 median');
+  // Not comparable to a "median career length" reference. yearsPro is years of
+  // MLB service, and getYearsPro backfills it as age - 21 for generated veterans
+  // who never actually played those seasons, so it tracks the age of the
+  // retiring cohort by construction. The question worth asking is whether it
+  // has run AHEAD of what the cohort's age implies, which is what a per-offseason
+  // increment for unsigned players used to do -- that produced a median of 11
+  // against a median of 1 season actually spent on a roster.
+  const medianYearsPro = percentile(yearsProBased, 0.5);
+  const medianRetireAge = percentile(retired.map((entry) => entry.exit!.age), 0.5);
+  const serviceImpliedByAge = Math.max(1, medianRetireAge - 21);
+  const serviceDrift = medianYearsPro - serviceImpliedByAge;
+  const serviceNote =
+    serviceDrift > 2.5
+      ? `RUNS ${serviceDrift.toFixed(1)} AHEAD of age-implied service -> still inflating`
+      : `age-implied ${serviceImpliedByAge.toFixed(0)} at retirement age ${medianRetireAge.toFixed(0)}`;
+  fmtLengths('yearsPro at retirement', yearsProBased, serviceNote);
   const stars = retired.filter((entry) => entry.peakOverall >= 80);
   if (stars.length > 0) {
     fmtLengths('seasons on roster (80+)', stars.map((entry) => entry.seasonsOnRoster), 'good players should last');
