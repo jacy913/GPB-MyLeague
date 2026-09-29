@@ -1,18 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Filter, Search, Shield, UserRound } from 'lucide-react';
+import { ChevronDown, Filter, Search } from 'lucide-react';
 import {
-  Player,
-  PlayerBattingRatings,
-  PlayerPitchingRatings,
-  PlayerSeasonBatting,
-  PlayerSeasonPitching,
-  Team,
-  TeamRosterSlot,
+  type Player,
+  type PlayerBattingRatings,
+  type PlayerPitchingRatings,
+  type PlayerSeasonBatting,
+  type PlayerSeasonPitching,
+  type Team,
+  type TeamRosterSlot,
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
-import { formatBattingAverage } from '../logic/statFormatting';
-import { AttributeRadar } from './AttributeRadar';
-import { TeamLogo } from './ui';
+import { Panel, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import { ClubPanel, StatTile, overallVariant } from './teams/shared';
+import { PlayerCard } from './teams/PlayerCard';
 
 interface PlayersHubProps {
   teams: Team[];
@@ -28,8 +28,15 @@ type TeamPresenceFilter = 'all' | 'assigned' | 'unassigned';
 type SortKey = 'overall_desc' | 'name' | 'age_asc' | 'age_desc' | 'team' | 'position' | 'potential_desc';
 type TeamScopeFilter = 'all' | 'free_agents' | 'retired' | string;
 
-const selectClassName =
-  'w-full appearance-none bg-transparent pr-7 text-sm uppercase tracking-[0.08em] text-zinc-100 outline-none [&>option]:bg-[#111111] [&>option]:text-zinc-100';
+const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
+  { value: 'overall_desc', label: 'OVR' },
+  { value: 'potential_desc', label: 'POT' },
+  { value: 'name', label: 'NAME' },
+  { value: 'age_asc', label: 'AGE UP' },
+  { value: 'age_desc', label: 'AGE DN' },
+  { value: 'team', label: 'CLUB' },
+  { value: 'position', label: 'POS' },
+];
 
 const getLatestSeasonYear = (
   battingStats: PlayerSeasonBatting[],
@@ -41,57 +48,33 @@ const getLatestSeasonYear = (
     ...pitchingStats.map((stat) => stat.seasonYear),
     ...rosterSlots.map((slot) => slot.seasonYear),
   ];
-
-  if (years.length === 0) {
-    return null;
-  }
-
-  return Math.max(...years);
+  return years.length === 0 ? null : Math.max(...years);
 };
 
-const formatPlayerLabel = (player: Player): string => `${player.firstName} ${player.lastName}`;
+const playerLabel = (player: Player): string => `${player.firstName} ${player.lastName}`;
 
-const getPlayerTeam = (player: Player, teamsById: Map<string, Team>): Team | null =>
+const teamOf = (player: Player, teamsById: Map<string, Team>): Team | null =>
   player.teamId ? teamsById.get(player.teamId) ?? null : null;
 
-const getPlayerOverall = (
+const overallOf = (
   playerId: string,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): number =>
-  battingRatingsByPlayerId.get(playerId)?.overall ??
-  pitchingRatingsByPlayerId.get(playerId)?.overall ??
-  0;
+  batting: Map<string, PlayerBattingRatings>,
+  pitching: Map<string, PlayerPitchingRatings>,
+): number => batting.get(playerId)?.overall ?? pitching.get(playerId)?.overall ?? 0;
 
-const OVR_RING_RADIUS = 34;
-const OVR_RING_CIRCUMFERENCE = 2 * Math.PI * OVR_RING_RADIUS;
-const getOverallRingOffset = (overall: number | null): number => {
-  const normalized = overall === null ? 0 : Math.max(60, Math.min(100, overall));
-  const progress = normalized === 0 ? 0 : (Math.max(60, Math.min(100, normalized)) - 60) / 40;
-  return OVR_RING_CIRCUMFERENCE * (1 - progress);
-};
-const getOverallTextClass = (overall: number | null): string => {
-  if (overall === null) {
-    return 'text-zinc-300';
-  }
-  if (overall >= 90) {
-    return 'text-amber-300';
-  }
-  if (overall >= 80) {
-    return 'text-white';
-  }
-  return 'text-zinc-300';
-};
-
-const getPlayerPotentialOverall = (
+const potentialOf = (
   playerId: string,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): number =>
-  battingRatingsByPlayerId.get(playerId)?.potentialOverall ??
-  pitchingRatingsByPlayerId.get(playerId)?.potentialOverall ??
-  0;
+  batting: Map<string, PlayerBattingRatings>,
+  pitching: Map<string, PlayerPitchingRatings>,
+): number => batting.get(playerId)?.potentialOverall ?? pitching.get(playerId)?.potentialOverall ?? 0;
 
+const selectClass =
+  'w-full appearance-none bg-transparent pr-6 t-caption text-[var(--color-ink)] outline-none';
+
+/**
+ * League player database. Filtering, sorting and selection are unchanged; the
+ * presentation is rebuilt on the shared primitives.
+ */
 export const PlayersHub: React.FC<PlayersHubProps> = ({
   teams,
   players,
@@ -116,132 +99,100 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
   );
 
   const latestRosterSlots = useMemo(() => {
-    if (!latestSeasonYear) {
-      return [];
-    }
+    if (!latestSeasonYear) return [];
     return rosterSlots.filter((slot) => slot.seasonYear === latestSeasonYear);
   }, [latestSeasonYear, rosterSlots]);
 
-  const rosterSlotByPlayerId = useMemo(() => {
-    const map = new Map<string, TeamRosterSlot>();
-    latestRosterSlots.forEach((slot) => {
-      map.set(slot.playerId, slot);
-    });
-    return map;
-  }, [latestRosterSlots]);
-
-  const latestBattingStatByPlayerId = useMemo(() => {
-    return getPreferredBattingStatsByPlayerId(battingStats, 'regular_season');
-  }, [battingStats]);
+  // Retained for the season-year readout; presence filtering reads player.teamId
+  // rather than slot occupancy, which is what the previous implementation did.
 
   const latestBattingRatingsByPlayerId = useMemo(() => {
     const map = new Map<string, PlayerBattingRatings>();
-    [...battingRatings]
-      .sort((left, right) => right.seasonYear - left.seasonYear)
-      .forEach((ratings) => {
-        if (!map.has(ratings.playerId)) {
-          map.set(ratings.playerId, ratings);
-        }
-      });
+    battingRatings.forEach((ratings) => {
+      const existing = map.get(ratings.playerId);
+      if (!existing || ratings.seasonYear > existing.seasonYear) map.set(ratings.playerId, ratings);
+    });
     return map;
   }, [battingRatings]);
 
-  const latestPitchingStatByPlayerId = useMemo(() => {
-    return getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season');
-  }, [pitchingStats]);
-
   const latestPitchingRatingsByPlayerId = useMemo(() => {
     const map = new Map<string, PlayerPitchingRatings>();
-    [...pitchingRatings]
-      .sort((left, right) => right.seasonYear - left.seasonYear)
-      .forEach((ratings) => {
-        if (!map.has(ratings.playerId)) {
-          map.set(ratings.playerId, ratings);
-        }
-      });
+    pitchingRatings.forEach((ratings) => {
+      const existing = map.get(ratings.playerId);
+      if (!existing || ratings.seasonYear > existing.seasonYear) map.set(ratings.playerId, ratings);
+    });
     return map;
   }, [pitchingRatings]);
 
+  const latestBattingStatByPlayerId = useMemo(
+    () => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'),
+    [battingStats],
+  );
+  const latestPitchingStatByPlayerId = useMemo(
+    () => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
+    [pitchingStats],
+  );
+
   const availablePositions = useMemo(
-    () => Array.from(new Set(players.flatMap((player) => [player.primaryPosition, player.secondaryPosition].filter(Boolean) as string[]))).sort(),
+    () => Array.from(new Set(players.map((player) => player.primaryPosition))).sort(),
     [players],
   );
 
   const filteredPlayers = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
-
     const nextPlayers = players.filter((player) => {
-      const fullName = formatPlayerLabel(player).toLowerCase();
-      const team = getPlayerTeam(player, teamsById);
+      const team = teamOf(player, teamsById);
       const matchesQuery =
-        normalizedQuery.length === 0 ||
-        fullName.includes(normalizedQuery) ||
-        player.lastName.toLowerCase().includes(normalizedQuery) ||
-        player.firstName.toLowerCase().includes(normalizedQuery) ||
-        player.primaryPosition.toLowerCase().includes(normalizedQuery) ||
-        team?.city.toLowerCase().includes(normalizedQuery) ||
-        team?.name.toLowerCase().includes(normalizedQuery);
-
+        normalizedQuery.length === 0
+        || playerLabel(player).toLowerCase().includes(normalizedQuery)
+        || player.primaryPosition.toLowerCase().includes(normalizedQuery)
+        || (team ? `${team.city} ${team.name}`.toLowerCase().includes(normalizedQuery) : false);
       const matchesTeam =
-        teamFilter === 'all' ||
-        (teamFilter === 'free_agents' && player.status === 'free_agent') ||
-        (teamFilter === 'retired' && player.status === 'retired') ||
-        (teamFilter !== 'free_agents' && teamFilter !== 'retired' && player.teamId === teamFilter);
+        teamFilter === 'all'
+        || (teamFilter === 'free_agents' && player.status === 'free_agent')
+        || (teamFilter === 'retired' && player.status === 'retired')
+        || player.teamId === teamFilter;
+      // Secondary position counts. A player who can play a slot only as a
+      // reserve belongs in that position's results; filtering on the primary
+      // position alone hid them.
       const matchesPosition =
-        positionFilter === 'all' ||
-        player.primaryPosition === positionFilter ||
-        player.secondaryPosition === positionFilter;
+        positionFilter === 'all'
+        || player.primaryPosition === positionFilter
+        || player.secondaryPosition === positionFilter;
       const matchesStatus = statusFilter === 'all' || player.status === statusFilter;
       const matchesPresence =
-        presenceFilter === 'all' ||
-        (presenceFilter === 'assigned' && player.teamId !== null) ||
-        (presenceFilter === 'unassigned' && player.teamId === null);
-
+        presenceFilter === 'all'
+        || (presenceFilter === 'assigned' && player.teamId !== null)
+        || (presenceFilter === 'unassigned' && player.teamId === null);
       return matchesQuery && matchesTeam && matchesPosition && matchesStatus && matchesPresence;
     });
 
     nextPlayers.sort((left, right) => {
-      if (sortKey === 'age_asc') {
-        return left.age - right.age || left.lastName.localeCompare(right.lastName);
-      }
-      if (sortKey === 'age_desc') {
-        return right.age - left.age || left.lastName.localeCompare(right.lastName);
-      }
+      if (sortKey === 'age_asc') return left.age - right.age || left.lastName.localeCompare(right.lastName);
+      if (sortKey === 'age_desc') return right.age - left.age || left.lastName.localeCompare(right.lastName);
       if (sortKey === 'team') {
-        const leftTeam = getPlayerTeam(left, teamsById);
-        const rightTeam = getPlayerTeam(right, teamsById);
-        const leftLabel = leftTeam ? `${leftTeam.city} ${leftTeam.name}` : 'Free Agent';
-        const rightLabel = rightTeam ? `${rightTeam.city} ${rightTeam.name}` : 'Free Agent';
-        return leftLabel.localeCompare(rightLabel) || left.lastName.localeCompare(right.lastName);
+        const l = teamOf(left, teamsById);
+        const r = teamOf(right, teamsById);
+        return `${l?.city ?? 'Free Agent'}`.localeCompare(`${r?.city ?? 'Free Agent'}`) || left.lastName.localeCompare(right.lastName);
       }
-      if (sortKey === 'position') {
-        return left.primaryPosition.localeCompare(right.primaryPosition) || left.lastName.localeCompare(right.lastName);
-      }
+      if (sortKey === 'position') return left.primaryPosition.localeCompare(right.primaryPosition) || left.lastName.localeCompare(right.lastName);
       if (sortKey === 'potential_desc') {
-        const leftPotential = getPlayerPotentialOverall(left.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-        const rightPotential = getPlayerPotentialOverall(right.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-        return rightPotential - leftPotential || left.lastName.localeCompare(right.lastName);
+        return potentialOf(right.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId)
+          - potentialOf(left.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId)
+          || left.lastName.localeCompare(right.lastName);
       }
       if (sortKey === 'overall_desc') {
-        const leftOverall = getPlayerOverall(left.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-        const rightOverall = getPlayerOverall(right.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-        return rightOverall - leftOverall || left.lastName.localeCompare(right.lastName) || left.firstName.localeCompare(right.firstName);
+        return overallOf(right.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId)
+          - overallOf(left.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId)
+          || left.lastName.localeCompare(right.lastName) || left.firstName.localeCompare(right.firstName);
       }
       return left.lastName.localeCompare(right.lastName) || left.firstName.localeCompare(right.firstName);
     });
 
     return nextPlayers;
   }, [
-    latestBattingRatingsByPlayerId,
-    latestPitchingRatingsByPlayerId,
-    players,
-    positionFilter,
-    presenceFilter,
-    searchQuery,
-    sortKey,
-    statusFilter,
-    teamFilter,
-    teamsById,
+    latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId,
+    players, positionFilter, presenceFilter, searchQuery, sortKey, statusFilter, teamFilter, teamsById,
   ]);
 
   useEffect(() => {
@@ -249,7 +200,6 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
       setSelectedPlayerId(null);
       return;
     }
-
     if (!filteredPlayers.some((player) => player.playerId === selectedPlayerId)) {
       setSelectedPlayerId(filteredPlayers[0].playerId);
     }
@@ -260,401 +210,189 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
     [filteredPlayers, selectedPlayerId],
   );
 
-  const selectedTeam = selectedPlayer ? getPlayerTeam(selectedPlayer, teamsById) : null;
+  const selectedTeam = selectedPlayer ? teamOf(selectedPlayer, teamsById) : null;
   const selectedBattingStats = selectedPlayer ? latestBattingStatByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedPitchingStats = selectedPlayer ? latestPitchingStatByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedBattingRatings = selectedPlayer ? latestBattingRatingsByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedPitchingRatings = selectedPlayer ? latestPitchingRatingsByPlayerId.get(selectedPlayer.playerId) ?? null : null;
   const selectedOverall = selectedBattingRatings?.overall ?? selectedPitchingRatings?.overall ?? null;
+
   const selectedAttributePoints = useMemo(() => {
     if (selectedPlayer?.playerType === 'batter' && selectedBattingRatings) {
+      const r = selectedBattingRatings;
       return [
-        { label: 'Contact', value: selectedBattingRatings.contact },
-        { label: 'Power', value: selectedBattingRatings.power },
-        { label: 'Discipline', value: selectedBattingRatings.plateDiscipline },
-        { label: 'Avoid K', value: selectedBattingRatings.avoidStrikeout },
-        { label: 'Speed', value: selectedBattingRatings.speed },
-        { label: 'Fielding', value: selectedBattingRatings.fielding },
+        { label: 'Contact', value: r.contact }, { label: 'Power', value: r.power },
+        { label: 'Discipline', value: r.plateDiscipline }, { label: 'Avoid K', value: r.avoidStrikeout },
+        { label: 'Speed', value: r.speed }, { label: 'Fielding', value: r.fielding },
       ];
     }
-
     if (selectedPlayer?.playerType === 'pitcher' && selectedPitchingRatings) {
+      const r = selectedPitchingRatings;
       return [
-        { label: 'Stuff', value: selectedPitchingRatings.stuff },
-        { label: 'Command', value: selectedPitchingRatings.command },
-        { label: 'Control', value: selectedPitchingRatings.control },
-        { label: 'Movement', value: selectedPitchingRatings.movement },
-        { label: 'Stamina', value: selectedPitchingRatings.stamina },
-        { label: 'Fielding', value: selectedPitchingRatings.fielding },
+        { label: 'Stuff', value: r.stuff }, { label: 'Command', value: r.command },
+        { label: 'Control', value: r.control }, { label: 'Movement', value: r.movement },
+        { label: 'Stamina', value: r.stamina }, { label: 'Fielding', value: r.fielding },
       ];
     }
-
     return [];
   }, [selectedBattingRatings, selectedPitchingRatings, selectedPlayer]);
 
-  const headerTitle = selectedPlayer ? formatPlayerLabel(selectedPlayer) : 'Player Pool Pending';
-  const headerSubline = selectedPlayer
-    ? `${selectedPlayer.primaryPosition}${selectedPlayer.secondaryPosition ? ` / ${selectedPlayer.secondaryPosition}` : ''} | ${selectedPlayer.status.replace('_', ' ')}`
-    : 'No players have been generated yet.';
+  const columns: StatTableColumn[] = [
+    { key: 'club', header: 'CLUB', width: '5ch' },
+    { key: 'name', header: 'NAME' },
+    { key: 'pos', header: 'POS', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'age', header: 'AGE', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'pot', header: 'POT', align: 'right', isNumeric: true, width: '4ch' },
+  ];
+
+  const rows: StatTableRow[] = filteredPlayers.map((player) => {
+    const team = teamOf(player, teamsById);
+    const overall = overallOf(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
+    return {
+      id: player.playerId,
+      cells: {
+        club: team ? <TeamLogo team={team} sizeClass="h-6 w-6" /> : <span className="t-caption text-[var(--color-ink-faint)]">--</span>,
+        name: <span className="truncate t-stat-sm">{playerLabel(player)}</span>,
+        pos: player.primaryPosition,
+        age: player.age,
+        ovr: <StatValue size="sm" variant={overallVariant(overall || null)}>{overall || '---'}</StatValue>,
+        pot: potentialOf(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId) || '---',
+      },
+    };
+  });
+
+  const scopeButton = (value: string, label: string) => {
+    const active = teamFilter === value;
+    return (
+      <button
+        key={value}
+        type="button"
+        onClick={() => setTeamFilter(value)}
+        aria-pressed={active}
+        className={`min-w-[96px] shrink-0 border px-3 py-2 t-label transition-colors ${
+          active
+            ? 'border-[var(--color-gold)] bg-[var(--color-gold)] text-[var(--color-ink-invert)]'
+            : 'border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] text-[var(--color-ink-dim)] hover:border-[var(--color-chrome-hi)]'
+        }`}
+      >
+        {label}
+      </button>
+    );
+  };
 
   return (
-    <section className="space-y-6">
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Roster Database</p>
-          <h2 className="font-display text-3xl uppercase tracking-[0.14em] text-white mt-1">Rosters</h2>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 min-w-[280px]">
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Loaded</p>
-            <p className="font-display text-2xl uppercase tracking-[0.08em] text-white mt-1">{players.length}</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Filtered</p>
-            <p className="font-display text-2xl uppercase tracking-[0.08em] text-white mt-1">{filteredPlayers.length}</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">With Team</p>
-            <p className="font-display text-2xl uppercase tracking-[0.08em] text-white mt-1">
-              {players.filter((player) => player.teamId).length}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Season</p>
-            <p className="font-display text-2xl uppercase tracking-[0.08em] text-white mt-1">{latestSeasonYear ?? '---'}</p>
+    <section className="space-y-5">
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <h1 className="t-h2">Rosters</h1>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <StatTile label="Loaded" value={players.length} />
+            <StatTile label="Filtered" value={filteredPlayers.length} />
+            <StatTile label="With Team" value={players.filter((player) => player.teamId).length} />
+            <StatTile label="Season" value={latestSeasonYear ?? '---'} />
           </div>
         </div>
-      </section>
 
-      <section className="rounded-3xl border border-white/10 bg-[#171717] p-4">
-        <div className="flex gap-2 overflow-x-auto scrollbar-subtle pb-1">
-            <button
-              onClick={() => setTeamFilter('all')}
-              className={`min-w-[110px] rounded-2xl border px-3 py-3 text-center transition-colors ${
-                teamFilter === 'all'
-                  ? 'border-white/25 bg-white/10'
-                  : 'border-white/10 bg-[#151515] hover:border-white/20'
-              }`}
-            >
-              <p className="font-display text-lg uppercase tracking-[0.1em] text-white">All</p>
-            </button>
-
-            <button
-              onClick={() => setTeamFilter('free_agents')}
-              className={`min-w-[132px] rounded-2xl border px-3 py-3 text-center transition-colors ${
-                teamFilter === 'free_agents'
-                  ? 'border-white/25 bg-white/10'
-                  : 'border-white/10 bg-[#151515] hover:border-white/20'
-              }`}
-            >
-              <p className="font-display text-lg uppercase tracking-[0.1em] text-white">Free Agents</p>
-            </button>
-
-            <button
-              onClick={() => setTeamFilter('retired')}
-              className={`min-w-[110px] rounded-2xl border px-3 py-3 text-center transition-colors ${
-                teamFilter === 'retired'
-                  ? 'border-white/25 bg-white/10'
-                  : 'border-white/10 bg-[#151515] hover:border-white/20'
-              }`}
-            >
-              <p className="font-display text-lg uppercase tracking-[0.1em] text-white">Retired</p>
-            </button>
-
-            {teams
-              .slice()
-              .sort((left, right) => left.city.localeCompare(right.city))
-              .map((team) => {
-                const isSelected = teamFilter === team.id;
-
-                return (
-                  <button
-                    key={team.id}
-                    onClick={() => setTeamFilter(team.id)}
-                    className={`min-w-[92px] rounded-2xl border px-3 py-3 transition-colors ${
-                      isSelected
-                        ? 'border-white/25 bg-white/10'
-                        : 'border-white/10 bg-[#151515] hover:border-white/20'
-                    }`}
-                  >
-                    <div className="flex items-center justify-center">
-                      <TeamLogo team={team} sizeClass="h-12 w-12" />
-                    </div>
-                  </button>
-                );
-              })}
+        <div className="flex gap-1 overflow-x-auto p-3">
+          {scopeButton('all', 'ALL')}
+          {scopeButton('free_agents', 'FREE AGENTS')}
+          {scopeButton('retired', 'RETIRED')}
+          {[...teams]
+            .sort((left, right) => left.city.localeCompare(right.city))
+            .map((team) => {
+              const active = teamFilter === team.id;
+              return (
+                <button
+                  key={team.id}
+                  type="button"
+                  onClick={() => setTeamFilter(team.id)}
+                  aria-pressed={active}
+                  aria-label={`Filter to ${team.city} ${team.name}`}
+                  className={`shrink-0 border p-2 transition-colors ${
+                    active
+                      ? 'border-[var(--color-gold)]'
+                      : 'border-transparent hover:border-[var(--color-chrome-lo)]'
+                  }`}
+                >
+                  <TeamLogo team={team} sizeClass="h-9 w-9" />
+                </button>
+              );
+            })}
         </div>
-      </section>
+      </Panel>
 
-      <section className="rounded-3xl border border-white/10 bg-[#171717] px-5 py-4">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_110px_130px_120px] gap-3 items-end">
-          <label className="border-b border-white/10 px-1 py-2">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-zinc-500" />
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search name, club, pos"
-                className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:font-mono placeholder:text-xs placeholder:uppercase placeholder:tracking-[0.16em] placeholder:text-zinc-600"
-              />
-            </div>
+      <Panel className="p-3">
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_110px_130px_120px]">
+          <label className="flex items-center gap-2 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">
+            <Search className="h-4 w-4 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />
+            <span className="sr-only">Search players</span>
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search name, club, pos"
+              className="w-full bg-transparent t-stat-sm text-[var(--color-ink)] outline-none placeholder:t-caption placeholder:text-[var(--color-ink-faint)]"
+            />
           </label>
 
-          <label className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
-            <div className="relative">
-              <select
-                value={positionFilter}
-                onChange={(event) => setPositionFilter(event.target.value)}
-                className={selectClassName}
-              >
-                <option value="all">POS</option>
-                {availablePositions.map((position) => (
-                  <option key={position} value={position}>
-                    {position}
-                  </option>
-                ))}
+          {([
+            { label: 'POSITION', value: positionFilter, options: [['all', 'POS'], ...availablePositions.map((p) => [p, p])], onChange: (v: string) => setPositionFilter(v) },
+            { label: 'STATUS', value: statusFilter, options: [['all', 'STATUS'], ['active', 'ACTIVE'], ['free_agent', 'FA'], ['prospect', 'PROS'], ['retired', 'RET']], onChange: (v: string) => setStatusFilter(v as 'all' | Player['status']) },
+            { label: 'SORT', value: sortKey, options: SORT_OPTIONS.map((o) => [o.value, o.label] as [string, string]), onChange: (v: string) => setSortKey(v as SortKey) },
+          ]).map((control) => (
+            <label key={control.label} className="relative flex flex-col gap-0.5 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-1.5">
+              <span className="t-caption text-[var(--color-ink-faint)]">{control.label}</span>
+              <select value={control.value} onChange={(event) => control.onChange(event.target.value)} className={selectClass}>
+                {control.options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            </div>
-          </label>
-
-          <label className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
-            <div className="relative">
-              <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as 'all' | Player['status'])}
-                className={selectClassName}
-              >
-                <option value="all">STATUS</option>
-                <option value="active">ACTIVE</option>
-                <option value="free_agent">FA</option>
-                <option value="prospect">PROS</option>
-                <option value="retired">RET</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            </div>
-          </label>
-
-          <label className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2.5">
-            <div className="relative">
-              <select
-                value={sortKey}
-                onChange={(event) => setSortKey(event.target.value as SortKey)}
-                className={selectClassName}
-              >
-                <option value="overall_desc">OVR</option>
-                <option value="name">NAME</option>
-                <option value="age_asc">AGE UP</option>
-                <option value="age_desc">AGE DN</option>
-                <option value="team">CLUB</option>
-                <option value="position">POS</option>
-                <option value="potential_desc">POT</option>
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            </div>
-          </label>
+              <ChevronDown className="pointer-events-none absolute bottom-2 right-2 h-3.5 w-3.5 text-[var(--color-gold)]" aria-hidden="true" />
+            </label>
+          ))}
         </div>
-      </section>
+      </Panel>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)] gap-6">
-        <section className="order-2 xl:order-2 rounded-3xl border border-white/10 bg-[#171717] p-5">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <div className="flex items-center gap-2">
-              <Filter className="h-5 w-5 text-zinc-400" />
-              <h3 className="font-display text-2xl uppercase tracking-[0.12em] text-white">Player List</h3>
-            </div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-              {filteredPlayers.length} results
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 overflow-hidden">
-            <div className="grid grid-cols-[56px_minmax(0,1.7fr)_84px_84px_84px_84px] gap-3 bg-white/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-              <span>Club</span>
-              <span>Name</span>
-              <span>Pos</span>
-              <span>Age</span>
-              <span>Ovr</span>
-              <span>Pot</span>
-            </div>
-
-            <div className="max-h-[720px] overflow-y-auto scrollbar-subtle divide-y divide-white/5">
-              {filteredPlayers.length === 0 ? (
-                <div className="px-4 py-12 text-center">
-                  <p className="font-display text-3xl uppercase tracking-[0.12em] text-zinc-300">No Players Loaded</p>
-                  <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500 mt-3">
-                    Generate or import a player pool to populate this page.
-                  </p>
-                </div>
-              ) : (
-                filteredPlayers.map((player) => {
-                  const team = getPlayerTeam(player, teamsById);
-                  const overall = getPlayerOverall(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-                  const potentialOverall = getPlayerPotentialOverall(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId);
-                  const isSelected = player.playerId === selectedPlayerId;
-                  return (
-                    <button
-                      key={player.playerId}
-                      onClick={() => setSelectedPlayerId(player.playerId)}
-                      className={`grid w-full grid-cols-[56px_minmax(0,1.7fr)_84px_84px_84px_84px] gap-3 px-4 py-3 text-left transition-colors ${
-                        isSelected ? 'bg-white/10' : 'bg-transparent hover:bg-white/5'
-                      }`}
-                    >
-                      <div className="flex items-center">
-                        {team ? (
-                          <TeamLogo team={team} sizeClass="h-11 w-11" />
-                        ) : (
-                          <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20">
-                            <span className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">-</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-display text-xl uppercase tracking-[0.08em] text-white truncate">{formatPlayerLabel(player)}</p>
-                      </div>
-                      <span className="font-display text-xl uppercase tracking-[0.06em] text-zinc-100">{player.primaryPosition}</span>
-                      <span className="font-display text-xl uppercase tracking-[0.06em] text-zinc-100">{player.age}</span>
-                      <span className={`font-display text-xl font-bold uppercase tracking-[0.06em] ${getOverallTextClass(overall || null)}`}>
-                        {overall || '---'}
-                      </span>
-                      <span className="font-display text-xl font-bold uppercase tracking-[0.06em] text-zinc-100">{potentialOverall || '---'}</span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </section>
-
-        <aside className="order-1 xl:order-1 rounded-3xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_30%),linear-gradient(135deg,#181818,#242424,#161616)] p-5">
-          <div className="grid grid-cols-[132px_minmax(0,1fr)_120px] gap-5 items-start">
-            <div className="rounded-3xl border border-white/10 bg-black/25 p-4 flex items-center justify-center min-h-[160px]">
-              {selectedTeam ? (
-                <TeamLogo team={selectedTeam} sizeClass="h-24 w-24" />
-              ) : (
-                <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/25">
-                  <UserRound className="h-10 w-10 text-zinc-600" />
-                </div>
-              )}
-            </div>
-
-            <div className="min-w-0">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                {selectedTeam ? `${selectedTeam.city} ${selectedTeam.name}` : 'Player Card'}
-              </p>
-              <h2 className="font-display text-4xl uppercase tracking-[0.12em] text-white mt-2 break-words">
-                {headerTitle}
-              </h2>
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400 mt-2">
-                {headerSubline}
-              </p>
-              <p className="font-mono text-xs uppercase tracking-[0.18em] text-zinc-300 mt-4">
-                {selectedPlayer
-                  ? `Bats ${selectedPlayer.bats} | Throws ${selectedPlayer.throws} | ${selectedPlayer.contractYearsLeft} Year${selectedPlayer.contractYearsLeft === 1 ? '' : 's'} Left`
-                  : 'Bats -- | Throws -- | Years Left --'}
-              </p>
-            </div>
-
-            <div className="flex flex-col items-center rounded-3xl border border-white/10 bg-black/25 px-4 py-5">
-              <div className="relative flex h-24 w-24 items-center justify-center">
-                <svg className="h-24 w-24 -rotate-90" viewBox="0 0 80 80" aria-hidden="true">
-                  <circle cx="40" cy="40" r={OVR_RING_RADIUS} className="fill-none stroke-white/10" strokeWidth="6" />
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r={OVR_RING_RADIUS}
-                    className="fill-none stroke-platinum"
-                    strokeWidth="6"
-                    strokeLinecap="round"
-                    strokeDasharray={OVR_RING_CIRCUMFERENCE}
-                    strokeDashoffset={getOverallRingOffset(selectedOverall)}
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">OVR</span>
-                  <span className={`font-display text-4xl font-bold uppercase tracking-[0.06em] leading-none mt-1 ${getOverallTextClass(selectedOverall)}`}>
-                    {selectedOverall ?? '---'}
-                  </span>
-                </div>
-              </div>
-              <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">Impact Grade</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-5">
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Primary</p>
-              <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                {selectedPlayer?.primaryPosition ?? '---'}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Height</p>
-              <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                {selectedPlayer?.height ?? '---'}
-              </p>
-            </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Age</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                  {selectedPlayer?.age ?? '---'}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Weight</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                  {selectedPlayer ? `${selectedPlayer.weightLbs} lbs` : '---'}
-                </p>
-              </div>
-            </div>
-
-          <section className="rounded-2xl border border-white/10 bg-black/20 p-4 mt-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Shield className="h-4 w-4 text-zinc-300" />
-              <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Attributes</h3>
-            </div>
-            {selectedPlayer ? (
-              selectedAttributePoints.length > 0 ? (
-                <AttributeRadar points={selectedAttributePoints} />
-              ) : (
-                <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">No ratings loaded for this player yet.</p>
-              )
-            ) : (
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">Generate players to inspect their attribute profile.</p>
-            )}
-          </section>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5">
-            <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="h-4 w-4 text-platinum" />
-                <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Batting Stats</h3>
-              </div>
-              <div className="space-y-2 font-mono text-sm">
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">AVG</span><span className="text-zinc-100">{selectedBattingStats ? formatBattingAverage(selectedBattingStats.avg) : '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">OPS</span><span className="text-zinc-100">{selectedBattingStats ? selectedBattingStats.ops.toFixed(3) : '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">AB</span><span className="text-zinc-100">{selectedBattingStats?.atBats ?? '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">H</span><span className="text-zinc-100">{selectedBattingStats?.hits ?? '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">HR</span><span className="text-zinc-100">{selectedBattingStats?.homeRuns ?? '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">RBI</span><span className="text-zinc-100">{selectedBattingStats?.rbi ?? '---'}</span></div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="h-4 w-4 text-prestige" />
-                <h3 className="font-display text-xl uppercase tracking-[0.1em] text-white">Pitching Stats</h3>
-              </div>
-              <div className="space-y-2 font-mono text-sm">
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">ERA</span><span className="text-zinc-100">{selectedPitchingStats ? selectedPitchingStats.era.toFixed(2) : '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">WHIP</span><span className="text-zinc-100">{selectedPitchingStats ? selectedPitchingStats.whip.toFixed(2) : '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">W-L</span><span className="text-zinc-100">{selectedPitchingStats ? `${selectedPitchingStats.wins}-${selectedPitchingStats.losses}` : '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">K</span><span className="text-zinc-100">{selectedPitchingStats?.strikeouts ?? '---'}</span></div>
-                <div className="flex justify-between gap-3"><span className="text-zinc-500">IP</span><span className="text-zinc-100">{selectedPitchingStats?.inningsPitched ?? '---'}</span></div>
-              </div>
-            </section>
-          </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)]">
+        <aside className="order-1 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-4 xl:order-1">
+          <PlayerCard
+            player={selectedPlayer}
+            team={selectedTeam}
+            overall={selectedOverall}
+            attributePoints={selectedAttributePoints}
+            battingStat={selectedBattingStats}
+            pitchingStat={selectedPitchingStats}
+            eyebrow={selectedTeam ? `${selectedTeam.city} ${selectedTeam.name}` : 'Player Card'}
+            title={selectedPlayer ? playerLabel(selectedPlayer) : 'Player Pool Pending'}
+            subline={selectedPlayer
+              ? `${selectedPlayer.primaryPosition}${selectedPlayer.secondaryPosition ? ` / ${selectedPlayer.secondaryPosition}` : ''} · ${selectedPlayer.status.replace('_', ' ')}`
+              : 'No players have been generated yet.'}
+            emptyAttributes="Generate players to inspect their attribute profile."
+          />
         </aside>
+
+        <ClubPanel
+          title="Player List"
+          eyebrow=""
+          aside={<span className="t-caption text-[var(--color-ink-faint)]">{filteredPlayers.length} RESULTS</span>}
+          bodyClassName="p-0"
+        >
+          {rows.length === 0 ? (
+            <p className="flex flex-col items-center gap-2 p-8 text-center">
+              <Filter className="h-6 w-6 text-[var(--color-ink-faint)]" aria-hidden="true" />
+              <span className="t-h3 text-[var(--color-ink)]">No Players Loaded</span>
+              <span className="t-caption text-[var(--color-ink-faint)]">Generate or import a player pool to populate this page.</span>
+            </p>
+          ) : (
+            <StatTable
+              columns={columns}
+              rows={rows}
+              density="dense"
+              onRowSelect={(id) => setSelectedPlayerId(String(id))}
+              selectedRowId={selectedPlayerId}
+              aria-label="League player database"
+              className="max-h-[720px] overflow-y-auto"
+            />
+          )}
+        </ClubPanel>
       </div>
     </section>
   );

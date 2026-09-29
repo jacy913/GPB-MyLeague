@@ -28,3 +28,4 @@ export { SectionTitle, type SectionTitleProps } from './SectionTitle';
 export { TeamLogo, type TeamLogoProps } from './TeamLogo';
 export { OddsBar, type OddsBarProps } from './OddsBar';
 export { MatchupStrip, type MatchupStripProps } from './MatchupStrip';
+export { RatingRing, type RatingRingProps } from './RatingRing';
