@@ -15,8 +15,6 @@ import {
   buildGameStoryCandidates,
   buildTransactionIndexes,
   buildTransactionStoryCandidates,
-  formatTickerGame,
-  formatTickerTransaction,
   generateHeadlineDeck,
   getFeaturedGame,
   type GameStoryCacheEntry,
@@ -26,7 +24,7 @@ import { isPlayoffGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
 import { HomePanel, getMilestones, sortStandings, type DivisionSnapshot, type Milestone } from './home/shared';
-import { FeaturedGamePanel, HeadlinePanel, TickerStrip } from './home/HeadlinePanel';
+import { FeaturedGamePanel, HeadlinePanel } from './home/HeadlinePanel';
 import { MvpRacePanel } from './home/MvpRacePanel';
 import { ActionCenter, DivisionSnapshotPanel, MilestoneTimeline, TradeDeskModal } from './home/Panels';
 import { RetroButton, StatValue } from './ui';
@@ -281,18 +279,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     () => milestones.find((milestone) => milestone.date > timelineDate && milestone.date <= (games[games.length - 1]?.date ?? milestone.date)) ?? null,
     [games, milestones, timelineDate],
   );
-  const recentTickerItems = useMemo(() => {
-    const recentGames = gameIndexes.completedGamesDesc
-      .slice(0, 10)
-      .map((game) => formatTickerGame(game, teamsById));
-    const recentTransactions = transactionIndexes.sortedTransactionsDesc
-      .slice(0, 6)
-      .map((transaction) => formatTickerTransaction(transaction, playersById, teamsById));
-
-    const items = [...recentGames, ...recentTransactions];
-    return items.length > 0 ? items : ['LEAGUE OFFICE | Headlines, scores, and transactions will stream here as the season develops.'];
-  }, [gameIndexes, playersById, teamsById, transactionIndexes]);
-
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? teams[0] ?? null;
   const divisionSnapshots = useMemo(() => {
     const grouped = new Map<string, { key: string; league: string; division: string; teams: Team[] }>();
@@ -409,8 +395,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   return (
     <section className="space-y-5">
-      <TickerStrip items={recentTickerItems} />
-
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]">
         <HeadlinePanel
           deck={headlineDeck}

@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, PauseCircle } from 'lucide-react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { PauseCircle } from 'lucide-react';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { Panel, RetroButton, TeamLogo } from './ui';
+import { Panel, TeamLogo } from './ui';
 import { isPlayoffGame } from '../logic/playoffs';
 import { Game, Team } from '../types';
 
@@ -14,23 +14,51 @@ interface PreviousDateScoreStripProps {
   onOpenGame: (gameId: string) => void;
 }
 
-const CARD_WIDTH = 208;
-const GAP = 8;
+/** Horizontal step between items, applied as margin so every item occupies the same period. */
+const ITEM_STEP = 8;
+/** Crawl speed in px per second. A constant speed is what makes it read as a board. */
+const CRAWL_SPEED = 55;
+const MIN_DURATION = 18;
+const MAX_DURATION = 110;
+
+interface CrawlEntry {
+  gameId: string;
+  awayTeam: Team | null;
+  homeTeam: Team | null;
+  final: boolean;
+  playoff: boolean;
+  awayRuns: number | null;
+  homeRuns: number | null;
+  statusLabel: string;
+}
 
 /**
- * Score bar.
+ * Score crawl, global.
  *
- * Was a three-line card per game -- a status row above two stacked team rows,
- * in a rounded box -- which made the bar about 100px tall to say one number.
- * It is now a single line per game: crest, score, score, crest. The user is
- * glancing at this constantly while simming, so it earns its vertical space
- * only by being thin, and the detail lives one click away in the game screen.
+ * A scoreboard ticker in the sense a stadium uses one: results move steadily
+ * right to left, forever, with no control surface at all. It replaces the
+ * dashboard's own headline crawl, which was the same motion in the wrong place,
+ * and the pagination this bar used to carry, which made a strip that changes on
+ * its own behave like a document the reader had to drive.
  *
- * Carousel rather than free scroll. A day has up to 16 games, which is far more
- * than fits, and a scrollbar gives no sense of how much is off screen. Paging is
- * by visible width rather than by card count so it survives a resize, and the
- * buttons disable at the ends instead of wrapping, so the page readout is never
- * a lie.
+ * The loop is seamless because of two details that are easy to get wrong. The
+ * step between items is margin on each item rather than gap on the container, so
+ * every item occupies exactly the same width and the last item in a group is not
+ * short by one gap. And the number of rendered items is forced to a whole
+ * multiple of the item count, so translating by half the track lands on item
+ * index 0 again rather than somewhere in the middle of the sequence. With gap on
+ * the container, or with a ragged count, the seam is visible once per loop.
+ *
+ * How many copies are rendered is measured rather than assumed, so the bar is
+ * full at any viewport width, and the duration is derived from the measured
+ * width at a constant speed, so a sixteen-game slate does not whip past and a
+ * two-game slate does not crawl for a minute.
+ *
+ * Scoreboard motion is exempt from the standing motion limit for the same reason
+ * simulation progress is -- it reports something actually happening. It pauses on
+ * hover and keyboard focus and stops entirely under prefers-reduced-motion,
+ * because a full-width crawl is the one thing on the page a user cannot scroll
+ * away from.
  */
 export function PreviousDateScoreStrip({
   simulationPerformanceMode,
@@ -40,70 +68,112 @@ export function PreviousDateScoreStrip({
   teamLookup,
   onOpenGame,
 }: PreviousDateScoreStripProps) {
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const [metrics, setMetrics] = useState({ scrollLeft: 0, maxScroll: 0, viewport: 0 });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const singleCopyRef = useRef<HTMLDivElement | null>(null);
+  const [copyWidth, setCopyWidth] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [paused, setPaused] = useState(false);
 
-  const measure = useCallback(() => {
-    const track = trackRef.current;
-    if (!track) return;
-    setMetrics({
-      scrollLeft: track.scrollLeft,
-      maxScroll: Math.max(0, track.scrollWidth - track.clientWidth),
-      viewport: track.clientWidth,
-    });
-  }, []);
-
-  useEffect(() => {
-    const track = trackRef.current;
-    if (!track) return undefined;
-
-    let frame = 0;
-    const onScroll = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        measure();
-      });
-    };
-
-    track.addEventListener('scroll', onScroll, { passive: true });
-    const observer = new ResizeObserver(measure);
-    observer.observe(track);
-
-    return () => {
-      track.removeEventListener('scroll', onScroll);
-      observer.disconnect();
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, [measure]);
-
-  // A new slate means a different number of cards; start at the left edge
-  // rather than leaving the track parked at a scroll offset it no longer has.
-  useEffect(() => {
-    const track = trackRef.current;
-    if (!track) return;
-    track.scrollTo({ left: 0, behavior: 'auto' });
-    measure();
-  }, [gamesForBannerDate, measure]);
-
-  const pageWidth = Math.max(CARD_WIDTH + GAP, metrics.viewport);
-  const pageCount = Math.max(1, Math.ceil(metrics.maxScroll / pageWidth) + 1);
-  const page = metrics.maxScroll <= 1 ? 0 : Math.round(metrics.scrollLeft / pageWidth);
-  const canPrev = metrics.scrollLeft > 2;
-  const canNext = metrics.scrollLeft < metrics.maxScroll - 2;
-
-  const goToPage = useCallback((next: number) => {
-    const track = trackRef.current;
-    if (!track) return;
-    const width = Math.max(CARD_WIDTH + GAP, track.clientWidth);
-    const max = Math.max(0, track.scrollWidth - track.clientWidth);
-    track.scrollTo({ left: Math.max(0, Math.min(next * width, max)), behavior: 'smooth' });
-  }, []);
-
-  const finalCount = useMemo(
-    () => gamesForBannerDate.filter((game) => game.status === 'completed').length,
-    [gamesForBannerDate],
+  const entries = useMemo<CrawlEntry[]>(
+    () => gamesForBannerDate.map((game) => {
+      const final = game.status === 'completed';
+      const playoff = isPlayoffGame(game);
+      return {
+        gameId: game.gameId,
+        awayTeam: teamLookup.get(game.awayTeam) ?? null,
+        homeTeam: teamLookup.get(game.homeTeam) ?? null,
+        final,
+        playoff,
+        awayRuns: final ? game.score.away : null,
+        homeRuns: final ? game.score.home : null,
+        statusLabel: playoff ? 'Playoff' : final ? 'Final' : 'Scheduled',
+      };
+    }),
+    [gamesForBannerDate, teamLookup],
   );
+
+  const itemCount = entries.length;
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const singleCopy = singleCopyRef.current;
+    if (!viewport || !singleCopy) {
+      return undefined;
+    }
+
+    const measure = () => {
+      const width = singleCopy.scrollWidth;
+      if (width <= 0) {
+        return;
+      }
+      setCopyWidth(width);
+      setViewportWidth(viewport.clientWidth);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    observer.observe(singleCopy);
+    return () => observer.disconnect();
+  }, [entries]);
+
+  const reducedMotion = useMemo(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    [],
+  );
+
+  // The crawl travels exactly half the track, and the visible window at the end
+  // of that travel is translate + viewport. So the half-track has to be at least
+  // one viewport wide, or the bar shows bare background at the end of every lap.
+  //
+  // Deriving the count from the full copy width instead only guarantees
+  // viewport/itemCount, which left a visible gap on a two- or three-game slate --
+  // small slates, which are exactly when a single result is most worth reading.
+  // Verified over 1 to 16 items at 360 to 1920px.
+  const period = itemCount > 0 && copyWidth > 0 ? copyWidth / itemCount : 0;
+  const halfItems = period > 0 && viewportWidth > 0
+    ? Math.ceil(Math.max(2, Math.ceil(viewportWidth / period)) / itemCount) * itemCount
+    : 0;
+  const renderCount = halfItems * 2;
+  const travel = halfItems * period;
+  const duration = travel > 0
+    ? Math.max(MIN_DURATION, Math.min(MAX_DURATION, travel / CRAWL_SPEED))
+    : MIN_DURATION;
+
+  const renderItem = useCallback((entry: CrawlEntry, key: string) => (
+    <button
+      key={key}
+      type="button"
+      onClick={() => onOpenGame(entry.gameId)}
+      aria-label={`${entry.awayTeam?.name ?? 'Away'} at ${entry.homeTeam?.name ?? 'Home'}, ${entry.statusLabel}`}
+      style={{ marginRight: ITEM_STEP }}
+      className="flex shrink-0 items-center gap-2 border border-[var(--color-chrome-lo)] border-l-[3px] border-l-[var(--color-chrome-lo)] bg-[var(--color-panel)] px-2 py-1 transition-colors hover:bg-[var(--color-panel-2)]"
+    >
+      {entry.awayTeam
+        ? <TeamLogo team={entry.awayTeam} sizeClass="h-6 w-6" />
+        : <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+
+      <span className="flex items-center gap-1.5 tabular-nums">
+        {entry.final ? (
+          <>
+            <span className="t-stat-sm">{entry.awayRuns}</span>
+            <span className="text-[var(--color-ink-faint)]" aria-hidden="true">–</span>
+            <span className="t-stat-sm">{entry.homeRuns}</span>
+          </>
+        ) : (
+          <span className="t-stat-sm text-[var(--color-ink-faint)]">–</span>
+        )}
+      </span>
+
+      {entry.homeTeam
+        ? <TeamLogo team={entry.homeTeam} sizeClass="h-6 w-6" />
+        : <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+
+      <span className={`w-[4ch] shrink-0 text-right t-caption ${entry.playoff ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'}`}>
+        {entry.playoff ? 'PL' : entry.final ? 'F' : 'SCH'}
+      </span>
+    </button>
+  ), [onOpenGame]);
 
   if (simulationPerformanceMode) {
     return (
@@ -114,7 +184,7 @@ export function PreviousDateScoreStrip({
             <p className="t-label text-[var(--color-warn)]">Simulation Focus Mode</p>
           </div>
           <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
-            Live score banners and ticker updates are paused while the calendar sim runs.
+            The score crawl is paused while the calendar sim runs.
           </p>
         </Panel>
       </div>
@@ -122,7 +192,7 @@ export function PreviousDateScoreStrip({
   }
 
   return (
-    <div className="flex items-center gap-3 border-b border-[var(--color-chrome-lo)] bg-[var(--color-base)] px-3 py-2 sm:px-5 lg:px-8">
+    <div className="flex items-center gap-3 border-b border-[var(--color-chrome-lo)] bg-[var(--color-base)] px-3 py-1.5 sm:px-5 lg:px-8">
       <div className="hidden shrink-0 items-center gap-2 border-r border-[var(--color-chrome-lo)] pr-4 md:flex">
         <span className="h-2 w-2 bg-[var(--color-platinum)]" aria-hidden="true" />
         <div>
@@ -131,121 +201,50 @@ export function PreviousDateScoreStrip({
         </div>
       </div>
 
-      {gamesForBannerDate.length === 0 ? (
+      {itemCount === 0 ? (
         <p className="flex-1 t-caption text-[var(--color-ink-faint)]">
           No games on the previous sim date.
         </p>
       ) : (
-        <>
+        <div
+          ref={viewportRef}
+          role="region"
+          aria-label="Previous date scores"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          onFocus={() => setPaused(true)}
+          onBlur={() => setPaused(false)}
+          className="relative min-w-0 flex-1 overflow-hidden"
+          style={{
+            maskImage: 'linear-gradient(90deg, transparent, #000 20px, #000 calc(100% - 20px), transparent)',
+            WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 20px, #000 calc(100% - 20px), transparent)',
+          }}
+        >
+          {/* Hidden and inert: establishes the single-copy width that both the
+              copy count and the duration are derived from, without putting an
+              unmeasured duplicate on screen. */}
+          <div ref={singleCopyRef} aria-hidden="true" className="pointer-events-none absolute -top-[9999px] left-0 h-0 w-max overflow-hidden opacity-0">
+            {entries.map((entry, index) => renderItem(entry, `measure-${index}`))}
+          </div>
+
           <div
-            ref={trackRef}
-            role="region"
-            aria-label="Previous date scores"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'ArrowRight') { event.preventDefault(); goToPage(page + 1); }
-              if (event.key === 'ArrowLeft') { event.preventDefault(); goToPage(page - 1); }
+            className="flex w-max"
+            style={{
+              animation: reducedMotion || paused
+                ? undefined
+                : `score-crawl ${duration}s linear infinite`,
+              animationPlayState: paused ? 'paused' : 'running',
             }}
-            className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
           >
-            <div className="flex w-max gap-2 pb-0.5">
-              {gamesForBannerDate.map((game) => {
-                const awayTeam = teamLookup.get(game.awayTeam) ?? null;
-                const homeTeam = teamLookup.get(game.homeTeam) ?? null;
-                const final = game.status === 'completed';
-                const playoff = isPlayoffGame(game);
-                // Undetermined is a single dash. Showing 0-0 for a game that has
-                // not been played states a score nobody earned, and printing the
-                // placeholder on both sides of the separator made the whole
-                // thing read as a scoreline.
-                const awayRuns = final ? game.score.away : null;
-                const homeRuns = final ? game.score.home : null;
-
-                // The edge says one thing only: played or not. Playoff identity
-                // is the text chip, so it stays legible without colour. Gold was
-                // briefly reused for "not yet played", which collided with the
-                // playoff chip and made a scheduled playoff game doubly gold.
-                const edge = final ? 'border-l-[var(--color-pos)]' : 'border-l-[var(--color-chrome-lo)]';
-                const statusLabel = playoff ? 'Playoff' : final ? 'Final' : 'Scheduled';
-
-                return (
-                  <button
-                    key={`banner-${game.gameId}`}
-                    type="button"
-                    onClick={() => onOpenGame(game.gameId)}
-                    aria-label={`${awayTeam?.name ?? game.awayTeam} at ${homeTeam?.name ?? game.homeTeam}, ${statusLabel}`}
-                    className={`flex w-[208px] shrink-0 snap-start items-center gap-2 border border-[var(--color-chrome-lo)] ${edge} border-l-[3px] bg-[var(--color-panel)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-panel-2)]`}
-                  >
-                    {awayTeam
-                      ? <TeamLogo team={awayTeam} sizeClass="h-7 w-7" />
-                      : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
-
-                    {/* flex-1 with both crests at the same fixed width is what
-                        actually centres the score between the two logos. The
-                        earlier ml-auto pinned the score to the home crest, so it
-                        sat right of centre on every card.
-
-                        An unplayed game shows a single dash, not "dash dash
-                        dash". The separator and the undetermined placeholder were
-                        both an en dash, which rendered as three of them and was
-                        legible as a scoreline at a glance. */}
-                    <span className="flex flex-1 items-center justify-center gap-1.5 tabular-nums">
-                      {final ? (
-                        <>
-                          <span className="t-stat text-[var(--color-ink)]">{awayRuns}</span>
-                          <span className="text-[var(--color-ink-faint)]" aria-hidden="true">–</span>
-                          <span className="t-stat text-[var(--color-ink)]">{homeRuns}</span>
-                        </>
-                      ) : (
-                        <span className="t-stat text-[var(--color-ink-faint)]">–</span>
-                      )}
-                    </span>
-
-                    {homeTeam
-                      ? <TeamLogo team={homeTeam} sizeClass="h-7 w-7" />
-                      : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
-
-                    <span
-                      className={`w-[4ch] shrink-0 text-right t-caption ${
-                        playoff ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'
-                      }`}
-                    >
-                      {playoff ? 'PL' : final ? 'F' : 'SCH'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            {Array.from({ length: renderCount }, (_, index) => (
+              renderItem(entries[index % itemCount], `crawl-${index}`)
+            ))}
           </div>
-
-          <div className="flex shrink-0 items-center gap-1">
-            <RetroButton
-              variant="ghost"
-              size="sm"
-              aria-label="Previous scores"
-              disabled={!canPrev}
-              onClick={() => goToPage(page - 1)}
-            >
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-            </RetroButton>
-            <span className="t-caption tabular-nums text-[var(--color-ink-faint)]">
-              {page + 1}/{pageCount}
-            </span>
-            <RetroButton
-              variant="ghost"
-              size="sm"
-              aria-label="Next scores"
-              disabled={!canNext}
-              onClick={() => goToPage(page + 1)}
-            >
-              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-            </RetroButton>
-          </div>
-        </>
+        </div>
       )}
 
       <span className="hidden shrink-0 t-caption tabular-nums text-[var(--color-ink-faint)] lg:inline">
-        {finalCount}/{gamesForBannerDate.length} final
+        {entries.filter((entry) => entry.final).length}/{itemCount} final
       </span>
     </div>
   );

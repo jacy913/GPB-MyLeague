@@ -331,3 +331,15 @@ body {
     animation: none;
   }
 }
+
+/* Global score crawl.
+
+   Duration is supplied inline from the item count rather than baked in here, so
+   a sixteen-game slate does not whip past and a two-game slate does not crawl
+   for a minute. The track holds an even number of copies and moves exactly one
+   half of its own width, which is a whole number of copies, so the loop never
+   shows a seam. */
+@keyframes score-crawl {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}

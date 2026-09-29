@@ -101,20 +101,6 @@ export const HeadlinePanel: React.FC<{
   );
 };
 
-export const TickerStrip: React.FC<{ items: string[] }> = ({ items }) => (
-  <div className="panel overflow-hidden">
-    <div className="broadcast-marquee px-4 py-2">
-      <div className="broadcast-marquee__track">
-        {items.concat(items).map((item, index) => (
-          <span key={`${item}-${index}`} className="t-caption whitespace-nowrap text-[var(--color-ink-dim)]">
-            {item}
-          </span>
-        ))}
-      </div>
-    </div>
-  </div>
-);
-
 export const FeaturedGamePanel: React.FC<{
   gameId: string | null;
   angle: string | null;
