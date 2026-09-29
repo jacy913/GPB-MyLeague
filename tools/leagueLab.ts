@@ -29,6 +29,7 @@ import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate, recalcul
 import { SimulationManager } from '../src/logic/simulationManager';
 import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { completeRosterVacancies, getOpenSlots } from '../src/logic/rosterCompletion';
+import { ALL_ROSTER_SLOTS } from '../src/types';
 import { applyOffseasonFreeAgencyRollover, applyOffseasonRetirements } from '../src/logic/offseasonFreeAgency';
 import {
   applyNextDraftPick,
@@ -428,7 +429,14 @@ interface SeasonSnapshot {
   ratingsByAge: Map<number, number[]>;
   topPlayerAges: number[];
   retirements: number;
+  /** Players with status 'active'. League membership, not roster occupancy. */
   activeCount: number;
+  /** Players occupying a slot this season. Capped by capacity by construction. */
+  rosteredCount: number;
+  /** Slots the league defines: teams x ALL_ROSTER_SLOTS. */
+  capacity: number;
+  /** Players marked active who hold no slot, so cannot appear in a game. */
+  unrosteredActive: number;
   freeAgentCount: number;
   pipeline: OffseasonPipeline | null;
 }
@@ -481,6 +489,14 @@ let lastPipeline: OffseasonPipeline | null = null;
 
 const snapshots: SeasonSnapshot[] = [];
 
+/**
+ * Ratings table size after each offseason. With retention on this is flat; with
+ * it off, which is what the app actually does, it grows without bound and takes
+ * the whole player state array down with it through every map/filter that
+ * touches ratings.
+ */
+const ratingsRows: { year: number; batting: number; pitching: number }[] = [];
+
 // ---------------------------------------------------------------------------
 // Universe construction
 // ---------------------------------------------------------------------------
@@ -495,6 +511,10 @@ const buildSchedule = (teams: Team[], seasonYear: number): Game[] =>
   generateSchedule(teams, { seasonStartDate: getDefaultSeasonStartDate(seasonYear), seasonDays: 180 });
 
 const NO_GAMES = args.get('no-games') === 'true';
+
+// Default true matches the lab's long-standing behaviour. Pass false to mirror
+// the app, which never passes retainRatingYears and therefore never prunes.
+const APP_RETENTION = args.get('app-retention') !== 'false';
 
 const latestRatingsByPlayer = (
   playerState: LeaguePlayerState,
@@ -662,7 +682,16 @@ const runSeason = async (
     playerState: rollover.nextPlayerState,
     seasonYear: nextYear,
     effectiveDate: `${nextYear}-12-10`,
-    retainRatingYears: 10,
+    // The lab prunes ratings history; the app does not pass this argument at
+    // all (App.tsx:1938), so development never prunes there and the ratings
+    // tables grow forever. --app-retention=false reproduces the app's actual
+    // behaviour so the growth can be measured instead of assumed.
+    retainRatingYears: APP_RETENTION ? 10 : null,
+  });
+  ratingsRows.push({
+    year: nextYear,
+    batting: development.nextPlayerState.battingRatings.length,
+    pitching: development.nextPlayerState.pitchingRatings.length,
   });
 
   // The real draft, matching the app's order: age, then develop, then draft,
@@ -749,11 +778,16 @@ const runSeason = async (
     const pool = nextRoster.playerState.players.length;
     const prospects = nextRoster.playerState.players.filter((p) => p.status === 'prospect').length;
     const freeAgents = nextRoster.playerState.players.filter((p) => p.status === 'free_agent').length;
+    // Counted, not derived. `pool - prospects - freeAgents` was reading as
+    // "active" while quietly absorbing every retired player still in the array,
+    // which is why this line climbed past 928 and looked like a roster leak.
+    const active = nextRoster.playerState.players.filter((p) => p.status === 'active').length;
+    const retired = nextRoster.playerState.players.filter((p) => p.status === 'retired').length;
     process.stdout.write(
       `         dev: ${s.playersDeveloped} players  avg ${s.averageOverall.toFixed(1)}` +
         `  +${s.bigGains} / -${s.bigDeclines}  injured ${s.injuredPlayers}\n` +
         `         draft: ${draft.picks} picks  |  pool ${pool}` +
-        `  (active ${pool - prospects - freeAgents}, FA ${freeAgents}, prospect ${prospects})` +
+        `  (active ${active}, FA ${freeAgents}, prospect ${prospects}, retired ${retired})` +
         `  aged out ${nextRoster.agedOutFreeAgents}\n`,
     );
     process.stdout.write(
@@ -836,6 +870,14 @@ const collectSnapshot = (
   const regular = games.filter(isRegularSeasonGame);
   const completed = regular.filter((game) => game.status === 'completed');
   const totalGames = completed.length;
+
+  // Occupancy, read off the season's roster rows.
+  const seasonSlotRows = playerState.rosterSlots.filter((slot) => slot.seasonYear === seasonYear);
+  const rosteredPlayerIds = new Set(seasonSlotRows.map((slot) => slot.playerId));
+  const rosteredCount = rosteredPlayerIds.size;
+  const unrosteredActive = playerState.players.filter(
+    (player) => player.status === 'active' && !rosteredPlayerIds.has(player.playerId),
+  ).length;
 
   let runs = 0;
   for (const game of completed) {
@@ -982,6 +1024,13 @@ const collectSnapshot = (
     runsPerPlateAppearance: leaguePlateAppearances > 0 ? runs / leaguePlateAppearances : 0,
     totalGamesPlayed: totalGames,
     teamGamesPlayed: teamGames,
+    // Occupancy, measured from the roster rows themselves rather than from
+    // player status. A player with status 'active' who holds no slot is a real
+    // condition worth counting: the status is what the offseason reads when it
+    // decides who held a roster season, so the two can disagree.
+    rosteredCount,
+    capacity: teams.length * ALL_ROSTER_SLOTS.length,
+    unrosteredActive,
     // Filled in by the caller, which owns the probe lifecycle.
     probe: null,
     teamWins,
@@ -1757,16 +1806,42 @@ const reportRosterHealth = () => {
   const last = snapshots[snapshots.length - 1];
   if (!last) return;
   console.log('\n--- ROSTER HEALTH ------------------------------------------------------');
-  console.log(`  active players      ${last.activeCount}   (32 teams x 29 = 928, plus FAs)`);
+  // status === 'active' counts players who never left the league; it is not a
+  // roster occupancy count, and comparing it against 928 mixes two different
+  // things. These two lines answer separate questions: how many players hold
+  // league membership, and how many actually occupy a slot this season.
+  console.log(`  status=active       ${last.activeCount}   (league membership, not roster occupancy)`);
+  console.log(`  rostered this year  ${last.rosteredCount}   of ${last.capacity} slots   (${(last.rosteredCount / Math.max(1, last.capacity) * 100).toFixed(0)}% full)`);
   console.log(`  free agents         ${last.freeAgentCount}`);
+  if (last.unrosteredActive > 0) {
+    console.log(`  active, no slot     ${last.unrosteredActive}   <-- these players cannot take the field`);
+  }
+  // Roster occupancy is the quantity that must hold steady. It is capped by
+  // construction, so any drift here is a genuine leak rather than a labelling
+  // artifact, which is what the old active-count comparison could not say.
   const early = snapshots.filter((s) => s.year <= last.year - 5);
   const late = snapshots.filter((s) => s.year > last.year - 5);
   if (early.length > 0 && late.length > 0) {
-    const earlyAvg = mean(early.map((s) => s.activeCount));
-    const lateAvg = mean(late.map((s) => s.activeCount));
+    const earlyAvg = mean(early.map((s) => s.rosteredCount));
+    const lateAvg = mean(late.map((s) => s.rosteredCount));
     const drift = lateAvg - earlyAvg;
-    const verdict = Math.abs(drift) < 25 ? 'stable' : 'LEAKING';
-    console.log(`  active count drift  ${earlyAvg.toFixed(0)} -> ${lateAvg.toFixed(0)}  (${drift >= 0 ? '+' : ''}${drift.toFixed(0)})  ${verdict}`);
+    const verdict = Math.abs(drift) < 8 ? 'stable' : 'LEAKING';
+    console.log(`  occupancy drift     ${earlyAvg.toFixed(0)} -> ${lateAvg.toFixed(0)}  (${drift >= 0 ? '+' : ''}${drift.toFixed(0)})  ${verdict}`);
+  }
+
+  // Ratings history. Retained state is bounded by retainRatingYears; unretained
+  // state is not, and the app currently passes no value at all. Reported because
+  // the growth stays invisible until the state array is large enough to stall a
+  // save, at which point it looks like an unrelated performance bug.
+  if (ratingsRows.length > 1) {
+    const firstRow = ratingsRows[0];
+    const finalRow = ratingsRows[ratingsRows.length - 1];
+    const total = (row: { batting: number; pitching: number }): number => row.batting + row.pitching;
+    const perSeason = (total(finalRow) - total(firstRow)) / Math.max(1, finalRow.year - firstRow.year);
+    console.log('');
+    console.log(`  ratings retention   ${APP_RETENTION ? 'ON (10 years)' : 'OFF (matches the app)'}`);
+    console.log(`  ratings rows        ${total(firstRow)} after ${firstRow.year} -> ${total(finalRow)} after ${finalRow.year}`);
+    console.log(`  growth              ${perSeason >= 0 ? '+' : ''}${perSeason.toFixed(0)} rows/season${APP_RETENTION ? '' : ', unbounded'}`);
   }
 };
 
