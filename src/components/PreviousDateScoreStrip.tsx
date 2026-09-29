@@ -154,8 +154,10 @@ export function PreviousDateScoreStrip({
                 const homeTeam = teamLookup.get(game.homeTeam) ?? null;
                 const final = game.status === 'completed';
                 const playoff = isPlayoffGame(game);
-                // Undetermined is drawn as a dash. Showing 0-0 for a game that
-                // has not been played states a score nobody earned.
+                // Undetermined is a single dash. Showing 0-0 for a game that has
+                // not been played states a score nobody earned, and printing the
+                // placeholder on both sides of the separator made the whole
+                // thing read as a scoreline.
                 const awayRuns = final ? game.score.away : null;
                 const homeRuns = final ? game.score.home : null;
 
@@ -176,25 +178,36 @@ export function PreviousDateScoreStrip({
                   >
                     {awayTeam
                       ? <TeamLogo team={awayTeam} sizeClass="h-7 w-7" />
-                      : <span className="h-7 w-7 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+                      : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
 
-                    <span className="ml-auto flex items-center gap-1.5 tabular-nums">
-                      <span className={`t-stat ${awayRuns === null ? 'text-[var(--color-ink-faint)]' : 'text-[var(--color-ink)]'}`}>
-                        {awayRuns ?? '–'}
-                      </span>
-                      <span className="text-[var(--color-ink-faint)]" aria-hidden="true">–</span>
-                      <span className={`t-stat ${homeRuns === null ? 'text-[var(--color-ink-faint)]' : 'text-[var(--color-ink)]'}`}>
-                        {homeRuns ?? '–'}
-                      </span>
+                    {/* flex-1 with both crests at the same fixed width is what
+                        actually centres the score between the two logos. The
+                        earlier ml-auto pinned the score to the home crest, so it
+                        sat right of centre on every card.
+
+                        An unplayed game shows a single dash, not "dash dash
+                        dash". The separator and the undetermined placeholder were
+                        both an en dash, which rendered as three of them and was
+                        legible as a scoreline at a glance. */}
+                    <span className="flex flex-1 items-center justify-center gap-1.5 tabular-nums">
+                      {final ? (
+                        <>
+                          <span className="t-stat text-[var(--color-ink)]">{awayRuns}</span>
+                          <span className="text-[var(--color-ink-faint)]" aria-hidden="true">–</span>
+                          <span className="t-stat text-[var(--color-ink)]">{homeRuns}</span>
+                        </>
+                      ) : (
+                        <span className="t-stat text-[var(--color-ink-faint)]">–</span>
+                      )}
                     </span>
 
                     {homeTeam
                       ? <TeamLogo team={homeTeam} sizeClass="h-7 w-7" />
-                      : <span className="h-7 w-7 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+                      : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
 
                     <span
-                      className={`ml-0.5 w-[4ch] shrink-0 text-right t-caption ${
-                        playoff ? 'text-[var(--color-gold)]' : final ? 'text-[var(--color-ink-faint)]' : 'text-[var(--color-ink-faint)]'
+                      className={`w-[4ch] shrink-0 text-right t-caption ${
+                        playoff ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'
                       }`}
                     >
                       {playoff ? 'PL' : final ? 'F' : 'SCH'}
