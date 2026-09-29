@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
   type Player,
@@ -13,7 +13,10 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtDiff, fmtEra, fmtGb, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
-import { Panel, SegmentedControl, SkewedPanel, StatTable, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import {
+  Panel, RetroButton, SegmentedControl, SkewedPanel, StatTable, StatValue, TeamLogo,
+  type StatTableColumn, type StatTableRow,
+} from './ui';
 
 type StandingsViewMode = 'league' | 'division';
 type StandingsRankKey = 'record' | 'win_pct' | 'run_diff' | 'runs_scored' | 'runs_allowed' | 'team_era' | 'team_rbi' | 'roster_strength' | 'team_whip';
@@ -42,6 +45,8 @@ interface TeamStandingRow {
 }
 
 const rosterStrengthSlots = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS];
+const LEAGUES = ['Prestige', 'Platinum'] as const;
+type LeagueName = (typeof LEAGUES)[number];
 const RANK_OPTIONS: Array<{ key: StandingsRankKey; label: string }> = [
   { key: 'record', label: 'Record' },
   { key: 'win_pct', label: 'Win %' },
@@ -130,12 +135,12 @@ const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, o
 
   const columns = useMemo<StatTableColumn[]>(() => [
     { key: 'team', header: 'TEAM' },
-    { key: 'wins', header: 'W', align: 'right', isNumeric: true, width: '3ch' },
-    { key: 'losses', header: 'L', align: 'right', isNumeric: true, width: '3ch' },
-    { key: 'pct', header: 'PCT', align: 'right', isNumeric: true, width: '5ch' },
-    { key: 'gb', header: 'GB', align: 'right', isNumeric: true, width: '4ch' },
-    { key: 'diff', header: 'DIFF', align: 'right', isNumeric: true, width: '5ch' },
-    { key: 'metric', header: getMetricLabel(rankKey).toUpperCase(), align: 'right', isNumeric: true, width: '7ch', sortKey: 'metric' },
+    { key: 'wins', header: 'W', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'losses', header: 'L', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'pct', header: 'PCT', align: 'right', isNumeric: true, width: '6ch' },
+    { key: 'gb', header: 'GB', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'diff', header: 'DIFF', align: 'right', isNumeric: true, width: '6ch' },
+    { key: 'metric', header: getMetricLabel(rankKey).toUpperCase(), align: 'right', isNumeric: true, width: '8ch', sortKey: 'metric' },
   ], [rankKey]);
 
   const tableRows = useMemo<StatTableRow[]>(() => rankedRows.map((row, index) => {
@@ -145,21 +150,21 @@ const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, o
       id: row.team.id,
       cells: {
         team: (
-          <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-2 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label={`Open ${row.team.city} ${row.team.name} roster`}>
-            <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-            <TeamLogo team={row.team} sizeClass="h-5 w-5" />
-            <span className={`truncate t-stat-sm ${isDivisionWinner ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
-              {isDivisionWinner && <span className="mr-1 text-[var(--color-gold)]" aria-label="Division leader">◆</span>}
-              {row.team.city} {row.team.name}
+          <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-3 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label={`Open ${row.team.city} ${row.team.name} roster`}>
+            <span className="w-[3ch] shrink-0 text-right t-stat text-[var(--color-ink-faint)]">{index + 1}</span>
+            <TeamLogo team={row.team} sizeClass="h-8 w-8" />
+            <span className={`truncate t-stat ${isDivisionWinner ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
+              {isDivisionWinner && <span className="mr-1.5 text-[var(--color-gold)]" aria-label="Division leader">◆</span>}
+              {row.team.city} <span className="text-[var(--color-ink-dim)]">{row.team.name}</span>
             </span>
           </button>
         ),
-        wins: row.team.wins,
-        losses: row.team.losses,
-        pct: fmtPct(row.winPct),
-        gb: divisionLeader ? getGamesBack(divisionLeader, row) : '—',
-        diff: <span className={row.runDiff >= 0 ? 'text-[var(--color-pos)]' : 'text-[var(--color-neg)]'}>{fmtDiff(row.runDiff)}</span>,
-        metric: getMetricValue(row, rankKey),
+        wins: <StatValue>{row.team.wins}</StatValue>,
+        losses: <StatValue>{row.team.losses}</StatValue>,
+        pct: <StatValue>{fmtPct(row.winPct)}</StatValue>,
+        gb: divisionLeader ? <StatValue>{getGamesBack(divisionLeader, row)}</StatValue> : '—',
+        diff: <StatValue variant={row.runDiff >= 0 ? 'pos' : 'neg'}>{fmtDiff(row.runDiff)}</StatValue>,
+        metric: <StatValue variant="accent">{getMetricValue(row, rankKey)}</StatValue>,
       },
     };
   }), [divisionLeaders, onSelectTeam, rankKey, rankedRows]);
@@ -171,7 +176,7 @@ const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, o
           <h2 className="t-h3">{title}</h2>
           <span className="t-stat text-[var(--color-gold)]">{recordLeader ? fmtRecord(recordLeader.team.wins, recordLeader.team.losses) : '—'}</span>
         </div>
-        <StatTable columns={columns} rows={tableRows} density="default" sortColumn="metric" playoffLineIndex={playoffLineIndex} wildCardLineIndex={wildCardLineIndex} aria-label={`${title} standings`} />
+        <StatTable columns={columns} rows={tableRows} density="large" sortColumn="metric" playoffLineIndex={playoffLineIndex} wildCardLineIndex={wildCardLineIndex} aria-label={`${title} standings`} />
       </div>
     </SkewedPanel>
   );
@@ -237,7 +242,12 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, batt
     });
   }, [battingRatingsByPlayerId, pitchingRatingsByPlayerId, playersById, preferredBattingByPlayerId, preferredPitchingByPlayerId, rosterSlots, teams]);
 
-  const leagueRows = useMemo(() => (['Prestige', 'Platinum'] as const).map((league) => ({ league, rows: standingsRows.filter((row) => row.team.league === league) })), [standingsRows]);
+  const [activeLeague, setActiveLeague] = useState<LeagueName>('Prestige');
+  const activeLeagueIndex = LEAGUES.indexOf(activeLeague);
+  const activeLeagueRows = useMemo(
+    () => standingsRows.filter((row) => row.team.league === activeLeague),
+    [activeLeague, standingsRows],
+  );
   const divisionRows = useMemo(() => (['Prestige', 'Platinum'] as const).flatMap((league) =>
     (['North', 'South', 'East', 'West'] as const).map((division) => ({ league, division, rows: standingsRows.filter((row) => row.team.league === league && row.team.division === division) })),
   ), [standingsRows]);
@@ -265,9 +275,71 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, batt
       </Panel>
 
       {viewMode === 'league' ? (
-        <div className="grid gap-5 md:grid-cols-2">
-          {leagueRows.map(({ league, rows }) => <StandingsPanel key={league} title={`${league} League`} rows={rows} rankKey={rankKey} onSelectTeam={onSelectTeam} playoffLineIndex={4} wildCardLineIndex={6} />)}
-        </div>
+        <>
+          {/* One league at a time. Side by side, each table was half the width it
+              needed to be readable, and the standings board is the screen the user
+              opens most. Full width buys the logo, the name and the figures room
+              to breathe. The switcher names both leagues so the other one is
+              never a mystery. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2" role="tablist" aria-label="League">
+              {LEAGUES.map((league) => {
+                const active = league === activeLeague;
+                return (
+                  <button
+                    key={league}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setActiveLeague(league)}
+                    className={`border px-4 py-2 t-h3 transition-colors ${
+                      active
+                        ? 'border-[var(--color-gold)] bg-[var(--color-gold)] text-[var(--color-ink-invert)]'
+                        : 'border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] text-[var(--color-ink-dim)] hover:border-[var(--color-chrome-hi)] hover:text-[var(--color-ink)]'
+                    }`}
+                  >
+                    {league}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <RetroButton
+                variant="ghost"
+                size="sm"
+                aria-label="Previous league"
+                disabled={activeLeagueIndex === 0}
+                onClick={() => setActiveLeague(LEAGUES[activeLeagueIndex - 1])}
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+              </RetroButton>
+              <span className="t-caption text-[var(--color-ink-faint)]">
+                League {activeLeagueIndex + 1} of {LEAGUES.length}
+              </span>
+              <RetroButton
+                variant="ghost"
+                size="sm"
+                aria-label="Next league"
+                disabled={activeLeagueIndex === LEAGUES.length - 1}
+                onClick={() => setActiveLeague(LEAGUES[activeLeagueIndex + 1])}
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </RetroButton>
+            </div>
+          </div>
+
+          {activeLeagueRows && (
+            <StandingsPanel
+              key={activeLeague}
+              title={`${activeLeague} League`}
+              rows={activeLeagueRows}
+              rankKey={rankKey}
+              onSelectTeam={onSelectTeam}
+              playoffLineIndex={4}
+              wildCardLineIndex={6}
+            />
+          )}
+        </>
       ) : (
         <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
           {divisionRows.map(({ league, division, rows }) => <StandingsPanel key={`${league}-${division}`} title={`${league} ${division}`} rows={rows} rankKey={rankKey} onSelectTeam={onSelectTeam} playoffLineIndex={1} wildCardLineIndex={2} />)}

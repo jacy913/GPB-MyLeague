@@ -1,6 +1,14 @@
 import React from 'react';
 
-export type StatTableDensity = 'default' | 'dense';
+export type StatTableDensity = 'default' | 'dense' | 'large';
+
+const ROW_HEIGHT: Record<StatTableDensity, string> = {
+  dense: '28px',
+  default: '30px',
+  // For tables that are the reason the user opened the screen. The standings
+  // board is the case: squeezed into two columns the rows were unreadable.
+  large: '42px',
+};
 
 export interface StatTableColumn {
   key: string;
@@ -66,8 +74,8 @@ export const StatTable: React.FC<StatTableProps> = ({
   className = '',
   'aria-label': ariaLabel,
 }) => {
-  const rowHeight = density === 'dense' ? '28px' : '30px';
-  const headerHeight = '32px';
+  const rowHeight = ROW_HEIGHT[density];
+  const headerHeight = density === 'large' ? '36px' : '32px';
 
   const isNumericColumn = (col: StatTableColumn) =>
     col.isNumeric ?? col.align === 'right';

@@ -5,6 +5,16 @@ import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient';
 export interface TeamLogoProps {
   team: Team;
   sizeClass?: string;
+  /**
+   * Draw the chrome well behind the logo. Off by default.
+   *
+   * The plate was added because the logos were cut against a neutral dark field
+   * and could lose edge contrast on navy. On review it read as a dark blue box
+   * around every crest, which was worse than the contrast problem it solved, and
+   * it competed with the mark instead of presenting it. Re-enable per call site
+   * if a specific logo does fringe against a particular surface.
+   */
+  plate?: boolean;
 }
 
 /*
@@ -78,7 +88,7 @@ const getTeamLogoBaseUrl = (teamId: string): string | null => {
   return data.publicUrl;
 };
 
-const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10' }) => {
+const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10', plate = false }) => {
   const [logoFailed, setLogoFailed] = useState(false);
   const [cacheVersion, setCacheVersion] = useState<number | null>(null);
   const localLogoUrl = useMemo(() => getLocalTeamLogoUrl(team), [team]);
@@ -128,17 +138,13 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
   }, [team.id]);
 
   return (
-    // Chrome plate. The logos were cut against a neutral dark field, so on navy
-    // they can lose edge contrast; the well guarantees separation on any
-    // surface. Tokens rather than the literal values in the proposal, so the
-    // plate tracks the palette if it is retuned.
     <div
-      className={`${sizeClass} shrink-0 overflow-hidden p-[3px]`}
-      style={{
+      className={`${sizeClass} shrink-0 overflow-hidden ${plate ? 'p-[3px]' : ''}`}
+      style={plate ? {
         background: 'linear-gradient(180deg, var(--color-panel-2), var(--color-base-2))',
         border: '1px solid var(--color-chrome-lo)',
         borderRadius: 'var(--radius-panel)',
-      }}
+      } : undefined}
     >
       {logoUrl && !logoFailed ? (
         <img
@@ -165,5 +171,5 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
 
 export const TeamLogo = React.memo(
   TeamLogoComponent,
-  (prev, next) => prev.team.id === next.team.id && prev.sizeClass === next.sizeClass,
+  (prev, next) => prev.team.id === next.team.id && prev.sizeClass === next.sizeClass && prev.plate === next.plate,
 );
