@@ -468,6 +468,23 @@ const createUuid = (): string => {
   return `plr-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 };
 
+/**
+ * Seeded player id.
+ *
+ * playerDevelopment keys every one of its deterministic rolls on playerId, so an
+ * unseeded id here silently breaks reproducibility: two builds of the same seed
+ * would draw the same sequence of ages, tiers and attributes but hand each player
+ * a different id, and the development pass would then resolve different rolls for
+ * all of them. The league would look identical in aggregate while no individual
+ * player matched, which is exactly the drift an A/B comparison cannot detect.
+ * Deriving the id from the seeded stream makes a seed reproduce the same players,
+ * not merely a similar-looking league.
+ */
+const createSeededId = (rng: RandomSource): string => {
+  const hex = (): string => Math.floor(rng() * 0x10000).toString(16).padStart(4, '0');
+  return `plr-${hex()}${hex()}-${hex()}-${hex()}-${hex()}-${hex()}${hex()}${hex()}`;
+};
+
 const randomInt = (min: number, max: number, rng: RandomSource): number =>
   Math.floor(rng() * (max - min + 1)) + min;
 
@@ -916,7 +933,7 @@ const createPlayerFromBlueprint = (
   const bio = generatePlayerBio(blueprint.primaryPosition, blueprint.status, age, rng);
 
   return {
-    playerId: createUuid(),
+    playerId: createSeededId(rng),
     teamId: blueprint.teamId,
     firstName: names.firstName,
     lastName: names.lastName,
