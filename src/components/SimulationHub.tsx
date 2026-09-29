@@ -38,6 +38,7 @@ interface SimulationHubProps {
   onCancelSimulation: () => void;
   onResetSeason: () => void;
   onTerminateUniverse: () => void;
+  onGeneratePlayers: () => void;
   universeSeedInput: string;
   onSetUniverseSeedInput: (value: string) => void;
   onPreviewNewUniverse: () => void;
@@ -81,6 +82,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   onCancelSimulation,
   onResetSeason,
   onTerminateUniverse,
+  onGeneratePlayers,
   universeSeedInput,
   onSetUniverseSeedInput,
   onPreviewNewUniverse,
@@ -315,6 +317,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             onSelectTeamId={onSelectTeamId}
             onSelectDate={onSelectDate}
             onTerminate={() => setTerminateModalOpen(true)}
+            onGeneratePlayers={onGeneratePlayers}
           />
 
           <LiveRun

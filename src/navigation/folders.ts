@@ -59,7 +59,15 @@ export interface NavFolder {
   accent?: 'gold';
 }
 
-/** Complete navigation tree — single source of truth */
+/**
+ * Complete navigation tree — single source of truth.
+ *
+ * Order is by how often the folder is opened, not by theme. COMMISSIONER moved
+ * up to second because it holds Simulate, which is a daily action, and it used
+ * to sit sixth of seven where it was genuinely hard to find -- the user had to
+ * scroll the rail to reach the screen they use every day. SYSTEM goes last
+ * because the engine book, the logs and settings are all occasional.
+ */
 export const NAV_FOLDERS: NavFolder[] = [
   {
     id: 'home',
@@ -67,6 +75,20 @@ export const NAV_FOLDERS: NavFolder[] = [
     icon: LayoutDashboard,
     leaves: [
       { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    ],
+  },
+  {
+    id: 'commissioner',
+    label: 'COMMISSIONER',
+    icon: Activity,
+    accent: 'gold',
+    leaves: [
+      { view: 'simulation', label: 'Simulate', icon: Activity },
+      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
+      { view: 'trades', label: 'Trades', icon: ArrowLeftRight },
+      { view: 'free_agency', label: 'Free Agents', icon: BriefcaseBusiness },
+      { view: 'draft', label: 'Draft', icon: Clock3 },
+      { view: 'lottery', label: 'Lottery', icon: Shuffle },
     ],
   },
   {
@@ -104,20 +126,6 @@ export const NAV_FOLDERS: NavFolder[] = [
     icon: Trophy,
     leaves: [
       { view: 'playoffs', label: 'Bracket', icon: Trophy },
-    ],
-  },
-  {
-    id: 'commissioner',
-    label: 'COMMISSIONER',
-    icon: Activity,
-    accent: 'gold',
-    leaves: [
-      { view: 'simulation', label: 'Simulate', icon: Activity },
-      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
-      { view: 'trades', label: 'Trades', icon: ArrowLeftRight },
-      { view: 'free_agency', label: 'Free Agents', icon: BriefcaseBusiness },
-      { view: 'draft', label: 'Draft', icon: Clock3 },
-      { view: 'lottery', label: 'Lottery', icon: Shuffle },
     ],
   },
   {

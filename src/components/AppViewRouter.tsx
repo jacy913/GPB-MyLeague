@@ -162,6 +162,7 @@ interface AppViewRouterProps {
   onQuickSimSeason: () => void;
   onResetSeason: () => void;
   onTerminateUniverse: () => void;
+  onGeneratePlayers: () => void;
   onSimulateToDate: (targetDate: string) => void;
   onProposeTrade: (trade: TradeProposal) => void;
   onApprovePendingTrade: (proposalId: string) => void;
@@ -264,6 +265,7 @@ export const AppViewRouter = ({
   onQuickSimSeason,
   onResetSeason,
   onTerminateUniverse,
+  onGeneratePlayers,
   onSimulateToDate,
   onProposeTrade,
   onApprovePendingTrade,
@@ -382,6 +384,7 @@ export const AppViewRouter = ({
           onCancelSimulation={onCancelSimulation}
           onResetSeason={onResetSeason}
           onTerminateUniverse={onTerminateUniverse}
+          onGeneratePlayers={onGeneratePlayers}
           universeSeedInput={universeSeedInput}
           onSetUniverseSeedInput={onSetUniverseSeedInput}
           seasonResetStatus={seasonResetStatus}

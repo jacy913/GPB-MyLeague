@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   AlertTriangle, ArrowLeftRight, BriefcaseBusiness, CalendarDays, Clock3, PauseCircle, Play,
-  RotateCcw, ShieldAlert, SkipForward, TimerReset,
+  RotateCcw, ShieldAlert, SkipForward, TimerReset, Wand2,
 } from 'lucide-react';
 import type { SimulationTarget, Team } from '../../types';
 import { Panel, RetroButton } from '../ui';
@@ -66,10 +66,11 @@ export const RunBoard: React.FC<{
   onSelectTeamId: (teamId: string) => void;
   onSelectDate: (date: string) => void;
   onTerminate: () => void;
+  onGeneratePlayers: () => void;
 }> = ({
   teams, selectedTeamId, activeDate, uniqueDateCount, currentDate, currentDateIndex,
   controlsLocked, isSimulating, isResetting, regularSeasonComplete, seasonComplete,
-  onStart, onCancel, onReset, onSelectTeamId, onSelectDate, onTerminate,
+  onStart, onCancel, onReset, onSelectTeamId, onSelectDate, onTerminate, onGeneratePlayers,
 }) => {
   const selectClass =
     'w-full appearance-none border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 t-stat-sm text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]';
@@ -121,9 +122,35 @@ export const RunBoard: React.FC<{
         </RetroButton>
       </div>
 
-      <RetroButton variant="danger" onClick={onTerminate} disabled={controlsLocked} className="mt-3 w-full">
-        Terminate Universe
-      </RetroButton>
+      {/* Universe lifecycle, together.
+          Generate Players and Terminate Universe are the same operation on the
+          same seed -- buildNewUniverse runs generate, develop and fill, and
+          neither stops at a bare pool -- so they belong side by side. They used
+          to be two unrelated controls in two unrelated places, which is how a
+          league ended up with teams, a schedule and no players and no obvious
+          way back. */}
+      <div className="mt-3 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-3">
+        <p className="t-caption text-[var(--color-ink-faint)]">Universe</p>
+        <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
+          Both actions rebuild the player pool from the seed below and refill every roster.
+        </p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <RetroButton
+            variant="default"
+            onClick={onGeneratePlayers}
+            disabled={controlsLocked}
+          >
+            <Wand2 className="h-4 w-4" aria-hidden="true" /> Generate Players
+          </RetroButton>
+          <RetroButton
+            variant="danger"
+            onClick={onTerminate}
+            disabled={controlsLocked}
+          >
+            Terminate Universe
+          </RetroButton>
+        </div>
+      </div>
     </SimPanel>
   );
 };

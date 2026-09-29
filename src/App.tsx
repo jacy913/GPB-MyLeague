@@ -28,6 +28,7 @@ import { SimulationFloatingPanel } from './components/SimulationFloatingPanel';
 import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
 import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
+import { NoPlayersGate } from './components/NoPlayersGate';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
 import { Activity, Bell, Clock3, Menu } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
@@ -3138,6 +3139,13 @@ function App() {
     stopDraftAutoRun,
   ]);
 
+  // A universe with no players is unplayable and, before NoPlayersGate, had no
+  // way back: the schedule self-heals on boot (see the games.length === 0 effect)
+  // but the player pool did not, and handleGeneratePlayers had no consumer in
+  // the UI. Reachable by refreshing while Terminate Universe is mid-build, which
+  // clears the pool before the replacement is generated.
+  const leagueHasNoPlayers = !isBootstrapping && playerState.players.length === 0;
+
   if (isBootstrapping) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-base)] text-[var(--color-ink)] font-[family-name:var(--font-body)]">
@@ -3146,6 +3154,18 @@ function App() {
           <p className="t-caption text-[var(--color-ink-dim)]">Loading league data...</p>
         </div>
       </div>
+    );
+  }
+
+  if (leagueHasNoPlayers) {
+    return (
+      <NoPlayersGate
+        seed={universeSeedInput}
+        teamCount={teams.length}
+        isRepairing={isGeneratingPlayers || isTerminatingUniverse}
+        onRepair={() => void handleGeneratePlayers()}
+        onTerminate={() => void handleTerminateUniverse()}
+      />
     );
   }
 
