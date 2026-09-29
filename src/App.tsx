@@ -26,10 +26,13 @@ import { TradeInterruptionModal } from './components/TradeInterruptionModal';
 import { SeasonAwardsModal } from './components/SeasonAwardsModal';
 import { SimulationFloatingPanel } from './components/SimulationFloatingPanel';
 import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
-import { MainNavigation, type AppView } from './components/MainNavigation';
+import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
-import { Activity, Bell, Clock3 } from 'lucide-react';
+import { Activity, Bell, Clock3, Menu } from 'lucide-react';
+import { FolderNav } from './navigation/FolderNav';
+import { MobileFolderMenu } from './navigation/MobileFolderMenu';
+import { TeamContextStrip } from './components/TeamContextStrip';
 import gpbLogo from './assets/gpb.png';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
@@ -1191,6 +1194,7 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
   const [view, setView] = useState<AppView>('dashboard');
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const [pendingTrades, setPendingTrades] = useState<PendingTradeProposal[]>([]);
@@ -2824,19 +2828,6 @@ function App() {
     setView('game_screen');
   }, [games]);
 
-  const openRandomTeamPage = useCallback(() => {
-    if (teams.length === 0) {
-      setView('teams');
-      return;
-    }
-
-    const eligibleTeams = teams.length > 1 ? teams.filter((team) => team.id !== selectedTeamId) : teams;
-    const randomIndex = Math.floor(Math.random() * eligibleTeams.length);
-    const nextTeam = eligibleTeams[randomIndex] ?? teams[0];
-    setSelectedTeamId(nextTeam.id);
-    setView('teams');
-  }, [teams, selectedTeamId]);
-
   const openTeamPage = useCallback((teamId: string) => {
     setSelectedTeamId(teamId);
     setView('teams');
@@ -3149,25 +3140,19 @@ function App() {
 
   if (isBootstrapping) {
     return (
-      <div className="min-h-screen bg-[#181818] text-white font-sans flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-base)] text-[var(--color-ink)] font-[family-name:var(--font-body)]">
         <div className="text-center space-y-2">
-          <img src={gpbLogo} alt="GPB" className="mx-auto h-24 w-24 object-contain drop-shadow-[0_4px_8px_rgba(0,0,0,0.45)]" />
-          <p className="text-slate-400 font-mono text-sm">Loading league data...</p>
+          <img src={gpbLogo} alt="GPB" className="mx-auto h-24 w-24 object-contain" />
+          <p className="t-caption text-[var(--color-ink-dim)]">Loading league data...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#141414] text-white font-sans selection:bg-white/20 relative overflow-x-hidden pb-20">
-      <div className="pointer-events-none absolute inset-0 opacity-40">
-        <div className="absolute -top-40 -left-24 w-[420px] h-[420px] rounded-full bg-prestige/15 blur-3xl" />
-        <div className="absolute top-[28%] -right-20 w-[360px] h-[360px] rounded-full bg-platinum/15 blur-3xl" />
-        <div className="absolute bottom-0 left-[32%] w-[520px] h-[240px] bg-gradient-to-r from-transparent via-white/5 to-transparent blur-2xl" />
-      </div>
-
+    <div className="relative min-h-screen overflow-x-hidden bg-[var(--color-base)] pb-20 text-[var(--color-ink)] font-[family-name:var(--font-body)] selection:bg-[var(--color-gold-dim)]">
       <div className="sticky top-0 z-50">
-        <div className="border-b border-white/10 bg-[#111111]/96 backdrop-blur">
+        <div className="border-b border-[var(--color-chrome-lo)] bg-[var(--color-void)]">
           <PreviousDateScoreStrip
             simulationPerformanceMode={simulationPerformanceMode}
             bannerDate={bannerDate}
@@ -3178,51 +3163,59 @@ function App() {
           />
         </div>
 
-        <header className="bg-[#151515]/95 backdrop-blur border-b border-white/10">
+        <header className="border-b border-[var(--color-chrome-lo)] bg-[var(--color-base-2)]">
           <div className="px-4 sm:px-6 lg:px-8 h-[88px] flex items-center justify-between">
             <button className="flex items-center gap-3" onClick={() => setView('dashboard')}>
-              <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.55)]" />
-              <span className="font-logo text-3xl sm:text-4xl uppercase leading-none tracking-[0.06em] text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+              <img src={gpbLogo} alt="GPB home" className="h-[68px] w-[68px] object-contain" />
+              <span className="t-h1 uppercase text-[var(--color-ink)]">
                 My League
               </span>
             </button>
 
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
-                <Activity className="w-4 h-4 text-prestige" />
-                <span className="font-mono">{formatHeaderDate(currentTimelineDate)}</span>
+            <div className="flex items-center gap-3 sm:gap-6">
+              <div className="hidden items-center gap-2 text-[var(--color-ink-dim)] md:flex">
+                <Activity className="h-4 w-4 text-[var(--color-info)]" />
+                <span className="t-caption">{formatHeaderDate(currentTimelineDate)}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
-                <Clock3 className="w-4 h-4 text-platinum" />
-                <span className="font-mono">{currentTimelineTimeLabel}</span>
+              <div className="hidden items-center gap-2 text-[var(--color-ink-dim)] md:flex">
+                <Clock3 className="h-4 w-4 text-[var(--color-platinum)]" />
+                <span className="t-caption">{currentTimelineTimeLabel}</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-zinc-400 hidden md:flex">
-                <span className={`w-2 h-2 rounded-full ${dataSource === 'supabase' ? 'bg-platinum' : 'bg-prestige'}`} />
-                <span className="font-mono">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
+              <div className="hidden items-center gap-2 text-[var(--color-ink-dim)] md:flex">
+                <span className={`h-2 w-2 ${dataSource === 'supabase' ? 'bg-[var(--color-platinum)]' : 'bg-[var(--color-prestige)]'}`} />
+                <span className="t-caption">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
               </div>
               <button
                 onClick={() => setView('notifications')}
-                className={`relative p-2 rounded-lg transition-colors ${view === 'notifications' ? 'bg-white/10 text-white' : 'text-zinc-400 hover:bg-[#323232]'}`}
+                className={`relative p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] ${view === 'notifications' ? 'bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]' : 'text-[var(--color-ink-dim)] hover:bg-[var(--color-panel-2)]'}`}
                 title="Commissioner Notifications"
               >
                 <Bell className="w-5 h-5" />
                 {commissionerNotices.length > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-platinum text-black text-[10px] font-mono flex items-center justify-center">
+                  <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center bg-[var(--color-platinum)] px-1 t-caption text-[var(--color-ink-invert)]">
                     {commissionerNotices.length > 9 ? '9+' : commissionerNotices.length}
                   </span>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => setIsMobileNavOpen(true)}
+                aria-label="Open navigation"
+                className="inline-flex h-10 w-10 items-center justify-center text-[var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] lg:hidden"
+              >
+                <Menu className="h-6 w-6" aria-hidden="true" />
+              </button>
             </div>
           </div>
         </header>
+        <TeamContextStrip
+          team={teams.find((team) => team.id === selectedTeamId) ?? null}
+          onOpenTeam={() => setView('teams')}
+        />
       </div>
 
       <div className="relative z-10 flex">
-        <MainNavigation
-          view={view}
-          onSetView={setView}
-          onOpenRandomTeamPage={openRandomTeamPage}
-        />
+        <FolderNav view={view} onSetView={setView} className="sticky top-[176px]" />
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
           <AppViewRouter
@@ -3285,6 +3278,13 @@ function App() {
         </main>
       </div>
 
+      <MobileFolderMenu
+        isOpen={isMobileNavOpen}
+        view={view}
+        onSetView={setView}
+        onClose={() => setIsMobileNavOpen(false)}
+      />
+
       <TradeInterruptionModal
         prompt={tradeInterruptionPrompt}
         onDismiss={() => setTradeInterruptionPrompt(null)}
@@ -3334,5 +3334,3 @@ function App() {
 }
 
 export default App;
-
-

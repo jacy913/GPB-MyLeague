@@ -550,7 +550,7 @@ export const useBroadcastFlair = ({
     return summary.split(pattern).filter(Boolean).map((part, index) => {
       const isHighlight = broadcastHighlightTokens.includes(part);
       return (
-        <span key={`${part}-${index}`} className={isHighlight ? 'font-semibold text-white' : undefined}>
+        <span key={`${part}-${index}`} className={isHighlight ? 'font-semibold text-[var(--color-ink)]' : undefined}>
           {part}
         </span>
       );

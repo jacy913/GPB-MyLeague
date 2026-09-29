@@ -35,7 +35,8 @@ import { GPBBook } from './GPBBook';
 import { PlayoffsBracket } from './PlayoffsBracket';
 import { CommissionerNotificationsPanel } from './CommissionerNotificationsPanel';
 import { CommissionerSettings } from './CommissionerSettings';
-import { type AppView } from './MainNavigation';
+import type { AppView } from '../types';
+import { UiKitGallery } from './UiKitGallery';
 import { SimulationSaveStatus } from '../hooks/useSimulationEngine';
 
 type CalendarDateSummary = {
@@ -352,6 +353,8 @@ export const AppViewRouter = ({
           onProposeTrade={onProposeTrade}
         />
       )}
+
+      {view === 'ui_kit' && <UiKitGallery />}
 
       {view === 'simulation' && (
         <SimulationHub

@@ -14,6 +14,30 @@ export interface Team {
   runsAllowed: number;
 }
 
+/** Every renderable application screen, including non-navigation development views. */
+export type AppView =
+  | 'dashboard'
+  | 'games_schedule'
+  | 'team_calendar'
+  | 'simulation'
+  | 'league_standings'
+  | 'leaders'
+  | 'history'
+  | 'teams'
+  | 'players'
+  | 'trades'
+  | 'lottery'
+  | 'draft'
+  | 'map'
+  | 'free_agency'
+  | 'offseason'
+  | 'playoffs'
+  | 'gpb_book'
+  | 'notifications'
+  | 'settings'
+  | 'game_screen'
+  | 'ui_kit';
+
 export type PlayerType = 'batter' | 'pitcher';
 export type PlayerStatus = 'active' | 'free_agent' | 'prospect' | 'retired';
 export type BatHand = 'L' | 'R' | 'S';

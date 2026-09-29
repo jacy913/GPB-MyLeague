@@ -1,17 +1,19 @@
 import React, { useMemo, useState } from 'react';
-import { BarChart3, ChevronDown, Layers3, Shield } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
-  Player,
-  PlayerBattingRatings,
-  PlayerPitchingRatings,
-  PlayerSeasonBatting,
-  PlayerSeasonPitching,
+  type Player,
+  type PlayerBattingRatings,
+  type PlayerPitchingRatings,
+  type PlayerSeasonBatting,
+  type PlayerSeasonPitching,
   STARTING_PITCHER_SLOTS,
-  Team,
-  TeamRosterSlot,
+  type Team,
+  type TeamRosterSlot,
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
+import { fmtDiff, fmtEra, fmtGb, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
+import { Panel, SegmentedControl, SkewedPanel, StatTable, type StatTableColumn, type StatTableRow } from './ui';
 import { TeamLogo } from './TeamLogo';
 
 type StandingsViewMode = 'league' | 'division';
@@ -30,7 +32,6 @@ interface StandingsHubProps {
 
 interface TeamStandingRow {
   team: Team;
-  gamesPlayed: number;
   winPct: number;
   runDiff: number;
   teamEra: number | null;
@@ -39,12 +40,9 @@ interface TeamStandingRow {
   runsScored: number;
   runsAllowed: number;
   rosterStrength: number | null;
-  rosterStrengthCoverage: number;
 }
 
-const sectionClass = 'rounded-3xl border border-white/10 bg-[linear-gradient(135deg,#121212,#1e1e1e,#101010)]';
 const rosterStrengthSlots = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS];
-
 const RANK_OPTIONS: Array<{ key: StandingsRankKey; label: string }> = [
   { key: 'record', label: 'Record' },
   { key: 'win_pct', label: 'Win %' },
@@ -57,207 +55,132 @@ const RANK_OPTIONS: Array<{ key: StandingsRankKey; label: string }> = [
   { key: 'runs_allowed', label: 'Runs Allowed' },
 ];
 
-const getLatestBattingRatingsMap = (ratings: PlayerBattingRatings[]): Map<string, PlayerBattingRatings> => {
-  const next = new Map<string, PlayerBattingRatings>();
-  [...ratings]
-    .sort((left, right) => right.seasonYear - left.seasonYear)
-    .forEach((rating) => {
-      if (!next.has(rating.playerId)) {
-        next.set(rating.playerId, rating);
-      }
-    });
-  return next;
+const getLatestBattingRatingsMap = (ratings: PlayerBattingRatings[]) => {
+  const result = new Map<string, PlayerBattingRatings>();
+  [...ratings].sort((a, b) => b.seasonYear - a.seasonYear).forEach((rating) => {
+    if (!result.has(rating.playerId)) result.set(rating.playerId, rating);
+  });
+  return result;
 };
 
-const getLatestPitchingRatingsMap = (ratings: PlayerPitchingRatings[]): Map<string, PlayerPitchingRatings> => {
-  const next = new Map<string, PlayerPitchingRatings>();
-  [...ratings]
-    .sort((left, right) => right.seasonYear - left.seasonYear)
-    .forEach((rating) => {
-      if (!next.has(rating.playerId)) {
-        next.set(rating.playerId, rating);
-      }
-    });
-  return next;
+const getLatestPitchingRatingsMap = (ratings: PlayerPitchingRatings[]) => {
+  const result = new Map<string, PlayerPitchingRatings>();
+  [...ratings].sort((a, b) => b.seasonYear - a.seasonYear).forEach((rating) => {
+    if (!result.has(rating.playerId)) result.set(rating.playerId, rating);
+  });
+  return result;
 };
 
-const formatPct = (pct: number): string => {
-  if (!Number.isFinite(pct)) {
-    return '.000';
-  }
-  if (pct > -1 && pct < 1) {
-    return pct.toFixed(3).replace(/^(-?)0\./, '$1.');
-  }
-  return pct.toFixed(3).replace(/^\.\./, '.');
-};
-const formatEra = (value: number | null): string => (value === null ? '--' : value.toFixed(2));
-const formatWhip = (value: number | null): string => (value === null ? '--' : value.toFixed(2));
-
-const compareNullableNumber = (left: number | null, right: number | null, direction: 'asc' | 'desc'): number => {
+const compareNullable = (left: number | null, right: number | null, direction: 'asc' | 'desc') => {
   if (left === null && right === null) return 0;
   if (left === null) return 1;
   if (right === null) return -1;
   return direction === 'asc' ? left - right : right - left;
 };
 
-const compareRecord = (left: TeamStandingRow, right: TeamStandingRow): number => {
-  if (right.winPct !== left.winPct) return right.winPct - left.winPct;
-  if (right.team.wins !== left.team.wins) return right.team.wins - left.team.wins;
-  if (right.runDiff !== left.runDiff) return right.runDiff - left.runDiff;
-  return left.team.city.localeCompare(right.team.city);
-};
+const compareRecord = (left: TeamStandingRow, right: TeamStandingRow) =>
+  right.winPct - left.winPct || right.team.wins - left.team.wins || right.runDiff - left.runDiff || left.team.city.localeCompare(right.team.city);
 
-const sortRowsByKey = (rows: TeamStandingRow[], rankKey: StandingsRankKey): TeamStandingRow[] => {
-  const next = [...rows];
-  next.sort((left, right) => {
-    if (rankKey === 'record') {
-      return compareRecord(left, right);
-    }
-    if (rankKey === 'win_pct') {
-      if (right.winPct !== left.winPct) return right.winPct - left.winPct;
-      return compareRecord(left, right);
-    }
-    if (rankKey === 'run_diff') {
-      if (right.runDiff !== left.runDiff) return right.runDiff - left.runDiff;
-      return compareRecord(left, right);
-    }
-    if (rankKey === 'runs_scored') {
-      if (right.runsScored !== left.runsScored) return right.runsScored - left.runsScored;
-      return compareRecord(left, right);
-    }
-    if (rankKey === 'runs_allowed') {
-      if (left.runsAllowed !== right.runsAllowed) return left.runsAllowed - right.runsAllowed;
-      return compareRecord(left, right);
-    }
-    if (rankKey === 'team_era') {
-      const eraDelta = compareNullableNumber(left.teamEra, right.teamEra, 'asc');
-      return eraDelta !== 0 ? eraDelta : compareRecord(left, right);
-    }
-    if (rankKey === 'team_whip') {
-      const whipDelta = compareNullableNumber(left.teamWhip, right.teamWhip, 'asc');
-      return whipDelta !== 0 ? whipDelta : compareRecord(left, right);
-    }
-    if (rankKey === 'team_rbi') {
-      if (right.teamRbi !== left.teamRbi) return right.teamRbi - left.teamRbi;
-      return compareRecord(left, right);
-    }
+const sortRows = (rows: TeamStandingRow[], rankKey: StandingsRankKey) => [...rows].sort((left, right) => {
+  if (rankKey === 'record') return compareRecord(left, right);
+  if (rankKey === 'win_pct') return right.winPct - left.winPct || compareRecord(left, right);
+  if (rankKey === 'run_diff') return right.runDiff - left.runDiff || compareRecord(left, right);
+  if (rankKey === 'runs_scored') return right.runsScored - left.runsScored || compareRecord(left, right);
+  if (rankKey === 'runs_allowed') return left.runsAllowed - right.runsAllowed || compareRecord(left, right);
+  if (rankKey === 'team_era') return compareNullable(left.teamEra, right.teamEra, 'asc') || compareRecord(left, right);
+  if (rankKey === 'team_whip') return compareNullable(left.teamWhip, right.teamWhip, 'asc') || compareRecord(left, right);
+  if (rankKey === 'team_rbi') return right.teamRbi - left.teamRbi || compareRecord(left, right);
+  return compareNullable(left.rosterStrength, right.rosterStrength, 'desc') || compareRecord(left, right);
+});
 
-    const strengthDelta = compareNullableNumber(left.rosterStrength, right.rosterStrength, 'desc');
-    return strengthDelta !== 0 ? strengthDelta : compareRecord(left, right);
-  });
-  return next;
-};
+const getMetricLabel = (rankKey: StandingsRankKey) => RANK_OPTIONS.find((option) => option.key === rankKey)?.label ?? 'Record';
 
-const getMetricLabel = (rankKey: StandingsRankKey): string => RANK_OPTIONS.find((option) => option.key === rankKey)?.label ?? 'Record';
-
-const getMetricValue = (row: TeamStandingRow, rankKey: StandingsRankKey): string => {
-  if (rankKey === 'record') return `${row.team.wins}-${row.team.losses}`;
-  if (rankKey === 'win_pct') return formatPct(row.winPct);
-  if (rankKey === 'run_diff') return `${row.runDiff > 0 ? '+' : ''}${row.runDiff}`;
+const getMetricValue = (row: TeamStandingRow, rankKey: StandingsRankKey) => {
+  if (rankKey === 'record') return fmtRecord(row.team.wins, row.team.losses);
+  if (rankKey === 'win_pct') return fmtPct(row.winPct);
+  if (rankKey === 'run_diff') return fmtDiff(row.runDiff);
   if (rankKey === 'runs_scored') return String(row.runsScored);
   if (rankKey === 'runs_allowed') return String(row.runsAllowed);
-  if (rankKey === 'team_era') return formatEra(row.teamEra);
-  if (rankKey === 'team_whip') return formatWhip(row.teamWhip);
+  if (rankKey === 'team_era') return row.teamEra === null ? '—' : fmtEra(row.teamEra);
+  if (rankKey === 'team_whip') return row.teamWhip === null ? '—' : fmtWhip(row.teamWhip);
   if (rankKey === 'team_rbi') return String(row.teamRbi);
-  return row.rosterStrength === null ? '--' : String(row.rosterStrength);
+  return row.rosterStrength === null ? '—' : String(row.rosterStrength);
 };
 
-const getGamesBack = (leader: TeamStandingRow | null, row: TeamStandingRow): string => {
-  if (!leader || leader.team.id === row.team.id) {
-    return '-';
-  }
-  const gb = ((leader.team.wins - row.team.wins) + (row.team.losses - leader.team.losses)) / 2;
-  return gb.toFixed(1);
-};
+const getGamesBack = (leader: TeamStandingRow, row: TeamStandingRow) =>
+  fmtGb(((leader.team.wins - row.team.wins) + (row.team.losses - leader.team.losses)) / 2);
 
-const StandingsPanel: React.FC<{
+interface StandingsPanelProps {
   title: string;
-  subtitle: string;
   rows: TeamStandingRow[];
   rankKey: StandingsRankKey;
-  accentClass: string;
   onSelectTeam: (teamId: string) => void;
-}> = ({ title, subtitle, rows, rankKey, accentClass, onSelectTeam }) => {
-  const rankedRows = useMemo(() => sortRowsByKey(rows, rankKey), [rankKey, rows]);
-  const recordLeader = useMemo(() => sortRowsByKey(rows, 'record')[0] ?? null, [rows]);
+  playoffLineIndex: number;
+  wildCardLineIndex?: number;
+}
+
+const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, onSelectTeam, playoffLineIndex, wildCardLineIndex }) => {
+  const rankedRows = useMemo(() => sortRows(rows, rankKey), [rankKey, rows]);
+  const recordLeader = useMemo(() => sortRows(rows, 'record')[0], [rows]);
+  const divisionLeaders = useMemo(() => new Map(
+    [...new Set(rows.map((row) => row.team.division))].map((division) => [
+      division,
+      sortRows(rows.filter((row) => row.team.division === division), 'record')[0],
+    ]),
+  ), [rows]);
+
+  const columns = useMemo<StatTableColumn[]>(() => [
+    { key: 'team', header: 'TEAM' },
+    { key: 'wins', header: 'W', align: 'right', isNumeric: true, width: '3ch' },
+    { key: 'losses', header: 'L', align: 'right', isNumeric: true, width: '3ch' },
+    { key: 'pct', header: 'PCT', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'gb', header: 'GB', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'diff', header: 'DIFF', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'metric', header: getMetricLabel(rankKey).toUpperCase(), align: 'right', isNumeric: true, width: '7ch', sortKey: 'metric' },
+  ], [rankKey]);
+
+  const tableRows = useMemo<StatTableRow[]>(() => rankedRows.map((row, index) => {
+    const divisionLeader = divisionLeaders.get(row.team.division);
+    const isDivisionWinner = divisionLeader?.team.id === row.team.id;
+    return {
+      id: row.team.id,
+      cells: {
+        team: (
+          <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-2 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label={`Open ${row.team.city} ${row.team.name} roster`}>
+            <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
+            <TeamLogo team={row.team} sizeClass="h-5 w-5" />
+            <span className={`truncate t-stat-sm ${isDivisionWinner ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
+              {isDivisionWinner && <span className="mr-1 text-[var(--color-gold)]" aria-label="Division leader">◆</span>}
+              {row.team.city} {row.team.name}
+            </span>
+          </button>
+        ),
+        wins: row.team.wins,
+        losses: row.team.losses,
+        pct: fmtPct(row.winPct),
+        gb: divisionLeader ? getGamesBack(divisionLeader, row) : '—',
+        diff: <span className={row.runDiff >= 0 ? 'text-[var(--color-pos)]' : 'text-[var(--color-neg)]'}>{fmtDiff(row.runDiff)}</span>,
+        metric: getMetricValue(row, rankKey),
+      },
+    };
+  }), [divisionLeaders, onSelectTeam, rankKey, rankedRows]);
 
   return (
-    <article className={`${sectionClass} overflow-hidden p-4`}>
-      <div className="mb-3 flex items-end justify-between gap-3 border-b border-white/10 pb-3">
-        <div>
-          <p className={`font-display text-2xl uppercase tracking-[0.1em] ${accentClass}`}>{title}</p>
-          <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{subtitle}</p>
+    <SkewedPanel direction="skew-r" panelVariant="default">
+      <div className="-m-4">
+        <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+          <h2 className="t-h3">{title}</h2>
+          <span className="t-stat text-[var(--color-gold)]">{recordLeader ? fmtRecord(recordLeader.team.wins, recordLeader.team.losses) : '—'}</span>
         </div>
-        <div className="rounded-full border border-white/10 bg-black/25 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-300">
-          Rank: {getMetricLabel(rankKey)}
-        </div>
+        <StatTable columns={columns} rows={tableRows} density="default" sortColumn="metric" playoffLineIndex={playoffLineIndex} wildCardLineIndex={wildCardLineIndex} aria-label={`${title} standings`} />
       </div>
-
-      <div className="overflow-x-auto">
-        <table className="min-w-[760px] w-full text-sm">
-          <thead className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-            <tr className="border-b border-white/10">
-              <th className="px-2 py-2 text-center">#</th>
-              <th className="px-2 py-2 text-left">Team</th>
-              <th className="px-2 py-2 text-center">Metric</th>
-              <th className="px-2 py-2 text-center">W-L</th>
-              <th className="px-2 py-2 text-center">PCT</th>
-              <th className="px-2 py-2 text-center">GB</th>
-              <th className="px-2 py-2 text-center">RD</th>
-              <th className="px-2 py-2 text-center">ERA</th>
-              <th className="px-2 py-2 text-center">RBI</th>
-              <th className="px-2 py-2 text-center">STR</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {rankedRows.map((row, index) => (
-              <tr key={row.team.id} className="hover:bg-white/5">
-                <td className="px-2 py-2 text-center font-mono text-zinc-400">{index + 1}</td>
-                <td className="px-2 py-2">
-                  <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-2 text-left">
-                    <TeamLogo team={row.team} sizeClass="h-10 w-10" />
-                    <div className="min-w-0">
-                      <p className="truncate font-display text-lg uppercase tracking-[0.06em] text-white">{row.team.city} {row.team.name}</p>
-                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                        {row.team.league} {row.team.division}
-                      </p>
-                    </div>
-                  </button>
-                </td>
-                <td className="px-2 py-2 text-center font-display text-lg uppercase tracking-[0.06em] text-[#f3dea1]">
-                  {getMetricValue(row, rankKey)}
-                </td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-200">{row.team.wins}-{row.team.losses}</td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-300">{formatPct(row.winPct)}</td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-500">{getGamesBack(recordLeader, row)}</td>
-                <td className={`px-2 py-2 text-center font-mono ${row.runDiff >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                  {row.runDiff > 0 ? '+' : ''}{row.runDiff}
-                </td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-200">{formatEra(row.teamEra)}</td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-200">{row.teamRbi}</td>
-                <td className="px-2 py-2 text-center font-mono text-zinc-200">{row.rosterStrength ?? '--'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </article>
+    </SkewedPanel>
   );
 };
 
-export const StandingsHub: React.FC<StandingsHubProps> = ({
-  teams,
-  players,
-  battingStats,
-  pitchingStats,
-  battingRatings,
-  pitchingRatings,
-  rosterSlots,
-  onSelectTeam,
-}) => {
+export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, battingStats, pitchingStats, battingRatings, pitchingRatings, rosterSlots, onSelectTeam }) => {
   const [viewMode, setViewMode] = useState<StandingsViewMode>('league');
   const [rankKey, setRankKey] = useState<StandingsRankKey>('record');
-
   const playersById = useMemo(() => new Map(players.map((player) => [player.playerId, player])), [players]);
   const preferredBattingByPlayerId = useMemo(() => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'), [battingStats]);
   const preferredPitchingByPlayerId = useMemo(() => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'), [pitchingStats]);
@@ -265,269 +188,92 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({
   const pitchingRatingsByPlayerId = useMemo(() => getLatestPitchingRatingsMap(pitchingRatings), [pitchingRatings]);
 
   const standingsRows = useMemo<TeamStandingRow[]>(() => {
-    const battingTotalsByTeamId = new Map<string, { rbi: number }>();
+    const rbiByTeam = new Map<string, number>();
     preferredBattingByPlayerId.forEach((stat, playerId) => {
-      const player = playersById.get(playerId);
-      if (!player?.teamId) return;
-      const current = battingTotalsByTeamId.get(player.teamId) ?? { rbi: 0 };
-      current.rbi += stat.rbi;
-      battingTotalsByTeamId.set(player.teamId, current);
+      const teamId = playersById.get(playerId)?.teamId;
+      if (teamId) rbiByTeam.set(teamId, (rbiByTeam.get(teamId) ?? 0) + stat.rbi);
     });
-
-    const pitchingTotalsByTeamId = new Map<string, { earnedRuns: number; innings: number; walks: number; hitsAllowed: number }>();
+    const pitchingByTeam = new Map<string, { earnedRuns: number; innings: number; walks: number; hitsAllowed: number }>();
     preferredPitchingByPlayerId.forEach((stat, playerId) => {
-      const player = playersById.get(playerId);
-      if (!player?.teamId) return;
-      const current = pitchingTotalsByTeamId.get(player.teamId) ?? { earnedRuns: 0, innings: 0, walks: 0, hitsAllowed: 0 };
-      current.earnedRuns += stat.earnedRuns;
-      current.innings += stat.inningsPitched;
-      current.walks += stat.walks;
-      current.hitsAllowed += stat.hitsAllowed;
-      pitchingTotalsByTeamId.set(player.teamId, current);
+      const teamId = playersById.get(playerId)?.teamId;
+      if (!teamId) return;
+      const totals = pitchingByTeam.get(teamId) ?? { earnedRuns: 0, innings: 0, walks: 0, hitsAllowed: 0 };
+      totals.earnedRuns += stat.earnedRuns;
+      totals.innings += stat.inningsPitched;
+      totals.walks += stat.walks;
+      totals.hitsAllowed += stat.hitsAllowed;
+      pitchingByTeam.set(teamId, totals);
     });
-
-    const latestRosterYearByTeamId = new Map<string, number>();
+    const latestRosterYear = new Map<string, number>();
     rosterSlots.forEach((slot) => {
-      const current = latestRosterYearByTeamId.get(slot.teamId) ?? slot.seasonYear;
-      if (slot.seasonYear > current) {
-        latestRosterYearByTeamId.set(slot.teamId, slot.seasonYear);
-      } else if (!latestRosterYearByTeamId.has(slot.teamId)) {
-        latestRosterYearByTeamId.set(slot.teamId, slot.seasonYear);
-      }
+      const knownYear = latestRosterYear.get(slot.teamId);
+      if (knownYear === undefined || slot.seasonYear > knownYear) latestRosterYear.set(slot.teamId, slot.seasonYear);
     });
-
-    const rosterPlayerByTeamSlot = new Map<string, string>();
+    const playerByTeamSlot = new Map<string, string>();
     rosterSlots.forEach((slot) => {
-      const latestYear = latestRosterYearByTeamId.get(slot.teamId);
-      if (latestYear === undefined || latestYear !== slot.seasonYear) {
-        return;
-      }
-      rosterPlayerByTeamSlot.set(`${slot.teamId}:${slot.slotCode}`, slot.playerId);
+      if (latestRosterYear.get(slot.teamId) === slot.seasonYear) playerByTeamSlot.set(`${slot.teamId}:${slot.slotCode}`, slot.playerId);
     });
 
     return teams.map((team) => {
       const gamesPlayed = team.wins + team.losses;
-      const winPct = gamesPlayed > 0 ? team.wins / gamesPlayed : 0;
-      const runDiff = team.runsScored - team.runsAllowed;
-
-      const pitchingTotals = pitchingTotalsByTeamId.get(team.id) ?? { earnedRuns: 0, innings: 0, walks: 0, hitsAllowed: 0 };
-      const teamEra = pitchingTotals.innings > 0 ? Number(((pitchingTotals.earnedRuns * 9) / pitchingTotals.innings).toFixed(2)) : null;
-      const teamWhip = pitchingTotals.innings > 0 ? Number(((pitchingTotals.walks + pitchingTotals.hitsAllowed) / pitchingTotals.innings).toFixed(2)) : null;
-
-      let rosterStrengthCoverage = 0;
-      let rosterStrengthTotal = 0;
+      const pitching = pitchingByTeam.get(team.id) ?? { earnedRuns: 0, innings: 0, walks: 0, hitsAllowed: 0 };
+      let strengthTotal = 0;
+      let strengthCount = 0;
       rosterStrengthSlots.forEach((slotCode) => {
-        const playerId = rosterPlayerByTeamSlot.get(`${team.id}:${slotCode}`);
-        if (!playerId) return;
-        const overall = battingRatingsByPlayerId.get(playerId)?.overall ?? pitchingRatingsByPlayerId.get(playerId)?.overall ?? 0;
-        if (overall <= 0) return;
-        rosterStrengthCoverage += 1;
-        rosterStrengthTotal += overall;
+        const playerId = playerByTeamSlot.get(`${team.id}:${slotCode}`);
+        const overall = playerId ? battingRatingsByPlayerId.get(playerId)?.overall ?? pitchingRatingsByPlayerId.get(playerId)?.overall ?? 0 : 0;
+        if (overall > 0) { strengthTotal += overall; strengthCount += 1; }
       });
-      const rosterStrength = rosterStrengthCoverage > 0 ? Math.round(rosterStrengthTotal / rosterStrengthCoverage) : null;
-
       return {
         team,
-        gamesPlayed,
-        winPct,
-        runDiff,
-        teamEra,
-        teamWhip,
-        teamRbi: battingTotalsByTeamId.get(team.id)?.rbi ?? 0,
+        winPct: gamesPlayed ? team.wins / gamesPlayed : 0,
+        runDiff: team.runsScored - team.runsAllowed,
+        teamEra: pitching.innings ? Number(((pitching.earnedRuns * 9) / pitching.innings).toFixed(2)) : null,
+        teamWhip: pitching.innings ? Number(((pitching.walks + pitching.hitsAllowed) / pitching.innings).toFixed(2)) : null,
+        teamRbi: rbiByTeam.get(team.id) ?? 0,
         runsScored: team.runsScored,
         runsAllowed: team.runsAllowed,
-        rosterStrength,
-        rosterStrengthCoverage,
+        rosterStrength: strengthCount ? Math.round(strengthTotal / strengthCount) : null,
       };
     });
   }, [battingRatingsByPlayerId, pitchingRatingsByPlayerId, playersById, preferredBattingByPlayerId, preferredPitchingByPlayerId, rosterSlots, teams]);
 
-  const rowsByLeague = useMemo(
-    () => ({
-      Prestige: standingsRows.filter((row) => row.team.league === 'Prestige'),
-      Platinum: standingsRows.filter((row) => row.team.league === 'Platinum'),
-    }),
-    [standingsRows],
-  );
-
-  const topByRankMetric = useMemo(() => sortRowsByKey(standingsRows, rankKey)[0] ?? null, [rankKey, standingsRows]);
-  const bestEra = useMemo(() => sortRowsByKey(standingsRows, 'team_era')[0] ?? null, [standingsRows]);
-  const mostRbi = useMemo(() => sortRowsByKey(standingsRows, 'team_rbi')[0] ?? null, [standingsRows]);
-  const strongestRoster = useMemo(() => sortRowsByKey(standingsRows, 'roster_strength')[0] ?? null, [standingsRows]);
+  const leagueRows = useMemo(() => (['Prestige', 'Platinum'] as const).map((league) => ({ league, rows: standingsRows.filter((row) => row.team.league === league) })), [standingsRows]);
+  const divisionRows = useMemo(() => (['Prestige', 'Platinum'] as const).flatMap((league) =>
+    (['North', 'South', 'East', 'West'] as const).map((division) => ({ league, division, rows: standingsRows.filter((row) => row.team.league === league && row.team.division === division) })),
+  ), [standingsRows]);
 
   return (
-    <section className="space-y-6">
-      <article className={`${sectionClass} p-6`}>
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-[#d8c88b]">Commissioner Standings Matrix</p>
-            <p className="mt-2 font-headline text-5xl uppercase tracking-[0.06em] text-white">Standings</p>
-            <p className="mt-3 max-w-4xl text-sm leading-6 text-zinc-400">
-              Start from the full league race, then pivot to divisional slices. Rank clubs by performance and roster quality using live team and player data.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="inline-flex rounded-xl border border-white/10 bg-black/30 p-1">
-              <button
-                type="button"
-                onClick={() => setViewMode('league')}
-                className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
-                  viewMode === 'league' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-                }`}
-              >
-                League View
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('division')}
-                className={`px-4 py-2 rounded-lg font-display text-sm uppercase tracking-widest transition-colors ${
-                  viewMode === 'division' ? 'bg-white text-black' : 'text-zinc-300 hover:text-white'
-                }`}
-              >
-                Division View
-              </button>
-            </div>
-
-            <label className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2">
-              <BarChart3 className="h-4 w-4 text-zinc-400" />
-              <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Rank By</span>
-              <select
-                value={rankKey}
-                onChange={(event) => setRankKey(event.target.value as StandingsRankKey)}
-                className="bg-transparent font-mono text-xs uppercase tracking-[0.16em] text-zinc-200 outline-none"
-              >
-                {RANK_OPTIONS.map((option) => (
-                  <option key={option.key} value={option.key} className="bg-[#141414] text-zinc-100">
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
-            </label>
-          </div>
+    <section className="space-y-5">
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <h1 className="t-h2">League Standings</h1>
+          <label className="relative flex items-center gap-2 t-caption text-[var(--color-ink-dim)]">
+            <span>SORT</span>
+            <select value={rankKey} onChange={(event) => setRankKey(event.target.value as StandingsRankKey)} className="appearance-none bg-[var(--color-sunken)] py-1 pl-2 pr-7 t-caption text-[var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label="Sort standings by">
+              {RANK_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-1 h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+          </label>
         </div>
-      </article>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <article className={`${sectionClass} p-4`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Current Rank Leader</p>
-          {topByRankMetric ? (
-            <div className="mt-2 flex items-center gap-3">
-              <TeamLogo team={topByRankMetric.team} sizeClass="h-11 w-11" />
-              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
-                {topByRankMetric.team.city} {topByRankMetric.team.name}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
-          )}
-          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">
-            {getMetricLabel(rankKey)}: {topByRankMetric ? getMetricValue(topByRankMetric, rankKey) : '--'}
-          </p>
-        </article>
-        <article className={`${sectionClass} p-4`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Best Team ERA</p>
-          {bestEra ? (
-            <div className="mt-2 flex items-center gap-3">
-              <TeamLogo team={bestEra.team} sizeClass="h-11 w-11" />
-              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
-                {bestEra.team.city} {bestEra.team.name}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
-          )}
-          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">{bestEra ? formatEra(bestEra.teamEra) : '--'} ERA</p>
-        </article>
-        <article className={`${sectionClass} p-4`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Most Team RBI</p>
-          {mostRbi ? (
-            <div className="mt-2 flex items-center gap-3">
-              <TeamLogo team={mostRbi.team} sizeClass="h-11 w-11" />
-              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
-                {mostRbi.team.city} {mostRbi.team.name}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
-          )}
-          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">{mostRbi ? mostRbi.teamRbi : '--'} RBI</p>
-        </article>
-        <article className={`${sectionClass} p-4`}>
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Strongest Core</p>
-          {strongestRoster ? (
-            <div className="mt-2 flex items-center gap-3">
-              <TeamLogo team={strongestRoster.team} sizeClass="h-11 w-11" />
-              <p className="min-w-0 truncate font-display text-2xl uppercase tracking-[0.08em] text-white">
-                {strongestRoster.team.city} {strongestRoster.team.name}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-2 font-display text-2xl uppercase tracking-[0.08em] text-white">No Data</p>
-          )}
-          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#ecd693]">
-            {strongestRoster?.rosterStrength ?? '--'} OVR | {strongestRoster?.rosterStrengthCoverage ?? 0}/{rosterStrengthSlots.length}
-          </p>
-        </article>
-      </section>
+        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="t-display">Standings</p>
+            <p className="t-body text-[var(--color-ink-dim)]">Core race metrics stay visible while the active sort metric receives its own highlighted column.</p>
+          </div>
+          <SegmentedControl aria-label="Standings view" value={viewMode} onChange={(value) => setViewMode(value as StandingsViewMode)} options={[{ value: 'league', label: 'League' }, { value: 'division', label: 'Division' }]} />
+        </div>
+      </Panel>
 
       {viewMode === 'league' ? (
-        <section className="grid gap-6 xl:grid-cols-2">
-          <StandingsPanel
-            title="Prestige League"
-            subtitle="All clubs ranked by selected metric"
-            rows={rowsByLeague.Prestige}
-            rankKey={rankKey}
-            accentClass="text-prestige"
-            onSelectTeam={onSelectTeam}
-          />
-          <StandingsPanel
-            title="Platinum League"
-            subtitle="All clubs ranked by selected metric"
-            rows={rowsByLeague.Platinum}
-            rankKey={rankKey}
-            accentClass="text-platinum"
-            onSelectTeam={onSelectTeam}
-          />
-        </section>
-      ) : (
-        <section className="space-y-6">
-          {(['Prestige', 'Platinum'] as const).map((league) => (
-            <div key={league} className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Layers3 className={`h-4 w-4 ${league === 'Prestige' ? 'text-prestige' : 'text-platinum'}`} />
-                <p className={`font-display text-2xl uppercase tracking-[0.08em] ${league === 'Prestige' ? 'text-prestige' : 'text-platinum'}`}>
-                  {league} Division Race
-                </p>
-              </div>
-              <div className="grid gap-4 xl:grid-cols-2">
-                {(['North', 'South', 'East', 'West'] as const).map((division) => (
-                  <StandingsPanel
-                    key={`${league}-${division}`}
-                    title={`${division} Division`}
-                    subtitle={`${league} clubs only`}
-                    rows={standingsRows.filter((row) => row.team.league === league && row.team.division === division)}
-                    rankKey={rankKey}
-                    accentClass={league === 'Prestige' ? 'text-prestige' : 'text-platinum'}
-                    onSelectTeam={onSelectTeam}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
-
-      <article className={`${sectionClass} p-4`}>
-        <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-zinc-400" />
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">How Team Metrics Are Built</p>
+        <div className="grid gap-5 md:grid-cols-2">
+          {leagueRows.map(({ league, rows }) => <StandingsPanel key={league} title={`${league} League`} rows={rows} rankKey={rankKey} onSelectTeam={onSelectTeam} playoffLineIndex={4} wildCardLineIndex={6} />)}
         </div>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
-          ERA and WHIP are aggregated from active roster pitchers&apos; current regular-season stat lines. RBI totals use current regular-season batting lines. Roster Strength is the average overall of core lineup and starting-rotation slots only, excluding backups.
-        </p>
-      </article>
+      ) : (
+        <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
+          {divisionRows.map(({ league, division, rows }) => <StandingsPanel key={`${league}-${division}`} title={`${league} ${division}`} rows={rows} rankKey={rankKey} onSelectTeam={onSelectTeam} playoffLineIndex={1} wildCardLineIndex={2} />)}
+        </div>
+      )}
     </section>
   );
 };
