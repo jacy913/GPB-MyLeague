@@ -886,18 +886,23 @@ const collectSnapshot = (
     (player) => player.status === 'active' && !rosteredPlayerIds.has(player.playerId),
   ).length;
 
-  // Latest overall per player, for measuring roster quality. Preferring the
-  // batting rating on a two-way player mirrors getPlayerOverall, which is what
-  // the free agency and retirement checks read.
-  const ratingOverallById = new Map<string, number>();
+  // Latest overall per player, for measuring roster quality. Ratings are stored
+  // oldest-first, so taking the first matching row would grade every player on
+  // their rookie season. Explicit max by seasonYear instead.
+  // Prefers the batting rating on a two-way player, mirroring getPlayerOverall,
+  // which is what the free agency and retirement checks read.
+  const ratingOverallById = new Map<string, { overall: number; seasonYear: number }>();
   for (const row of playerState.battingRatings) {
     if (row.seasonYear > seasonYear) continue;
-    if (!ratingOverallById.has(row.playerId)) ratingOverallById.set(row.playerId, row.overall);
+    const held = ratingOverallById.get(row.playerId);
+    if (!held || row.seasonYear > held.seasonYear) ratingOverallById.set(row.playerId, { overall: row.overall, seasonYear: row.seasonYear });
   }
   for (const row of playerState.pitchingRatings) {
     if (row.seasonYear > seasonYear) continue;
-    if (!ratingOverallById.has(row.playerId)) ratingOverallById.set(row.playerId, row.overall);
+    const held = ratingOverallById.get(row.playerId);
+    if (!held || row.seasonYear > held.seasonYear) ratingOverallById.set(row.playerId, { overall: row.overall, seasonYear: row.seasonYear });
   }
+  const latestOverall = (playerId: string): number => ratingOverallById.get(playerId)?.overall ?? 0;
 
   let runs = 0;
   for (const game of completed) {
@@ -991,7 +996,7 @@ const collectSnapshot = (
     const teamIds = new Set(seasonSlotRows.filter((slot) => slot.teamId === team.id).map((slot) => slot.playerId));
     const overalls = [...teamIds]
       .map((playerId) => playerState.players.find((player) => player.playerId === playerId))
-      .map((player) => (player ? ratingOverallById.get(player.playerId) : undefined))
+      .map((player) => (player ? latestOverall(player.playerId) : undefined))
       .filter((value): value is number => typeof value === 'number' && value > 0);
     return overalls.length > 0 ? mean(overalls) : 0;
   });
