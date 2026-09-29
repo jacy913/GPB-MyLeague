@@ -7,6 +7,12 @@ interface FolderNavProps {
   view: AppView;
   onSetView: (view: AppView) => void;
   className?: string;
+  /**
+   * Offset from the viewport top for the sticky case. Supplied by the shell,
+   * which measures the sticky header rather than hardcoding its height, so the
+   * nav cannot drift out of alignment when the header's contents change.
+   */
+  style?: React.CSSProperties;
 }
 
 type VisibleItem =
@@ -19,7 +25,7 @@ type VisibleItem =
  * This component intentionally owns no application state beyond folder expansion.
  * It can be mounted by the shell once ownership of App.tsx is available.
  */
-export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className = '' }) => {
+export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className = '', style }) => {
   const activeFolder = VIEW_TO_FOLDER[view];
   const [expandedFolders, setExpandedFolders] = useState<Set<FolderId>>(() => new Set([activeFolder]));
   const [activeItemId, setActiveItemId] = useState<string>(`folder-${activeFolder}`);
@@ -157,7 +163,11 @@ export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className
   return (
     <aside
       aria-label="Primary navigation"
-      className={`hidden h-[calc(100vh-176px)] w-60 shrink-0 overflow-y-auto border-r border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] lg:block ${className}`}
+      // Height is derived from the measured header offset rather than the old
+      // hardcoded 176px, which no longer described the header once the team strip
+      // came out. Falls back to a sane value before the first measurement lands.
+      style={{ height: 'calc(100vh - var(--sticky-header-h, 176px))', ...style }}
+      className={`hidden w-60 shrink-0 overflow-y-auto border-r border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] lg:block ${className}`}
     >
       <nav className="p-2" role="tree" aria-label="League navigation">
         {NAV_FOLDERS.map((folder) => {

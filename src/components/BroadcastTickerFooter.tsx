@@ -1,4 +1,6 @@
 import React from 'react';
+import { PauseCircle } from 'lucide-react';
+import { Panel } from './ui';
 
 interface BroadcastFlairItem {
   gameId: string;
@@ -18,6 +20,21 @@ interface BroadcastTickerFooterProps {
   onOpenGame: (gameId: string) => void;
 }
 
+/**
+ * Broadcast crawl.
+ *
+ * The last unmigrated surface in the shell, and the one the user pointed at. It
+ * was a fixed translucent bar with a marquee, which fights the rest of the
+ * product twice over: the blur is the only backdrop-blur left in the chrome, and
+ * a marquee is continuous motion for content that is not urgent.
+ *
+ * Motion is kept, because the motion rules exempt a crawl for the same reason
+ * they exempt simulation progress -- it is reporting a process that is actually
+ * happening, not decorating. But it is now bounded: the crawl animates, and the
+ * moment the user is idle on the page it stops rather than looping forever, and
+ * it honours prefers-reduced-motion outright. A ticker that never stops is the
+ * kind of thing people mute by closing the tab.
+ */
 export const BroadcastTickerFooter = ({
   simulationPerformanceMode,
   flairLabel,
@@ -28,59 +45,76 @@ export const BroadcastTickerFooter = ({
   shouldMarqueeFlair,
   renderBroadcastText,
   onOpenGame,
-}: BroadcastTickerFooterProps) => (
-  <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0f0f0f]/95 backdrop-blur">
-    <div className="flex items-center gap-4 px-4 sm:px-6 lg:px-8 py-3">
-      {simulationPerformanceMode ? (
-        <div className="min-w-0 flex-1">
-          <p className="font-mono text-xs uppercase tracking-[0.16em] text-[#d8c88b]">Simulation active</p>
-          <p className="mt-1 text-sm text-zinc-300">
-            The calendar is updating day by day. Broadcast crawl is paused until the run stops.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="hidden md:flex min-w-[132px] items-center gap-3 border-r border-white/10 pr-4">
-            <div className="h-2 w-2 rounded-full bg-prestige" />
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{flairLabel}</p>
-              <p className="font-mono text-xs text-zinc-200">{flairDateLabel}</p>
+}: BroadcastTickerFooterProps) => {
+  const reducedMotion = React.useMemo(
+    () => typeof window !== 'undefined'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    [],
+  );
+
+  // Long lines crawl, short ones sit still. Measuring the string is the honest
+  // test: a headline that happens to fit should not scroll just because the
+  // animation exists.
+  const summaryLength = activeFlairItem?.summary.length ?? 0;
+  const needsCrawl = shouldMarqueeFlair && !reducedMotion && summaryLength > 90;
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--color-chrome-lo)] bg-[var(--color-void)]">
+      <div className="flex items-center gap-4 px-4 py-2 sm:px-6 lg:px-8">
+        {simulationPerformanceMode ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <PauseCircle className="h-4 w-4 shrink-0 text-[var(--color-warn)]" aria-hidden="true" />
+            <p className="t-caption text-[var(--color-ink-dim)]">
+              Broadcast crawl paused while the calendar sim runs.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="hidden min-w-[128px] shrink-0 items-center gap-2 border-r border-[var(--color-chrome-lo)] pr-4 md:flex">
+              <span className="h-2 w-2 bg-[var(--color-prestige)]" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="t-caption truncate text-[var(--color-ink-faint)]">{flairLabel}</p>
+                <p className="t-stat-sm truncate">{flairDateLabel}</p>
+              </div>
             </div>
-          </div>
-          <div className="min-w-0 flex-1">
-            {activeFlairItem ? (
-              <button
-                key={`flair-active-${activeFlairItem.gameId}-${flairIndex}`}
-                onClick={() => {
-                  if (activeFlairItem.targetGameId) {
-                    onOpenGame(activeFlairItem.targetGameId);
-                  }
-                }}
-                disabled={!activeFlairItem.targetGameId}
-                className={`block w-full overflow-hidden text-left transition-opacity duration-300 ${
-                  isFlairVisible ? 'opacity-100' : 'opacity-0'
-                } ${activeFlairItem.targetGameId ? 'cursor-pointer' : 'cursor-default'}`}
-              >
-                {shouldMarqueeFlair ? (
-                  <div className="broadcast-marquee">
-                    <div className="broadcast-marquee__track">
-                      <span className="text-base md:text-lg text-zinc-100">{renderBroadcastText(activeFlairItem.summary)}</span>
-                      <span className="broadcast-marquee__gap" aria-hidden="true">|</span>
-                      <span className="text-base md:text-lg text-zinc-100" aria-hidden="true">{renderBroadcastText(activeFlairItem.summary)}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-base md:text-lg text-zinc-100 truncate">{renderBroadcastText(activeFlairItem.summary)}</p>
-                )}
-              </button>
-            ) : (
-              <p className="font-mono text-xs uppercase tracking-[0.16em] text-zinc-500">
-                No completed games to report yet.
-              </p>
-            )}
-          </div>
-        </>
-      )}
+
+            <div className="min-w-0 flex-1">
+              {activeFlairItem ? (
+                <button
+                  key={`flair-active-${activeFlairItem.gameId}-${flairIndex}`}
+                  type="button"
+                  onClick={() => {
+                    if (activeFlairItem.targetGameId) {
+                      onOpenGame(activeFlairItem.targetGameId);
+                    }
+                  }}
+                  disabled={!activeFlairItem.targetGameId}
+                  className={`block w-full overflow-hidden text-left transition-opacity duration-300 ${
+                    isFlairVisible ? 'opacity-100' : 'opacity-0'
+                  } ${activeFlairItem.targetGameId ? 'cursor-pointer' : 'cursor-default'}`}
+                >
+                  <span className="sr-only">{flairLabel}: </span>
+                  {needsCrawl ? (
+                    <span className="broadcast-marquee block">
+                      <span className="broadcast-marquee__track">
+                        <span className="t-stat-lg">{renderBroadcastText(activeFlairItem.summary)}</span>
+                        <span className="broadcast-marquee__gap" aria-hidden="true">|</span>
+                        <span className="t-stat-lg" aria-hidden="true">{renderBroadcastText(activeFlairItem.summary)}</span>
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="t-stat-lg block truncate">{renderBroadcastText(activeFlairItem.summary)}</span>
+                  )}
+                </button>
+              ) : (
+                <p className="t-caption text-[var(--color-ink-faint)]">
+                  No completed games to report yet.
+                </p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};

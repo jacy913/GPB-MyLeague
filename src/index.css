@@ -286,3 +286,48 @@ body {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--color-gold);
 }
+
+/* Broadcast crawl.
+
+   These three classes were referenced by the home page headline panel and the
+   broadcast ticker but had no definition anywhere in the project, so nothing
+   actually scrolled. Defined now, since a crawl that does not crawl is just a
+   truncated string.
+
+   The track holds two copies of the line and translates by exactly half its
+   width, so the seam lands on the gap between them and the loop is invisible.
+   Duration is fixed rather than derived from length, which means long headlines
+   move slower per character than short ones; that is acceptable for a crawl and
+   avoids a layout read on every tick. */
+.broadcast-marquee {
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent);
+}
+
+.broadcast-marquee__track {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 24px;
+  min-width: 200%;
+  animation: broadcast-crawl 26s linear infinite;
+}
+
+.broadcast-marquee__gap {
+  color: var(--color-chrome-hi);
+}
+
+@keyframes broadcast-crawl {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* The crawl is exempt from the standing motion limit for the same reason
+   simulation progress is: it reports something actually happening. It is still
+   the one piece of continuous motion in the product, so it yields entirely to a
+   stated preference rather than merely slowing down. */
+@media (prefers-reduced-motion: reduce) {
+  .broadcast-marquee__track {
+    animation: none;
+  }
+}

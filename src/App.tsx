@@ -33,7 +33,6 @@ import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
 import { Activity, Bell, Clock3, Menu } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
 import { MobileFolderMenu } from './navigation/MobileFolderMenu';
-import { TeamContextStrip } from './components/TeamContextStrip';
 import gpbLogo from './assets/gpb.png';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
@@ -3146,6 +3145,30 @@ function App() {
   // clears the pool before the replacement is generated.
   const leagueHasNoPlayers = !isBootstrapping && playerState.players.length === 0;
 
+  // The folder nav is sticky and has to park directly under the header, which is
+  // itself sticky and is three bands tall (score strip, masthead, and whatever
+  // else is added to it later). This used to be a hand-written top-[176px], which
+  // silently desynchronised the moment the header changed -- removing the team
+  // strip left the nav floating with a gap. Measuring it instead means the two
+  // cannot drift apart, and it survives a viewport narrower than the score strip's
+  // own breakpoint.
+  const stickyHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [stickyHeaderHeight, setStickyHeaderHeight] = useState(0);
+
+  useEffect(() => {
+    const header = stickyHeaderRef.current;
+    if (!header) {
+      return undefined;
+    }
+
+    const measure = () => setStickyHeaderHeight(Math.ceil(header.getBoundingClientRect().height));
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [leagueHasNoPlayers]);
+
   if (isBootstrapping) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-base)] text-[var(--color-ink)] font-[family-name:var(--font-body)]">
@@ -3171,7 +3194,7 @@ function App() {
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-[var(--color-base)] pb-20 text-[var(--color-ink)] font-[family-name:var(--font-body)] selection:bg-[var(--color-gold-dim)]">
-      <div className="sticky top-0 z-50">
+      <div ref={stickyHeaderRef} className="sticky top-0 z-50">
         <div className="border-b border-[var(--color-chrome-lo)] bg-[var(--color-void)]">
           <PreviousDateScoreStrip
             simulationPerformanceMode={simulationPerformanceMode}
@@ -3228,14 +3251,21 @@ function App() {
             </div>
           </div>
         </header>
-        <TeamContextStrip
-          team={teams.find((team) => team.id === selectedTeamId) ?? null}
-          onOpenTeam={() => setView('teams')}
-        />
       </div>
 
       <div className="relative z-10 flex">
-        <FolderNav view={view} onSetView={setView} className="sticky top-[176px]" />
+        <FolderNav
+          view={view}
+          onSetView={setView}
+          className="sticky"
+          // Published as a variable as well as applied inline: the nav's own
+          // height calc reads it, so one measurement drives both the offset and
+          // the length of the scrollable column.
+          style={{
+            top: stickyHeaderHeight,
+            ['--sticky-header-h' as string]: `${stickyHeaderHeight}px`,
+          }}
+        />
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
           <AppViewRouter
