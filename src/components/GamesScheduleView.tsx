@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
+import { CalendarDays, Crosshair, Flag } from 'lucide-react';
 import { Game, Team } from '../types';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { TeamLogo } from './ui';
+import { Panel, RetroButton } from './ui';
+import { GameCard, type PregameRecord } from './game/GameCard';
 
 interface SeasonProgressSummary {
   completedGames: number;
@@ -16,13 +17,6 @@ interface DaySummary {
   completed: number;
   scheduled: number;
   playoff: number;
-}
-
-interface PregameRecord {
-  awayWins: number;
-  awayLosses: number;
-  homeWins: number;
-  homeLosses: number;
 }
 
 interface GamesScheduleViewProps {
@@ -44,6 +38,26 @@ interface GamesScheduleViewProps {
   onOpenGame: (gameId: string) => void;
 }
 
+const StatTile: React.FC<{ label: string; value: React.ReactNode; accent?: boolean }> = ({ label, value, accent }) => (
+  <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">
+    <p className="t-caption text-[var(--color-ink-faint)]">{label}</p>
+    <p className={`t-stat-lg mt-1 truncate ${accent ? 'text-[var(--color-gold)]' : ''}`}>{value}</p>
+  </div>
+);
+
+/**
+ * Score and schedule.
+ *
+ * Was 424 lines of raw hex and gradient panels, with a hero block whose radial
+ * gradients and 40px rounded corners belonged to the pre-token surface. Two
+ * halves here: a season header carrying progress, the date rail and the jump
+ * controls, then the slate for the selected day.
+ *
+ * The date rail keeps its own horizontal scroll and its scroll-into-view, which
+ * is a genuine interaction rather than decoration: selecting a date anywhere in
+ * the app has to bring the rail with it, or the selection is invisible. That
+ * logic is unchanged.
+ */
 export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
   seasonProgressSummary,
   seasonComplete,
@@ -103,96 +117,109 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
     scrollCalendarDateIntoView(activeDate, 'auto');
   }, [activeDate, scrollCalendarDateIntoView]);
 
+  const progress = Math.max(0, Math.min(100, seasonProgressSummary.progress));
+  const phaseLabel = seasonComplete
+    ? 'Season complete'
+    : activeDateHasPlayoffs
+      ? 'Playoff race live'
+      : 'Regular season in progress';
+
   return (
-    <div className="space-y-6">
-    <section className="overflow-hidden rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(167,155,0,0.12),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(23,182,144,0.12),transparent_28%),linear-gradient(135deg,#1c1c1c,#252525 42%,#171717)] p-4 md:p-6">
-      <div className="flex flex-col gap-5">
+    <div className="space-y-5">
+      <Panel variant="hero" className="flex flex-col gap-5 p-4 md:p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-zinc-500">Season Progress</p>
-            <div className="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
-              <p className="font-display text-4xl uppercase tracking-[0.08em] text-white md:text-5xl">
-                {Math.round(seasonProgressSummary.progress)}% Complete
-              </p>
-              <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
-                {seasonComplete ? 'Season complete' : activeDateHasPlayoffs ? 'Playoff race live' : 'Regular season in progress'}
-              </p>
-            </div>
+            <p className="t-caption text-[var(--color-ink-faint)]">Season Progress</p>
+            <p className="t-h1 mt-1">{Math.round(progress)}% Complete</p>
+            <p className="t-caption mt-1 text-[var(--color-ink-dim)]">{phaseLabel}</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:min-w-[520px]">
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Played</p>
-              <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.completedGames}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Remaining</p>
-              <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.remainingGames}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Season Scope</p>
-              <p className="mt-2 font-display text-2xl uppercase text-white">{seasonProgressSummary.totalGames}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Sim Date</p>
-              <p className="mt-2 font-display text-lg uppercase text-white">{formatHeaderDate(currentDate || activeDate)}</p>
-            </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[520px]">
+            <StatTile label="Played" value={seasonProgressSummary.completedGames} />
+            <StatTile label="Remaining" value={seasonProgressSummary.remainingGames} />
+            <StatTile label="Season Scope" value={seasonProgressSummary.totalGames} />
+            <StatTile label="Sim Date" value={formatHeaderDate(currentDate || activeDate)} accent />
           </div>
         </div>
 
-        <div className="relative h-4 overflow-hidden rounded-full border border-white/10 bg-black/35">
+        <div>
           <div
-            className="h-full rounded-full bg-[linear-gradient(90deg,#a79b00_0%,#f3f0e2_48%,#17b690_100%)] shadow-[0_0_22px_rgba(23,182,144,0.35)] transition-[width] duration-500"
-            style={{ width: `${seasonProgressSummary.progress}%` }}
-          />
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_62%)]" />
+            className="h-2.5 w-full border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)]"
+            role="progressbar"
+            aria-valuenow={Math.round(progress)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Season completion"
+          >
+            <div
+              className="h-full bg-[var(--color-gold)] transition-[width] duration-500 ease-[var(--ease-snap)]"
+              style={{ width: `${Math.max(1, progress)}%` }}
+            />
+          </div>
+          <p className="t-caption mt-1 tabular-nums text-[var(--color-ink-faint)]">
+            {seasonProgressSummary.completedGames} of {seasonProgressSummary.totalGames} games played
+          </p>
         </div>
 
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-col gap-3 border-t border-[var(--color-chrome-lo)] pt-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <p className="font-display text-2xl uppercase tracking-[0.12em] text-white">Season Calendar</p>
-            <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+            <h2 className="t-h2">Season Calendar</h2>
+            <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
               Select a day to change the scoreboard slate
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Selected Slate</p>
-              <p className="mt-2 font-display text-lg uppercase text-white">{formatHeaderDate(activeDate)}</p>
-            </div>
-            <button
-              type="button"
+          <div className="flex flex-wrap items-end gap-2">
+            <StatTile label="Selected Slate" value={formatHeaderDate(activeDate)} accent />
+            <RetroButton
+              variant="primary"
               onClick={handleJumpToCurrentDate}
               disabled={!currentDate}
-              className="rounded-xl border border-prestige/35 bg-prestige/12 px-4 py-3 text-left transition-colors hover:border-prestige/55 hover:bg-prestige/18 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-black/20"
+              className="flex-col items-start gap-1"
             >
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Jump to Current</span>
-              <span className="mt-2 block font-display text-lg uppercase text-white">
-                {currentDate ? formatHeaderDate(currentDate) : 'Unavailable'}
+              <span className="t-caption">
+                <Crosshair className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                Jump to Current
               </span>
-            </button>
-            <label className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Jump To Date</span>
+              <span className="t-stat">{currentDate ? formatHeaderDate(currentDate) : 'Unavailable'}</span>
+            </RetroButton>
+            <label className="flex flex-col gap-1 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">
+              <span className="t-caption text-[var(--color-ink-faint)]">
+                <CalendarDays className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                Jump To Date
+              </span>
               <input
                 type="date"
                 value={activeDate}
                 min={allScheduleDates[0]}
                 max={allScheduleDates[allScheduleDates.length - 1]}
                 onChange={(event) => onSelectDate(event.target.value)}
-                className="mt-2 block bg-transparent font-mono text-sm text-white focus:outline-none"
+                className="t-stat-sm text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
               />
             </label>
           </div>
         </div>
 
-        <div ref={calendarStripRef} className="overflow-x-auto pb-2 scrollbar-subtle">
-          <div className="flex min-w-max gap-3">
+        <div ref={calendarStripRef} className="overflow-x-auto pb-1">
+          <div className="flex w-max gap-2">
             {allScheduleDates.map((date) => {
               const daySummary = calendarSummaryByDate.get(date) ?? { total: 0, completed: 0, scheduled: 0, playoff: 0 };
               const isSelected = date === activeDate;
               const isCurrent = date === currentDate;
               const isPlayoffDate = daySummary.playoff > 0;
+              const isFinale = date === lastRegularSeasonDate;
+
+              // Edge carries slate type, fill carries selection, pip carries
+              // "today". Three different meanings, three different channels, so
+              // none of them is the only signal for its own state.
+              const edge = isPlayoffDate
+                ? 'border-l-[var(--color-gold)]'
+                : isCurrent
+                  ? 'border-l-[var(--color-platinum)]'
+                  : 'border-l-transparent';
+              const fill = isSelected
+                ? 'bg-[var(--color-panel-3)]'
+                : 'bg-[var(--color-sunken)]';
 
               return (
                 <button
@@ -204,221 +231,81 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
                       dateButtonRefs.current.delete(date);
                     }
                   }}
+                  type="button"
                   onClick={() => onSelectDate(date)}
-                  className={`group min-w-[150px] rounded-2xl border px-4 py-4 text-left transition-all ${
-                    isSelected
-                      ? isPlayoffDate
-                        ? 'border-zinc-200/60 bg-zinc-100/10 shadow-[0_18px_40px_rgba(255,255,255,0.06)]'
-                        : 'border-prestige/55 bg-prestige/14 shadow-[0_18px_40px_rgba(23,182,144,0.1)]'
-                      : isCurrent
-                        ? 'border-platinum/40 bg-platinum/10'
-                        : 'border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/[0.06]'
+                  aria-current={isSelected ? 'date' : undefined}
+                  aria-label={`${formatHeaderDate(date)}, ${daySummary.total} games, ${daySummary.completed} final`}
+                  className={`w-[168px] shrink-0 border border-[var(--color-chrome-lo)] border-l-[3px] ${edge} ${fill} px-3 py-2 text-left transition-colors ${
+                    isSelected ? 'border-[var(--color-gold-hi)]' : 'hover:border-[var(--color-chrome-hi)]'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-display text-xl uppercase tracking-[0.08em] text-white">
-                        {new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                      </p>
-                      <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                        {isPlayoffDate ? 'Playoff slate' : 'Regular season'}
-                      </p>
-                    </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`t-stat ${isSelected ? 'text-[var(--color-gold)]' : ''}`}>
+                      {new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                    </span>
                     {isPlayoffDate ? (
-                      <span className="rounded-full border border-zinc-200/20 bg-zinc-100/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-200">
-                        PL
-                      </span>
+                      <span className="t-caption text-[var(--color-gold)]">PL</span>
                     ) : isCurrent ? (
-                      <span className="rounded-full border border-prestige/30 bg-prestige/10 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-prestige">
-                        Today
-                      </span>
+                      <span className="t-caption text-[var(--color-platinum)]">TODAY</span>
                     ) : null}
                   </div>
 
-                  <div className="mt-5">
-                    <p className="font-display text-lg uppercase tracking-[0.08em] text-zinc-100">
-                      {daySummary.total} {daySummary.total === 1 ? 'Game' : 'Games'} Today
-                    </p>
-                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-                      {daySummary.completed} final{daySummary.completed === 1 ? '' : 's'} / {daySummary.scheduled} upcoming
-                    </p>
-                    {date === lastRegularSeasonDate && (
-                      <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.18em] text-platinum">Regular season finale</p>
-                    )}
-                  </div>
+                  <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
+                    {isPlayoffDate ? 'Playoff slate' : isFinale ? 'Reg. finale' : 'Regular season'}
+                  </p>
+                  <p className="t-caption mt-1 tabular-nums text-[var(--color-ink-dim)]">
+                    {daySummary.total} {daySummary.total === 1 ? 'game' : 'games'} · {daySummary.completed} final
+                  </p>
                 </button>
               );
             })}
           </div>
         </div>
-      </div>
-    </section>
+      </Panel>
 
-    <section className="bg-gradient-to-br from-[#1f1f1f] via-[#242424] to-[#1f1f1f] rounded-2xl border border-white/10 p-4 md:p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-display text-3xl uppercase tracking-widest text-white">
-          Game Schedule
-        </h2>
-        <div className="text-right">
-          {activeDateHasPlayoffs && (
-            <span className="inline-flex items-center rounded-md border border-zinc-200/20 bg-zinc-200/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wide text-zinc-200 mb-1">
-              Playoff Window
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <div className="flex items-center gap-2">
+            <Flag className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+            <h2 className="t-h3">Game Schedule</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            {activeDateHasPlayoffs && (
+              <span className="border border-[var(--color-gold)] px-2 py-0.5 t-caption text-[var(--color-gold)]">
+                Playoff Window
+              </span>
+            )}
+            <span className="t-stat-sm tabular-nums text-[var(--color-ink-dim)]">
+              {formatHeaderDate(activeDate)} · {gamesForActiveDate.length} {gamesForActiveDate.length === 1 ? 'game' : 'games'}
             </span>
-          )}
-          <div className="font-mono text-xs text-zinc-400">
-            {activeDate} | {gamesForActiveDate.length} games
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {gamesForActiveDate.length === 0 ? (
-          <div className="xl:col-span-2 rounded-xl border border-white/10 bg-[#181818] px-4 py-8 text-center text-zinc-500 font-mono">
-            No games scheduled for this date.
-          </div>
-        ) : (
-          gamesForActiveDate.map((game) => {
-            const awayTeam = teamLookup.get(game.awayTeam);
-            const homeTeam = teamLookup.get(game.homeTeam);
-            const pregame = pregameRecordByGameId.get(game.gameId) ?? {
-              awayWins: 0,
-              awayLosses: 0,
-              homeWins: 0,
-              homeLosses: 0,
-            };
-
-            const awayRuns = game.status === 'completed' ? game.score.away : 0;
-            const homeRuns = game.status === 'completed' ? game.score.home : 0;
-            const awayHitsRaw = getStatNumber(game, 'awayHits');
-            const homeHitsRaw = getStatNumber(game, 'homeHits');
-            const awayErrorsRaw = getStatNumber(game, 'awayErrors');
-            const homeErrorsRaw = getStatNumber(game, 'homeErrors');
-            const awayHits = game.status === 'completed' ? (awayHitsRaw > 0 ? awayHitsRaw : getFallbackHits(game, 'away')) : 0;
-            const homeHits = game.status === 'completed' ? (homeHitsRaw > 0 ? homeHitsRaw : getFallbackHits(game, 'home')) : 0;
-            const awayErrors = game.status === 'completed' ? awayErrorsRaw : 0;
-            const homeErrors = game.status === 'completed' ? homeErrorsRaw : 0;
-            const playoffLabel = game.playoff ? `${game.playoff.seriesLabel} | Game ${game.playoff.gameNumber}` : null;
-            const scheduledTimeLabel = getScheduledGameTimeLabel(game, games);
-            const gameWindowStatus = getGameWindowStatus(game, games, currentDate);
-            const cardStatusLabel =
-              gameWindowStatus === 'final'
-                ? 'Final'
-                : gameWindowStatus === 'live_window'
-                  ? 'Live Window'
-                  : 'Scheduled';
-
-            return (
-              <article
+        <div className="grid gap-3 p-4 xl:grid-cols-2">
+          {gamesForActiveDate.length === 0 ? (
+            <p className="t-body text-[var(--color-ink-faint)] xl:col-span-2">
+              No games scheduled for this date.
+            </p>
+          ) : (
+            gamesForActiveDate.map((game) => (
+              <GameCard
                 key={game.gameId}
-                onClick={() => onOpenGame(game.gameId)}
-                className="rounded-2xl border border-white/10 bg-[#171717] px-4 py-5 cursor-pointer transition-colors hover:border-white/20"
-              >
-                <div className="mb-4">
-                  <div>
-                    <div className="inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wide">
-                      <span
-                        className={
-                          gameWindowStatus === 'final'
-                            ? 'text-platinum'
-                            : gameWindowStatus === 'live_window'
-                              ? 'text-prestige'
-                              : 'text-zinc-500'
-                        }
-                      >
-                        {cardStatusLabel}
-                      </span>
-                      <span className="text-zinc-500">
-                        {scheduledTimeLabel}
-                      </span>
-                    </div>
-                    {playoffLabel && (
-                      <div className="font-mono text-[10px] uppercase tracking-wide text-zinc-500 mt-1">
-                        {playoffLabel}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-5 items-center">
-                  <div className="flex items-center gap-4 min-w-0 justify-self-start">
-                    {awayTeam ? (
-                      <TeamLogo team={awayTeam} sizeClass="w-20 h-20" />
-                    ) : (
-                      <div className="w-20 h-20 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-sm text-zinc-500 uppercase">
-                        {game.awayTeam}
-                      </div>
-                    )}
-                    <div className="min-w-0">
-                      <p className="font-display text-4xl uppercase tracking-wide text-zinc-100 leading-none truncate">
-                        {awayTeam ? awayTeam.city : game.awayTeam.toUpperCase()}
-                      </p>
-                      <p className="font-display text-2xl uppercase tracking-wide text-zinc-400 leading-none mt-1 truncate">
-                        {awayTeam ? awayTeam.name : 'Unknown'}
-                      </p>
-                      <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-2">
-                        {pregame.awayWins}-{pregame.awayLosses}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-center justify-center">
-                    <div className="font-mono text-4xl md:text-5xl text-zinc-100 leading-none">
-                      {awayRuns}-{homeRuns}
-                    </div>
-                    <div className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-1">
-                      {playoffLabel ?? `${awayTeam ? awayTeam.id.toUpperCase() : game.awayTeam.toUpperCase()} vs ${homeTeam ? homeTeam.id.toUpperCase() : game.homeTeam.toUpperCase()}`}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 min-w-0 justify-self-end">
-                    <div className="min-w-0 text-right">
-                      <p className="font-display text-4xl uppercase tracking-wide text-zinc-100 leading-none truncate">
-                        {homeTeam ? homeTeam.city : game.homeTeam.toUpperCase()}
-                      </p>
-                      <p className="font-display text-2xl uppercase tracking-wide text-zinc-400 leading-none mt-1 truncate">
-                        {homeTeam ? homeTeam.name : 'Unknown'}
-                      </p>
-                      <p className="font-mono text-[11px] uppercase tracking-wide text-zinc-500 mt-2">
-                        {pregame.homeWins}-{pregame.homeLosses}
-                      </p>
-                    </div>
-                    {homeTeam ? (
-                      <TeamLogo team={homeTeam} sizeClass="w-20 h-20" />
-                    ) : (
-                      <div className="w-20 h-20 rounded-xl border border-white/10 bg-[#202020] flex items-center justify-center font-mono text-sm text-zinc-500 uppercase">
-                        {game.homeTeam}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="h-px bg-gradient-to-r from-transparent via-white/15 to-transparent my-4" />
-
-                <div className="rounded-xl border border-white/10 bg-[#121212] px-4 py-3">
-                  <div className="grid grid-cols-[52px_minmax(0,1fr)_48px_48px_48px] gap-x-2 text-sm font-mono items-center">
-                    <span className="text-zinc-500"></span>
-                    <span className="text-zinc-500 uppercase">Team</span>
-                    <span className="text-zinc-500 text-right">R</span>
-                    <span className="text-zinc-500 text-right">H</span>
-                    <span className="text-zinc-500 text-right">E</span>
-
-                    <span className="text-zinc-500 uppercase">AWAY</span>
-                    <span className="text-zinc-100 truncate">{awayTeam ? `${awayTeam.city} ${awayTeam.name}` : game.awayTeam.toUpperCase()}</span>
-                    <span className="text-zinc-100 text-right">{awayRuns}</span>
-                    <span className="text-zinc-100 text-right">{awayHits}</span>
-                    <span className="text-zinc-100 text-right">{awayErrors}</span>
-
-                    <span className="text-zinc-500 uppercase">HOME</span>
-                    <span className="text-zinc-100 truncate">{homeTeam ? `${homeTeam.city} ${homeTeam.name}` : game.homeTeam.toUpperCase()}</span>
-                    <span className="text-zinc-100 text-right">{homeRuns}</span>
-                    <span className="text-zinc-100 text-right">{homeHits}</span>
-                    <span className="text-zinc-100 text-right">{homeErrors}</span>
-                  </div>
-                </div>
-              </article>
-            );
-          })
-        )}
-      </div>
-    </section>
-  </div>
+                game={game}
+                games={games}
+                currentDate={currentDate}
+                awayTeam={teamLookup.get(game.awayTeam) ?? null}
+                homeTeam={teamLookup.get(game.homeTeam) ?? null}
+                pregame={pregameRecordByGameId.get(game.gameId) ?? {
+                  awayWins: 0, awayLosses: 0, homeWins: 0, homeLosses: 0,
+                }}
+                getStatNumber={getStatNumber}
+                getFallbackHits={getFallbackHits}
+                onOpenGame={onOpenGame}
+              />
+            ))
+          )}
+        </div>
+      </Panel>
+    </div>
   );
 };
