@@ -1,6 +1,7 @@
 import { Dispatch, SetStateAction, useCallback } from 'react';
 import { getGeneratedContractYearsLeft } from '../logic/playerBio';
 import { repairRosterSlotsForTeams } from '../logic/rosterManagement';
+import { shakeUpFreeAgency } from '../logic/automaticMarket';
 import { Game, LeaguePlayerState, PendingTradeProposal, RosterSlotCode, Team } from '../types';
 
 type NoticeLevel = 'info' | 'success' | 'warning' | 'error';
@@ -46,6 +47,7 @@ interface UseRosterTransactionsResult {
   handleApprovePendingTrade: (proposalId: string) => Promise<void>;
   handleVetoPendingTrade: (proposalId: string) => void;
   handleFreeAgencyAssignment: (assignment: FreeAgencyAssignment) => Promise<void>;
+  handleFreeAgencyShakeUp: () => Promise<void>;
 }
 
 const clonePlayerStatsAndRatings = (nextPlayerState: LeaguePlayerState) => ({
@@ -373,10 +375,34 @@ export const useRosterTransactions = ({
     teams,
   ]);
 
+  const handleFreeAgencyShakeUp = useCallback(async () => {
+    if (!isFreeAgencyMarketOpen) {
+      pushNotice(freeAgencyMarketStatusMessage || `Free agency is closed until ${freeAgencyOpenDate}.`, 'warning');
+      return;
+    }
+
+    const effectiveDate = resolveEffectiveActionDate(currentDate, selectedDate, games);
+    const result = shakeUpFreeAgency(teams, playerState, effectiveDate);
+    if (result.signings === 0) {
+      pushNotice('Shake Up found no free-agent upgrades for the current rosters.', 'info');
+      return;
+    }
+    setPlayerState(result.playerState);
+    saveLocalPlayerStateSafely(result.playerState);
+    try {
+      if (isSupabaseConfigured) await saveSupabasePlayerState(result.playerState);
+      pushNotice(`Shake Up completed ${result.signings} upgrade signing${result.signings === 1 ? '' : 's'} across ${result.rounds} market round${result.rounds === 1 ? '' : 's'}.`, 'success');
+    } catch (error) {
+      console.error('Failed to persist free-agency shake up:', error);
+      pushNotice('Shake Up completed locally, but syncing player data failed.', 'warning');
+    }
+  }, [currentDate, freeAgencyMarketStatusMessage, freeAgencyOpenDate, games, isFreeAgencyMarketOpen, isSupabaseConfigured, playerState, pushNotice, resolveEffectiveActionDate, saveLocalPlayerStateSafely, saveSupabasePlayerState, selectedDate, setPlayerState, teams]);
+
   return {
     handleTradeProposal,
     handleApprovePendingTrade,
     handleVetoPendingTrade,
     handleFreeAgencyAssignment,
+    handleFreeAgencyShakeUp,
   };
 };

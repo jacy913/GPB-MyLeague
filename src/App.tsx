@@ -33,13 +33,17 @@ import { Activity, Bell, Clock3 } from 'lucide-react';
 import gpbLogo from './assets/gpb.png';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
-import { generatePlayerPool } from './logic/playerGenerator';
+import { buildNewUniverse, DEFAULT_UNIVERSE_SEED } from './logic/universeBootstrap';
+import type { BuildNewUniverseResult } from './logic/universeBootstrap';
+import { normalizeSeed } from './lib/random';
 import {
   applyPlayerGameStatDelta,
   resetPlayerSeasonStats,
 } from './logic/playerStats';
-import { repairRosterSlotsForTeams } from './logic/rosterManagement';
-import { applyOffseasonFreeAgencyRollover, parseOffseasonMeta } from './logic/offseasonFreeAgency';
+import { auditRosterInvariants, repairRosterSlotsForTeams } from './logic/rosterManagement';
+import { completeRosterVacancies } from './logic/rosterCompletion';
+import { applyOffseasonFreeAgencyRollover, applyOffseasonRetirements, parseOffseasonMeta } from './logic/offseasonFreeAgency';
+import { applyPlayerDevelopment } from './logic/playerDevelopment';
 import { isPlayoffGame, isRegularSeasonGame } from './logic/playoffs';
 import { isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -59,6 +63,12 @@ import { useRosterTransactions } from './hooks/useRosterTransactions';
 import { useScheduleDerivedState } from './hooks/useScheduleDerivedState';
 import { useSeasonLifecycle } from './hooks/useSeasonLifecycle';
 import { buildOffseasonEventSchedule } from './logic/offseasonSchedule';
+import {
+  createLocalUniverseBundle,
+  LocalUniverseBundle,
+  validateLocalUniverseBundle,
+} from './logic/localUniverseState';
+import { LocalOperationLock } from './logic/localOperationLock';
 
 type NoticeLevel = 'info' | 'success' | 'warning' | 'error';
 
@@ -95,6 +105,7 @@ const DRAFT_CENTER_STORAGE_KEY = 'gpb_draft_center_v1';
 const SEASON_HISTORY_STORAGE_KEY = 'gpb_season_history_v1';
 const OFFSEASON_WORKFLOW_STORAGE_KEY = 'gpb_offseason_workflow_v1';
 const OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY = 'gpb_offseason_rollover_markers_v1';
+const PENDING_TRADES_STORAGE_KEY = 'gpb_pending_trades_v1';
 const MAX_SEASON_HISTORY_ENTRIES = 60;
 const IDLE_SEASON_RESET_STATUS: SeasonResetStatus = {
   isResetting: false,
@@ -106,7 +117,7 @@ const IDLE_OFFSEASON_WORKFLOW_STATE: OffseasonWorkflowState = {
   stage: 'idle',
 };
 
-type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
 interface OffseasonWorkflowState {
   seasonYear: number | null;
@@ -114,14 +125,8 @@ interface OffseasonWorkflowState {
 }
 
 type BlockingOffseasonEventKey = 'awards' | 'lottery' | 'draft';
+interface BlockingOffseasonEvent { key: BlockingOffseasonEventKey; date: string; label: string; view: AppView | null; isComplete: boolean; }
 
-interface BlockingOffseasonEvent {
-  key: BlockingOffseasonEventKey;
-  date: string;
-  label: string;
-  view: AppView | null;
-  isComplete: boolean;
-}
 
 const LEAGUE_ORDER: Team['league'][] = ['Platinum', 'Prestige'];
 const DIVISION_ORDER: Team['division'][] = ['North', 'South', 'East', 'West'];
@@ -1206,13 +1211,15 @@ function App() {
   const [isSeasonHistoryLoaded, setIsSeasonHistoryLoaded] = useState(false);
   const [offseasonWorkflow, setOffseasonWorkflow] = useState<OffseasonWorkflowState>(IDLE_OFFSEASON_WORKFLOW_STATE);
   const [isDraftProcessing, setIsDraftProcessing] = useState(false);
-  const [playerGenerationPreview, setPlayerGenerationPreview] = useState<LeaguePlayerState | null>(null);
+  const [newUniversePreview, setNewUniversePreview] = useState<BuildNewUniverseResult | null>(null);
+  const [universeSeedInput, setUniverseSeedInput] = useState(String(DEFAULT_UNIVERSE_SEED));
   const [commissionerNotices, setCommissionerNotices] = useState<CommissionerNotice[]>([]);
   const draftCenterRef = useRef<DraftCenterState>({ activeClass: null, history: [] });
   const playerStateRef = useRef<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const rosterAutoOptimizedRef = useRef(false);
   const offseasonRolloverAppliedRef = useRef<Set<number>>(new Set());
   const gameStatsSignatureCacheRef = useRef<Map<string, GameStatsSignatureCacheEntry>>(new Map());
+  const localOperationLockRef = useRef(new LocalOperationLock());
 
   const getCachedGameStatsSignature = useCallback((game: Game): GameStatsSignature => {
     const existing = gameStatsSignatureCacheRef.current.get(game.gameId);
@@ -1240,6 +1247,29 @@ function App() {
       ...prev,
     ].slice(0, 30));
   }, []);
+
+  const acquireLocalOperation = useCallback((operation: Exclude<Parameters<LocalOperationLock['acquire']>[0], 'idle'>): boolean => {
+    if (localOperationLockRef.current.acquire(operation)) {
+      return true;
+    }
+
+    pushNotice(`Another local operation is already running (${localOperationLockRef.current.current}).`, 'warning');
+    return false;
+  }, [pushNotice]);
+
+  const auditRosterState = useCallback((nextPlayerState: LeaguePlayerState, seasonYear: number, context: string) => {
+    const audit = auditRosterInvariants(nextPlayerState, teams, seasonYear);
+    if (audit.isValid) {
+      pushNotice(`${context}: roster audit passed for all ${audit.teams.length} teams.`, 'info');
+    } else {
+      const teamsWithMissingSlots = audit.teams.filter((team) => team.missingSlots.length > 0).length;
+      pushNotice(
+        `${context}: ${audit.totalViolations} roster invariant violation${audit.totalViolations === 1 ? '' : 's'} across ${teamsWithMissingSlots} team${teamsWithMissingSlots === 1 ? '' : 's'}.`,
+        'warning',
+      );
+    }
+    return audit;
+  }, [pushNotice, teams]);
 
   const saveLocalPlayerStateSafely = useCallback((nextPlayerState: LeaguePlayerState) => {
     try {
@@ -1362,7 +1392,7 @@ function App() {
         return;
       }
       const stage = parsed.stage;
-      if (stage !== 'idle' && stage !== 'draft_lottery' && stage !== 'draft' && stage !== 'free_agency') {
+      if (stage !== 'idle' && stage !== 'awards' && stage !== 'retirements' && stage !== 'draft_lottery' && stage !== 'draft' && stage !== 'free_agency' && stage !== 'start_next_season') {
         return;
       }
       const seasonYear = typeof parsed.seasonYear === 'number' && Number.isFinite(parsed.seasonYear)
@@ -1631,6 +1661,9 @@ function App() {
     onOpenFreeAgencyView: () => {
       setView('free_agency');
     },
+    onOpenOffseasonView: () => {
+      setView('offseason');
+    },
   });
 
   const {
@@ -1707,6 +1740,9 @@ function App() {
         stage: 'draft',
       });
     },
+    onDraftCompleted: (nextPlayerState, seasonYear) => {
+      auditRosterState(nextPlayerState, seasonYear, 'Draft completed');
+    },
   });
 
   const awardsSavedForCurrentOffseason = useMemo(
@@ -1725,7 +1761,7 @@ function App() {
   const lotteryCompletedForCurrentOffseason = Boolean(draftCenter.activeClass);
   const draftCompletedForCurrentOffseason = Boolean(draftCenter.activeClass?.isComplete);
   const isDraftOpen = seasonComplete && offseasonStage === 'draft' && currentDate >= draftOpenDate;
-  const isFreeAgencyMarketOpen = Boolean(currentDate) && !isFreeAgencyFreezeWindow;
+  const isFreeAgencyMarketOpen = seasonComplete ? offseasonStage === 'free_agency' : Boolean(currentDate) && !isFreeAgencyFreezeWindow;
   const freeAgencyMarketStatusMessage = isFreeAgencyFreezeWindow
     ? `Free agency is closed from the regular-season finale through ${freeAgencyOpenDate}.`
     : `Free agency is currently unavailable.`;
@@ -1782,10 +1818,6 @@ function App() {
       return;
     }
 
-    if (currentDate < freeAgencyOpenDate) {
-      return;
-    }
-
     setOffseasonWorkflow((current) => {
       if (current.stage !== 'draft') {
         return current;
@@ -1809,10 +1841,6 @@ function App() {
 
   useEffect(() => {
     if (!seasonComplete || offseasonStage !== 'free_agency') {
-      return;
-    }
-
-    if (currentDate < freeAgencyOpenDate) {
       return;
     }
 
@@ -1847,12 +1875,14 @@ function App() {
       teams,
       seasonYear: rolloverSeasonYear,
       effectiveDate,
+      skipAgeAndRetirements: true,
     });
 
     offseasonRolloverAppliedRef.current.add(rolloverSeasonYear);
     saveOffseasonRolloverMarkers([...existingMarkers, rolloverSeasonYear]);
     setPlayerState(result.nextPlayerState);
     playerStateRef.current = result.nextPlayerState;
+    auditRosterState(result.nextPlayerState, rolloverSeasonYear, 'Retirements completed');
     saveLocalPlayerStateSafely(result.nextPlayerState);
 
     void (async () => {
@@ -1875,7 +1905,6 @@ function App() {
     );
   }, [
     currentDate,
-    freeAgencyOpenDate,
     games,
     isSupabaseConfigured,
     offseasonStage,
@@ -1889,6 +1918,67 @@ function App() {
     setPlayerState,
     teams,
   ]);
+
+  const simulateRetirements = useCallback(async () => {
+    if (!seasonComplete || offseasonStage !== 'retirements') {
+      pushNotice('Retirements are not the active offseason event.', 'warning');
+      return;
+    }
+    const seasonYear = offseasonWorkflow.seasonYear ?? resolveSeasonYear(currentDate, games);
+    const effectiveDate = resolveEffectiveActionDate(currentDate, selectedDate, games);
+    const result = applyOffseasonRetirements({
+      playerState,
+      seasonYear,
+      effectiveDate,
+    });
+
+    // Players are now aged to the coming year, so write their new ratings
+    // before the draft and free agency run. Otherwise the rest of the offseason
+    // evaluates a stale snapshot and nobody ever improves or declines.
+    const development = applyPlayerDevelopment({
+      playerState: result.nextPlayerState,
+      seasonYear: seasonYear + 1,
+      effectiveDate,
+    });
+
+    setPlayerState(development.nextPlayerState);
+    playerStateRef.current = development.nextPlayerState;
+    saveLocalPlayerStateSafely(development.nextPlayerState);
+    setOffseasonWorkflow({ seasonYear, stage: 'draft_lottery' });
+    try {
+      if (isSupabaseConfigured) await saveSupabasePlayerState(development.nextPlayerState);
+      pushNotice(
+        `Aging complete: ${result.retiredPlayers} retired, ${development.summary.playersDeveloped} players developed for ${seasonYear + 1} (avg ${development.summary.averageOverall.toFixed(1)}). ` +
+        `${development.summary.bigGains} breakout / ${development.summary.bigDeclines} steep decline, ${development.summary.injuredPlayers} injured.`,
+        'success',
+      );
+    } catch (error) {
+      console.error('Failed to persist retirement event:', error);
+      pushNotice('Retirements completed locally, but syncing player data failed.', 'warning');
+    }
+  }, [currentDate, games, isSupabaseConfigured, offseasonStage, offseasonWorkflow.seasonYear, playerState, pushNotice, resolveEffectiveActionDate, saveLocalPlayerStateSafely, saveSupabasePlayerState, seasonComplete, selectedDate, setPlayerState]);
+
+  const completeFreeAgency = useCallback(() => {
+    if (!seasonComplete || offseasonStage !== 'free_agency') return;
+    const seasonYear = offseasonWorkflow.seasonYear ?? resolveSeasonYear(currentDate, games);
+    const effectiveDate = resolveEffectiveActionDate(currentDate, selectedDate, games);
+    const completion = completeRosterVacancies(teams, playerState, seasonYear, effectiveDate);
+    setPlayerState(completion.playerState);
+    playerStateRef.current = completion.playerState;
+    saveLocalPlayerStateSafely(completion.playerState);
+    auditRosterState(completion.playerState, seasonYear, 'Free agency finalized');
+    if (isSupabaseConfigured) {
+      void saveSupabasePlayerState(completion.playerState).catch((error) => {
+        console.error('Failed to persist completed roster state:', error);
+        pushNotice('Roster completion applied locally, but Supabase sync failed.', 'warning');
+      });
+    }
+    setOffseasonWorkflow((current) => ({ ...current, stage: 'start_next_season' }));
+    pushNotice(
+      `Free agency finalized: ${completion.freeAgentsSigned} free agents signed and ${completion.rookiesAdded} rookies added. ${completion.remainingOpenSlots} open roster slots remain.`,
+      completion.remainingOpenSlots === 0 ? 'success' : 'warning',
+    );
+  }, [auditRosterState, currentDate, games, isSupabaseConfigured, offseasonStage, offseasonWorkflow.seasonYear, playerState, pushNotice, resolveEffectiveActionDate, resolveSeasonYear, saveLocalPlayerStateSafely, saveSupabasePlayerState, seasonComplete, selectedDate, setOffseasonWorkflow, setPlayerState, teams]);
 
   const resetSeason = useCallback(async (teamsToReset = teams, settingsToUse = settings) => {
     if (seasonResetStatus.isResetting) {
@@ -1905,12 +1995,13 @@ function App() {
       return;
     }
 
-    if (seasonComplete && offseasonStage !== 'free_agency') {
-      const nextStepMessage = offseasonStage === 'draft_lottery'
-        ? 'Run the draft lottery first.'
-        : 'Finish the draft before moving to free agency.';
-      pushNotice(`${nextStepMessage} Offseason order is Draft Lottery -> Draft -> Free Agency.`, 'warning');
-      setView(offseasonStage === 'draft_lottery' ? 'lottery' : 'draft');
+    if (seasonComplete && offseasonStage !== 'start_next_season') {
+      pushNotice('Complete the active item in the Offseason Checklist before starting the next season.', 'warning');
+      setView('offseason');
+      return;
+    }
+
+    if (!acquireLocalOperation('season_reset')) {
       return;
     }
 
@@ -2000,11 +2091,13 @@ function App() {
         pushNotice('Season reset locally, but Supabase sync failed.', 'warning');
       }
     } finally {
+      localOperationLockRef.current.release('season_reset');
       globalThis.setTimeout(() => {
         setSeasonResetStatus(IDLE_SEASON_RESET_STATUS);
       }, 500);
     }
   }, [
+    acquireLocalOperation,
     teams,
     settings,
     seasonResetStatus.isResetting,
@@ -2033,12 +2126,9 @@ function App() {
       return;
     }
 
-    if (seasonComplete && offseasonStage !== 'free_agency') {
-      const nextStepMessage = offseasonStage === 'draft_lottery'
-        ? 'Run the draft lottery first.'
-        : 'Finish the draft before moving to free agency.';
-      pushNotice(`${nextStepMessage} Offseason order is Draft Lottery -> Draft -> Free Agency.`, 'warning');
-      setView(offseasonStage === 'draft_lottery' ? 'lottery' : 'draft');
+    if (seasonComplete && offseasonStage !== 'start_next_season') {
+      pushNotice('Complete the active item in the Offseason Checklist before starting the next season.', 'warning');
+      setView('offseason');
       return;
     }
 
@@ -2078,6 +2168,9 @@ function App() {
   }, [pushNotice]);
 
   const handleHardWipePlayers = useCallback(async () => {
+    if (!acquireLocalOperation('player_generation')) {
+      return;
+    }
     setIsWipingPlayers(true);
 
     try {
@@ -2101,8 +2194,9 @@ function App() {
       pushNotice('Failed to hard-wipe player data.', 'error');
     } finally {
       setIsWipingPlayers(false);
+      localOperationLockRef.current.release('player_generation');
     }
-  }, [pushNotice]);
+  }, [acquireLocalOperation, pushNotice]);
 
   const handleTerminateUniverse = useCallback(async () => {
     if (isTerminatingUniverse || seasonResetStatus.isResetting) {
@@ -2114,7 +2208,12 @@ function App() {
       return;
     }
 
+    if (!acquireLocalOperation('universe_termination')) {
+      return;
+    }
+
     setIsTerminatingUniverse(true);
+    const normalizedSeed = normalizeSeed(universeSeedInput);
 
     try {
       resetSimulationState();
@@ -2129,15 +2228,18 @@ function App() {
       );
       const baselineSchedule = createMasterSchedule(baselineTeams, baselineSeasonYear);
       const firstDate = baselineSchedule[0]?.date ?? getDefaultSeasonStartDate(baselineSeasonYear);
-      const wipedPlayerState: LeaguePlayerState = {
-        players: [],
-        battingStats: [],
-        pitchingStats: [],
-        battingRatings: [],
-        pitchingRatings: [],
-        rosterSlots: [],
-        transactions: [],
-      };
+      // A new universe begins immediately playable and immediately coherent:
+      // buildNewUniverse runs generate -> develop -> fill rosters, the same
+      // chain the offseason runs, so the development model and the roster
+      // repair are already in force on day one instead of a season later.
+      // Seeding it means the same universe can be rebuilt to A/B a model change.
+      const built = buildNewUniverse({
+        teams: baselineTeams,
+        seasonYear: baselineSeasonYear,
+        seed: normalizedSeed,
+        effectiveDate: `${baselineSeasonYear}-12-15`,
+      });
+      const regeneratedPlayerState = built.playerState;
 
       React.startTransition(() => {
         setTeams(baselineTeams);
@@ -2147,7 +2249,7 @@ function App() {
         setSelectedDate(firstDate);
         setProgress(0);
         setSeasonComplete(false);
-        setPlayerState(wipedPlayerState);
+        setPlayerState(regeneratedPlayerState);
         setPendingTrades([]);
         setTradeBoardDate('');
         setTradeInterruptionPrompt(null);
@@ -2156,11 +2258,12 @@ function App() {
         setDraftCenter({ activeClass: null, history: [] });
         setOffseasonWorkflow(IDLE_OFFSEASON_WORKFLOW_STATE);
         setSelectedGameId(null);
-        setPlayerGenerationPreview(null);
+        setNewUniversePreview(null);
       });
+      playerStateRef.current = regeneratedPlayerState;
 
       clearLocalPlayerState();
-      saveLocalPlayerStateSafely(wipedPlayerState);
+      saveLocalPlayerStateSafely(regeneratedPlayerState);
       saveLocalLeagueStateSafely(baselineTeams, baselineSettings, baselineSchedule, firstDate, 0, false);
 
       localStorage.removeItem(SEASON_HISTORY_STORAGE_KEY);
@@ -2168,6 +2271,7 @@ function App() {
       localStorage.removeItem(OFFSEASON_WORKFLOW_STORAGE_KEY);
       localStorage.removeItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY);
       setIsSeasonHistoryLoaded(true);
+      setNewUniversePreview(null);
 
       if (isSupabaseConfigured) {
         await clearSupabasePlayerState();
@@ -2181,20 +2285,22 @@ function App() {
           false,
           { pruneMissingGames: true },
         );
-        await saveSupabasePlayerState(wipedPlayerState);
+        await saveSupabasePlayerState(regeneratedPlayerState);
         setDataSource('supabase');
-        pushNotice('Universe terminated. League, players, and history were fully reset.', 'success');
+        pushNotice(`Universe terminated and rebuilt with ${regeneratedPlayerState.players.length} players (seed ${normalizedSeed}).`, 'success');
       } else {
         setDataSource('local');
-        pushNotice('Universe terminated locally. Supabase is not configured.', 'warning');
+        pushNotice(`Universe terminated locally and rebuilt with ${regeneratedPlayerState.players.length} players (seed ${normalizedSeed}).`, 'success');
       }
     } catch (error) {
       console.error('Failed to terminate universe:', error);
       pushNotice('Terminate Universe failed. Some data may still be present.', 'error');
     } finally {
       setIsTerminatingUniverse(false);
+      localOperationLockRef.current.release('universe_termination');
     }
   }, [
+    acquireLocalOperation,
     createMasterSchedule,
     currentDate,
     games,
@@ -2208,23 +2314,43 @@ function App() {
     saveLocalPlayerStateSafely,
     seasonResetStatus.isResetting,
     stopDraftAutoRun,
+    universeSeedInput,
   ]);
 
-  const handlePreviewGeneratePlayers = useCallback(() => {
+  // One path for making a universe, and one preview. "Generate Players" used to
+  // be a second, partial version of this that swapped playerState and left the
+  // schedule, standings, history and offseason markers behind, which could
+  // leave a live league holding a year-one-shaped pool. Both controls now build
+  // the same thing through buildNewUniverse.
+  const handlePreviewNewUniverse = useCallback(() => {
     const seasonYear = resolveSeasonYear(currentDate, games);
-    const generatedPlayerState = generatePlayerPool(teams, seasonYear);
-    setPlayerGenerationPreview(generatedPlayerState);
-  }, [currentDate, games, teams]);
+    const built = buildNewUniverse({
+      teams,
+      seasonYear,
+      seed: normalizeSeed(universeSeedInput),
+      effectiveDate: `${seasonYear}-12-15`,
+    });
+    setNewUniversePreview(built);
+  }, [currentDate, games, teams, universeSeedInput]);
 
   const handleDismissPlayerPreview = useCallback(() => {
-    setPlayerGenerationPreview(null);
+    setNewUniversePreview(null);
   }, []);
 
   const handleGeneratePlayers = useCallback(async () => {
+    if (!acquireLocalOperation('player_generation')) {
+      return;
+    }
     setIsGeneratingPlayers(true);
 
     try {
-      const generatedPlayerState = playerGenerationPreview ?? generatePlayerPool(teams, resolveSeasonYear(currentDate, games));
+      const seasonYear = resolveSeasonYear(currentDate, games);
+      const generatedPlayerState = newUniversePreview?.playerState ?? buildNewUniverse({
+        teams,
+        seasonYear,
+        seed: normalizeSeed(universeSeedInput),
+        effectiveDate: `${seasonYear}-12-15`,
+      }).playerState;
 
       clearLocalPlayerState();
       saveLocalPlayerStateSafely(generatedPlayerState);
@@ -2239,14 +2365,91 @@ function App() {
         pushNotice(`Generated ${generatedPlayerState.players.length} players locally. Supabase is not configured.`, 'warning');
       }
 
-      setPlayerGenerationPreview(null);
+      setNewUniversePreview(null);
     } catch (error) {
       console.error('Failed to generate player data:', error);
       pushNotice('Failed to generate player data.', 'error');
     } finally {
       setIsGeneratingPlayers(false);
+      localOperationLockRef.current.release('player_generation');
     }
-  }, [currentDate, games, playerGenerationPreview, pushNotice, teams]);
+  }, [acquireLocalOperation, currentDate, games, isSupabaseConfigured, newUniversePreview, pushNotice, teams, universeSeedInput]);
+
+  const exportLocalUniverseBackup = useCallback(async (): Promise<LocalUniverseBundle> => (
+    createLocalUniverseBundle({
+      league: {
+        teams,
+        settings,
+        games,
+        currentDate,
+        progress,
+        seasonComplete,
+      },
+      players: playerState,
+      seasonHistory,
+      offseasonWorkflow,
+      draftCenter,
+      pendingTrades,
+    })
+  ), [currentDate, draftCenter, games, offseasonWorkflow, pendingTrades, playerState, progress, seasonComplete, seasonHistory, settings, teams]);
+
+  const importLocalUniverseBackup = useCallback(async (payload: unknown): Promise<void> => {
+    if (!acquireLocalOperation('backup_import')) {
+      throw new Error('Another local operation is already running.');
+    }
+
+    try {
+    const validation = validateLocalUniverseBundle(payload);
+    if (!validation.valid) {
+      throw new Error(`Backup validation failed: ${validation.errors.slice(0, 3).join(' ')}`);
+    }
+
+    const bundle = payload as LocalUniverseBundle;
+    resetSimulationState();
+    stopDraftAutoRun();
+
+    saveLocalLeagueStateSafely(
+      bundle.league.teams,
+      bundle.league.settings,
+      bundle.league.games,
+      bundle.league.currentDate,
+      bundle.league.progress,
+      bundle.league.seasonComplete,
+    );
+    saveLocalPlayerStateSafely(bundle.players);
+    localStorage.setItem(SEASON_HISTORY_STORAGE_KEY, JSON.stringify(bundle.seasonHistory));
+    localStorage.setItem(OFFSEASON_WORKFLOW_STORAGE_KEY, JSON.stringify(bundle.offseasonWorkflow));
+    localStorage.setItem(DRAFT_CENTER_STORAGE_KEY, JSON.stringify(bundle.draftCenter));
+    localStorage.setItem(PENDING_TRADES_STORAGE_KEY, JSON.stringify(bundle.pendingTrades));
+
+    React.startTransition(() => {
+      setTeams(bundle.league.teams);
+      setSettings(bundle.league.settings);
+      setGames(bundle.league.games);
+      setCurrentDate(bundle.league.currentDate);
+      setSelectedDate(bundle.league.currentDate);
+      setProgress(bundle.league.progress);
+      setSeasonComplete(bundle.league.seasonComplete);
+      setPlayerState(bundle.players);
+      setSeasonHistory(bundle.seasonHistory);
+      setOffseasonWorkflow(bundle.offseasonWorkflow);
+      setDraftCenter(bundle.draftCenter);
+      setPendingTrades(bundle.pendingTrades);
+      setTradeBoardDate('');
+      setTradeInterruptionPrompt(null);
+      setSelectedGameId(null);
+      setNewUniversePreview(null);
+      setDataSource('local');
+    });
+    playerStateRef.current = bundle.players;
+    draftCenterRef.current = bundle.draftCenter;
+    offseasonRolloverAppliedRef.current.clear();
+    setIsSeasonHistoryLoaded(true);
+    pushNotice('Local universe backup imported and applied successfully.', 'success');
+    } finally {
+      localOperationLockRef.current.release('backup_import');
+    }
+  }, [acquireLocalOperation, pushNotice, resetSimulationState, saveLocalLeagueStateSafely, saveLocalPlayerStateSafely, stopDraftAutoRun]);
 
   async function persistSimulationSnapshot(
     nextTeams: Team[],
@@ -2461,6 +2664,7 @@ function App() {
     handleApprovePendingTrade,
     handleVetoPendingTrade,
     handleFreeAgencyAssignment,
+    handleFreeAgencyShakeUp,
   } = useRosterTransactions({
     currentDate,
     selectedDate,
@@ -2756,6 +2960,10 @@ function App() {
     void handleFreeAgencyAssignment(assignment);
   }, [handleFreeAgencyAssignment]);
 
+  const shakeUpFreeAgencyFromRouter = useCallback(() => {
+    void handleFreeAgencyShakeUp();
+  }, [handleFreeAgencyShakeUp]);
+
   const generateDraftClassFromRouter = useCallback(() => {
     void handleGenerateDraftClass();
   }, [handleGenerateDraftClass]);
@@ -2800,6 +3008,13 @@ function App() {
     void handleHardWipePlayers();
   }, [handleHardWipePlayers]);
 
+  const exportLocalBackupFromRouter = useCallback(() => exportLocalUniverseBackup(), [exportLocalUniverseBackup]);
+
+  const importLocalBackupFromRouter = useCallback(
+    (payload: unknown) => importLocalUniverseBackup(payload),
+    [importLocalUniverseBackup],
+  );
+
   const terminateUniverseFromRouter = useCallback(() => {
     void handleTerminateUniverse();
   }, [handleTerminateUniverse]);
@@ -2827,6 +3042,10 @@ function App() {
     onVetoPendingTrade: handleVetoPendingTrade,
     onRefreshTradeBoard: refreshTradeBoard,
     onAssignFreeAgent: assignFreeAgentFromRouter,
+    onShakeUpFreeAgency: shakeUpFreeAgencyFromRouter,
+    onAutoSelectAwards: applyAutoSeasonAwards,
+    onSimulateRetirements: simulateRetirements,
+    onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
     onDraftNextPick: draftNextPickFromRouter,
     onAutoDraftRound: autoDraftRoundFromRouter,
@@ -2842,13 +3061,19 @@ function App() {
     onClearNotifications: clearNotificationsFromRouter,
     onSaveSettings: handleSaveSettings,
     onClearHistoricalData: clearHistoricalDataFromRouter,
-    onPreviewGeneratePlayers: handlePreviewGeneratePlayers,
+    onPreviewGeneratePlayers: handlePreviewNewUniverse,
     onGeneratePlayers: generatePlayersFromRouter,
+    universeSeedInput,
+    onSetUniverseSeedInput: setUniverseSeedInput,
     onHardWipePlayers: hardWipePlayersFromRouter,
+    onExportLocalBackup: exportLocalBackupFromRouter,
+    onImportLocalBackup: importLocalBackupFromRouter,
     onDismissPlayerPreview: handleDismissPlayerPreview,
   }), [
     approvePendingTradeFromRouter,
     assignFreeAgentFromRouter,
+    applyAutoSeasonAwards,
+    completeFreeAgency,
     autoDraftAllFromRouter,
     autoDraftRoundFromRouter,
     cancelSimulationRun,
@@ -2858,11 +3083,13 @@ function App() {
     draftNextPickFromRouter,
     generateDraftClassFromRouter,
     generatePlayersFromRouter,
+    exportLocalBackupFromRouter,
     handleDismissPlayerPreview,
-    handlePreviewGeneratePlayers,
+    handlePreviewNewUniverse,
     handleSaveSettings,
     handleVetoPendingTrade,
     hardWipePlayersFromRouter,
+    importLocalBackupFromRouter,
     terminateUniverseFromRouter,
     openGameScreen,
     openSimulationCenter,
@@ -2872,6 +3099,7 @@ function App() {
     refreshTradeBoard,
     resetDraftBoardFromRouter,
     resetSeasonFromRouter,
+    simulateRetirements,
     setSelectedDate,
     setSelectedTeamId,
     setView,
@@ -2978,6 +3206,8 @@ function App() {
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
             offseasonStage={offseasonStage}
+            offseasonSeasonYear={offseasonEventSeasonYear}
+            offseasonChampionLabel={seasonAwardsSelection?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}
             hasPendingSeasonAwards={Boolean(seasonAwardsSelection)}
             awardsUnlockDate={awardsUnlockDate}
             lotteryOpenDate={lotteryOpenDate}
@@ -3013,7 +3243,7 @@ function App() {
             seasonHistory={seasonHistory}
             settings={settings}
             dataSource={dataSource}
-            playerGenerationPreview={playerGenerationPreview}
+            newUniversePreview={newUniversePreview}
             isClearingHistoricalData={isClearingHistory}
             isGeneratingPlayers={isGeneratingPlayers}
             isWipingPlayers={isWipingPlayers}

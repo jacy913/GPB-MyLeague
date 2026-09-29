@@ -217,8 +217,6 @@ const buildOfferBoard = (
   battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
   pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
 ): FreeAgencyOfferCard[] => {
-  if (freeAgent.marketValue < 72 || freeAgent.overall < 68) return [];
-
   const candidateSlots =
     freeAgent.player.primaryPosition === 'SP'
       ? STARTING_PITCHER_SLOTS
@@ -275,6 +273,34 @@ const buildOfferBoard = (
   });
 
   const rankedOffers = results.sort((left, right) => right.interest - left.interest).slice(0, 6);
+  // Even fringe players need a destination in automatic-market mode. If no
+  // club cleared the normal interest threshold, use the weakest compatible
+  // roster spot as a low-interest fallback offer.
+  if (rankedOffers.length === 0 && teams.length > 0) {
+    const fallback = teams.flatMap((team) => candidateSlots.map((rawSlotCode) => {
+      const slotCode = rawSlotCode as RosterSlotCode;
+      const slot = activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode === slotCode) ?? null;
+      const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
+      const incumbentOverall = incumbent
+        ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
+        : 0;
+      return { team, slotCode, incumbent, incumbentOverall };
+    }))
+      .sort((left, right) => left.incumbentOverall - right.incumbentOverall || left.team.id.localeCompare(right.team.id))[0];
+    if (fallback) {
+      rankedOffers.push({
+        team: fallback.team,
+        slotCode: fallback.slotCode,
+        slotLabel: getRosterSlotLabel(fallback.slotCode),
+        interest: 1,
+        contractYears: getOfferContractYears(freeAgent.player, freeAgent.overall),
+        incumbentName: fallback.incumbent ? `${fallback.incumbent.firstName} ${fallback.incumbent.lastName}` : null,
+        incumbentOverall: fallback.incumbent ? fallback.incumbentOverall : null,
+        isQualifyingOffer: false,
+        note: `${fallback.team.city} are the best available fallback fit for ${freeAgent.player.lastName}.`,
+      });
+    }
+  }
   return upsertQualifyingOffer(
     rankedOffers,
     freeAgent,
@@ -332,8 +358,6 @@ export const buildFreeAgencyMarketEntries = (
       };
     })
     .sort((left, right) => {
-      const offerGap = right.offers.length - left.offers.length;
-      if (offerGap !== 0) return offerGap;
-      return right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName);
+      return right.marketValue - left.marketValue || right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName);
     });
 };

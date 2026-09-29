@@ -36,6 +36,7 @@ export type AppView =
   | 'draft'
   | 'map'
   | 'free_agency'
+  | 'offseason'
   | 'playoffs'
   | 'gpb_book'
   | 'notifications'
@@ -99,6 +100,13 @@ const NAV_ITEMS: NavigationItem[] = [
     view: 'simulation',
     label: 'Simulate',
     icon: Activity,
+    desktopActiveClass: 'bg-[#d4bb6a] text-black',
+    mobileActiveClass: 'bg-[#d4bb6a] text-black',
+  },
+  {
+    view: 'offseason',
+    label: 'Offseason',
+    icon: CalendarRange,
     desktopActiveClass: 'bg-[#d4bb6a] text-black',
     mobileActiveClass: 'bg-[#d4bb6a] text-black',
   },

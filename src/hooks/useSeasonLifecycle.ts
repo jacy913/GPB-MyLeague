@@ -11,7 +11,7 @@ import {
 } from '../types';
 
 type NoticeLevel = 'info' | 'success' | 'warning' | 'error';
-type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
 interface OffseasonWorkflowLike {
   seasonYear: number | null;
@@ -63,6 +63,7 @@ interface UseSeasonLifecycleArgs {
   ) => WorldSeriesCandidateBundleLike;
   onOpenDraftView: () => void;
   onOpenFreeAgencyView: () => void;
+  onOpenOffseasonView: () => void;
 }
 
 interface UseSeasonLifecycleResult {
@@ -94,6 +95,7 @@ export const useSeasonLifecycle = ({
   computeWorldSeriesMvpCandidates,
   onOpenDraftView,
   onOpenFreeAgencyView,
+  onOpenOffseasonView,
 }: UseSeasonLifecycleArgs): UseSeasonLifecycleResult => {
   const [seasonAwardsSelection, setSeasonAwardsSelection] = useState<SeasonAwardsSelectionState | null>(null);
   const previousSeasonCompleteRef = useRef(false);
@@ -170,8 +172,11 @@ export const useSeasonLifecycle = ({
         .slice(0, maxSeasonHistoryEntries);
     });
     setSeasonAwardsSelection(null);
+    setOffseasonWorkflow((current) => current.stage === 'awards'
+      ? { ...current, stage: 'retirements' }
+      : current);
     pushNotice(`Season ${selection.seasonYear} awards saved to History.`, 'success');
-  }, [maxSeasonHistoryEntries, pushNotice, setSeasonHistory]);
+  }, [maxSeasonHistoryEntries, pushNotice, setOffseasonWorkflow, setSeasonHistory]);
 
   const applyAutoSeasonAwards = useCallback(() => {
     if (!seasonAwardsSelection) {
@@ -187,7 +192,7 @@ export const useSeasonLifecycle = ({
 
   const offseasonStage: OffseasonStage = useMemo(
     () => (seasonComplete
-      ? (offseasonWorkflow.stage === 'idle' ? 'draft_lottery' : offseasonWorkflow.stage)
+      ? (offseasonWorkflow.stage === 'idle' ? 'awards' : offseasonWorkflow.stage)
       : 'idle'),
     [offseasonWorkflow.stage, seasonComplete],
   );
@@ -196,7 +201,7 @@ export const useSeasonLifecycle = ({
     const justEnteredOffseason = seasonComplete && !previousSeasonCompleteRef.current;
     if (justEnteredOffseason) {
       const selection = buildSeasonAwardsSelection();
-      if (selection && currentDate >= awardsUnlockDate) {
+      if (selection) {
         setSeasonAwardsSelection(selection);
         pushNotice(`Awards voting opened on ${awardsUnlockDate}.`, 'info');
       }
@@ -204,16 +209,12 @@ export const useSeasonLifecycle = ({
       if (offseasonWorkflow.stage === 'idle') {
         setOffseasonWorkflow({
           seasonYear: resolveSeasonYear(currentDate || games[games.length - 1]?.date || games[0]?.date, games),
-          stage: 'draft_lottery',
+          stage: 'awards',
         });
-        pushNotice('Offseason sequence started: Draft Lottery -> Draft -> Free Agency.', 'info');
+        pushNotice('Offseason checklist started: Awards -> Retirements -> Lottery -> Draft -> Free Agency.', 'info');
       }
 
-      if (offseasonWorkflow.stage === 'free_agency') {
-        onOpenFreeAgencyView();
-      } else {
-        onOpenDraftView();
-      }
+      onOpenOffseasonView();
     }
     previousSeasonCompleteRef.current = seasonComplete;
   }, [
@@ -222,8 +223,7 @@ export const useSeasonLifecycle = ({
     currentDate,
     games,
     offseasonWorkflow.stage,
-    onOpenDraftView,
-    onOpenFreeAgencyView,
+    onOpenOffseasonView,
     pushNotice,
     resolveSeasonYear,
     seasonComplete,
@@ -232,10 +232,6 @@ export const useSeasonLifecycle = ({
 
   useEffect(() => {
     if (!seasonComplete || seasonAwardsSelection) {
-      return;
-    }
-
-    if (!currentDate || currentDate < awardsUnlockDate) {
       return;
     }
 

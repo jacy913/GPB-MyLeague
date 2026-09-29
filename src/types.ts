@@ -334,6 +334,7 @@ export interface GameSessionState {
   date: string;
   awayTeamId: string;
   homeTeamId: string;
+  randomState: number;
   participants: GameParticipantsSnapshot | null;
   status: 'pregame' | 'in_progress' | 'completed';
   inning: number;

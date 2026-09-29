@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
+    "lab": "tsx tools/leagueLab.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

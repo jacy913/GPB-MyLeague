@@ -317,8 +317,12 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
     const buckets = new Map<string, Team[]>();
     teams.forEach((team) => {
       const key = `${team.league}:${team.division}`;
-      const divisionTeams = teams.filter((candidate) => candidate.league === team.league && candidate.division === team.division).sort(compareStandings);
+      const divisionTeams = buckets.get(key) ?? [];
+      divisionTeams.push(team);
       buckets.set(key, divisionTeams);
+    });
+    buckets.forEach((divisionTeams) => {
+      divisionTeams.sort(compareStandings);
     });
     return buckets;
   }, [teams]);

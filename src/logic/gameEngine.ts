@@ -22,6 +22,20 @@ const INNING_OUT_VALUE = Number((1 / 3).toFixed(3));
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
+const createRandomSeed = (value: string): number => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) || 1;
+};
+
+const nextRandom = (session: GameSessionState): number => {
+  session.randomState = (Math.imul(session.randomState, 1664525) + 1013904223) >>> 0;
+  return session.randomState / 4294967296;
+};
+
 const cloneBases = (bases: BaseState): BaseState => ({ ...bases });
 
 const emptyBases = (): BaseState => ({
@@ -125,7 +139,7 @@ const appendLog = (session: GameSessionState, log: PlayLogEvent): GameSessionSta
 });
 
 const addRuns = (session: GameSessionState, runsScored: number): GameSessionState => {
-  if (runsScored <= 0) {
+  if (!Number.isFinite(runsScored) || runsScored <= 0) {
     return session;
   }
 
@@ -269,7 +283,7 @@ const pickDefender = (session: GameSessionState): GameParticipantBatter | null =
     return null;
   }
 
-  const index = Math.floor(Math.random() * lineup.length);
+  const index = Math.floor(nextRandom(session) * lineup.length);
   return lineup[index] ?? null;
 };
 
@@ -467,7 +481,7 @@ const getOutcomeWeights = (
   const environmentBias = (0.5 - settings.leagueEnvironmentBalance) * 2;
   const varianceScale = 0.8 + settings.battingVarianceFactor * 0.8;
   const teamEdge = (battingTeam.rating - fieldingTeam.rating) * 0.65;
-  const noise = (Math.random() - 0.5) * settings.gameLuckFactor * 60;
+  const noise = (nextRandom(session) - 0.5) * settings.gameLuckFactor * 60;
   const powerEdge = (batter.battingRatings.power - pitcher.pitchingRatings.movement) * varianceScale;
   const contactEdge = (batter.battingRatings.contact - (pitcher.pitchingRatings.stuff * 0.55 + pitcher.pitchingRatings.movement * 0.45)) * varianceScale;
   const disciplineEdge = (batter.battingRatings.plateDiscipline - pitcher.pitchingRatings.control) * varianceScale;
@@ -489,9 +503,9 @@ const getOutcomeWeights = (
   };
 };
 
-const pickOutcome = (weights: Record<AtBatOutcome, number>): AtBatOutcome => {
+const pickOutcome = (session: GameSessionState, weights: Record<AtBatOutcome, number>): AtBatOutcome => {
   const total = OUTCOME_POOL.reduce((sum, outcome) => sum + weights[outcome], 0);
-  let roll = Math.random() * total;
+  let roll = nextRandom(session) * total;
   for (const outcome of OUTCOME_POOL) {
     roll -= weights[outcome];
     if (roll <= 0) {
@@ -544,9 +558,9 @@ const recordPitchingOut = (session: GameSessionState, pitcherId: string | null, 
 
 const addPitchUsage = (session: GameSessionState, outcome: AtBatOutcome) => {
   const pitchCountDelta =
-    outcome === 'BB' ? 5 + Math.floor(Math.random() * 2)
-      : outcome === 'SO' ? 4 + Math.floor(Math.random() * 2)
-        : 3 + Math.floor(Math.random() * 3);
+    outcome === 'BB' ? 5 + Math.floor(nextRandom(session) * 2)
+      : outcome === 'SO' ? 4 + Math.floor(nextRandom(session) * 2)
+        : 3 + Math.floor(nextRandom(session) * 3);
 
   if (getFieldingTeamId(session) === session.awayTeamId) {
     session.awayPitching = {
@@ -743,14 +757,14 @@ const resolveSingleLikeAdvance = (
   }
 
   const secondRunnerScores = runnerFromSecond
-    ? Math.random() < clamp((getRunnerSpeed(session, runnerFromSecond) - 55) / 55, 0.45, 0.92)
+    ? nextRandom(session) < clamp((getRunnerSpeed(session, runnerFromSecond) - 55) / 55, 0.45, 0.92)
     : false;
   if (runnerFromSecond && secondRunnerScores) {
     scoringPlayerIds.push(runnerFromSecond);
   }
 
   const firstRunnerToThird = runnerFromFirst
-    ? Math.random() < clamp((getRunnerSpeed(session, runnerFromFirst) - 45) / 60, 0.25, 0.82)
+    ? nextRandom(session) < clamp((getRunnerSpeed(session, runnerFromFirst) - 45) / 60, 0.25, 0.82)
     : false;
 
   return {
@@ -769,7 +783,7 @@ const resolveDoubleAdvance = (
 ): { bases: BaseState; scoringPlayerIds: string[] } => {
   const scoringPlayerIds = [session.bases.third, session.bases.second].filter((runnerId): runnerId is string => Boolean(runnerId));
   const runnerFromFirstScores = session.bases.first
-    ? Math.random() < clamp((getRunnerSpeed(session, session.bases.first) - 45) / 65, 0.3, 0.78)
+    ? nextRandom(session) < clamp((getRunnerSpeed(session, session.bases.first) - 45) / 65, 0.3, 0.78)
     : false;
 
   if (session.bases.first && runnerFromFirstScores) {
@@ -818,19 +832,57 @@ const isWalkOff = (session: GameSessionState): boolean =>
 const assignPitcherDecision = (session: GameSessionState) => {
   const awayPitcherId = session.awayPitching.currentPitcherId;
   const homePitcherId = session.homePitching.currentPitcherId;
-  if (session.scoreboard.awayRuns > session.scoreboard.homeRuns) {
-    session.playerStats.winningPitcherId = awayPitcherId;
-    session.playerStats.losingPitcherId = homePitcherId;
-  } else if (session.scoreboard.homeRuns > session.scoreboard.awayRuns) {
-    session.playerStats.winningPitcherId = homePitcherId;
-    session.playerStats.losingPitcherId = awayPitcherId;
-  }
+  const winningTeamId = session.scoreboard.awayRuns > session.scoreboard.homeRuns ? session.awayTeamId : session.homeTeamId;
+  const losingTeamId = winningTeamId === session.awayTeamId ? session.homeTeamId : session.awayTeamId;
+  const winningPitcherId = winningTeamId === session.awayTeamId ? awayPitcherId : homePitcherId;
+  const losingPitcherId = losingTeamId === session.awayTeamId ? awayPitcherId : homePitcherId;
+
+  session.playerStats.winningPitcherId = winningPitcherId;
+  session.playerStats.losingPitcherId = losingPitcherId;
 
   if (session.playerStats.winningPitcherId) {
     ensurePitchingDelta(session, session.playerStats.winningPitcherId).wins += 1;
   }
   if (session.playerStats.losingPitcherId) {
     ensurePitchingDelta(session, session.playerStats.losingPitcherId).losses += 1;
+  }
+
+  const runMargin = Math.abs(session.scoreboard.awayRuns - session.scoreboard.homeRuns);
+  if (runMargin <= 3 && winningPitcherId && winningPitcherId !== getTeamStarter(session, winningTeamId)?.playerId) {
+    session.playerStats.savePitcherId = winningPitcherId;
+    ensurePitchingDelta(session, winningPitcherId).saves += 1;
+  }
+};
+
+const validateCompletedSession = (session: GameSessionState): void => {
+  const awayLineScore = session.lineScore.reduce((total, inning) => total + inning.away, 0);
+  const homeLineScore = session.lineScore.reduce((total, inning) => total + inning.home, 0);
+  const battingRuns = Object.values(session.playerStats.batting).reduce((total, line) => total + line.runsScored, 0);
+  const battingHits = Object.values(session.playerStats.batting).reduce((total, line) => total + line.hits, 0);
+
+  const hasInvalidNumber = [
+    session.scoreboard.awayRuns,
+    session.scoreboard.homeRuns,
+    awayLineScore,
+    homeLineScore,
+    battingRuns,
+    battingHits,
+  ].some((value) => !Number.isFinite(value) || value < 0 || !Number.isInteger(value));
+
+  if (hasInvalidNumber) {
+    throw new Error(`Invalid numeric box score generated for game ${session.gameId}.`);
+  }
+
+  if (awayLineScore !== session.scoreboard.awayRuns || homeLineScore !== session.scoreboard.homeRuns) {
+    throw new Error(`Inning totals do not match the final score for game ${session.gameId}.`);
+  }
+
+  if (Object.keys(session.playerStats.batting).length > 0 && battingRuns !== session.scoreboard.awayRuns + session.scoreboard.homeRuns) {
+    throw new Error(`Player runs do not match the final score for game ${session.gameId}.`);
+  }
+
+  if (Object.keys(session.playerStats.batting).length > 0 && battingHits !== session.scoreboard.awayHits + session.scoreboard.homeHits) {
+    throw new Error(`Player hits do not match the box score for game ${session.gameId}.`);
   }
 };
 
@@ -896,6 +948,7 @@ export const createGameSession = (
   date: game.date,
   awayTeamId: game.awayTeam,
   homeTeamId: game.homeTeam,
+  randomState: createRandomSeed(`${game.gameId}:${game.date}:${game.awayTeam}:${game.homeTeam}`),
   participants,
   status: game.status === 'completed' ? 'completed' : 'pregame',
   inning: 1,
@@ -978,6 +1031,7 @@ export const startGameSession = (session: GameSessionState): GameSessionState =>
     half: 'top',
     outs: 0,
     bases: emptyBases(),
+    randomState: createRandomSeed(`${session.gameId}:${session.date}:${session.awayTeamId}:${session.homeTeamId}`),
     awayBatterIndex: 0,
     homeBatterIndex: 0,
     awayPitching: {
@@ -1039,7 +1093,7 @@ export const simulateNextAtBat = (
     return input;
   }
 
-  const startedSession = input.status === 'pregame' ? startGameSession(input) : input;
+  const startedSession = input.status === 'pregame' ? startGameSession(input) : { ...input };
   const session = maybeMakePitchingChange(startedSession);
   const batter = getCurrentBatter(session);
   const pitcher = getCurrentPitcher(session);
@@ -1050,7 +1104,7 @@ export const simulateNextAtBat = (
   const battingTeam = session.half === 'top' ? awayTeam : homeTeam;
   const fieldingTeam = session.half === 'top' ? homeTeam : awayTeam;
   const weights = getOutcomeWeights(session, batter, pitcher, battingTeam, fieldingTeam, session.half === 'bottom', settings);
-  const outcome = pickOutcome(weights);
+  const outcome = pickOutcome(session, weights);
   const defender = outcome === 'ERR' || outcome === 'OUT' ? pickDefender(session) : null;
 
   let nextSession: GameSessionState = {
@@ -1245,7 +1299,19 @@ export const simulateGameToFinal = (
 ): GameSessionState => {
   let current = session.status === 'pregame' ? startGameSession(session) : session;
   let stalledSteps = 0;
+  let simulatedAtBats = 0;
   while (current.status !== 'completed') {
+    simulatedAtBats += 1;
+    if (simulatedAtBats > 1200) {
+      return completeBrokenGameByForfeit(
+        current,
+        awayTeam,
+        homeTeam,
+        getBattingTeamId(current),
+        'The game exceeded the maximum number of simulated at-bats.',
+      );
+    }
+
     const next = simulateNextAtBat(current, awayTeam, homeTeam, settings);
     if (next === current) {
       stalledSteps += 1;
@@ -1268,8 +1334,11 @@ export const simulateGameToFinal = (
   return current;
 };
 
-export const buildCompletedGameFromSession = (game: Game, session: GameSessionState): CompletedGameResult => ({
-  game: {
+export const buildCompletedGameFromSession = (game: Game, session: GameSessionState): CompletedGameResult => {
+  validateCompletedSession(session);
+
+  return {
+    game: {
     ...game,
     status: 'completed',
     score: {
@@ -1292,6 +1361,7 @@ export const buildCompletedGameFromSession = (game: Game, session: GameSessionSt
       interactiveSim: true,
       simulatedAt: new Date().toISOString(),
     },
-  },
-  playerStatDelta: clonePlayerStatDelta(session.playerStats),
-});
+    },
+    playerStatDelta: clonePlayerStatDelta(session.playerStats),
+  };
+};

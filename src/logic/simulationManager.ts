@@ -110,6 +110,10 @@ export class SimulationManager {
   private readonly seasonStartDate: string;
   private readonly regularSeasonEndDate: string;
   private currentDate: string;
+  private allDates: string[];
+  private nextGameNumber: number;
+  private readonly leagueSeedCache = new Map<Team['league'], SeededPlayoffTeam[]>();
+  private readonly seedMapCache = new Map<Team['league'], Map<string, SeededPlayoffTeam>>();
 
   constructor(input: SimulationManagerInput) {
     this.settings = input.settings;
@@ -160,6 +164,8 @@ export class SimulationManager {
     this.seasonStartDate = this.games[0]?.date ?? input.currentDate;
     this.regularSeasonEndDate = getRegularSeasonEndDate(this.games, input.currentDate);
     this.currentDate = input.currentDate || this.seasonStartDate;
+    this.allDates = this.buildAllDates();
+    this.nextGameNumber = this.computeNextGameNumber();
   }
 
   private getLatestBattingRatingsByPlayerId() {
@@ -186,31 +192,47 @@ export class SimulationManager {
     return byPlayerId;
   }
 
-  private getAllDates(): string[] {
+  private buildAllDates(): string[] {
     return Array.from(new Set(this.games.map((game) => game.date))).sort((a, b) => a.localeCompare(b));
   }
 
+  private refreshGameIndexes(): void {
+    this.allDates = this.buildAllDates();
+  }
+
+  private clearSeedCaches(): void {
+    this.leagueSeedCache.clear();
+    this.seedMapCache.clear();
+  }
+
   private snapDateToExisting(rawDate: string): string {
-    const dates = this.getAllDates();
-    if (dates.length === 0) {
+    if (this.allDates.length === 0) {
       return rawDate;
     }
 
-    const onOrAfter = dates.find((date) => date >= rawDate);
+    const onOrAfter = this.allDates.find((date) => date >= rawDate);
     return onOrAfter ?? rawDate;
   }
 
   private getScheduledGames(predicate?: (game: Game) => boolean): Game[] {
-    return this.games
-      .filter((game) => game.status === 'scheduled' && (predicate ? predicate(game) : true))
-      .sort(compareGameOrder);
+    return this.games.filter((game) => game.status === 'scheduled' && (predicate ? predicate(game) : true));
   }
 
   private getNextScheduledGame(predicate?: (game: Game) => boolean): Game | undefined {
-    return this.getScheduledGames(predicate)[0];
+    return this.games.find((game) => game.status === 'scheduled' && (predicate ? predicate(game) : true));
   }
 
-  private getNextGameNumber(): number {
+  private getScheduledGameCount(predicate?: (game: Game) => boolean): number {
+    let count = 0;
+    this.games.forEach((game) => {
+      if (game.status === 'scheduled' && (predicate ? predicate(game) : true)) {
+        count += 1;
+      }
+    });
+    return count;
+  }
+
+  private computeNextGameNumber(): number {
     return this.games.reduce((maxValue, game) => {
       const match = game.gameId.match(/(\d+)$/);
       const nextValue = match ? Number(match[1]) : 0;
@@ -353,18 +375,34 @@ export class SimulationManager {
 
       return game.status === 'completed';
     });
+    this.refreshGameIndexes();
+    this.clearSeedCaches();
   }
 
   private getLeagueSeeds(league: Team['league']): SeededPlayoffTeam[] {
+    const cached = this.leagueSeedCache.get(league);
+    if (cached) {
+      return cached;
+    }
+
     const teams = this.teamOrder
       .map((id) => this.teamsById.get(id))
       .filter((team): team is Team => Boolean(team));
 
-    return getLeaguePlayoffSeeds(teams, this.games, league);
+    const seeds = getLeaguePlayoffSeeds(teams, this.games, league);
+    this.leagueSeedCache.set(league, seeds);
+    return seeds;
   }
 
   private getSeedMap(league: Team['league']): Map<string, SeededPlayoffTeam> {
-    return new Map(this.getLeagueSeeds(league).map((seed) => [seed.team.id, seed]));
+    const cached = this.seedMapCache.get(league);
+    if (cached) {
+      return cached;
+    }
+
+    const seedMap = new Map(this.getLeagueSeeds(league).map((seed) => [seed.team.id, seed]));
+    this.seedMapCache.set(league, seedMap);
+    return seedMap;
   }
 
   private createSeriesGame(
@@ -386,7 +424,7 @@ export class SimulationManager {
     const awayTeam = higherSeedAtHome ? bottomSeed.team.id : topSeed.team.id;
 
     return {
-      gameId: `p-${String(this.getNextGameNumber()).padStart(5, '0')}`,
+      gameId: `p-${String(this.nextGameNumber++).padStart(5, '0')}`,
       date: addDaysToISODate(startDate, offset),
       homeTeam,
       awayTeam,
@@ -412,6 +450,8 @@ export class SimulationManager {
 
   private appendGame(gameToAdd: Game): void {
     this.games = [...this.games, gameToAdd].sort(compareGameOrder);
+    this.refreshGameIndexes();
+    this.clearSeedCaches();
   }
 
   private ensureSeriesHasNextGame(
@@ -696,6 +736,7 @@ export class SimulationManager {
         awayTeam.wins += 1;
         homeTeam.losses += 1;
       }
+      this.clearSeedCaches();
     }
   }
 
@@ -780,18 +821,18 @@ export class SimulationManager {
 
   private getRemainingCandidateCount(normalizedCurrent: string, target: SimulationTarget, targetEndDate: string | null): number {
     if (target.scope === 'season') {
-      return this.getScheduledGames().length;
+      return this.getScheduledGameCount();
     }
 
     if (target.scope === 'regular_season') {
-      return this.getScheduledGames((game) => isRegularSeasonGame(game) && game.date >= normalizedCurrent).length;
+      return this.getScheduledGameCount((game) => isRegularSeasonGame(game) && game.date >= normalizedCurrent);
     }
 
     if (target.scope === 'next_game') {
       const teamId = target.teamId ?? '';
-      return this.getScheduledGames(
+      return this.getScheduledGameCount(
         (game) => game.date >= normalizedCurrent && (game.homeTeam === teamId || game.awayTeam === teamId),
-      ).length;
+      );
     }
 
     if (target.scope === 'next_playoff_game') {
@@ -810,7 +851,7 @@ export class SimulationManager {
         return 0;
       }
 
-      return this.getScheduledGames((game) => {
+      return this.getScheduledGameCount((game) => {
         if (game.date < normalizedCurrent) {
           return false;
         }
@@ -821,14 +862,14 @@ export class SimulationManager {
           return false;
         }
         return true;
-      }).length;
+      });
     }
 
     if (!targetEndDate) {
       return 0;
     }
 
-    return this.getScheduledGames((game) => game.date >= normalizedCurrent && game.date <= targetEndDate).length;
+    return this.getScheduledGameCount((game) => game.date >= normalizedCurrent && game.date <= targetEndDate);
   }
 
   public async run(

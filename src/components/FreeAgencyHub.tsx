@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Star } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Shuffle, Star } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
@@ -38,6 +38,8 @@ interface FreeAgencyHubProps {
     contractYearsLeft: number;
     isQualifyingOffer?: boolean;
   }) => void;
+  onShakeUp: () => void;
+  onCompleteMarket?: () => void;
   onExit: () => void;
 }
 
@@ -124,6 +126,8 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
   marketStatusMessage,
   seasonComplete,
   onAssignPlayer,
+  onShakeUp,
+  onCompleteMarket,
   onExit,
 }) => {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
@@ -210,6 +214,21 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
             <div className="rounded-full border border-white/10 bg-black/25 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300">
               {currentDate || 'Offseason'}
             </div>
+            <button
+              type="button"
+              onClick={onShakeUp}
+              disabled={!isMarketOpen || freeAgents.length === 0}
+              title="Sign the best available upgrades, then allow released players to cascade to weaker rosters."
+              className="inline-flex items-center gap-2 rounded-full border border-[#d4bb6a]/35 bg-[#d4bb6a]/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-[#ecd693] transition-colors hover:border-[#d4bb6a]/60 hover:bg-[#d4bb6a]/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Shuffle className="h-3.5 w-3.5" />
+              Shake Up
+            </button>
+            {onCompleteMarket && (
+              <button type="button" onClick={onCompleteMarket} className="rounded-full border border-emerald-300/35 bg-emerald-500/10 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-emerald-100 transition-colors hover:bg-emerald-500/20">
+                Complete Free Agency
+              </button>
+            )}
             <button
               onClick={onExit}
               className="rounded-full border border-white/10 bg-black/25 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300 transition-colors hover:border-white/20 hover:text-white"

@@ -19,6 +19,14 @@ const IDLE_SIMULATION_SAVE_STATUS: SimulationSaveStatus = {
   label: '',
 };
 
+const getSimulationThrottleMs = (target: SimulationTarget): number => {
+  if (target.scope === 'day' || target.scope === 'next_game' || target.scope === 'next_playoff_game' || target.scope === 'to_game') {
+    return 340;
+  }
+
+  return 0;
+};
+
 interface UseSimulationEngineArgs {
   teams: Team[];
   games: Game[];
@@ -405,7 +413,7 @@ export const useSimulationEngine = ({
         queuedDates: plan.dates,
         targetDate: plan.targetDate,
         label,
-        throttleMs: 340,
+        throttleMs: getSimulationThrottleMs(target),
       },
     });
   }, [

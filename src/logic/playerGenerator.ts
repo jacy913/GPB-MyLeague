@@ -50,6 +50,13 @@ interface PlayerBlueprint {
   primaryPosition: PlayerPosition;
   teamId: string | null;
   slotCode: RosterSlotCode | null;
+  /**
+   * Overrides the age the ageBucket would have produced. Active rosters draw
+   * from MLB_AGE_WEIGHTS so the league is born with a realistic age shape; the
+   * bucket is still derived from the drawn age so potential and years of
+   * service stay consistent with it.
+   */
+  age?: number;
 }
 
 const DEFAULT_RANDOM: RandomSource = () => Math.random();
@@ -552,15 +559,41 @@ const distributeEvenly = <T extends string>(values: T[], total: number): Record<
 const buildBucketPool = <T extends string>(counts: Record<T, number>): T[] =>
   Object.entries(counts).flatMap(([key, count]) => Array.from({ length: count }, () => key as T));
 
-const getActiveAgeBuckets = (activePlayerCount: number): Array<Exclude<AgeBucket, 'prospect'>> => {
-  const veteranCount = Math.round(activePlayerCount * 0.25);
-  const peakCount = Math.max(activePlayerCount - veteranCount, 0);
+/**
+ * Share of MLB roster spots held by players of each age, used to seed a new
+ * universe. The old behaviour split active rosters 75/25 between a flat 23-32
+ * "peak" band and a flat 33-39 "veteran" band, which put a quarter of every
+ * roster (232 players league-wide) in the tail of a career and left no player
+ * under 23 on any active roster at all. A new league has to be born with a
+ * young cohort feeding it, or it starts at the end of its own pipeline.
+ *
+ * These weights are shaped like a real MLB roster: a mode at 26-27, a long
+ * right tail, and a thin but real band of 22-year-old call-ups.
+ */
+const MLB_AGE_WEIGHTS: Array<{ value: number; weight: number }> = [
+  { value: 22, weight: 25 },
+  { value: 23, weight: 50 },
+  { value: 24, weight: 80 },
+  { value: 25, weight: 105 },
+  { value: 26, weight: 110 },
+  { value: 27, weight: 105 },
+  { value: 28, weight: 95 },
+  { value: 29, weight: 85 },
+  { value: 30, weight: 75 },
+  { value: 31, weight: 65 },
+  { value: 32, weight: 55 },
+  { value: 33, weight: 45 },
+  { value: 34, weight: 35 },
+  { value: 35, weight: 25 },
+  { value: 36, weight: 15 },
+  { value: 37, weight: 10 },
+  { value: 38, weight: 7 },
+  { value: 39, weight: 4 },
+  { value: 40, weight: 2 },
+];
 
-  return [
-    ...Array.from({ length: peakCount }, () => 'peak' as const),
-    ...Array.from({ length: veteranCount }, () => 'veteran' as const),
-  ];
-};
+/** Peak under 30, so it can drive potential and service the same way the old bands did. */
+const ageBucketForAge = (age: number): Exclude<AgeBucket, 'prospect'> => (age <= 29 ? 'peak' : 'veteran');
 
 const getAgeForBucket = (bucket: AgeBucket, rng: RandomSource): number => {
   if (bucket === 'prospect') {
@@ -571,6 +604,9 @@ const getAgeForBucket = (bucket: AgeBucket, rng: RandomSource): number => {
   }
   return randomInt(33, 39, rng);
 };
+
+/** Draws a roster age from MLB_AGE_WEIGHTS, so a new universe is born on a real age curve. */
+const getRosterAge = (rng: RandomSource): number => weightedChoice(MLB_AGE_WEIGHTS, rng);
 
 const getPotential = (status: PlayerStatus, bucket: AgeBucket, rng: RandomSource): number => {
   if (status === 'prospect') {
@@ -871,7 +907,7 @@ const createPlayerFromBlueprint = (
   usedFullNames: Set<string>,
   rng: RandomSource,
 ): Player => {
-  const age = getAgeForBucket(blueprint.ageBucket, rng);
+  const age = blueprint.age ?? getAgeForBucket(blueprint.ageBucket, rng);
   const yearsPro = getYearsPro(age, blueprint.status, rng);
   const draftClassYear = blueprint.status === 'prospect' ? seasonYear : Math.max(seasonYear - yearsPro, seasonYear - Math.max(age - 18, 1));
   const names = buildUniqueName(usedFullNames, rng);
@@ -944,30 +980,33 @@ const getReservePrimaryPosition = (reserveIndex: number, rng: RandomSource): Pla
     ? sample(BATTING_POSITIONS, rng)
     : weightedChoice(RESERVE_PITCHER_POSITION_WEIGHTS, rng);
 
-const getActiveRosterBlueprints = (teams: Team[], rng: RandomSource): PlayerBlueprint[] => {
-  const ageBuckets = shuffle(getActiveAgeBuckets(teams.length * (CORE_ROSTER_SLOTS.length + RESERVE_ROSTER_SLOTS.length)), rng);
-
-  let ageIndex = 0;
-
-  return teams.flatMap((team) =>
+const getActiveRosterBlueprints = (teams: Team[], rng: RandomSource): PlayerBlueprint[] =>
+  teams.flatMap((team) =>
     [
-      ...CORE_ROSTER_SLOTS.map((slotCode) => ({
-        status: 'active' as const,
-        ageBucket: ageBuckets[ageIndex++] ?? 'peak',
-        primaryPosition: SLOT_TO_PRIMARY_POSITION[slotCode],
-        teamId: team.id,
-        slotCode,
-      })),
-      ...RESERVE_ROSTER_SLOTS.map((slotCode, reserveIndex) => ({
-        status: 'active' as const,
-        ageBucket: ageBuckets[ageIndex++] ?? 'peak',
-        primaryPosition: getReservePrimaryPosition(reserveIndex, rng),
-        teamId: team.id,
-        slotCode,
-      })),
+      ...CORE_ROSTER_SLOTS.map((slotCode) => {
+        const age = getRosterAge(rng);
+        return {
+          status: 'active' as const,
+          ageBucket: ageBucketForAge(age),
+          age,
+          primaryPosition: SLOT_TO_PRIMARY_POSITION[slotCode],
+          teamId: team.id,
+          slotCode,
+        };
+      }),
+      ...RESERVE_ROSTER_SLOTS.map((slotCode, reserveIndex) => {
+        const age = getRosterAge(rng);
+        return {
+          status: 'active' as const,
+          ageBucket: ageBucketForAge(age),
+          age,
+          primaryPosition: getReservePrimaryPosition(reserveIndex, rng),
+          teamId: team.id,
+          slotCode,
+        };
+      }),
     ],
   );
-};
 
 const getTargetPositionCounts = (activeBlueprints: PlayerBlueprint[]): Record<PlayerPosition, number> => {
   const batterTargets = distributeEvenly(BATTING_POSITIONS, SUPPLEMENTAL_BATTER_COUNT);

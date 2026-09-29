@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { LeaguePlayerState, Team, SimulationSettings } from '../types';
-import { Save, RotateCcw, Search, AlertTriangle, Trash2, Image as ImageIcon, Users, Download, Upload } from 'lucide-react';
+import { Team, SimulationSettings } from '../types';
+import { Save, RotateCcw, Search, AlertTriangle, Trash2, Image as ImageIcon, Download, Upload } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../logic/simulation';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+import { NewUniversePreviewModal } from './NewUniversePreview';
+import type { BuildNewUniverseResult } from '../logic/universeBootstrap';
+import type { LocalUniverseBundle } from '../logic/localUniverseState';
 import {
   deleteSupabaseSliderPreset,
-  exportLocalStateBundle,
-  importLocalStateBundle,
   loadSupabaseSliderPresets,
   saveSupabaseSliderPreset,
   SliderPresetRecord,
@@ -18,11 +19,11 @@ interface CommissionerSettingsProps {
   onSave: (teams: Team[], settings: SimulationSettings) => void;
   onCancel: () => void;
   onClearHistoricalData: () => Promise<void>;
-  onPreviewGeneratePlayers: () => void;
-  onGeneratePlayers: () => Promise<void>;
   onHardWipePlayers: () => Promise<void>;
+  onExportLocalBackup: () => Promise<LocalUniverseBundle>;
+  onImportLocalBackup: (payload: unknown) => Promise<void>;
   onDismissPlayerPreview: () => void;
-  playerGenerationPreview: LeaguePlayerState | null;
+  newUniversePreview: BuildNewUniverseResult | null;
   isClearingHistoricalData: boolean;
   isGeneratingPlayers: boolean;
   isWipingPlayers: boolean;
@@ -35,11 +36,11 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
   onSave,
   onCancel,
   onClearHistoricalData,
-  onPreviewGeneratePlayers,
-  onGeneratePlayers,
   onHardWipePlayers,
+  onExportLocalBackup,
+  onImportLocalBackup,
   onDismissPlayerPreview,
-  playerGenerationPreview,
+  newUniversePreview,
   isClearingHistoricalData,
   isGeneratingPlayers,
   isWipingPlayers,
@@ -304,34 +305,6 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
 
   const leagueAccentText = (league: Team['league']) => (league === 'Prestige' ? 'text-prestige' : 'text-platinum');
   const leagueAccentBorder = (league: Team['league']) => (league === 'Prestige' ? 'border-l-prestige/70' : 'border-l-platinum/70');
-  const previewPlayerIds = useMemo(
-    () => new Set((playerGenerationPreview?.players ?? []).map((player) => player.playerId)),
-    [playerGenerationPreview],
-  );
-  const previewBattingRatingsByPlayerId = useMemo(
-    () => new Map((playerGenerationPreview?.battingRatings ?? []).map((ratings) => [ratings.playerId, ratings])),
-    [playerGenerationPreview],
-  );
-  const previewPitchingRatingsByPlayerId = useMemo(
-    () => new Map((playerGenerationPreview?.pitchingRatings ?? []).map((ratings) => [ratings.playerId, ratings])),
-    [playerGenerationPreview],
-  );
-  const previewRosteredPlayerIds = useMemo(
-    () => new Set((playerGenerationPreview?.rosterSlots ?? []).map((slot) => slot.playerId)),
-    [playerGenerationPreview],
-  );
-  const previewPlayers = useMemo(
-    () => (playerGenerationPreview?.players ?? []).slice(0, 12),
-    [playerGenerationPreview],
-  );
-  const previewSeasonYear = useMemo(() => {
-    const allYears = [
-      ...(playerGenerationPreview?.battingRatings ?? []).map((ratings) => ratings.seasonYear),
-      ...(playerGenerationPreview?.pitchingRatings ?? []).map((ratings) => ratings.seasonYear),
-      ...(playerGenerationPreview?.rosterSlots ?? []).map((slot) => slot.seasonYear),
-    ];
-    return allYears.length > 0 ? Math.max(...allYears) : null;
-  }, [playerGenerationPreview]);
 
   const handleClearHistoricalData = () => {
     const approved = window.confirm(
@@ -353,10 +326,6 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     }
 
     void onHardWipePlayers();
-  };
-
-  const handleGeneratePlayers = () => {
-    onPreviewGeneratePlayers();
   };
 
   const handleSaveSettings = () => {
@@ -427,7 +396,7 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     setIsExportingBackup(true);
     setLocalBackupStatus(null);
     try {
-      const bundle = await exportLocalStateBundle();
+      const bundle = await onExportLocalBackup();
       const serialized = JSON.stringify(bundle, null, 2);
       const blob = new Blob([serialized], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -463,11 +432,8 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
     try {
       const rawText = await file.text();
       const parsed = JSON.parse(rawText);
-      await importLocalStateBundle(parsed);
-      setLocalBackupStatus('Backup imported. Reloading to apply it.');
-      window.setTimeout(() => {
-        window.location.reload();
-      }, 400);
+      await onImportLocalBackup(parsed);
+      setLocalBackupStatus('Backup imported and applied successfully.');
     } catch (error) {
       console.error('Failed to import local backup bundle:', error);
       const reason = error instanceof Error ? error.message : 'Unknown import error';
@@ -975,16 +941,10 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
                       Supabase is not configured, so there is no remote season history to clear.
                     </p>
                   )}
-                  <button
-                    onClick={handleGeneratePlayers}
-                    disabled={isGeneratingPlayers}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-platinum/90 hover:bg-platinum disabled:bg-white/10 disabled:text-slate-500 text-black font-display font-bold tracking-wide uppercase rounded-lg transition-all shadow-lg active:scale-95"
-                  >
-                    <Users className="w-4 h-4" />
-                    {isGeneratingPlayers ? 'Generating Players...' : 'Generate Players'}
-                  </button>
                   <p className="text-[11px] text-slate-500 font-mono">
-                    Builds a fresh player pool with unique first-name and last-name combinations, then syncs it to the app state.
+                    Starting a new universe is a single seeded action from the Simulation Center. It runs
+                    generate, develop, and fill-rosters in order, so the development model is in force from
+                    day one rather than after a season.
                   </p>
                   <button
                     onClick={handleHardWipePlayers}
@@ -1004,105 +964,11 @@ export const CommissionerSettings: React.FC<CommissionerSettingsProps> = ({
         </div>
       </div>
 
-      {playerGenerationPreview && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 px-4">
-          <div className="w-full max-w-6xl rounded-3xl border border-white/10 bg-[#141414] shadow-2xl">
-            <div className="flex items-center justify-between gap-4 border-b border-white/10 px-6 py-5">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Player Generation Preview</p>
-                <h3 className="font-display text-3xl uppercase tracking-[0.12em] text-white mt-1">
-                  {previewSeasonYear ? `Season ${previewSeasonYear}` : 'Generated Pool'}
-                </h3>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={onDismissPlayerPreview}
-                  className="px-4 py-2 text-sm font-display uppercase tracking-[0.12em] text-zinc-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => void onGeneratePlayers()}
-                  disabled={isGeneratingPlayers}
-                  className="flex items-center gap-2 rounded-xl bg-platinum px-5 py-2 text-sm font-display font-bold uppercase tracking-[0.12em] text-black disabled:bg-white/10 disabled:text-slate-500"
-                >
-                  <Users className="h-4 w-4" />
-                  {isGeneratingPlayers ? 'Uploading...' : 'Generate & Upload'}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 px-6 py-5 border-b border-white/10">
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Players</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">{playerGenerationPreview.players.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Batters</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">{playerGenerationPreview.battingRatings.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Pitchers</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">{playerGenerationPreview.pitchingRatings.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Rostered</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">{previewRosteredPlayerIds.size}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Rated</p>
-                <p className="font-display text-3xl uppercase tracking-[0.08em] text-white mt-2">
-                  {previewPlayerIds.size === 0 ? 0 : previewBattingRatingsByPlayerId.size + previewPitchingRatingsByPlayerId.size}
-                </p>
-              </div>
-            </div>
-
-            <div className="max-h-[60vh] overflow-y-auto px-6 py-5 scrollbar-subtle">
-              <div className="rounded-2xl border border-white/10 overflow-hidden">
-                <div className="grid grid-cols-[minmax(0,1.5fr)_80px_88px_90px_84px_84px_88px] gap-3 bg-white/5 px-4 py-3 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                  <span>Player</span>
-                  <span>Pos</span>
-                  <span>Status</span>
-                  <span>Team</span>
-                  <span>OVR</span>
-                  <span>POT</span>
-                  <span>Age</span>
-                </div>
-                <div className="divide-y divide-white/5">
-                  {previewPlayers.map((player) => {
-                    const battingRatings = previewBattingRatingsByPlayerId.get(player.playerId);
-                    const pitchingRatings = previewPitchingRatingsByPlayerId.get(player.playerId);
-                    const overall = battingRatings?.overall ?? pitchingRatings?.overall ?? '---';
-                    const potentialOverall = battingRatings?.potentialOverall ?? pitchingRatings?.potentialOverall ?? '---';
-                    const team = player.teamId ? teams.find((candidate) => candidate.id === player.teamId) ?? null : null;
-
-                    return (
-                      <div key={player.playerId} className="grid grid-cols-[minmax(0,1.5fr)_80px_88px_90px_84px_84px_88px] gap-3 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="font-display text-xl uppercase tracking-[0.08em] text-white truncate">
-                            {player.firstName} {player.lastName}
-                          </p>
-                          <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-500 truncate">
-                            {player.playerType} | {player.bats}/{player.throws}
-                          </p>
-                        </div>
-                        <span className="font-mono text-sm text-zinc-200">{player.primaryPosition}</span>
-                        <span className="font-mono text-sm text-zinc-200">{player.status.replace('_', ' ')}</span>
-                        <span className="font-mono text-sm text-zinc-200 truncate">{team ? team.city : 'None'}</span>
-                        <span className="font-mono text-sm text-zinc-100">{overall}</span>
-                        <span className="font-mono text-sm text-zinc-100">{potentialOverall}</span>
-                        <span className="font-mono text-sm text-zinc-200">{player.age}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <p className="mt-4 font-mono text-[11px] text-zinc-500">
-                Preview shows the first 12 generated players. Confirming will replace the current player pool and sync the full batch to Supabase.
-              </p>
-            </div>
-          </div>
-        </div>
+      {newUniversePreview && (
+        <NewUniversePreviewModal
+          preview={newUniversePreview}
+          onDismiss={onDismissPlayerPreview}
+        />
       )}
     </div>
   );

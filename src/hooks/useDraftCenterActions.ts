@@ -23,7 +23,7 @@ interface UseDraftCenterActionsArgs {
   games: Game[];
   teams: Team[];
   seasonComplete: boolean;
-  offseasonStage: 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+  offseasonStage: 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
   lotteryOpenDate: string;
   draftOpenDate: string;
   isSimulating: boolean;
@@ -42,6 +42,7 @@ interface UseDraftCenterActionsArgs {
   resolveSeasonYear: (currentDate: string | null | undefined, seasonGames?: Game[]) => number;
   removePlayersFromStateByIdSet: (playerState: LeaguePlayerState, playerIdsToRemove: Set<string>) => LeaguePlayerState;
   onAdvanceOffseasonToDraft: (seasonYear: number) => void;
+  onDraftCompleted: (playerState: LeaguePlayerState, seasonYear: number) => void;
 }
 
 interface UseDraftCenterActionsResult {
@@ -78,6 +79,7 @@ export const useDraftCenterActions = ({
   resolveSeasonYear,
   removePlayersFromStateByIdSet,
   onAdvanceOffseasonToDraft,
+  onDraftCompleted,
 }: UseDraftCenterActionsArgs): UseDraftCenterActionsResult => {
   const draftAutoRunTimerRef = useRef<number | null>(null);
 
@@ -155,6 +157,10 @@ export const useDraftCenterActions = ({
     setDraftCenter(nextDraftCenter);
     draftCenterRef.current = nextDraftCenter;
 
+    if (workingDraftClass.isComplete) {
+      onDraftCompleted(workingPlayerState, workingDraftClass.seasonYear);
+    }
+
     return {
       applied,
       completed: workingDraftClass.isComplete,
@@ -181,11 +187,6 @@ export const useDraftCenterActions = ({
 
     if (offseasonStage !== 'draft_lottery') {
       pushNotice('Lottery is view-only. You can only run it during the Draft Lottery stage.', 'warning');
-      return;
-    }
-
-    if (currentDate < lotteryOpenDate) {
-      pushNotice(`Lottery opens on ${lotteryOpenDate}.`, 'warning');
       return;
     }
 
@@ -258,6 +259,7 @@ export const useDraftCenterActions = ({
     offseasonStage,
     lotteryOpenDate,
     onAdvanceOffseasonToDraft,
+    onDraftCompleted,
     playerStateRef,
     pushNotice,
     removePlayersFromStateByIdSet,
@@ -272,10 +274,6 @@ export const useDraftCenterActions = ({
 
   const handleDraftNextPick = useCallback(async () => {
     if (isDraftProcessing) {
-      return;
-    }
-    if (currentDate < draftOpenDate) {
-      pushNotice(`Draft opens on ${draftOpenDate}.`, 'warning');
       return;
     }
     const result = executeDraftBatch(1);
@@ -298,10 +296,6 @@ export const useDraftCenterActions = ({
   }, [currentDate, draftOpenDate, executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState]);
 
   const runDraftAuto = useCallback((scope: 'round' | 'full') => {
-    if (currentDate < draftOpenDate) {
-      pushNotice(`Draft opens on ${draftOpenDate}.`, 'warning');
-      return;
-    }
     const activeClass = draftCenterRef.current.activeClass;
     if (!activeClass || activeClass.isComplete || isDraftProcessing) {
       return;

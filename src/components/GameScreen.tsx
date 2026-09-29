@@ -81,6 +81,7 @@ const createEmptyBroadcastSession = (
   date: game.date,
   awayTeamId: game.awayTeam,
   homeTeamId: game.homeTeam,
+  randomState: 1,
   participants,
   status: started ? 'in_progress' : 'pregame',
   inning: 1,

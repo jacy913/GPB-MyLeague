@@ -283,12 +283,26 @@ export const resetPlayerSeasonStats = (
   playerState: LeaguePlayerState,
   seasonYear: number,
 ): LeaguePlayerState => {
-  const battingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'batter');
-  const pitchingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'pitcher');
+  const battingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'batter' && player.status !== 'retired');
+  const pitchingPlayers = playerState.players.filter((player): player is Player => player.playerType === 'pitcher' && player.status !== 'retired');
+  const battingResetIds = new Set(battingPlayers.map((player) => player.playerId));
+  const pitchingResetIds = new Set(pitchingPlayers.map((player) => player.playerId));
+  const preservedBattingStats = playerState.battingStats.filter(
+    (stat) => stat.seasonYear !== seasonYear || stat.seasonPhase !== 'regular_season' || !battingResetIds.has(stat.playerId),
+  );
+  const preservedPitchingStats = playerState.pitchingStats.filter(
+    (stat) => stat.seasonYear !== seasonYear || stat.seasonPhase !== 'regular_season' || !pitchingResetIds.has(stat.playerId),
+  );
 
   return {
     ...playerState,
-    battingStats: battingPlayers.map((player) => createEmptyBattingStat(player.playerId, seasonYear, 'regular_season')),
-    pitchingStats: pitchingPlayers.map((player) => createEmptyPitchingStat(player.playerId, seasonYear, 'regular_season')),
+    battingStats: [
+      ...preservedBattingStats,
+      ...battingPlayers.map((player) => createEmptyBattingStat(player.playerId, seasonYear, 'regular_season')),
+    ],
+    pitchingStats: [
+      ...preservedPitchingStats,
+      ...pitchingPlayers.map((player) => createEmptyPitchingStat(player.playerId, seasonYear, 'regular_season')),
+    ],
   };
 };

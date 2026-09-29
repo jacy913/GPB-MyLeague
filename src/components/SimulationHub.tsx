@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { addDaysToISODate } from '../logic/simulation';
 import { isPlayoffGame, isRegularSeasonGame } from '../logic/playoffs';
+import { NewUniversePreviewModal } from './NewUniversePreview';
+import type { BuildNewUniverseResult } from '../logic/universeBootstrap';
 import { Game, SimulationTarget, Team } from '../types';
 
 export interface SimulationRunState {
@@ -33,7 +35,7 @@ export interface SimulationRunState {
   interruptionCount?: number;
 }
 
-type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 type TimelineStatus = 'complete' | 'active' | 'upcoming';
 
 interface TimelineStep {
@@ -81,6 +83,10 @@ interface SimulationHubProps {
   onCancelSimulation: () => void;
   onResetSeason: () => void;
   onTerminateUniverse: () => void;
+  universeSeedInput: string;
+  onSetUniverseSeedInput: (value: string) => void;
+  onPreviewNewUniverse: () => void;
+  newUniversePreview: BuildNewUniverseResult | null;
   onOpenTrades: () => void;
   onOpenFreeAgency: () => void;
   onOpenLottery: () => void;
@@ -211,6 +217,10 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
   onCancelSimulation,
   onResetSeason,
   onTerminateUniverse,
+  universeSeedInput,
+  onSetUniverseSeedInput,
+  onPreviewNewUniverse,
+  newUniversePreview,
   onOpenTrades,
   onOpenFreeAgency,
   onOpenLottery,
@@ -252,8 +262,6 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
 
   const [focusedMonth, setFocusedMonth] = useState(getMonthKey(cursorDate || activeDate || uniqueDates[0] || new Date().toISOString().slice(0, 7)));
   const [terminateModalOpen, setTerminateModalOpen] = useState(false);
-  const [terminateLeverValue, setTerminateLeverValue] = useState(0);
-  const terminateLeverArmed = terminateLeverValue >= 98;
 
   useEffect(() => {
     const sourceDate = simulationRunState?.currentDate || cursorDate || activeDate || uniqueDates[0] || simulationRunState?.targetDate || '';
@@ -261,12 +269,6 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
       setFocusedMonth(getMonthKey(sourceDate));
     }
   }, [activeDate, cursorDate, simulationRunState, uniqueDates]);
-
-  useEffect(() => {
-    if (!terminateModalOpen) {
-      setTerminateLeverValue(0);
-    }
-  }, [terminateModalOpen]);
 
   const calendarCells = useMemo(() => buildCalendarCells(focusedMonth), [focusedMonth]);
   const monthLabel = useMemo(
@@ -714,7 +716,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
               </button>
               <button onClick={() => onStartSimulation({ scope: 'season' })} disabled={controlsLocked || seasonComplete} className="rounded-2xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-4 text-left hover:border-[#d4bb6a]/40 disabled:opacity-50">
                 <p className="font-headline text-xl uppercase tracking-[0.08em] text-[#f3dea1]">Full Season</p>
-                <p className="mt-2 text-xs leading-5 text-zinc-300">Run everything, but still halt when the market needs commissioner attention.</p>
+                        <p className="mt-2 text-xs leading-5 text-zinc-300">Run everything continuously. Free agents choose their top offer and valid trades are accepted automatically.</p>
               </button>
             </div>
 
@@ -942,7 +944,7 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
             <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Commissioner Guidance</p>
             <div className="mt-4 space-y-3 text-sm leading-6 text-zinc-300">
               <p>The sim advances in daily steps now. That keeps the calendar visible, avoids opaque batch runs, and gives the office a clean place to stop for market activity.</p>
-              <p>New trade proposals can halt the run during the opening stretch. New free-agency opportunity alerts can halt the run when the market changes enough to deserve a manual decision.</p>
+              <p>The market runs automatically during simulation: free agents sign with their preferred offer and valid club trades are completed without commissioner approval.</p>
               <p>Reset is locked while a run is active. Stop the run first, then change course.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
@@ -963,30 +965,40 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 px-4 py-6 backdrop-blur-sm">
           <div className="w-full max-w-xl rounded-[1.75rem] border border-red-500/35 bg-[linear-gradient(135deg,#1a0b0b,#220f0f,#120808)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-red-300">Danger Zone</p>
-            <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">Terminate Universe</p>
+            <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">New Universe</p>
             <p className="mt-4 text-sm leading-6 text-zinc-300">
-              This will hard wipe all players, all season history, and the current league season state.
-              This action is irreversible.
+              Rebuilds the league from scratch: all players, all season history, the draft board, and the
+              current season state. The new pool is generated, developed, and rostered in one pass, so the
+              model is already in force on day one.
             </p>
 
-            <div className="mt-6 rounded-2xl border border-red-500/25 bg-black/25 p-4">
-              <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-red-200">Safety Lever</p>
-              <p className="mt-2 font-mono text-xs uppercase tracking-[0.16em] text-zinc-400">
-                Slide fully right to arm termination.
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
+              <label
+                htmlFor="universe-seed"
+                className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-400"
+              >
+                Universe Seed
+              </label>
+              <p className="mt-2 font-mono text-xs leading-5 text-zinc-500">
+                The same seed rebuilds the same universe exactly, so you can rerun a model change against a
+                fixed baseline. Change it to reroll the player pool.
               </p>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={terminateLeverValue}
-                onChange={(event) => setTerminateLeverValue(Number(event.target.value))}
-                className="mt-4 w-full accent-red-500"
-              />
-              <div className="mt-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em]">
-                <span className="text-zinc-500">Safe</span>
-                <span className={terminateLeverArmed ? 'text-red-200' : 'text-zinc-500'}>
-                  {terminateLeverArmed ? 'Armed' : 'Not Armed'}
-                </span>
+              <div className="mt-3 flex gap-2">
+                <input
+                  id="universe-seed"
+                  type="text"
+                  inputMode="numeric"
+                  value={universeSeedInput}
+                  onChange={(event) => onSetUniverseSeedInput(event.target.value)}
+                  className="min-w-0 flex-1 rounded-xl border border-white/15 bg-black/40 px-3 py-2 font-mono text-sm text-white outline-none focus:border-white/35"
+                />
+                <button
+                  type="button"
+                  onClick={() => onSetUniverseSeedInput(String(Math.floor(Math.random() * 999999)))}
+                  className="rounded-xl border border-white/15 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-300 hover:border-white/30"
+                >
+                  Reroll
+                </button>
               </div>
             </div>
 
@@ -1000,21 +1012,38 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
               </button>
               <button
                 type="button"
+                onClick={onPreviewNewUniverse}
+                disabled={controlsLocked}
+                className="rounded-2xl border border-white/20 bg-white/10 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-white hover:border-white/35 disabled:opacity-50"
+              >
+                Preview
+              </button>
+              <button
+                type="button"
                 onClick={() => {
-                  if (!terminateLeverArmed) {
-                    return;
-                  }
                   setTerminateModalOpen(false);
                   onTerminateUniverse();
                 }}
-                disabled={!terminateLeverArmed || controlsLocked}
-                className="rounded-2xl border border-red-500/35 bg-red-500/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-red-100 hover:border-red-400/45 disabled:opacity-50"
+                disabled={controlsLocked}
+                className="rounded-2xl border border-red-500/35 bg-red-500/20 px-4 py-3 font-headline text-xl uppercase tracking-[0.08em] text-red-100 hover:border-red-400/45 disabled:opacity-50 sm:col-span-2"
               >
-                Confirm Termination
+                Terminate &amp; Rebuild
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {newUniversePreview && (
+        <NewUniversePreviewModal
+          preview={newUniversePreview}
+          onDismiss={() => setTerminateModalOpen(true)}
+          isGenerating={isTerminatingUniverse}
+          onConfirm={() => {
+            setTerminateModalOpen(false);
+            onTerminateUniverse();
+          }}
+        />
       )}
     </section>
   );

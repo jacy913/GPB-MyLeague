@@ -1,6 +1,8 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { DraftHistoryEntry, DraftClassState } from '../logic/draftLogic';
+import type { LocalUniverseBundle } from '../logic/localUniverseState';
+import type { BuildNewUniverseResult } from '../logic/universeBootstrap';
 import { SimulationProgressUpdate } from '../logic/simulationManager';
 import {
   CompletedGameResult,
@@ -20,6 +22,7 @@ import { TeamCalendar } from './TeamCalendar';
 import { TeamsHub } from './TeamsHub';
 import { PlayersHub } from './PlayersHub';
 import { FreeAgencyHub } from './FreeAgencyHub';
+import { OffseasonHub } from './OffseasonHub';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
 import { LotteryHub } from './LotteryHub';
@@ -77,7 +80,7 @@ type SeasonResetStatus = {
   label: string;
 };
 
-type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
 interface AppViewRouterProps {
   view: AppView;
@@ -97,6 +100,8 @@ interface AppViewRouterProps {
   isDraftOpen: boolean;
   isFreeAgencyMarketOpen: boolean;
   freeAgencyMarketStatusMessage: string;
+  offseasonSeasonYear: number;
+  offseasonChampionLabel: string;
   isSimulating: boolean;
   isFinalizingSimulation: boolean;
   simulationProgress: SimulationProgressUpdate | null;
@@ -124,7 +129,9 @@ interface AppViewRouterProps {
   seasonHistory: SeasonHistoryEntry[];
   settings: SimulationSettings;
   dataSource: 'supabase' | 'local';
-  playerGenerationPreview: LeaguePlayerState | null;
+  newUniversePreview: BuildNewUniverseResult | null;
+  universeSeedInput: string;
+  onSetUniverseSeedInput: (value: string) => void;
   isClearingHistoricalData: boolean;
   isGeneratingPlayers: boolean;
   isWipingPlayers: boolean;
@@ -159,6 +166,10 @@ interface AppViewRouterProps {
   onVetoPendingTrade: (proposalId: string) => void;
   onRefreshTradeBoard: () => void;
   onAssignFreeAgent: (assignment: FreeAgencyAssignment) => void;
+  onShakeUpFreeAgency: () => void;
+  onAutoSelectAwards: () => void;
+  onSimulateRetirements: () => void;
+  onCompleteFreeAgency: () => void;
   onGenerateDraftClass: () => void;
   onDraftNextPick: () => void;
   onAutoDraftRound: () => void;
@@ -174,8 +185,6 @@ interface AppViewRouterProps {
   onClearNotifications: () => void;
   onSaveSettings: (newTeams: Team[], newSettings: SimulationSettings) => void;
   onClearHistoricalData: () => void;
-  onPreviewGeneratePlayers: () => void;
-  onGeneratePlayers: () => void;
   onHardWipePlayers: () => void;
   onDismissPlayerPreview: () => void;
 }
@@ -198,6 +207,8 @@ export const AppViewRouter = ({
   isDraftOpen,
   isFreeAgencyMarketOpen,
   freeAgencyMarketStatusMessage,
+  offseasonSeasonYear,
+  offseasonChampionLabel,
   isSimulating,
   isFinalizingSimulation,
   simulationProgress,
@@ -225,7 +236,9 @@ export const AppViewRouter = ({
   seasonHistory,
   settings,
   dataSource,
-  playerGenerationPreview,
+  newUniversePreview,
+  universeSeedInput,
+  onSetUniverseSeedInput,
   isClearingHistoricalData,
   isGeneratingPlayers,
   isWipingPlayers,
@@ -255,6 +268,10 @@ export const AppViewRouter = ({
   onVetoPendingTrade,
   onRefreshTradeBoard,
   onAssignFreeAgent,
+  onShakeUpFreeAgency,
+  onAutoSelectAwards,
+  onSimulateRetirements,
+  onCompleteFreeAgency,
   onGenerateDraftClass,
   onDraftNextPick,
   onAutoDraftRound,
@@ -270,8 +287,6 @@ export const AppViewRouter = ({
   onClearNotifications,
   onSaveSettings,
   onClearHistoricalData,
-  onPreviewGeneratePlayers,
-  onGeneratePlayers,
   onHardWipePlayers,
   onDismissPlayerPreview,
 }: AppViewRouterProps) => (
@@ -363,6 +378,8 @@ export const AppViewRouter = ({
           onCancelSimulation={onCancelSimulation}
           onResetSeason={onResetSeason}
           onTerminateUniverse={onTerminateUniverse}
+          universeSeedInput={universeSeedInput}
+          onSetUniverseSeedInput={onSetUniverseSeedInput}
           seasonResetStatus={seasonResetStatus}
           onOpenTrades={() => onSetView('trades')}
           onOpenFreeAgency={() => onSetView('free_agency')}
@@ -427,8 +444,33 @@ export const AppViewRouter = ({
           marketStatusMessage={freeAgencyMarketStatusMessage}
           seasonComplete={seasonComplete}
           onAssignPlayer={onAssignFreeAgent}
+          onShakeUp={onShakeUpFreeAgency}
+          onCompleteMarket={seasonComplete && offseasonStage === 'free_agency' ? onCompleteFreeAgency : undefined}
           onExit={() => onSetView('dashboard')}
         />
+      )}
+
+      {view === 'offseason' && seasonComplete && offseasonStage !== 'idle' && (
+        <OffseasonHub
+          seasonYear={offseasonSeasonYear}
+          stage={offseasonStage}
+          championLabel={offseasonChampionLabel}
+          awardsComplete={seasonHistory.some((entry) => entry.seasonYear === offseasonSeasonYear)}
+          lotteryComplete={Boolean(draftClass)}
+          draftComplete={Boolean(draftClass?.isComplete)}
+          onAwards={onAutoSelectAwards}
+          onRetirements={onSimulateRetirements}
+          onLottery={onGenerateDraftClass}
+          onDraft={onAutoDraftAll}
+          onFreeAgency={onCompleteFreeAgency}
+          onStartSeason={onResetSeason}
+        />
+      )}
+      {view === 'offseason' && !seasonComplete && (
+        <section className="rounded-[2rem] border border-white/10 bg-[#171717] p-10 text-center">
+          <p className="font-headline text-4xl uppercase tracking-[0.06em] text-white">Offseason Locked</p>
+          <p className="mt-3 text-sm text-zinc-400">The checklist opens automatically when the World Series champion is announced.</p>
+        </section>
       )}
 
       {view === 'trades' && (
@@ -565,11 +607,9 @@ export const AppViewRouter = ({
           onSave={onSaveSettings}
           onCancel={() => onSetView('games_schedule')}
           onClearHistoricalData={onClearHistoricalData}
-          onPreviewGeneratePlayers={onPreviewGeneratePlayers}
-          onGeneratePlayers={onGeneratePlayers}
           onHardWipePlayers={onHardWipePlayers}
           onDismissPlayerPreview={onDismissPlayerPreview}
-          playerGenerationPreview={playerGenerationPreview}
+          newUniversePreview={newUniversePreview}
           isClearingHistoricalData={isClearingHistoricalData}
           isGeneratingPlayers={isGeneratingPlayers}
           isWipingPlayers={isWipingPlayers}

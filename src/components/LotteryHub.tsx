@@ -4,7 +4,7 @@ import { Team } from '../types';
 import { DRAFT_ROUNDS, DraftClassState, DraftPickRecord } from '../logic/draftLogic';
 import { TeamLogo } from './TeamLogo';
 
-type OffseasonStage = 'idle' | 'draft_lottery' | 'draft' | 'free_agency';
+type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
 interface LotteryHubProps {
   teams: Team[];

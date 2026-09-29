@@ -2,6 +2,7 @@
 
 import { PendingTradeProposal } from '../types';
 import { buildFreeAgencyMarketEntries } from '../logic/freeAgencyLogic';
+import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../logic/automaticMarket';
 import { SimulationManager } from '../logic/simulationManager';
 import { isRegularSeasonGame } from '../logic/playoffs';
 import { generatePendingTradeProposals } from '../logic/tradeLogic';
@@ -215,6 +216,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         },
       });
 
+      working.playerState = automaticallySignFreeAgents(finalizedTeams, working.playerState, result.currentDate);
       const regularSeasonGames = working.games.filter(isRegularSeasonGame);
       const nextTrades = generatePendingTradeProposals(
         finalizedTeams,
@@ -224,59 +226,12 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       );
       const newTrades = nextTrades.filter((proposal) => !knownTradeIds.has(getStableTradeMarketKey(proposal)));
       knownTradeIds = new Set(nextTrades.map(getStableTradeMarketKey));
-
-      const nextFreeAgencyAlerts = getSimulationFreeAgencyAlerts({
-        ...startPayload,
-        teams: finalizedTeams,
-        games: working.games,
-        playerState: working.playerState,
-      });
-      const newFreeAgencyAlerts = nextFreeAgencyAlerts.filter((alert) => !knownFreeAgencyKeys.has(alert.key));
-      knownFreeAgencyKeys = new Set(nextFreeAgencyAlerts.map((alert) => alert.key));
+      if (newTrades.length > 0) {
+        working.playerState = automaticallyAcceptTrades(newTrades, working.playerState, result.currentDate);
+      }
 
       if (startPayload.throttleMs > 0) {
         await delay(startPayload.throttleMs);
-      }
-
-      if (newTrades.length > 0) {
-        postMessageToMain({
-          type: 'interrupted',
-          payload: {
-            snapshot: {
-              teams: finalizedTeams,
-              games: working.games,
-              playerState: working.playerState,
-              currentDate: result.currentDate,
-              seasonComplete: complete,
-              simulatedGameCount: totalSimulatedGames,
-            },
-            interruptionKind: 'trade',
-            interruptionCount: newTrades.length,
-            pendingTrades: nextTrades,
-            message: `${newTrades.length} new trade proposal${newTrades.length === 1 ? '' : 's'} surfaced on ${result.currentDate}. Review the market before continuing.`,
-          },
-        });
-        return;
-      }
-
-      if (newFreeAgencyAlerts.length > 0) {
-        postMessageToMain({
-          type: 'interrupted',
-          payload: {
-            snapshot: {
-              teams: finalizedTeams,
-              games: working.games,
-              playerState: working.playerState,
-              currentDate: result.currentDate,
-              seasonComplete: complete,
-              simulatedGameCount: totalSimulatedGames,
-            },
-            interruptionKind: 'free_agency',
-            interruptionCount: newFreeAgencyAlerts.length,
-            message: `${newFreeAgencyAlerts[0]?.playerName ?? 'A free agent'} drew a fresh offer from ${newFreeAgencyAlerts[0]?.teamName ?? 'a club'}. Review the market before continuing.`,
-          },
-        });
-        return;
       }
 
       if (useTargetScopeForStep) {

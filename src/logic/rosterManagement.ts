@@ -2,6 +2,7 @@ import {
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
   CoreRosterSlotCode,
+  ALL_ROSTER_SLOTS,
   LeaguePlayerState,
   Player,
   PlayerBattingRatings,
@@ -25,7 +26,160 @@ type RosterRepairResult = {
   battingCoverageByTeamId: Record<string, number>;
 };
 
+export interface RosterInvariantViolation {
+  teamId: string | null;
+  code:
+    | 'missing_slot'
+    | 'duplicate_slot'
+    | 'duplicate_player'
+    | 'missing_player'
+    | 'wrong_team'
+    | 'inactive_player'
+    | 'unassigned_active_player';
+  message: string;
+  playerId?: string;
+  slotCode?: RosterSlotCode;
+}
+
+export interface RosterTeamAudit {
+  teamId: string;
+  assignedSlotCount: number;
+  activePlayerCount: number;
+  missingSlots: RosterSlotCode[];
+  violations: RosterInvariantViolation[];
+}
+
+export interface RosterInvariantAudit {
+  seasonYear: number;
+  isValid: boolean;
+  totalViolations: number;
+  teams: RosterTeamAudit[];
+  violations: RosterInvariantViolation[];
+}
+
 const DH_FIT_POSITIONS = new Set(['DH', '1B', 'LF', 'RF', '3B', 'C']);
+
+export const auditRosterInvariants = (
+  playerState: LeaguePlayerState,
+  teams: Array<{ id: string }>,
+  seasonYear?: number,
+): RosterInvariantAudit => {
+  const resolvedSeasonYear = seasonYear ?? getLatestSeasonYear(playerState.rosterSlots, new Date().getUTCFullYear());
+  const playersById = new Map(playerState.players.map((player) => [player.playerId, player]));
+  const slotsForSeason = playerState.rosterSlots.filter((slot) => slot.seasonYear === resolvedSeasonYear);
+  const violations: RosterInvariantViolation[] = [];
+  const assignedPlayerIds = new Map<string, TeamRosterSlot>();
+  const teamAudits = teams.map((team) => {
+    const teamId = team.id;
+    const teamSlots = slotsForSeason.filter((slot) => slot.teamId === teamId);
+    const teamViolations: RosterInvariantViolation[] = [];
+    const slotsByCode = new Map<RosterSlotCode, TeamRosterSlot[]>();
+
+    teamSlots.forEach((slot) => {
+      const slots = slotsByCode.get(slot.slotCode) ?? [];
+      slots.push(slot);
+      slotsByCode.set(slot.slotCode, slots);
+
+      const player = playersById.get(slot.playerId);
+      if (!player) {
+        teamViolations.push({
+          teamId,
+          code: 'missing_player',
+          message: `Roster slot ${slot.slotCode} references missing player ${slot.playerId}.`,
+          playerId: slot.playerId,
+          slotCode: slot.slotCode,
+        });
+      } else {
+        if (player.teamId !== teamId) {
+          teamViolations.push({
+            teamId,
+            code: 'wrong_team',
+            message: `Player ${player.playerId} is assigned to ${teamId} but belongs to ${player.teamId ?? 'no team'}.`,
+            playerId: player.playerId,
+            slotCode: slot.slotCode,
+          });
+        }
+        if (player.status !== 'active') {
+          teamViolations.push({
+            teamId,
+            code: 'inactive_player',
+            message: `Roster slot ${slot.slotCode} contains ${player.status} player ${player.playerId}.`,
+            playerId: player.playerId,
+            slotCode: slot.slotCode,
+          });
+        }
+      }
+
+      const previousAssignment = assignedPlayerIds.get(slot.playerId);
+      if (previousAssignment) {
+        teamViolations.push({
+          teamId,
+          code: 'duplicate_player',
+          message: `Player ${slot.playerId} is assigned to multiple roster slots.`,
+          playerId: slot.playerId,
+          slotCode: slot.slotCode,
+        });
+      } else {
+        assignedPlayerIds.set(slot.playerId, slot);
+      }
+    });
+
+    slotsByCode.forEach((slots, slotCode) => {
+      if (slots.length > 1) {
+        teamViolations.push({
+          teamId,
+          code: 'duplicate_slot',
+          message: `Roster slot ${slotCode} is assigned ${slots.length} times.`,
+          slotCode,
+        });
+      }
+    });
+
+    const missingSlots = ALL_ROSTER_SLOTS.filter((slotCode) => !slotsByCode.has(slotCode));
+    missingSlots.forEach((slotCode) => {
+      teamViolations.push({
+        teamId,
+        code: 'missing_slot',
+        message: `Roster slot ${slotCode} is empty.`,
+        slotCode,
+      });
+    });
+
+    const activePlayerIds = new Set(
+      playerState.players
+        .filter((player) => player.teamId === teamId && player.status === 'active')
+        .map((player) => player.playerId),
+    );
+    const assignedTeamPlayerIds = new Set(teamSlots.map((slot) => slot.playerId));
+    activePlayerIds.forEach((playerId) => {
+      if (!assignedTeamPlayerIds.has(playerId)) {
+        teamViolations.push({
+          teamId,
+          code: 'unassigned_active_player',
+          message: `Active player ${playerId} belongs to the team but has no roster slot.`,
+          playerId,
+        });
+      }
+    });
+
+    violations.push(...teamViolations);
+    return {
+      teamId,
+      assignedSlotCount: teamSlots.length,
+      activePlayerCount: activePlayerIds.size,
+      missingSlots,
+      violations: teamViolations,
+    };
+  });
+
+  return {
+    seasonYear: resolvedSeasonYear,
+    isValid: violations.length === 0,
+    totalViolations: violations.length,
+    teams: teamAudits,
+    violations,
+  };
+};
 
 const getLatestSeasonYear = (rosterSlots: TeamRosterSlot[], fallbackYear: number): number =>
   rosterSlots.length > 0 ? Math.max(...rosterSlots.map((slot) => slot.seasonYear)) : fallbackYear;
@@ -242,7 +396,16 @@ export const repairRosterSlotsForTeams = (
     };
   }
 
-  const seasonYear = getLatestSeasonYear(playerState.rosterSlots, fallbackSeasonYear);
+  // Repair the newest year we know about, but never a year older than the one
+  // the caller asked for. Taking the max of the two matters at the offseason
+  // boundary: the new season has no slots yet, so the latest slot year is still
+  // last season's. Repairing that instead would leave the new season with zero
+  // slots, which every caller then reads as "all 928 roster spots are vacant"
+  // and fills by generating and signing a surplus of new players.
+  const seasonYear = Math.max(
+    getLatestSeasonYear(playerState.rosterSlots, 0),
+    fallbackSeasonYear,
+  );
   const teamIdSet = new Set(uniqueTeamIds);
   const battingRatingsByPlayerId = createLatestBattingRatingsMap(playerState.battingRatings);
   const pitchingRatingsByPlayerId = createLatestPitchingRatingsMap(playerState.pitchingRatings);

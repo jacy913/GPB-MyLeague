@@ -54,9 +54,6 @@ const LOCAL_SAFETY_SNAPSHOT_PREFIX = 'gpb_local_safety_snapshot_v1_';
 const LOCAL_SAFETY_SNAPSHOT_INDEX_KEY = 'gpb_local_safety_snapshot_index_v1';
 const LOCAL_SAFETY_SNAPSHOT_LIMIT = 5;
 const LOCAL_SAFETY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 1000;
-const LOCAL_EXPORT_FORMAT = 'gpb_local_state_export';
-const LOCAL_EXPORT_VERSION = 1;
-const LOCAL_DRAFT_CENTER_KEY = 'gpb_draft_center_v1';
 let localSafetySnapshotLastAt = 0;
 let localSafetySnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -74,9 +71,9 @@ let cachedLeagueId: string | null = null;
 let ensureLeaguePromise: Promise<string> | null = null;
 let supabaseBackoffUntil = 0;
 
-export interface LocalStateExportBundle {
-  format: typeof LOCAL_EXPORT_FORMAT;
-  version: typeof LOCAL_EXPORT_VERSION;
+interface LocalSafetySnapshot {
+  format: 'gpb_local_safety_snapshot';
+  version: 1;
   exportedAt: string;
   leagueState: {
     teams: Team[] | null;
@@ -87,9 +84,6 @@ export interface LocalStateExportBundle {
     seasonComplete: boolean | null;
   };
   playerState: LeaguePlayerState;
-  extras?: {
-    draftCenterRaw: string | null;
-  };
 }
 
 interface TeamRow {
@@ -1134,9 +1128,9 @@ const queueLocalSafetySnapshot = (): void => {
           loadLocalLeagueStateAsync(),
           loadLocalPlayerStateAsync(),
         ]);
-        const snapshot: LocalStateExportBundle = {
-          format: LOCAL_EXPORT_FORMAT,
-          version: LOCAL_EXPORT_VERSION,
+        const snapshot: LocalSafetySnapshot = {
+          format: 'gpb_local_safety_snapshot',
+          version: 1,
           exportedAt: new Date().toISOString(),
           leagueState: {
             ...leagueState,
@@ -1144,12 +1138,6 @@ const queueLocalSafetySnapshot = (): void => {
             seasonComplete: normalizeSeasonComplete(leagueState.seasonComplete),
           },
           playerState,
-          extras: {
-            draftCenterRaw:
-              typeof localStorage !== 'undefined'
-                ? localStorage.getItem(LOCAL_DRAFT_CENTER_KEY)
-                : null,
-          },
         };
         const snapshotId = `${LOCAL_SAFETY_SNAPSHOT_PREFIX}${Date.now()}`;
         await writeIndexedDbValues([[snapshotId, JSON.stringify(snapshot)]]);
@@ -1167,154 +1155,6 @@ const queueLocalSafetySnapshot = (): void => {
       }
     })();
   }, delay);
-};
-
-const asObjectRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-
-const assertStringOrNull = (value: unknown, label: string): string | null => {
-  if (typeof value === 'string' || value === null) {
-    return value;
-  }
-  throw new Error(`Invalid backup payload: ${label} must be a string or null.`);
-};
-
-const assertNumber = (value: unknown, label: string): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  throw new Error(`Invalid backup payload: ${label} must be a finite number.`);
-};
-
-const assertBoolean = (value: unknown, label: string): boolean => {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  throw new Error(`Invalid backup payload: ${label} must be a boolean.`);
-};
-
-const assertArray = <T>(value: unknown, label: string): T[] => {
-  if (Array.isArray(value)) {
-    return value as T[];
-  }
-  throw new Error(`Invalid backup payload: ${label} must be an array.`);
-};
-
-const parseImportBundle = (payload: unknown): LocalStateExportBundle => {
-  const root = asObjectRecord(payload);
-  if (!root) {
-    throw new Error('Invalid backup payload: root must be an object.');
-  }
-
-  if (root.format !== LOCAL_EXPORT_FORMAT) {
-    throw new Error('Invalid backup payload: unsupported format.');
-  }
-  if (root.version !== LOCAL_EXPORT_VERSION) {
-    throw new Error('Invalid backup payload: unsupported version.');
-  }
-
-  const leagueStateRaw = asObjectRecord(root.leagueState);
-  const playerStateRaw = asObjectRecord(root.playerState);
-  if (!leagueStateRaw || !playerStateRaw) {
-    throw new Error('Invalid backup payload: missing leagueState or playerState.');
-  }
-
-  const settingsRaw = asObjectRecord(leagueStateRaw.settings);
-
-  return {
-    format: LOCAL_EXPORT_FORMAT,
-    version: LOCAL_EXPORT_VERSION,
-    exportedAt: typeof root.exportedAt === 'string' ? root.exportedAt : new Date().toISOString(),
-    leagueState: {
-      teams: leagueStateRaw.teams === null ? null : assertArray<Team>(leagueStateRaw.teams, 'leagueState.teams'),
-      settings: settingsRaw ? {
-        continuityWeight: assertNumber(settingsRaw.continuityWeight, 'leagueState.settings.continuityWeight'),
-        winLossVariance: assertNumber(settingsRaw.winLossVariance, 'leagueState.settings.winLossVariance'),
-        homeFieldAdvantage: assertNumber(settingsRaw.homeFieldAdvantage, 'leagueState.settings.homeFieldAdvantage'),
-        gameLuckFactor: assertNumber(settingsRaw.gameLuckFactor, 'leagueState.settings.gameLuckFactor'),
-        leagueEnvironmentBalance: assertNumber(settingsRaw.leagueEnvironmentBalance, 'leagueState.settings.leagueEnvironmentBalance'),
-        battingVarianceFactor: assertNumber(settingsRaw.battingVarianceFactor, 'leagueState.settings.battingVarianceFactor'),
-      } : null,
-      games: leagueStateRaw.games === null ? null : assertArray<Game>(leagueStateRaw.games, 'leagueState.games'),
-      currentDate: assertStringOrNull(leagueStateRaw.currentDate, 'leagueState.currentDate'),
-      progress: leagueStateRaw.progress === null
-        ? null
-        : assertNumber(leagueStateRaw.progress, 'leagueState.progress'),
-      seasonComplete: leagueStateRaw.seasonComplete === null
-        ? null
-        : assertBoolean(leagueStateRaw.seasonComplete, 'leagueState.seasonComplete'),
-    },
-    playerState: {
-      players: assertArray<Player>(playerStateRaw.players, 'playerState.players'),
-      battingStats: assertArray<PlayerSeasonBatting>(playerStateRaw.battingStats, 'playerState.battingStats'),
-      pitchingStats: assertArray<PlayerSeasonPitching>(playerStateRaw.pitchingStats, 'playerState.pitchingStats'),
-      battingRatings: assertArray<PlayerBattingRatings>(playerStateRaw.battingRatings, 'playerState.battingRatings'),
-      pitchingRatings: assertArray<PlayerPitchingRatings>(playerStateRaw.pitchingRatings, 'playerState.pitchingRatings'),
-      rosterSlots: assertArray<TeamRosterSlot>(playerStateRaw.rosterSlots, 'playerState.rosterSlots'),
-      transactions: assertArray<PlayerTransaction>(playerStateRaw.transactions, 'playerState.transactions'),
-    },
-    extras: (() => {
-      const extrasRaw = asObjectRecord(root.extras);
-      if (!extrasRaw) {
-        return undefined;
-      }
-      return {
-        draftCenterRaw: assertStringOrNull(extrasRaw.draftCenterRaw, 'extras.draftCenterRaw'),
-      };
-    })(),
-  };
-};
-
-export const exportLocalStateBundle = async (): Promise<LocalStateExportBundle> => {
-  const [leagueState, playerState] = await Promise.all([
-    loadLocalLeagueStateAsync(),
-    loadLocalPlayerStateAsync(),
-  ]);
-
-  return {
-    format: LOCAL_EXPORT_FORMAT,
-    version: LOCAL_EXPORT_VERSION,
-    exportedAt: new Date().toISOString(),
-    leagueState: {
-      ...leagueState,
-      progress: normalizeProgress(leagueState.progress),
-      seasonComplete: normalizeSeasonComplete(leagueState.seasonComplete),
-    },
-    playerState,
-    extras: {
-      draftCenterRaw:
-        typeof localStorage !== 'undefined'
-          ? localStorage.getItem(LOCAL_DRAFT_CENTER_KEY)
-          : null,
-    },
-  };
-};
-
-export const importLocalStateBundle = async (payload: unknown): Promise<void> => {
-  const bundle = parseImportBundle(payload);
-  const { leagueState, playerState } = bundle;
-
-  if (!leagueState.teams || !leagueState.settings || !leagueState.games || !leagueState.currentDate) {
-    throw new Error('Backup is missing required league state fields.');
-  }
-
-  saveLocalLeagueState(
-    leagueState.teams,
-    leagueState.settings,
-    leagueState.games,
-    leagueState.currentDate,
-    normalizeProgress(leagueState.progress),
-    normalizeSeasonComplete(leagueState.seasonComplete),
-  );
-  saveLocalPlayerState(playerState);
-  if (typeof localStorage !== 'undefined' && bundle.extras?.draftCenterRaw !== undefined) {
-    if (bundle.extras.draftCenterRaw === null) {
-      localStorage.removeItem(LOCAL_DRAFT_CENTER_KEY);
-    } else {
-      localStorage.setItem(LOCAL_DRAFT_CENTER_KEY, bundle.extras.draftCenterRaw);
-    }
-  }
-  queueLocalSafetySnapshot();
 };
 
 export const saveLocalLeagueState = (

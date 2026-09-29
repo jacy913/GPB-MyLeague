@@ -318,6 +318,235 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
     'GameParticipantsSnapshot + PlayerGameStatDelta: the bridge between roster data and interactive game resolution',
   ];
 
+  // -------------------------------------------------------------------------
+  // Park environment module blueprint
+  // -------------------------------------------------------------------------
+
+  type ParkDimensionTier = 'A' | 'B' | 'C';
+
+  interface ParkDimensionSpec {
+    key: string;
+    name: string;
+    tier: ParkDimensionTier;
+    leverage: string;
+    choices: string[];
+    effect: string;
+  }
+
+  const PARK_TIER_LABELS: Record<ParkDimensionTier, { label: string; note: string; className: string }> = {
+    A: {
+      label: 'Tier A — Large Effect',
+      note: 'These move scoring enough that getting them wrong would be visible in the box score. Decide these carefully for all 32 teams.',
+      className: 'border-prestige/30 bg-prestige/8',
+    },
+    B: {
+      label: 'Tier B — Moderate Effect',
+      note: 'Real, measurable, but small enough that reasonable disagreement between parks is fine.',
+      className: 'border-white/10 bg-black/25',
+    },
+    C: {
+      label: 'Tier C — Flavor / Narrative',
+      note: 'Adds texture rather than accuracy. Only worth building if it makes the park feel like somewhere.',
+      className: 'border-white/10 bg-black/25',
+    },
+  };
+
+  const parkDimensions: ParkDimensionSpec[] = [
+    {
+      key: 'altitude',
+      name: 'Altitude',
+      tier: 'A',
+      leverage: 'Dominant single factor',
+      choices: ['Sea level', 'Moderate (800–1,500 ft)', 'High (3,000–4,500 ft)', 'Extreme (5,000–6,500 ft)'],
+      effect:
+        'Air density at 5,280 ft is about 85% of sea level, so the ball carries roughly 17% farther — a 400 ft drive becomes ~468. That single change converts a wide band of deep flies into home runs, which is why an extreme-altitude park runs an HR factor near 145 and not 130. Pitching suffers through a separate channel: breaking balls lose bite in thin air, so sliders and changeups flatten.',
+    },
+    {
+      key: 'roof',
+      name: 'Roof / Enclosure',
+      tier: 'A',
+      leverage: 'High, and per-game if retractable',
+      choices: ['Open air', 'Fixed roof, natural air', 'Retractable, currently open', 'Retractable, currently closed', 'Climate-controlled dome'],
+      effect:
+        'A dome is not just "no rain." It means constant temperature, no sun, no wind, and — the sneaky part — the pitcher has no visual distractions, which measurably helps hitters. On a retractable park the roof state becomes a genuine per-game variable rather than a park constant.',
+    },
+    {
+      key: 'wallDistances',
+      name: 'Outfield Wall Distances',
+      tier: 'A',
+      leverage: 'Most direct control available',
+      choices: ['LF', 'LCF', 'CF', 'RCF', 'RF — each in feet'],
+      effect:
+        'Five numbers per park. A 350 ft RF wall and a 400 ft RF wall are different ballparks for a right-handed power hitter and nearly identical for a contact hitter. Suggested simplification: derive LCF and RCF as 12.5% interpolations of LF/CF and CF/RF, since real parks are usually roughly symmetric that way and it halves the data entry.',
+    },
+    {
+      key: 'wallHeight',
+      name: 'Wall Height',
+      tier: 'A',
+      leverage: 'High, and handedness-asymmetric',
+      choices: ['Low (3–5 ft)', 'Standard (6–8 ft)', 'Tall (10–14 ft)', 'Monument (20–40 ft)'],
+      effect:
+        'Converts doubles into home runs. A 40 ft wall at 379 ft produces a completely different season than the same distance at 8 ft. The classic monster wall is a short porch for one handedness and a curtain for the other, which is why handedness splits matter so much at that park.',
+    },
+    {
+      key: 'wallColor',
+      name: 'Wall Color / Material',
+      tier: 'A',
+      leverage: 'Real but small',
+      choices: ['White / padded', 'Dark / green / brick', 'Glass / patterned'],
+      effect:
+        'Light-colored walls absorb more energy on impact, so a white wall turns balls that would clear a dark wall into doubles and outs. Cheap to include as a multiplier, and one of the more satisfying details to get right.',
+    },
+    {
+      key: 'climate',
+      name: 'Climate Regime',
+      tier: 'A',
+      leverage: 'High, two separate channels',
+      choices: ['Cold, short season', 'Temperate', 'Hot, dry', 'Hot, humid / tropical', 'Cool, coastal'],
+      effect:
+        'Drives ball carry and pitcher endurance at once. Hot air is less dense (roughly 5% between 15°C and 30°C) so balls carry ~5% farther, and cold dense air is the reverse. But the larger effect is fatigue: heat and humidity drain pitchers, and cold does the same thing by a different route. A 4.20 ERA pitcher at 95°F and high humidity is not the same pitcher as that same pitcher in October.',
+    },
+    {
+      key: 'surface',
+      name: 'Surface',
+      tier: 'B',
+      leverage: 'Moderate, mostly via ground balls',
+      choices: ['Natural grass', 'Artificial turf', 'Hybrid (turf base, grass top)'],
+      effect:
+        'Turf skips harder and more consistently, which plays up the ground-ball game and produces more double plays. It also measurably raises infield error rates, and it wears on pitchers, fielders, and baserunners who slide. Turf also drains, so a wet-weather game means something different on turf than on grass.',
+    },
+    {
+      key: 'grassLength',
+      name: 'Grass Length',
+      tier: 'B',
+      leverage: 'Moderate — this is the GB/FB split',
+      choices: ['Short, mow-hard', 'Standard', 'Long, thick'],
+      effect:
+        'Deliberately separate from surface. Long grass kills bloopers and turns grounders into singles; short grass lets grounders through. This dimension is really a ground-ball park factor vs. fly-ball park factor in disguise, which is how modern sabermetrics splits park factors anyway. If directional splits are ever wanted, this is where they come from.',
+    },
+    {
+      key: 'soil',
+      name: 'Soil Composition',
+      tier: 'B',
+      leverage: 'Small, but interacts with surface',
+      choices: ['Dry, hard-packed', 'Standard clay', 'Damp / heavy', 'Sandy / loose'],
+      effect:
+        'Damp clay kills hops, so grounders become singles and the double-play rate drops. Dry hard clay does the opposite. Small on its own, but it compounds with surface, so pick both and let the sim combine them with the right signs rather than treating them as independent.',
+    },
+    {
+      key: 'humidity',
+      name: 'Humidity',
+      tier: 'B',
+      leverage: 'Small on carry, real on fatigue',
+      choices: ['Arid', 'Moderate', 'Humid / oppressive'],
+      effect:
+        'Worth keeping separate from climate regime because the two often disagree — one hot arid city and one hot humid city with the same temperature play very differently. Humid air is slightly less dense so balls carry a little further, but the real cost lands on the pitching staff.',
+    },
+    {
+      key: 'foulTerritory',
+      name: 'Foul Territory',
+      tier: 'B',
+      leverage: 'Moderate on HR and K',
+      choices: ['Small', 'Standard', 'Generous'],
+      effect:
+        'Generous foul ground means fewer balls are caught in foul territory, which meaningfully raises home run rates and strikeout rates together. A well-known large-park archetype runs a neutral HR factor with an elevated run factor, and this is the dimension that produces it.',
+    },
+    {
+      key: 'wind',
+      name: 'Wind Exposure',
+      tier: 'C',
+      leverage: 'Niche — best as a per-game roll',
+      choices: ['Sheltered', 'Occasional', 'Windy'],
+      effect:
+        'Real, but wind direction is genuinely random in reality, so this is better modeled as an occasional per-game modifier than a fixed park constant. The lake-effect and marine-layer parks are the archetypes here.',
+    },
+    {
+      key: 'sunShadow',
+      name: "Batter's Box Sun",
+      tier: 'C',
+      leverage: 'Niche',
+      choices: ['Full sun', 'Moving shadow line', 'Mostly shaded'],
+      effect:
+        'Beloved and genuinely real — the shadow line that crosses the plate in afternoon games. Only affects day games at a subset of parks, so it is pure texture unless a per-game weather layer gets built.',
+    },
+    {
+      key: 'sightlines',
+      name: 'Sightlines / Background',
+      tier: 'C',
+      leverage: 'Narrative only',
+      choices: ['Open sky', 'Urban backdrop', 'Industrial / distracting'],
+      effect:
+        'The visual backdrop behind the wall is theorized to affect pitcher focus. No defensible number exists for it, so this belongs in flavor text rather than in the outcome weights.',
+    },
+    {
+      key: 'drainage',
+      name: 'Drainage / Rain Delays',
+      tier: 'C',
+      leverage: 'Narrative only',
+      choices: ['Excellent', 'Average', 'Poor'],
+      effect:
+        'Purely narrative unless a per-game weather layer exists. Flagged because it is the dimension that would decide whether rain shortens games or merely changes their character.',
+    },
+  ];
+
+  const parkDerivedFactors = [
+    {
+      factor: 'HR Factor',
+      drivenBy: 'Altitude, climate temperature, humidity, wall distance, wall height, wall color, foul territory, roof',
+    },
+    {
+      factor: 'FB Factor',
+      drivenBy: 'Altitude, climate temperature, humidity, field distances, roof',
+    },
+    {
+      factor: 'GB Factor',
+      drivenBy: 'Surface, grass length, soil composition, wall distance',
+    },
+    {
+      factor: 'Run Factor',
+      drivenBy: 'All of the above, plus pitcher fatigue rate from climate and humidity',
+    },
+  ];
+
+  const parkInteractions = [
+    'Altitude × temperature on home run carry. Both are air-density effects and they compound, so the model must multiply them rather than add two separate home run penalties.',
+    'Surface × grass length on ground balls. These are the same outcome arriving through two doors; combining them additively would double count.',
+    'Roof × climate regime. A climate-controlled dome should neutralize the climate regime outright, not stack on top of it.',
+    'Wall distance × wall height. A short wall only produces a home run if the wall is also tall enough to be over it. Distance alone is not sufficient.',
+    'Foul territory × wall height. Generous foul ground and tall walls both suppress balls in play, and they overlap more than they appear to.',
+  ];
+
+  const parkCalibrationRefs = [
+    { archetype: 'Extreme altitude, open air', reference: 'Coors-style', hr: '~145', run: '~115' },
+    { archetype: 'Hot, dry, roofed', reference: 'Desert dome', hr: '~100 (spikes in summer)', run: '~101' },
+    { archetype: 'Sea level, hot, huge foul ground', reference: 'Large foul territory', hr: '~99', run: '~101' },
+    { archetype: 'Short porch, monument wall opposite', reference: 'Yankee-style', hr: '~103', run: '~101' },
+    { archetype: 'Deep, tall walls, sea level', reference: 'Citi-style', hr: '~93', run: '~98' },
+    { archetype: 'Suppressed by marine layer', reference: 'Petco / Oracle-style', hr: '~92', run: '~96–97' },
+    { archetype: 'Cold, sheltered, asymmetric walls', reference: 'Fenway-style', hr: '~100', run: '~97' },
+    { archetype: 'Hot, humid, retractable roof', reference: 'Retractable dome', hr: '~98', run: '~97' },
+    { archetype: 'Cool, large, elevated bowl', reference: 'Dodger-style', hr: '~96', run: '~92' },
+    { archetype: 'Ivy, brick, wind off the lake', reference: 'Wrigley-style', hr: '~101', run: '~101' },
+  ];
+
+  const parkHandpickPriority = [
+    'Hand-pick with care — these define the park identity: altitude, roof status, the five wall distances, wall height, surface. Six decisions per team.',
+    'Hand-pick quickly — low sensitivity, reasonable disagreement is fine: climate regime, humidity, grass length, foul territory. Four per team.',
+    'Let the sim derive — never hand-set these directly: HR / FB / GB / run factors, pitcher fatigue rate, home-field advantage magnitude, and every home/road split the teams show.',
+  ];
+
+  const parkDataContract = [
+    "ParkProfile: teamId, altitudeBand, roofType, roofState ('open' | 'closed' | 'n/a'), surface, grassLength, soilType, climateRegime, humidityBand, foulTerritory",
+    'ParkDimensions: lfFt, lcfFt, cfFt, rcfFt, rfFt, wallHeightFt, wallColor',
+    'ParkFactors: teamId, seasonYear, hrFactor, fbFactor, gbFactor, runFactor, temperatureModifier, pitcherFatigueRate',
+    'GameWeather (optional per-game layer): gameId, roofState, temperatureBand, humidityBand, windBand, precipitation',
+  ];
+
+  const parkOpenDecisions = [
+    'Whether park factors are fixed properties of the park, or live state that varies game to game.',
+    'Fixed baselines are simpler and historically accurate for most dimensions. A per-game weather layer is what makes heat waves and rain matter, and it is a materially different build. Cheaper to choose now than to retrofit later.',
+  ];
+
 
   return (
     <section className="space-y-6">
@@ -849,6 +1078,150 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
           </div>
           <p className="font-mono text-[11px] text-zinc-500 mt-2">
             Note: Home record fields are required to fully support your tiebreak logic in code.
+          </p>
+        </section>
+      </article>
+
+      <article className="bg-gradient-to-br from-[#1d1d1d] via-[#242424] to-[#191919] border border-white/10 rounded-2xl p-5 md:p-6">
+        <h3 className="font-display text-3xl uppercase tracking-widest text-white mb-1">Park Environment Module Blueprint (Draft)</h3>
+        <p className="font-mono text-xs text-zinc-500 mb-4">
+          Design reference for the ballpark environment layer. Every dimension below is a physical fact about a park, hand-assigned per team, from which the simulation derives its scoring factors.
+        </p>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Dimensions</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">{parkDimensions.length}</p>
+          </div>
+          <div className="rounded-xl border border-prestige/30 bg-prestige/8 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Tier A (Build First)</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">{parkDimensions.filter((d) => d.tier === 'A').length}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Derived Factors</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">{parkDerivedFactors.length}</p>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+            <p className="font-mono text-[10px] uppercase text-zinc-500">Parks To Assign</p>
+            <p className="font-mono text-lg text-zinc-100 mt-1">{teams.length || 32}</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-platinum/25 bg-[linear-gradient(135deg,rgba(23,182,144,0.1),rgba(255,255,255,0.02))] px-4 py-3 mb-4">
+          <p className="font-mono text-[11px] uppercase text-zinc-400">Core Design Decision</p>
+          <p className="text-sm text-zinc-200 mt-2">
+            Hand-pick the physical properties, and let the simulation derive the factors. Never hand-set a park's HR factor directly.
+          </p>
+          <p className="text-sm text-zinc-300 mt-2">
+            Setting altitude, grass length, wall distances, and roof status and computing the scoring consequences from those is far less tedious than maintaining four derived numbers per team, keeps everything self-consistent when a dimension is tweaked, and forces interactions to be handled honestly rather than quietly double counted. Every dimension below is still a hand decision — it is just a decision about a fact about the ballpark rather than a conclusion about scoring.
+          </p>
+        </div>
+
+        {(['A', 'B', 'C'] as ParkDimensionTier[]).map((tier) => {
+          const tierMeta = PARK_TIER_LABELS[tier];
+          const tierDims = parkDimensions.filter((d) => d.tier === tier);
+          return (
+            <section key={tier} className={`rounded-xl border px-4 py-3 mb-4 ${tierMeta.className}`}>
+              <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100">{tierMeta.label}</h4>
+              <p className="font-mono text-[11px] text-zinc-500 mt-1 mb-3">{tierMeta.note}</p>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                {tierDims.map((dim) => (
+                  <div key={dim.key} className="rounded-lg border border-white/10 bg-[#111] px-3 py-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="font-display text-lg uppercase tracking-wide text-zinc-100">{dim.name}</p>
+                      <p className="font-mono text-[10px] uppercase text-prestige">{dim.leverage}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {dim.choices.map((choice) => (
+                        <span key={choice} className="rounded bg-white/5 border border-white/10 px-2 py-0.5 font-mono text-[10px] text-zinc-300">
+                          {choice}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-sm text-zinc-400 mt-2">{dim.effect}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">How Dimensions Roll Up Into Factors</h4>
+          <p className="text-sm text-zinc-400 mb-3">
+            Four derived outputs, which the game consumes by multiplying the existing at-bat outcome weights before the roll. This is the entire integration cost — no pitch modeling, no sequencing, no change to the at-bat.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {parkDerivedFactors.map((item) => (
+              <div key={item.factor} className="rounded-lg border border-white/10 bg-[#111] px-3 py-2">
+                <p className="font-mono text-xs uppercase text-platinum">{item.factor}</p>
+                <p className="font-mono text-[11px] text-zinc-400 mt-1">{item.drivenBy}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/8 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Interaction Warnings</h4>
+          <p className="font-mono text-[11px] text-zinc-500 mb-2">Where the derivation must multiply rather than add, to avoid double counting the same physical effect twice.</p>
+          <div className="space-y-1.5">
+            {parkInteractions.map((item) => (
+              <p key={item} className="font-mono text-[11px] text-zinc-300">— {item}</p>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Calibration References</h4>
+          <p className="font-mono text-[11px] text-zinc-500 mb-3">
+            Multi-year figures for well-established real ballparks, given as archetype names rather than specific cities so they transfer to this league. Use these to sanity check assignments — if six parks end up within 2% of each other, the hand-picking was too conservative.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {parkCalibrationRefs.map((ref) => (
+              <div key={ref.archetype} className="rounded-lg border border-white/10 bg-[#111] px-3 py-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="font-mono text-[11px] uppercase text-zinc-200">{ref.archetype}</p>
+                  <p className="font-mono text-[10px] text-zinc-500">{ref.reference}</p>
+                </div>
+                <div className="flex gap-4 mt-1">
+                  <p className="font-mono text-[11px] text-platinum">HR {ref.hr}</p>
+                  <p className="font-mono text-[11px] text-prestige">RUN {ref.run}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="font-mono text-[11px] text-zinc-500 mt-3">
+            Note on the cold, asymmetric archetype: a monument wall can be extreme for one handedness while still producing a neutral park-wide factor, because the home run gain for lefties and the extra-base-hit loss for everyone else largely cancel. Do not assume a big wall means a scoring park.
+          </p>
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Assignment Priority</h4>
+          <div className="space-y-2">
+            {parkHandpickPriority.map((item) => (
+              <div key={item} className="rounded-lg border border-white/10 bg-[#111] px-3 py-2">
+                <p className="font-mono text-[11px] text-zinc-300">{item}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-prestige/25 bg-prestige/8 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Open Decision</h4>
+          {parkOpenDecisions.map((item) => (
+            <p key={item} className="text-sm text-zinc-300">{item}</p>
+          ))}
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 mt-4">
+          <h4 className="font-display text-xl uppercase tracking-wide text-zinc-100 mb-2">Data Contract For Future Build</h4>
+          <div className="bg-[#111] border border-white/10 rounded-lg p-3 font-mono text-xs text-zinc-300 overflow-x-auto">
+            {parkDataContract.map((item) => (
+              <p key={item} className="mt-1 first:mt-0">{item}</p>
+            ))}
+          </div>
+          <p className="font-mono text-[11px] text-zinc-500 mt-2">
+            Normalization note: compute each factor relative to the league average once per season rather than hardcoding league assumptions. That keeps the run environment self-correcting instead of drifting, which is the failure mode to avoid.
           </p>
         </section>
       </article>
