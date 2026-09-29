@@ -1701,9 +1701,14 @@ const reportCareerFlow = () => {
     const leftOpen = avg((l) => l.openSlotsLeft);
     const unsigned = avg((l) => l.unsignedRemaining);
 
+    // releasedToMarket counts every player whose contract ran out, whether or
+    // not they were offered a qualifying offer first, so qualifiersDeclined is a
+    // SUBSET of it and the two must not be added together.
+    const released = avg((l) => l.releasedToMarket);
+    const declined = avg((l) => l.qualifiersDeclined);
     console.log(`  slots vacant at offseason start   ${slotsOpen.toFixed(1)}`);
-    console.log(`  contracts ended -> market         ${avg((l) => l.releasedToMarket).toFixed(1)}`);
-    console.log(`  qualifying offers declined        ${avg((l) => l.qualifiersDeclined).toFixed(1)}`);
+    console.log(`  released to market (total)        ${released.toFixed(1)}`);
+    console.log(`    of which declined a QO          ${declined.toFixed(1)}   (subset, not additional supply)`);
     console.log(`  free agents signed                 ${signed.toFixed(1)}`);
     console.log(`  rookies drafted instead            ${drafted.toFixed(1)}`);
     console.log(`  vacancies left unfilled            ${leftOpen.toFixed(1)}`);
@@ -1718,6 +1723,11 @@ const reportCareerFlow = () => {
     console.log('');
     console.log(`  vacancy fill rate                 ${(fillRate * 100).toFixed(0)}%`);
     console.log(`  signings vs unsigned pool         ${(demandVsSupply * 100).toFixed(0)}%`);
+    // Supply against demand, on the true totals. Anything released that the
+    // market cannot absorb has to survive as unsigned depth, and the age-out is
+    // what eventually removes it, so this ratio is what sets the pool size.
+    console.log(`  supply vs vacancies               ${released.toFixed(0)} released for ${slotsOpen.toFixed(0)} slots   (${(released / Math.max(1, slotsOpen)).toFixed(2)}x)`);
+    console.log(`  aged out as backstop               ${avg((l) => l.agedOutFreeAgents).toFixed(1)}`);
     const draftPicks = avg((l) => l.draftPicks);
     const drafteesUnsigned = avg((l) => l.drafteesUnsigned);
     console.log(`  draft picks                       ${draftPicks.toFixed(0)}`);
