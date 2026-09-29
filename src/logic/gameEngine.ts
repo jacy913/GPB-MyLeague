@@ -491,15 +491,32 @@ const getOutcomeWeights = (
   const pitcherForm = getPitcherFormBonus(pitcher) * (0.75 + settings.battingVarianceFactor * 0.5);
   const edge = teamEdge + homeBonus + noise + fatiguePenalty + batterForm - pitcherForm;
 
+  // Base weights are anchored to the league's real per-plate-appearance outcome
+  // rates rather than being free-floating constants. An MLB plate appearance
+  // resolves roughly as:
+  //
+  //   strikeout 18.5%   out in play 48.1%   walk 9.2%
+  //   single    15.0%   double      4.8%    triple 0.6%   homer 2.9%
+  //
+  // The totals here (862) are arbitrary as a scale -- only the proportions
+  // matter, because pickOutcome normalises by the sum -- so each base is the real
+  // share multiplied by 862. The modifier coefficients around them are unchanged,
+  // and are what make a good hitter and a good pitcher move outcomes apart.
+  //
+  // This matters more than it sounds. The previous intercepts were unanchored,
+  // and the league drifted to too many strikeouts and singles with too few
+  // homers, extra-base hits and walks, which showed up as 2.96 runs per
+  // team-game against a real 4.28: the right number of outs turning into the
+  // wrong outcomes.
   return {
-    OUT: clamp(408 - contactEdge * 0.82 - powerEdge * 0.1 + defenseQuality * 0.35 - edge * 0.31 - environmentBias * 33, 295, 570),
-    SO: clamp(181 - strikeoutEdge * 1.07 + (pitcher.pitchingRatings.command - batter.battingRatings.contact) * 0.45 - fatiguePenalty * 0.36 - batterForm * 0.09 + pitcherForm * 0.21 - environmentBias * 8.5, 88, 262),
-    BB: clamp(70 + disciplineEdge * 0.58 + (pitcher.pitchingRatings.command - pitcher.pitchingRatings.control) * -0.18 + fatiguePenalty * 0.3 + edge * 0.055 + environmentBias * 6, 28, 118),
-    '1B': clamp(143 + contactEdge * 0.72 + batterForm * 0.18 - pitcherForm * 0.17 + edge * 0.21 + environmentBias * 15, 96, 210),
-    '2B': clamp(33 + powerEdge * 0.3 + speedEdge * 0.1 + batterForm * 0.075 - pitcherForm * 0.07 + edge * 0.065 + environmentBias * 5, 11, 56),
-    '3B': clamp(3.5 + speedEdge * 0.048 + contactEdge * 0.012 + environmentBias * 0.45, 0.8, 8.5),
-    HR: clamp(19.5 + powerEdge * 0.34 + batterForm * 0.11 - pitcherForm * 0.1 + edge * 0.06 - defenseQuality * 0.02 + environmentBias * 3.5, 3.5, 38),
-    ERR: clamp(4 + (90 - defenseQuality) * 0.09 + environmentBias * 0.35, 0.5, 8),
+    OUT: clamp(414 - contactEdge * 0.82 - powerEdge * 0.1 + defenseQuality * 0.35 - edge * 0.31 - environmentBias * 33, 295, 570),
+    SO: clamp(160 - strikeoutEdge * 1.07 + (pitcher.pitchingRatings.command - batter.battingRatings.contact) * 0.45 - fatiguePenalty * 0.36 - batterForm * 0.09 + pitcherForm * 0.21 - environmentBias * 8.5, 88, 262),
+    BB: clamp(79 + disciplineEdge * 0.58 + (pitcher.pitchingRatings.command - pitcher.pitchingRatings.control) * -0.18 + fatiguePenalty * 0.3 + edge * 0.055 + environmentBias * 6, 28, 118),
+    '1B': clamp(129 + contactEdge * 0.72 + batterForm * 0.18 - pitcherForm * 0.17 + edge * 0.21 + environmentBias * 15, 96, 210),
+    '2B': clamp(41 + powerEdge * 0.3 + speedEdge * 0.1 + batterForm * 0.075 - pitcherForm * 0.07 + edge * 0.065 + environmentBias * 5, 11, 56),
+    '3B': clamp(5.4 + speedEdge * 0.048 + contactEdge * 0.012 + environmentBias * 0.45, 0.8, 8.5),
+    HR: clamp(24.6 + powerEdge * 0.34 + batterForm * 0.11 - pitcherForm * 0.1 + edge * 0.06 - defenseQuality * 0.02 + environmentBias * 3.5, 3.5, 38),
+    ERR: clamp(8.6 + (90 - defenseQuality) * 0.09 + environmentBias * 0.35, 0.5, 16),
   };
 };
 
@@ -702,6 +719,123 @@ const scoreRunner = (session: GameSessionState, runnerId: string | null) => {
   ensureBattingDelta(session, runnerId).runsScored += 1;
 };
 
+/**
+ * Probability that a runner scores, by hit type and the runner's starting base.
+ *
+ * The base rates are the observed ones: a runner on third almost always comes
+ * home on a single, a runner on second is a coin flip on a double, and a runner
+ * on first is nearly always held to second on a single. That last pair is where
+ * this engine was badly wrong -- it was rolling roughly even odds for a runner
+ * to score from first on a single, which happens about 2% of the time in
+ * baseball. Because singles are the most common hit in the league, that one
+ * number was generating most of the surplus runs: the league scored 6.58 R/game
+ * while collecting 12.6 total bases per team-game, a rate of 0.522 runs per
+ * base against a real 0.314.
+ *
+ * Each figure is then nudged by the runner's own speed so a burner and a
+ * lead-footed masher do not advance identically, but the modifier is deliberately
+ * narrow. Base rates describe the league; speed should shade them, not replace
+ * them.
+ */
+type RunnerOrigin = 'first' | 'second' | 'third';
+
+const SCORING_ADVANCE_RATES: Record<string, Partial<Record<RunnerOrigin, number>>> = {
+  single: {
+    third: 0.97,
+    second: 0.39,
+    // Held to second. Roughly 1 in 50, not 1 in 2.
+    first: 0.02,
+  },
+  double: {
+    third: 0.99,
+    second: 0.6,
+    first: 0.11,
+  },
+  triple: {
+    third: 1.0,
+    second: 0.95,
+    first: 0.88,
+  },
+};
+
+/**
+ * Applies a runner's speed to a scoring base rate.
+ *
+ * Speed is rated on the same 60-100 scale as every other attribute, so it is
+ * centred by 75 to get a multiplier. The spread is deliberately narrow: a
+ * league-average rate stays close to its observed value no matter who is running,
+ * because the real distribution of advancement is wide and this engine's speed
+ * ratings are not yet sharp enough to redistribute it meaningfully.
+ */
+const scoreChance = (session: GameSessionState, runnerId: string | null, baseRate: number): number => {
+  if (!runnerId) {
+    return 0;
+  }
+  const speedFactor = clamp((getRunnerSpeed(session, runnerId) - 75) / 25, -0.4, 0.4);
+  return clamp(baseRate * (1 + speedFactor * 0.35), baseRate * 0.6, Math.min(1, baseRate * 1.5));
+};
+
+/**
+ * Optional diagnostic probe for the run environment.
+ *
+ * Questions about scoring cannot be answered from the box score, because the
+ * box score records what happened to hitters and never what happened to runners
+ * already aboard. This collects, per at-bat, how many runners were on base and
+ * how many runs each outcome produced -- the two facts needed to tell a league
+ * that swings too little apart from one that strands its baserunners.
+ *
+ * It is inert unless startGameEngineProbe() is called and nothing is persisted,
+ * so ordinary simulation pays nothing for it. The league lab switches it on when
+ * it needs to attribute scoring, then reads and resets it.
+ */
+export interface GameEngineProbe {
+  plateAppearances: number;
+  runnersOnBase: number;
+  /** Counters indexed by 0, 1, 2, 3 runners aboard. */
+  baseCounts: [number, number, number, number];
+  runsByOutcome: Record<string, number>;
+  plateAppearancesByOutcome: Record<string, number>;
+}
+
+let activeProbe: GameEngineProbe | null = null;
+
+export const startGameEngineProbe = (): void => {
+  activeProbe = {
+    plateAppearances: 0,
+    runnersOnBase: 0,
+    baseCounts: [0, 0, 0, 0],
+    runsByOutcome: {},
+    plateAppearancesByOutcome: {},
+  };
+};
+
+export const readGameEngineProbe = (): GameEngineProbe | null =>
+  activeProbe
+    ? {
+        plateAppearances: activeProbe.plateAppearances,
+        runnersOnBase: activeProbe.runnersOnBase,
+        baseCounts: [...activeProbe.baseCounts] as [number, number, number, number],
+        runsByOutcome: { ...activeProbe.runsByOutcome },
+        plateAppearancesByOutcome: { ...activeProbe.plateAppearancesByOutcome },
+      }
+    : null;
+
+export const stopGameEngineProbe = (): void => {
+  activeProbe = null;
+};
+
+const recordProbeAtBat = (bases: BaseState, outcome: AtBatOutcome, runsScored: number): void => {
+  if (!activeProbe) {
+    return;
+  }
+  const occupied = (bases.first ? 1 : 0) + (bases.second ? 1 : 0) + (bases.third ? 1 : 0);
+  activeProbe.plateAppearances += 1;
+  activeProbe.runnersOnBase += occupied;
+  activeProbe.baseCounts[occupied] += 1;
+  activeProbe.runsByOutcome[outcome] = (activeProbe.runsByOutcome[outcome] ?? 0) + runsScored;
+  activeProbe.plateAppearancesByOutcome[outcome] = (activeProbe.plateAppearancesByOutcome[outcome] ?? 0) + 1;
+};
+
 const assignRunsAndRbi = (
   session: GameSessionState,
   scoringPlayerIds: string[],
@@ -747,6 +881,7 @@ const resolveSingleLikeAdvance = (
   session: GameSessionState,
   batterId: string,
 ): { bases: BaseState; scoringPlayerIds: string[] } => {
+  const rates = SCORING_ADVANCE_RATES.single;
   const scoringPlayerIds: string[] = [];
   const runnerFromThird = session.bases.third;
   const runnerFromSecond = session.bases.second;
@@ -756,16 +891,14 @@ const resolveSingleLikeAdvance = (
     scoringPlayerIds.push(runnerFromThird);
   }
 
-  const secondRunnerScores = runnerFromSecond
-    ? nextRandom(session) < clamp((getRunnerSpeed(session, runnerFromSecond) - 55) / 55, 0.45, 0.92)
-    : false;
+  const secondRunnerScores =
+    runnerFromSecond !== null && nextRandom(session) < scoreChance(session, runnerFromSecond, rates.second!);
   if (runnerFromSecond && secondRunnerScores) {
     scoringPlayerIds.push(runnerFromSecond);
   }
 
-  const firstRunnerToThird = runnerFromFirst
-    ? nextRandom(session) < clamp((getRunnerSpeed(session, runnerFromFirst) - 45) / 60, 0.25, 0.82)
-    : false;
+  const firstRunnerToThird =
+    runnerFromFirst !== null && nextRandom(session) < scoreChance(session, runnerFromFirst, rates.first!);
 
   return {
     bases: {
@@ -781,20 +914,29 @@ const resolveDoubleAdvance = (
   session: GameSessionState,
   batterId: string,
 ): { bases: BaseState; scoringPlayerIds: string[] } => {
-  const scoringPlayerIds = [session.bases.third, session.bases.second].filter((runnerId): runnerId is string => Boolean(runnerId));
-  const runnerFromFirstScores = session.bases.first
-    ? nextRandom(session) < clamp((getRunnerSpeed(session, session.bases.first) - 45) / 65, 0.3, 0.78)
-    : false;
+  const rates = SCORING_ADVANCE_RATES.double;
+  const scoringPlayerIds: string[] = [];
+  const runnerFromThird = session.bases.third;
+  const runnerFromSecond = session.bases.second;
+  const runnerFromFirst = session.bases.first;
 
-  if (session.bases.first && runnerFromFirstScores) {
-    scoringPlayerIds.push(session.bases.first);
+  // The runner from second does not automatically come home on a double. That
+  // was hardcoded to score, which is a base rate near 60%, not 100%.
+  if (runnerFromThird) {
+    scoringPlayerIds.push(runnerFromThird);
+  }
+  if (runnerFromSecond && nextRandom(session) < scoreChance(session, runnerFromSecond, rates.second!)) {
+    scoringPlayerIds.push(runnerFromSecond);
+  }
+  if (runnerFromFirst && nextRandom(session) < scoreChance(session, runnerFromFirst, rates.first!)) {
+    scoringPlayerIds.push(runnerFromFirst);
   }
 
   return {
     bases: {
       first: null,
       second: batterId,
-      third: session.bases.first && !runnerFromFirstScores ? session.bases.first : null,
+      third: runnerFromFirst && !scoringPlayerIds.includes(runnerFromFirst) ? runnerFromFirst : null,
     },
     scoringPlayerIds,
   };
@@ -803,16 +945,29 @@ const resolveDoubleAdvance = (
 const resolveTripleAdvance = (
   session: GameSessionState,
   batterId: string,
-): { bases: BaseState; scoringPlayerIds: string[] } => ({
-  bases: {
-    first: null,
-    second: null,
-    third: batterId,
-  },
-  scoringPlayerIds: [session.bases.first, session.bases.second, session.bases.third].filter(
-    (runnerId): runnerId is string => Boolean(runnerId),
-  ),
-});
+): { bases: BaseState; scoringPlayerIds: string[] } => {
+  const rates = SCORING_ADVANCE_RATES.triple;
+  const scoringPlayerIds: string[] = [];
+  const origins: Array<[RunnerOrigin, string | null]> = [
+    ['third', session.bases.third],
+    ['second', session.bases.second],
+    ['first', session.bases.first],
+  ];
+  for (const [origin, runnerId] of origins) {
+    if (runnerId && nextRandom(session) < scoreChance(session, runnerId, rates[origin]!)) {
+      scoringPlayerIds.push(runnerId);
+    }
+  }
+
+  return {
+    bases: {
+      first: null,
+      second: null,
+      third: batterId,
+    },
+    scoringPlayerIds,
+  };
+};
 
 const resolveHomeRunAdvance = (
   session: GameSessionState,
@@ -1227,6 +1382,9 @@ export const simulateNextAtBat = (
 
   assignRunsAndRbi(nextSession, scoringPlayerIds, batter.playerId, pitcher.playerId, rbi, outcome !== 'ERR');
   nextSession = addRuns(nextSession, runsScored);
+  // `session.bases` is the pre-at-bat state, which is the occupancy this
+  // plate appearance was decided against.
+  recordProbeAtBat(session.bases, outcome, runsScored);
   nextSession = advanceBatterIndex(nextSession);
   nextSession = appendLog(nextSession, createLog(nextSession, outcome, description, batter, pitcher, defender, runsScored, rbi, scoringPlayerIds));
 

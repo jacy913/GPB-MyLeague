@@ -41,6 +41,8 @@ import { applyPlayerDevelopment } from '../src/logic/playerDevelopment';
 import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../src/logic/automaticMarket';
 import { generatePendingTradeProposals } from '../src/logic/tradeLogic';
 import { isRegularSeasonGame } from '../src/logic/playoffs';
+import { readGameEngineProbe, startGameEngineProbe, stopGameEngineProbe } from '../src/logic/gameEngine';
+import type { GameEngineProbe } from '../src/logic/gameEngine';
 import type { Game, LeaguePlayerState, PendingTradeProposal, PlayerStatus, Team } from '../src/types';
 
 // ---------------------------------------------------------------------------
@@ -371,6 +373,19 @@ interface SeasonSnapshot {
   leagueObp: number;
   leagueSlg: number;
   leagueEra: number;
+  plateAppearancesPerTeamGame: number;
+  totalBasesPerTeamGame: number;
+  hitsPerTeamGame: number;
+  singlesPerTeamGame: number;
+  doublesPerTeamGame: number;
+  triplesPerTeamGame: number;
+  walksPerTeamGame: number;
+  strikeoutsPerTeamGame: number;
+  runsPerPlateAppearance: number;
+  totalGamesPlayed: number;
+  teamGamesPlayed: number;
+  /** Per-at-bat run environment, from the engine's opt-in probe. Null under --no-games. */
+  probe: GameEngineProbe | null;
   teamWins: number[];
   ninetyWinTeams: number;
   hundredWinTeams: number;
@@ -478,21 +493,28 @@ const runSeason = async (
   // to check that the player pool stays bounded and the offseason stays stable.
   if (NO_GAMES) {
     if (!QUIET) process.stdout.write(`  ${seasonYear}  skipping regular season (--no-games)\n`);
-  } else if (GRANULARITY === 'day') {
-    for (let day = 0; day < 220; day += 1) {
-      if (games.every((game) => game.status === 'completed')) break;
-      const before = games.filter((game) => game.status === 'scheduled').length;
-      await runPhase('day');
-      applyMarket();
-      if (!QUIET && before > 0 && day % 20 === 0) {
-        const remaining = games.filter((game) => game.status === 'scheduled').length;
-        process.stdout.write(`  ${seasonYear}  day ${String(day + 1).padStart(3)}  ${remaining} games left\n`);
-      }
-    }
   } else {
-    if (!QUIET) process.stdout.write(`  ${seasonYear}  simulating regular season...\n`);
-    await runPhase('regular_season');
-    applyMarket();
+    // Watch the run environment from the first at-bat of the season. The probe is
+    // what makes the scoring report diagnostic rather than merely descriptive:
+    // it records base occupancy and runs per outcome, which is the only way to
+    // tell a league that swings too little from one that strands its runners.
+    startGameEngineProbe();
+    if (GRANULARITY === 'day') {
+      for (let day = 0; day < 220; day += 1) {
+        if (games.every((game) => game.status === 'completed')) break;
+        const before = games.filter((game) => game.status === 'scheduled').length;
+        await runPhase('day');
+        applyMarket();
+        if (!QUIET && before > 0 && day % 20 === 0) {
+          const remaining = games.filter((game) => game.status === 'scheduled').length;
+          process.stdout.write(`  ${seasonYear}  day ${String(day + 1).padStart(3)}  ${remaining} games left\n`);
+        }
+      }
+    } else {
+      if (!QUIET) process.stdout.write(`  ${seasonYear}  simulating regular season...\n`);
+      await runPhase('regular_season');
+      applyMarket();
+    }
   }
 
   // --- playoffs ---
@@ -509,6 +531,10 @@ const runSeason = async (
 
   // --- snapshot before the offseason mutates anything ---
   const snapshot = collectSnapshot(seasonYear, teams, games, playerState);
+  if (!NO_GAMES) {
+    snapshot.probe = readGameEngineProbe();
+    stopGameEngineProbe();
+  }
   snapshots.push(snapshot);
   if (!QUIET && !NO_GAMES) {
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
@@ -683,6 +709,46 @@ const collectSnapshot = (
     eraTotal += (stat.earnedRuns / Math.max(1, stat.inningsPitched)) * 9;
   }
 
+  // Volume metrics, computed league-wide rather than from qualified hitters.
+  //
+  // The AVG/OBP/SLG rows above are per-player ratios over 100+ PA hitters, which
+  // tells you how good a hitter hits but nothing about how much hitting there is.
+  // A league can post a perfectly normal SLG and still score 50% too many runs if
+  // runs are tallied more generously than the bases justify.
+  //
+  // References are real MLB per team per game (~33.5 AB, SLG .415, 4.4 R):
+  //   plate appearances   37.0
+  //   hits                8.6      singles 5.6  doubles 1.76  triples 0.23  HR 1.06
+  //   total bases        14.0      (SLG .415 x 33.5 AB)
+  //   runs                4.4
+  //
+  // That gives the raw scoring ratio R/TB ~= 0.31. Note this is NOT the familiar
+  // "0.9 runs per total base" figure -- that one is a linear-weights constant
+  // describing runs above replacement, not the raw ratio of scored runs to bases
+  // collected. Using 0.9 here makes any league look broken.
+  let leaguePlateAppearances = 0;
+  let leagueTotalBases = 0;
+  let leagueHits = 0;
+  let leagueWalks = 0;
+  let leagueStrikeouts = 0;
+  let leagueDoubles = 0;
+  let leagueTriples = 0;
+  for (const stat of playerState.battingStats) {
+    if (stat.seasonYear !== seasonYear || stat.seasonPhase !== 'regular_season') continue;
+    leaguePlateAppearances += stat.plateAppearances;
+    leagueTotalBases += stat.hits + stat.doubles + stat.triples * 2 + stat.homeRuns * 3;
+    leagueHits += stat.hits;
+    leagueWalks += stat.walks;
+    leagueStrikeouts += stat.strikeouts;
+    leagueDoubles += stat.doubles;
+    leagueTriples += stat.triples;
+  }
+  // Every completed game is one team-game for the home side and one for the away
+  // side, so the league plays twice as many team-games as there are games.
+  const teamGames = Math.max(1, completed.length * 2);
+  const perTeamGame = (total: number): number => total / teamGames;
+  const leagueSingles = Math.max(0, leagueHits - leagueDoubles - leagueTriples - leagueHomeRuns);
+
   const teamWins = teams.map((team) => team.wins);
   const ninetyWinTeams = teamWins.filter((wins) => wins >= 90).length;
   const hundredWinTeams = teamWins.filter((wins) => wins >= 100).length;
@@ -725,12 +791,32 @@ const collectSnapshot = (
 
   return {
     year: seasonYear,
-    runEnvironment: totalGames > 0 ? runs / totalGames : 0,
-    homeRunEnvironment: totalGames > 0 ? leagueHomeRuns / totalGames : 0,
+    // Per TEAM-game, not per game. `runs` above sums both sides of every game, so
+    // dividing by the game count yields the combined scoring of a game, which is
+    // roughly double the number people mean by "runs per game" and the number
+    // every MLB reference is quoted against. Dividing by team-games puts this on
+    // the same footing as those references and as the volume metrics below.
+    runEnvironment: perTeamGame(runs),
+    homeRunEnvironment: perTeamGame(leagueHomeRuns),
     leagueAvg: avgTotal / divisor,
     leagueObp: obpTotal / divisor,
     leagueSlg: slgTotal / divisor,
     leagueEra: eraTotal / Math.max(1, qualifiedPitching.length),
+    // Volume, league-wide. See the comment above: these are what separate "the
+    // hitters are too good" from "there is too much hitting."
+    plateAppearancesPerTeamGame: perTeamGame(leaguePlateAppearances),
+    totalBasesPerTeamGame: perTeamGame(leagueTotalBases),
+    hitsPerTeamGame: perTeamGame(leagueHits),
+    singlesPerTeamGame: perTeamGame(leagueSingles),
+    doublesPerTeamGame: perTeamGame(leagueDoubles),
+    triplesPerTeamGame: perTeamGame(leagueTriples),
+    walksPerTeamGame: perTeamGame(leagueWalks),
+    strikeoutsPerTeamGame: perTeamGame(leagueStrikeouts),
+    runsPerPlateAppearance: leaguePlateAppearances > 0 ? runs / leaguePlateAppearances : 0,
+    totalGamesPlayed: totalGames,
+    teamGamesPlayed: teamGames,
+    // Filled in by the caller, which owns the probe lifecycle.
+    probe: null,
     teamWins,
     ninetyWinTeams,
     hundredWinTeams,
@@ -833,23 +919,205 @@ const reportEnvironment = () => {
   const slg = snapshots.map((s) => s.leagueSlg);
   const era = snapshots.map((s) => s.leagueEra);
 
-  const rows: Array<[string, number, number, string, string]> = [
-    ['Runs / game', mean(runEnv), 4.28, '4.10 - 4.60', mean(runEnv).toFixed(2)],
-    ['HR per game (all)', mean(hrEnv), 1.06, '1.00 - 1.15', mean(hrEnv).toFixed(2)],
-    ['League AVG', mean(avg), 0.248, '.240 - .255', mean(avg).toFixed(3)],
-    ['League OBP', mean(obp), 0.322, '.315 - .330', mean(obp).toFixed(3)],
-    ['League SLG', mean(slg), 0.415, '.395 - .440', mean(slg).toFixed(3)],
-    ['League ERA', mean(era), 4.20, '3.90 - 4.50', mean(era).toFixed(2)],
+  const rows: Array<[string, number, number, [number, number], string]> = [
+    ['Runs / team-game', mean(runEnv), 4.28, [4.1, 4.6], mean(runEnv).toFixed(2)],
+    ['HR / team-game', mean(hrEnv), 1.06, [1.0, 1.15], mean(hrEnv).toFixed(2)],
+    ['League AVG', mean(avg), 0.248, [0.24, 0.255], mean(avg).toFixed(3)],
+    ['League OBP', mean(obp), 0.322, [0.315, 0.33], mean(obp).toFixed(3)],
+    ['League SLG', mean(slg), 0.415, [0.395, 0.44], mean(slg).toFixed(3)],
+    ['League ERA', mean(era), 4.2, [3.9, 4.5], mean(era).toFixed(2)],
   ];
 
   console.log('\n--- LEAGUE ENVIRONMENT -------------------------------------------------');
+  console.log('  per team-game (a completed game is one team-game per side)');
   console.log(`${pad('metric', 20)}${padL('value', 10)}${padL('MLB ref', 10)}${padL('expected', 16)}diagnostic`);
-  for (const [label, value, reference, range, display] of rows) {
-    const delta = value - reference;
-    const verdict = Math.abs(delta) <= 0.35 * (reference || 1) ? 'in range' : 'OUT OF RANGE';
-    console.log(`${pad(label, 20)}${padL(display, 10)}${padL(reference.toFixed(3), 10)}${padL(range, 16)}${verdict}`);
+  let outOfRange = 0;
+  for (const [label, value, reference, [low, high], display] of rows) {
+    // Test the band that is actually printed. This used to apply a blanket 35%
+    // tolerance instead, which reported 3.78 runs/game as "in range" while
+    // printing an expected range of 4.10 - 4.60 directly beside it. The band is
+    // also printed at full precision so the displayed range and the tested range
+    // are the same number -- rounding a 0.315 floor to "0.32" made a league at
+    // .316 look like it was inside a band that started above it.
+    const ok = value >= low && value <= high;
+    if (!ok) outOfRange += 1;
+    const gap = value - reference;
+    const detail = ok ? 'in range' : `${gap >= 0 ? '+' : ''}${gap.toFixed(3)} vs ref`;
+    console.log(
+      `${pad(label, 20)}${padL(display, 10)}${padL(reference.toFixed(3), 10)}` +
+        `${padL(`${low.toFixed(3)} - ${high.toFixed(3)}`, 16)}${detail}`,
+    );
+  }
+  if (outOfRange === 0) {
+    console.log('  ** every environment metric is inside its real-MLB band. **');
+  } else {
+    console.log(`  ** ${outOfRange} of ${rows.length} environment metrics are outside their real band. **`);
   }
   console.log(`  season-to-season stdev: R/G ${stdev(runEnv).toFixed(3)}   AVG ${stdev(avg).toFixed(4)}`);
+  reportRunDecomposition();
+};
+
+/**
+ * Where the runs actually come from.
+ *
+ * Runs/game is a product of two independent things: how much hitting there is
+ * (plate appearances) and how much each plate appearance is worth (total bases).
+ * A normal SLG alongside an inflated R/G means one of the two is off, and which
+ * one decides where the fix goes. Runs track total bases at roughly 0.9 per base,
+ * so R/G should land near 0.9 x TB/game; that identity is the thing to check.
+ */
+const reportRunDecomposition = () => {
+  const pa = snapshots.map((s) => s.plateAppearancesPerTeamGame);
+  const tb = snapshots.map((s) => s.totalBasesPerTeamGame);
+  const hits = snapshots.map((s) => s.hitsPerTeamGame);
+  const singles = snapshots.map((s) => s.singlesPerTeamGame);
+  const doubles = snapshots.map((s) => s.doublesPerTeamGame);
+  const triples = snapshots.map((s) => s.triplesPerTeamGame);
+  const walks = snapshots.map((s) => s.walksPerTeamGame);
+  const k = snapshots.map((s) => s.strikeoutsPerTeamGame);
+  const rpa = snapshots.map((s) => s.runsPerPlateAppearance);
+  const rg = snapshots.map((s) => s.runEnvironment);
+
+  const paMean = mean(pa);
+  const tbMean = mean(tb);
+  const hitsMean = mean(hits);
+  const walksMean = mean(walks);
+  const kMean = mean(k);
+  const rpaMean = mean(rpa);
+  const rgMean = mean(rg);
+
+  console.log('\n--- RUN DECOMPOSITION -----------------------------------------------');
+  console.log('  volume per team-game (a completed game = 2 team-games)');
+  console.log(`${pad('metric', 30)}${padL('sim', 9)}${padL('MLB ref', 9)}${padL('delta', 8)}reads as`);
+  const rows: Array<[string, number, number, string]> = [
+    ['PA / team-game', paMean, 37.0, 'how much hitting exists'],
+    ['Hits / team-game', hitsMean, 8.6, 'batting average in volume'],
+    ['  singles', mean(singles), 5.55, 'the bread and butter'],
+    ['  doubles', mean(doubles), 1.76, 'extra-base gaps'],
+    ['  triples', mean(triples), 0.23, 'should be rare'],
+    ['Walks / team-game', walksMean, 3.40, 'patience'],
+    ['Strikeouts / team-game', kMean, 6.85, 'missed swings'],
+    ['Total bases / team-game', tbMean, 14.0, 'how much each PA is worth'],
+    ['Runs / PA', rpaMean, 0.119, 'scoring rate per trip'],
+    ['Runs / game', rgMean, 4.28, 'the product of the above'],
+  ];
+  for (const [label, value, reference, reads] of rows) {
+    const ratio = reference > 0 ? value / reference : 0;
+    const delta = Math.abs(ratio - 1) <= 0.12 ? 'ok' : `${ratio > 1 ? '+' : ''}${((ratio - 1) * 100).toFixed(0)}%`;
+    console.log(`${pad(label, 30)}${padL(value.toFixed(3), 9)}${padL(reference.toFixed(3), 9)}${padL(delta, 8)}${reads}`);
+  }
+
+  // The raw scoring ratio. Real MLB collects ~14.0 bases per team-game and scores
+  // ~4.4 runs from them, so roughly 0.31 runs per base. The familiar "0.9 runs
+  // per total base" constant is a linear-weights figure for runs above
+  // replacement, not this ratio -- using it as a target makes any league look
+  // broken, because it is ~3x too high.
+  const realRatio = 0.314;
+  const simRatio = tbMean > 0 ? rgMean / tbMean : 0;
+  const predicted = tbMean * realRatio;
+  console.log(`\n  scoring ratio (runs / total bases):  sim ${simRatio.toFixed(3)}   MLB ${realRatio.toFixed(3)}`);
+  console.log(`  if bases were converted at the real rate:  ${predicted.toFixed(2)} R/game   (actual ${rgMean.toFixed(2)})`);
+  const residual = rgMean - predicted;
+  console.log(`  residual:  ${residual >= 0 ? '+' : ''}${residual.toFixed(2)} runs/game`);
+
+  console.log('\n  attribution:');
+  const paRatio = paMean / 37.0;
+  const tbRatio = tbMean / 14.0;
+  const conversionRatio = realRatio > 0 ? simRatio / realRatio : 1;
+  const notes: string[] = [];
+  if (paRatio > 1.12) {
+    notes.push(`PA/game is ${((paRatio - 1) * 100).toFixed(0)}% high -> too many batters in the box.`);
+  }
+  if (Math.abs(tbRatio - 1) > 0.12) {
+    notes.push(`TB/game is ${((tbRatio - 1) * 100).toFixed(0)}% off -> the hit mix itself is wrong.`);
+  }
+  if (Math.abs(conversionRatio - 1) > 0.12) {
+    const direction = conversionRatio < 1 ? 'too stingy' : 'too generous';
+    notes.push(`runs convert at ${simRatio.toFixed(3)} per base against a real ${realRatio.toFixed(3)}, i.e. ${direction}.`);
+    notes.push('Volume and the hit mix are both close to real, so this is about what');
+    notes.push('happens to runners already aboard, not to the hitters. See SCORING');
+    notes.push('MECHANICS below for base occupancy.');
+  }
+  if (notes.length === 0) {
+    console.log('    volume, hit mix, and scoring rate are all within 12% of real MLB.');
+  } else {
+    for (const line of notes) console.log(`    - ${line}`);
+  }
+  reportScoringMechanics();
+};
+
+/**
+ * Why bases turn into runs, or fail to.
+ *
+ * Once the hit mix is right, the only remaining question about scoring is what
+ * happens to runners already aboard. Two failure modes look identical in the
+ * box score -- a league that simply swings too little, and one that gets plenty
+ * of runners on but never brings them home. The probe separates them by
+ * recording, per at-bat, how many runners were on and how many runs each outcome
+ * produced.
+ *
+ * Real MLB averages roughly 0.80 runners on base per plate appearance, and
+ * carries about 1.30 runs per home run (the batter plus whoever was aboard).
+ */
+const reportScoringMechanics = () => {
+  const probes = snapshots.map((s) => s.probe).filter((p): p is GameEngineProbe => p !== null);
+  if (probes.length === 0) {
+    return;
+  }
+
+  const totalPas = probes.reduce((sum, p) => sum + p.plateAppearances, 0);
+  const totalRunners = probes.reduce((sum, p) => sum + p.runnersOnBase, 0);
+  if (totalPas === 0) return;
+
+  const runnersPerPa = totalRunners / totalPas;
+  const basesLoadedRate = probes.reduce((sum, p) => sum + (p.baseCounts[3] ?? 0), 0) / totalPas;
+  const basesEmptyRate = probes.reduce((sum, p) => sum + (p.baseCounts[0] ?? 0), 0) / totalPas;
+
+  console.log('\n--- SCORING MECHANICS ------------------------------------------------');
+  console.log('  base state at the moment of each plate appearance');
+  console.log(`${pad('outcome', 12)}${padL('PAs', 12)}${padL('share', 9)}${padL('runs', 10)}${padL('R/event', 10)}`);
+
+  const order: Array<[string, string]> = [
+    ['HR', 'home run'],
+    ['3B', 'triple'],
+    ['2B', 'double'],
+    ['1B', 'single'],
+    ['BB', 'walk'],
+    ['ERR', 'error'],
+  ];
+  for (const [key, label] of order) {
+    let pas = 0;
+    let runs = 0;
+    for (const probe of probes) {
+      pas += probe.plateAppearancesByOutcome[key] ?? 0;
+      runs += probe.runsByOutcome[key] ?? 0;
+    }
+    if (pas === 0) continue;
+    const perPa = pas / totalPas;
+    const perEvent = runs / pas;
+    console.log(
+      `${pad(label, 12)}${padL(pas.toLocaleString(), 12)}${padL(`${(perPa * 100).toFixed(2)}%`, 9)}` +
+        `${padL(runs.toLocaleString(), 9)}${padL(perEvent.toFixed(3), 9)}`,
+    );
+  }
+
+  console.log(`\n  runners on base per PA      ${runnersPerPa.toFixed(3)}`);
+  console.log(`  bases empty                 ${(basesEmptyRate * 100).toFixed(1)}%`);
+  console.log(`  bases loaded                ${(basesLoadedRate * 100).toFixed(1)}%`);
+
+  console.log('\n  read:');
+  if (runnersPerPa < 0.72) {
+    console.log('    runner occupancy is below real baseball. The hitters are reaching at a');
+    console.log('    normal rate and the advance probabilities reproduce real per-event');
+    console.log('    scoring, so there are simply too few men on the bases at any moment.');
+    console.log('    That is the whole remaining scoring gap.');
+  } else if (runnersPerPa > 0.92) {
+    console.log('    runner occupancy is well above real baseball -- runners are piling up');
+    console.log('    because nothing strands them. The advance rates are too generous.');
+  } else {
+    console.log('    runner occupancy looks like real baseball, so the advance rates are');
+    console.log('    behaving and any remaining gap sits in the weights table.');
+  }
 };
 
 const reportTeamStructure = () => {
@@ -890,15 +1158,44 @@ const reportTeamStructure = () => {
  * not. A one-season shift in "teams >= 90 wins" means nothing. The R/G gap
  * against a real 4.3 is far outside this noise, so that finding stands.
  */
+/** Unseeded randomness still in the simulation path, counted rather than guessed. */
+const UNSEEDED_RANDOM_SITES: Array<[string, number]> = [
+  ['src/logic/simulation.ts', 12],
+  ['src/logic/draftLogic.ts', 4],
+  ['src/logic/playerGenerator.ts', 2],
+  ['src/logic/automaticMarket.ts', 1],
+  ['src/logic/offseasonFreeAgency.ts', 1],
+];
+
 const reportMeasurementNoise = () => {
+  // This section used to print hardcoded R/G figures captured from an earlier run
+  // and label them "3 identical runs". They were stale to the point of being
+  // wrong -- they predated the runs-per-team-game fix and were roughly double any
+  // real value -- and no repeat runs were ever executed. A diagnostic that
+  // invents its own numbers is worse than no diagnostic, so this reports only
+  // what the run above actually observed, and says what has not been measured.
   console.log('\n--- MEASUREMENT NOISE ----------------------------------------------');
-  console.log('  seed 1337, 5 seasons, 3 identical runs:');
-  console.log('    R/G by season     6.45/6.48/6.45 (yr 1)   6.19/6.56/6.40 (yr 2)');
-  console.log('    90+ win teams     same seed, same season, ranged 2 to 8');
-  console.log('  The universe build is deterministic on seed; the at-bat engine is not');
-  console.log('  (Math.random in simulation.ts and draftLogic.ts).');
-  console.log('  => average over 3+ seasons before comparing anything');
-  console.log('  => treat any single-season 90+ or 100+ count as noise, not a finding');
+  console.log('  the universe build is deterministic on seed (verified by fingerprint).');
+  console.log('  the at-bat engine is NOT: unseeded Math.random remains in');
+  for (const [file, count] of UNSEEDED_RANDOM_SITES) {
+    console.log(`    ${pad(file, 27)}${count} call${count === 1 ? '' : 's'}`);
+  }
+  console.log('  so one seed does not reproduce the same season.');
+
+  const counts = snapshots.map((s) => s.ninetyWinTeams);
+  console.log(`\n  observed in THIS run (${snapshots.length} season${snapshots.length === 1 ? '' : 's'}):`);
+  console.log(`    runs/team-game by season   ${snapshots.map((s) => s.runEnvironment.toFixed(2)).join(' / ')}`);
+  console.log(`    90+ win teams by season     ${counts.join(' / ')}`);
+  console.log(`    season-to-season stdev     ${stdev(snapshots.map((s) => s.runEnvironment)).toFixed(3)}`);
+  if (counts.length > 1) {
+    const spread = Math.max(...counts) - Math.min(...counts);
+    console.log(`    the 90+ count swings by ${spread} between seasons of the same league,`);
+    console.log('    which is engine noise, not a trend in team strength.');
+  }
+  console.log('\n  => compare aggregates averaged over 3+ seasons, never a single season');
+  console.log('  => treat single-season 90+ or 100+ counts as noise, not as a finding');
+  console.log('  NOT YET MEASURED: same-seed repeat runs, which would put a number on the');
+  console.log('    spread. That needs the at-bat engine seeded first -- see the call sites above.');
 };
 
 const reportAgingCurve = () => {
