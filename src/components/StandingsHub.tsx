@@ -262,16 +262,22 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, batt
   // them apart, so a Prestige accent would have been an invisible change. The
   // flip to teal is unmistakable and therefore does real work: it tells the
   // user they have moved league.
-  const accentVar = activeLeague === 'Platinum' ? 'var(--color-platinum)' : 'var(--color-gold)';
-  // The brightest tier is its own token, so it has to be remapped alongside the
-  // base or the division leader's name stays gold on a teal board.
-  const accentHiVar = activeLeague === 'Platinum' ? 'var(--color-platinum-hi)' : 'var(--color-gold-hi)';
+  // Only Platinum remaps. Assigning `--color-gold: var(--color-gold)` is a
+  // self-reference: a custom property whose own value resolves through itself is
+  // invalid at computed-value time, so every var(--color-gold) inside the
+  // subtree collapsed to its initial value and the selected tab rendered as
+  // background: none, which against the dark panel reads as a black button with
+  // black text. Leaving the property absent for Prestige keeps the inherited
+  // gold and is why the bug only ever showed on one of the two tabs.
+  const leagueAccentStyle = activeLeague === 'Platinum'
+    ? ({
+      '--color-gold': 'var(--color-platinum)',
+      '--color-gold-hi': 'var(--color-platinum-hi)',
+    } as React.CSSProperties)
+    : undefined;
 
   return (
-    <section
-      className="space-y-5"
-      style={{ '--color-gold': accentVar, '--color-gold-hi': accentHiVar } as React.CSSProperties}
-    >
+    <section className="space-y-5" style={leagueAccentStyle}>
       <Panel className="overflow-hidden">
         <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
           <h1 className="t-h2">League Standings</h1>

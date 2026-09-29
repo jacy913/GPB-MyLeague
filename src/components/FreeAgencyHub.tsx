@@ -220,9 +220,12 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
       id: entry.player.playerId,
       cells: {
         player: (
-          <span className="block min-w-0">
-            <span className="block truncate t-stat-sm">{entry.player.firstName} {entry.player.lastName}</span>
-            <span className="block truncate t-caption text-[var(--color-ink-faint)]">{entry.player.playerType}</span>
+          // No playerType subtitle. It restated what the POS column two cells
+          // along already says, and it was the only reason this list needed a
+          // two-line cell -- which is what made it the most cramped table in
+          // the product. The name gets the full row height instead.
+          <span className="block min-w-0 truncate t-stat">
+            {entry.player.firstName} {entry.player.lastName}
           </span>
         ),
         pos: entry.player.primaryPosition,

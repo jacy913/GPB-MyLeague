@@ -2,11 +2,24 @@ import React from 'react';
 
 export type StatTableDensity = 'default' | 'dense' | 'large';
 
+/**
+ * Row heights.
+ *
+ * A global tightening pass, after the rows read as congested across every list
+ * in the product: rosters, players, free agents, the draft board, the trade
+ * queue. `default` is the workhorse and was 30px, which forced two-line cells
+ * and truncated names. It now sits just under the standings board, which is the
+ * densest list anyone actually wants to read and reads well at 48px with a
+ * 32px crest.
+ *
+ * `dense` is kept for the two places that genuinely stack a second line of
+ * content under the primary figure -- the home page's matchup panels and the
+ * trade queue -- and is still tightened rather than raised, because those two
+ * are read by comparison rather than scanned.
+ */
 const ROW_HEIGHT: Record<StatTableDensity, string> = {
-  dense: '28px',
-  default: '30px',
-  // For tables that are the reason the user opened the screen. The standings
-  // board is the case: squeezed into two columns the rows were unreadable.
+  dense: '30px',
+  default: '44px',
   large: '48px',
 };
 
@@ -75,7 +88,9 @@ export const StatTable: React.FC<StatTableProps> = ({
   'aria-label': ariaLabel,
 }) => {
   const rowHeight = ROW_HEIGHT[density];
-  const headerHeight = density === 'large' ? '36px' : '32px';
+  // Tracks the row height so the header does not read as a cramped strip above
+  // a roomy body.
+  const headerHeight = density === 'dense' ? '30px' : '36px';
 
   const isNumericColumn = (col: StatTableColumn) =>
     col.isNumeric ?? col.align === 'right';
