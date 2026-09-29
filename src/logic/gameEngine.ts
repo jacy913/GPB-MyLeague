@@ -16,6 +16,7 @@ import {
   SimulationSettings,
   Team,
 } from '../types';
+import { TEAM_EDGE_WEIGHT } from './teamStrength';
 
 const OUTCOME_POOL: AtBatOutcome[] = ['OUT', 'SO', 'BB', '1B', '2B', '3B', 'HR', 'ERR'];
 const INNING_OUT_VALUE = Number((1 / 3).toFixed(3));
@@ -480,7 +481,7 @@ const getOutcomeWeights = (
   const homeBonus = isHomeBatting ? settings.homeFieldAdvantage * 80 : -settings.homeFieldAdvantage * 80;
   const environmentBias = (0.5 - settings.leagueEnvironmentBalance) * 2;
   const varianceScale = 0.8 + settings.battingVarianceFactor * 0.8;
-  const teamEdge = (battingTeam.rating - fieldingTeam.rating) * 0.65;
+  const teamEdge = (battingTeam.rating - fieldingTeam.rating) * TEAM_EDGE_WEIGHT;
   const noise = (nextRandom(session) - 0.5) * settings.gameLuckFactor * 60;
   const powerEdge = (batter.battingRatings.power - pitcher.pitchingRatings.movement) * varianceScale;
   const contactEdge = (batter.battingRatings.contact - (pitcher.pitchingRatings.stuff * 0.55 + pitcher.pitchingRatings.movement * 0.45)) * varianceScale;

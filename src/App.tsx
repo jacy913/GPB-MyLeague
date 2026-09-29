@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { INITIAL_TEAMS } from './data/teams';
-import { addDaysToISODate, generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings, DEFAULT_SETTINGS } from './logic/simulation';
+import { addDaysToISODate, generateSchedule, getDefaultSeasonStartDate, DEFAULT_SETTINGS } from './logic/simulation';
 import {
   CompletedGameResult,
   LeaguePlayerState,
@@ -34,6 +34,7 @@ import gpbLogo from './assets/gpb.png';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
 import { buildGameParticipants } from './logic/gameParticipants';
 import { buildNewUniverse, DEFAULT_UNIVERSE_SEED } from './logic/universeBootstrap';
+import { recalculateTeamRatingsFromRosters } from './logic/teamStrength';
 import type { BuildNewUniverseResult } from './logic/universeBootstrap';
 import { normalizeSeed } from './lib/random';
 import {
@@ -1456,17 +1457,22 @@ function App() {
     return (completed / seasonGames.length) * 100;
   }, []);
 
-  const buildFreshSeasonTeams = useCallback((teamsToReset: Team[], settingsToUse: SimulationSettings): Team[] => {
-    const zeroedTeams = teamsToReset.map((team) => ({
+  /**
+   * Clears the season record for a new year. Rating is deliberately left alone:
+   * it is derived from the roster, and the roster is re-rated at the end of the
+   * offseason once free agency and the draft have settled. Re-deriving it here
+   * from wins would reintroduce the feedback loop this replaced -- a strong
+   * record would set a high rating, the high rating would produce the record,
+   * and roster management would have no purchase on either.
+   */
+  const buildFreshSeasonTeams = useCallback((teamsToReset: Team[]): Team[] =>
+    teamsToReset.map((team) => ({
       ...team,
       wins: 0,
       losses: 0,
       runsScored: 0,
       runsAllowed: 0,
-    }));
-
-    return recalculateTeamRatings(zeroedTeams, settingsToUse);
-  }, []);
+    })), []);
 
   const createMasterSchedule = useCallback((seasonTeams: Team[], seasonYear?: number): Game[] => {
     const normalizedSeasonYear = typeof seasonYear === 'number' && Number.isFinite(seasonYear) && seasonYear > 0
@@ -1967,6 +1973,13 @@ function App() {
     playerStateRef.current = completion.playerState;
     saveLocalPlayerStateSafely(completion.playerState);
     auditRosterState(completion.playerState, seasonYear, 'Free agency finalized');
+
+    // Re-rate from the rosters the offseason just settled. This is the same
+    // call the diagnostic harness makes at the same point, so a league measured
+    // in the lab and a league played in the app agree on team strength.
+    const ratedTeams = recalculateTeamRatingsFromRosters(teams, completion.playerState, seasonYear);
+    setTeams(ratedTeams);
+
     if (isSupabaseConfigured) {
       void saveSupabasePlayerState(completion.playerState).catch((error) => {
         console.error('Failed to persist completed roster state:', error);
@@ -2027,10 +2040,15 @@ function App() {
 
       updateResetProgress(24, 'Building clean schedule and records');
 
-      const freshTeams = buildFreshSeasonTeams(teamsToReset, settingsToUse);
       const activeSeasonYear = resolveSeasonYear(currentDate, games);
       const latestKnownSeasonYear = Math.max(activeSeasonYear, latestArchivedSeasonYear || activeSeasonYear);
       const nextSeasonYear = seasonComplete ? latestKnownSeasonYear + 1 : latestKnownSeasonYear;
+      // Rate for nextSeasonYear, the year the schedule is about to be built for.
+      // Ratings are already roster-derived by this point -- the offseason re-rates
+      // at the end of free agency -- so this covers the case where a reset happens
+      // without one, and guarantees the season never starts on a stale rating.
+      const ratedTeams = recalculateTeamRatingsFromRosters(teamsToReset, playerState, nextSeasonYear);
+      const freshTeams = buildFreshSeasonTeams(ratedTeams);
       const schedule = createMasterSchedule(freshTeams, nextSeasonYear);
       const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(nextSeasonYear);
       const resetSeasonYear = resolveSeasonYear(firstDate, schedule);
@@ -2111,7 +2129,8 @@ function App() {
     latestArchivedSeasonYear,
     pushNotice,
     buildFreshSeasonTeams,
-    createMasterSchedule,
+    playerState,
+ createMasterSchedule,
     playerState,
     saveLocalPlayerStateSafely,
     saveLocalLeagueStateSafely,
@@ -2241,8 +2260,18 @@ function App() {
       });
       const regeneratedPlayerState = built.playerState;
 
+      // Team strength is derived from the roster, so it can only be rated once
+      // the rosters exist. Without this the universe would start on the static
+      // ratings in data/teams.ts and never be re-rated, which is what made team
+      // management cosmetic in the shipped game.
+      const ratedBaselineTeams = recalculateTeamRatingsFromRosters(
+        baselineTeams,
+        regeneratedPlayerState,
+        baselineSeasonYear,
+      );
+
       React.startTransition(() => {
-        setTeams(baselineTeams);
+        setTeams(ratedBaselineTeams);
         setSettings(baselineSettings);
         setGames(baselineSchedule);
         setCurrentDate(firstDate);
@@ -2264,7 +2293,7 @@ function App() {
 
       clearLocalPlayerState();
       saveLocalPlayerStateSafely(regeneratedPlayerState);
-      saveLocalLeagueStateSafely(baselineTeams, baselineSettings, baselineSchedule, firstDate, 0, false);
+      saveLocalLeagueStateSafely(ratedBaselineTeams, baselineSettings, baselineSchedule, firstDate, 0, false);
 
       localStorage.removeItem(SEASON_HISTORY_STORAGE_KEY);
       localStorage.removeItem(DRAFT_CENTER_STORAGE_KEY);
@@ -2277,7 +2306,7 @@ function App() {
         await clearSupabasePlayerState();
         await clearSupabaseSeasonHistory();
         await persistLeagueState(
-          baselineTeams,
+          ratedBaselineTeams,
           baselineSettings,
           baselineSchedule,
           firstDate,

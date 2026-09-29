@@ -51,7 +51,17 @@ const randomNormal = (mean: number, stdDev: number): number => {
   return z * stdDev + mean;
 };
 
-// Recalculate team ratings based on settings.
+/**
+ * @deprecated Team strength is roster-derived. Use
+ * `recalculateTeamRatingsFromRosters` in logic/teamStrength instead.
+ *
+ * This reads a team's rating off its own win total, which is a feedback loop:
+ * winning raises the rating, the raised rating produces more wins, and no amount
+ * of roster management can move it. It is kept because deleting call sites is a
+ * separate decision, but nothing in the app or the harness should call it, and
+ * the at-bat engine can no longer consume its output -- it produces a 35-65
+ * scale while the engine now reads the players' own 60-100 scale.
+ */
 export const recalculateTeamRatings = (teams: Team[], settings: SimulationSettings): Team[] => {
   return teams.map((team) => {
     // Blend historical baseline and random performance.

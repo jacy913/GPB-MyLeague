@@ -25,7 +25,7 @@
  */
 
 import { INITIAL_TEAMS } from '../src/data/teams';
-import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate, recalculateTeamRatings } from '../src/logic/simulation';
+import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
 import { SimulationManager } from '../src/logic/simulationManager';
 import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { completeRosterVacancies, getOpenSlots } from '../src/logic/rosterCompletion';
@@ -40,6 +40,7 @@ import {
 } from '../src/logic/draftLogic';
 import { applyPlayerDevelopment } from '../src/logic/playerDevelopment';
 import { repairRosterSlotsForTeams } from '../src/logic/rosterManagement';
+import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../src/logic/automaticMarket';
 import { generatePendingTradeProposals } from '../src/logic/tradeLogic';
 import { isRegularSeasonGame } from '../src/logic/playoffs';
@@ -444,6 +445,10 @@ interface SeasonSnapshot {
   rosterWinsCorrelation: number;
   rosterRatingCorrelation: number;
   ratingWinsCorrelation: number;
+  /** Wins per team-rating point, least squares over the 32 teams. */
+  ratingToWinsSlope: number;
+  /** Wins per run of run differential, least squares over the 32 teams. */
+  runDiffToWinsSlope: number;
   freeAgentCount: number;
   pipeline: OffseasonPipeline | null;
 }
@@ -508,11 +513,13 @@ const ratingsRows: { year: number; batting: number; pitching: number }[] = [];
 // Universe construction
 // ---------------------------------------------------------------------------
 
-const buildFreshTeams = (teams: Team[]): Team[] =>
-  recalculateTeamRatings(
-    teams.map((team) => ({ ...team, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0 })),
-    DEFAULT_SETTINGS,
-  );
+/**
+ * Clears the season record without touching rating. Rating is not derived from
+ * results any more, so mixing the two here would quietly reintroduce the old
+ * feedback loop while looking like a reset.
+ */
+const resetTeamRecord = (teams: Team[]): Team[] =>
+  teams.map((team) => ({ ...team, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0 }));
 
 const buildSchedule = (teams: Team[], seasonYear: number): Game[] =>
   generateSchedule(teams, { seasonStartDate: getDefaultSeasonStartDate(seasonYear), seasonDays: 180 });
@@ -809,8 +816,13 @@ const runSeason = async (
   // ledger belongs to the season that snapshot will report on.
   if (snapshots.length > 0) snapshots[snapshots.length - 1].pipeline = pipeline;
 
+  // Re-rate every team from the rosters the offseason just settled, so next
+  // season starts with strength that reflects who is actually under contract.
+  // The app performs this same step at the same point in its offseason.
+  const ratedTeams = recalculateTeamRatingsFromRosters(teams, nextRoster.playerState, nextYear);
+
   return {
-    teams,
+    teams: ratedTeams,
     games,
     playerState: nextRoster.playerState,
     retirements,
@@ -1005,6 +1017,27 @@ const collectSnapshot = (
   const rosterRatingCorrelation = pearson(rosterStrength, teamRatings);
   const ratingWinsCorrelation = pearson(teamRatings, teamWins);
 
+  // Wins per rating point, by least squares. Any consumer that wants to convert
+  // a team rating into a win expectation has to pick a coefficient, and picking
+  // one by feel is how a scale change silently halves a model. The slope is
+  // measured from the league's own seasons, so it says what a rating point is
+  // actually worth here rather than what it was worth under the old 28-92 scale.
+  const ratingToWinsSlope = ((): number => {
+    const xs = teamRatings;
+    const ys = teamWins;
+    const n = Math.min(xs.length, ys.length);
+    if (n < 3) return 0;
+    const meanX = mean(xs);
+    const meanY = mean(ys);
+    let covariance = 0;
+    let varianceX = 0;
+    for (let index = 0; index < n; index += 1) {
+      covariance += (xs[index] - meanX) * (ys[index] - meanY);
+      varianceX += (xs[index] - meanX) ** 2;
+    }
+    return varianceX > 0 ? covariance / varianceX : 0;
+  })();
+
   let homeWins = 0;
   let homeGames = 0;
   for (const game of completed) {
@@ -1022,6 +1055,24 @@ const collectSnapshot = (
     winTotals.push(team.wins);
     pythErrors.push(team.wins - pythagoreanWins(team.runsScored, team.runsAllowed, gamesPlayed));
   }
+
+  // Wins per run of run differential. Real MLB: "10 runs = 1 win" → ~0.10
+  // wins per run, which is why Pythagorean is nearly exact. Reported so the
+  // trade evaluator's run-differential term can be checked against the league
+  // rather than assumed from a misremembered constant.
+  const runDiffToWinsSlope = ((): number => {
+    const n = Math.min(runDiffs.length, winTotals.length);
+    if (n < 3) return 0;
+    const meanX = mean(runDiffs);
+    const meanY = mean(winTotals);
+    let covariance = 0;
+    let varianceX = 0;
+    for (let index = 0; index < n; index += 1) {
+      covariance += (runDiffs[index] - meanX) * (winTotals[index] - meanY);
+      varianceX += (runDiffs[index] - meanX) ** 2;
+    }
+    return varianceX > 0 ? covariance / varianceX : 0;
+  })();
 
   const ratingsByAge = new Map<number, number[]>();
   const overallByPlayer = latestRatingsByPlayer(playerState, seasonYear);
@@ -1079,6 +1130,8 @@ const collectSnapshot = (
     rosterWinsCorrelation,
     rosterRatingCorrelation,
     ratingWinsCorrelation,
+    ratingToWinsSlope,
+    runDiffToWinsSlope,
     // Filled in by the caller, which owns the probe lifecycle.
     probe: null,
     teamWins,
@@ -1402,6 +1455,15 @@ const reportTeamStructure = () => {
   console.log(`  home win rate      mean ${padL(mean(homePct).toFixed(3), 7)}   (real MLB ~0.535-0.545)`);
   console.log(`  Pythagorean error  mean ${padL(mean(pyth).toFixed(2), 7)} wins   (real MLB ~0-1)`);
   console.log(`  run diff -> wins   mean ${padL(mean(corr).toFixed(3), 7)} r    (real MLB ~0.95+)`);
+  // The two conversion constants any win-expectation model needs. Reported so a
+  // consumer can be checked against the league instead of against a remembered
+  // real-world figure that may not survive a change of scale.
+  console.log(
+    `  wins per rating pt ${padL(mean(snapshots.map((s) => s.ratingToWinsSlope)).toFixed(2), 7)}      (regression, rating -> wins)`,
+  );
+  console.log(
+    `  wins per run diff  ${padL(mean(snapshots.map((s) => s.runDiffToWinsSlope)).toFixed(3), 7)}      (real MLB ~0.10 "10 runs = 1 win")`,
+  );
   reportMeasurementNoise();
 };
 
@@ -1906,6 +1968,14 @@ const reportRosterHealth = () => {
   console.log(`  corr(roster strength, wins)        ${last.rosterWinsCorrelation.toFixed(3)}`);
   console.log(`  corr(roster strength, team rating) ${last.rosterRatingCorrelation.toFixed(3)}`);
   console.log(`  corr(team rating, wins)            ${last.ratingWinsCorrelation.toFixed(3)}`);
+  // The calibration constant for anything that converts a team rating into an
+  // expected win total. It is reported rather than hardcoded so a consumer can
+  // be checked against what the league actually does.
+  console.log(
+    `  wins per rating point              ${last.ratingToWinsSlope.toFixed(2)}` +
+      `   (spread ${((strong[0] ?? 0) - (strong[strong.length - 1] ?? 0)).toFixed(1)} OVR` +
+      ` => ${(last.ratingToWinsSlope * ((strong[0] ?? 0) - (strong[strong.length - 1] ?? 0))).toFixed(1)} wins)`,
+  );
   // Roster strength must correlate with wins, and must reach the engine through
   // rating. A high roster-to-rating correlation with a low roster-to-wins one
   // means the link exists but is drowned out by something else downstream.
@@ -1936,7 +2006,7 @@ const main = async () => {
   console.log(`  market        ${RUN_MARKET ? 'auto free agency + auto trades' : 'disabled'}`);
   console.log(`  games         ${NO_GAMES ? 'SKIPPED (offseason chain only)' : 'simulated'}`);
 
-  let teams = buildFreshTeams(INITIAL_TEAMS.map((team) => ({ ...team })));
+  let teams = resetTeamRecord(INITIAL_TEAMS.map((team) => ({ ...team })));
   let games = buildSchedule(teams, START_YEAR);
 
   // The same bootstrap the game uses, so the lab measures the universe a
@@ -1949,6 +2019,16 @@ const main = async () => {
     effectiveDate: `${START_YEAR}-03-20`,
   });
   let playerState = built.playerState;
+
+  // Rating is derived from the roster, so it can only be computed once rosters
+  // exist. The app does the same thing at the end of New Universe; doing it here
+  // in the same place keeps the two paths from drifting apart again.
+  teams = recalculateTeamRatingsFromRosters(teams, playerState, START_YEAR);
+  const startingRatings = teams.map((team) => team.rating);
+  console.log(
+    `            team ratings ${Math.min(...startingRatings).toFixed(1)} .. ${Math.max(...startingRatings).toFixed(1)}` +
+      `  (roster-derived, spread ${(Math.max(...startingRatings) - Math.min(...startingRatings)).toFixed(1)})`,
+  );
 
   console.log(`\n  universe: ${teams.length} teams, ${playerState.players.length} players, ${games.length} games`);
   console.log(`  bootstrap: generate -> develop -> fill, seed ${built.diagnostics.seed}, ${built.diagnostics.elapsedMs}ms`);
@@ -1963,7 +2043,7 @@ const main = async () => {
     const seasonYear = START_YEAR + index;
     const result = await runSeason(teams, playerState, games, seasonYear, rng);
 
-    teams = buildFreshTeams(result.teams);
+    teams = resetTeamRecord(result.teams);
     playerState = result.playerState;
     games = buildSchedule(teams, seasonYear + 1);
 

@@ -13,6 +13,7 @@ import {
 } from '../types';
 import { generateDraftClassBundle } from './draftLogic';
 import { repairRosterSlotsForTeams } from './rosterManagement';
+import { getLeagueMeanStrength, getTeamRosterStrength } from './teamStrength';
 
 export interface RosterCompletionResult {
   playerState: LeaguePlayerState;
@@ -80,7 +81,7 @@ const isEligibleForSlot = (player: Player, slotCode: RosterSlotCode): boolean =>
 const getFitScore = (
   player: Player,
   slotCode: RosterSlotCode,
-  team: Team,
+  teamStrengthEdge: number,
   battingRatings: Map<string, PlayerBattingRatings>,
   pitchingRatings: Map<string, PlayerPitchingRatings>,
 ): number => {
@@ -102,7 +103,12 @@ const getFitScore = (
     positionBonus = 45;
   }
 
-  return overall * 16 + positionBonus + team.rating * 0.25;
+  // The team term is a tiebreak between equally talented players, not a driver:
+  // overall * 16 puts one rating point at 16, and this puts a full league-wide
+  // spread of roster strength (about 6 rating points) at 9. It reads the edge
+  // against the league mean rather than the raw rating, so it keeps its size
+  // when the player generator's weights change the absolute scale.
+  return overall * 16 + positionBonus + teamStrengthEdge * 1.5;
 };
 
 /**
@@ -127,18 +133,18 @@ export const getOpenSlots = (rosterSlots: TeamRosterSlot[], teams: Team[], seaso
 const chooseBestAssignment = (
   players: Player[],
   openSlots: OpenSlot[],
-  teamsById: Map<string, Team>,
+  teamStrengthEdgeByTeamId: Map<string, number>,
   battingRatings: Map<string, PlayerBattingRatings>,
   pitchingRatings: Map<string, PlayerPitchingRatings>,
 ): { player: Player; slot: OpenSlot } | null => {
   let best: { player: Player; slot: OpenSlot; score: number } | null = null;
 
   openSlots.forEach((slot) => {
-    const team = teamsById.get(slot.teamId);
-    if (!team) return;
+    const teamStrengthEdge = teamStrengthEdgeByTeamId.get(slot.teamId);
+    if (teamStrengthEdge === undefined) return;
 
     players.forEach((player) => {
-      const score = getFitScore(player, slot.slotCode, team, battingRatings, pitchingRatings);
+      const score = getFitScore(player, slot.slotCode, teamStrengthEdge, battingRatings, pitchingRatings);
       if (score > (best?.score ?? Number.NEGATIVE_INFINITY)) {
         best = { player, slot, score };
       }
@@ -193,6 +199,12 @@ export const completeRosterVacancies = (
   effectiveDate: string,
 ): RosterCompletionResult => {
   const teamsById = new Map(teams.map((team) => [team.id, team]));
+  // Fit scoring needs each team's roster strength relative to the league mean,
+  // not its raw rating. Computing it here means the whole market is graded
+  // against one consistent baseline rather than each call recomputing it.
+  const strength = getTeamRosterStrength(teams, inputPlayerState, seasonYear);
+  const leagueMean = getLeagueMeanStrength(strength);
+  const teamStrengthEdgeByTeamId = new Map(teams.map((team) => [team.id, (strength.get(team.id) ?? leagueMean) - leagueMean]));
   let battingRatings = getLatestRatings(inputPlayerState.battingRatings);
   let pitchingRatings = getLatestRatings(inputPlayerState.pitchingRatings);
   let playerState = {
@@ -215,7 +227,7 @@ export const completeRosterVacancies = (
     const available = [...candidates];
 
     while (available.length > 0 && openSlots.length > 0) {
-      const assignment = chooseBestAssignment(available, openSlots, teamsById, battingRatings, pitchingRatings);
+      const assignment = chooseBestAssignment(available, openSlots, teamStrengthEdgeByTeamId, battingRatings, pitchingRatings);
       if (!assignment) break;
       playerState = assignPlayerToTeam(playerState, assignment.player, assignment.slot.teamId, seasonYear, effectiveDate, eventType);
       const playerIndex = available.findIndex((player) => player.playerId === assignment.player.playerId);
