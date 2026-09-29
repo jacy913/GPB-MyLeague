@@ -437,6 +437,13 @@ interface SeasonSnapshot {
   capacity: number;
   /** Players marked active who hold no slot, so cannot appear in a game. */
   unrosteredActive: number;
+  /** Mean latest overall of the players each team actually has at this season. */
+  rosterStrength: number[];
+  /** team.rating as the engine sees it. */
+  teamRatings: number[];
+  rosterWinsCorrelation: number;
+  rosterRatingCorrelation: number;
+  ratingWinsCorrelation: number;
   freeAgentCount: number;
   pipeline: OffseasonPipeline | null;
 }
@@ -879,6 +886,19 @@ const collectSnapshot = (
     (player) => player.status === 'active' && !rosteredPlayerIds.has(player.playerId),
   ).length;
 
+  // Latest overall per player, for measuring roster quality. Preferring the
+  // batting rating on a two-way player mirrors getPlayerOverall, which is what
+  // the free agency and retirement checks read.
+  const ratingOverallById = new Map<string, number>();
+  for (const row of playerState.battingRatings) {
+    if (row.seasonYear > seasonYear) continue;
+    if (!ratingOverallById.has(row.playerId)) ratingOverallById.set(row.playerId, row.overall);
+  }
+  for (const row of playerState.pitchingRatings) {
+    if (row.seasonYear > seasonYear) continue;
+    if (!ratingOverallById.has(row.playerId)) ratingOverallById.set(row.playerId, row.overall);
+  }
+
   let runs = 0;
   for (const game of completed) {
     runs += game.score.away + game.score.home;
@@ -962,6 +982,24 @@ const collectSnapshot = (
   const ninetyWinTeams = teamWins.filter((wins) => wins >= 90).length;
   const hundredWinTeams = teamWins.filter((wins) => wins >= 100).length;
 
+  // Does a good roster produce wins? team.rating is a real input to the at-bat
+  // engine (gameEngine.ts:483), so if rating and roster quality are uncorrelated
+  // then signing a great player cannot make a team better, and every roster
+  // decision the player makes is cosmetic. Measured from the players actually
+  // holding slots this season, not from any stored team aggregate.
+  const rosterStrength = teams.map((team) => {
+    const teamIds = new Set(seasonSlotRows.filter((slot) => slot.teamId === team.id).map((slot) => slot.playerId));
+    const overalls = [...teamIds]
+      .map((playerId) => playerState.players.find((player) => player.playerId === playerId))
+      .map((player) => (player ? ratingOverallById.get(player.playerId) : undefined))
+      .filter((value): value is number => typeof value === 'number' && value > 0);
+    return overalls.length > 0 ? mean(overalls) : 0;
+  });
+  const teamRatings = teams.map((team) => team.rating);
+  const rosterWinsCorrelation = pearson(rosterStrength, teamWins);
+  const rosterRatingCorrelation = pearson(rosterStrength, teamRatings);
+  const ratingWinsCorrelation = pearson(teamRatings, teamWins);
+
   let homeWins = 0;
   let homeGames = 0;
   for (const game of completed) {
@@ -1031,6 +1069,11 @@ const collectSnapshot = (
     rosteredCount,
     capacity: teams.length * ALL_ROSTER_SLOTS.length,
     unrosteredActive,
+    rosterStrength,
+    teamRatings,
+    rosterWinsCorrelation,
+    rosterRatingCorrelation,
+    ratingWinsCorrelation,
     // Filled in by the caller, which owns the probe lifecycle.
     probe: null,
     teamWins,
@@ -1843,6 +1886,28 @@ const reportRosterHealth = () => {
     console.log(`  ratings rows        ${total(firstRow)} after ${firstRow.year} -> ${total(finalRow)} after ${finalRow.year}`);
     console.log(`  growth              ${perSeason >= 0 ? '+' : ''}${perSeason.toFixed(0)} rows/season${APP_RETENTION ? '' : ', unbounded'}`);
   }
+
+  // --- does a better roster win? -----------------------------------------
+  // The decisive question for every roster decision a user makes. team.rating
+  // is a genuine input to the at-bat engine, so roster quality has to reach it
+  // somehow; if roster strength correlates with neither rating nor wins, then
+  // drafting and signing change nothing about how a team plays.
+  const strong = [...last.rosterStrength].sort((left, right) => right - left);
+  console.log('');
+  console.log('--- ROSTER QUALITY vs RESULTS ------------------------------------------');
+  console.log(`  best roster mean OVR               ${strong[0]?.toFixed(1) ?? 'n/a'}`);
+  console.log(`  worst roster mean OVR              ${strong[strong.length - 1]?.toFixed(1) ?? 'n/a'}`);
+  console.log(`  spread across the league           ${((strong[0] ?? 0) - (strong[strong.length - 1] ?? 0)).toFixed(1)} OVR`);
+  console.log(`  corr(roster strength, wins)        ${last.rosterWinsCorrelation.toFixed(3)}`);
+  console.log(`  corr(roster strength, team rating) ${last.rosterRatingCorrelation.toFixed(3)}`);
+  console.log(`  corr(team rating, wins)            ${last.ratingWinsCorrelation.toFixed(3)}`);
+  // Roster strength must correlate with wins, and must reach the engine through
+  // rating. A high roster-to-rating correlation with a low roster-to-wins one
+  // means the link exists but is drowned out by something else downstream.
+  const verdict = last.rosterWinsCorrelation >= 0.5 && last.rosterRatingCorrelation >= 0.7
+    ? 'roster quality drives results'
+    : 'roster quality does NOT reliably drive results';
+  console.log(`  VERDICT                            ${verdict}`);
 };
 
 const retiredIds = new Set<string>();
