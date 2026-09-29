@@ -1,9 +1,11 @@
 import React, { useMemo } from 'react';
-import { CalendarDays, Crown, PauseCircle, Play, SkipForward } from 'lucide-react';
+import { CalendarDays, PauseCircle, Play, SkipForward } from 'lucide-react';
 import { Game, PlayoffRoundKey, Team } from '../types';
 import { SeededPlayoffTeam, compareSeededTeams, getLeaguePlayoffSeeds, getRoundBestOf, isPlayoffGame } from '../logic/playoffs';
 import { addDaysToISODate } from '../logic/simulation';
+import { fmtDiff, fmtRecord } from '../logic/statFormatting';
 import { formatHeaderDate } from './SeasonCalendarStrip';
+import { Panel, RetroButton, StatValue } from './ui';
 import { TeamLogo } from './TeamLogo';
 import worldSeriesLogo from '../assets/worldserieslogo.png';
 import gpbLogo from '../assets/gpb.png';
@@ -564,6 +566,7 @@ const buildPlayoffBracketView = (
   };
 };
 
+
 const roundTitles: Record<PlayoffRoundKey, string> = {
   wild_card: 'Wild Card',
   divisional: 'Divisional',
@@ -571,411 +574,482 @@ const roundTitles: Record<PlayoffRoundKey, string> = {
   world_series: 'World Series',
 };
 
-const pipsForSeries = (wins: number, bestOf: number, filledClass: string) =>
-  Array.from({ length: Math.floor(bestOf / 2) + 1 }).map((_, index) => (
+/**
+ * Best-of pips, drawn as diamonds.
+ *
+ * A rotated square is the period's answer to a circular progress ring, and it
+ * costs nothing at this size. Filled is a win, hollow is a loss.
+ */
+const SeriesPips: React.FC<{ wins: number; bestOf: number; fill: string; size?: 'sm' | 'md' }> = ({
+  wins,
+  bestOf,
+  fill,
+  size = 'sm',
+}) => {
+  const total = Math.floor(bestOf / 2) + 1;
+  const box = size === 'sm' ? 'h-2 w-2' : 'h-2.5 w-2.5';
+  return (
+    <div className="flex items-center gap-1" aria-label={`${wins} of ${bestOf - 1} series wins`}>
+      {Array.from({ length: total }, (_, index) => (
+        <span
+          key={index}
+          className={`${box} inline-block rotate-45 ${
+            index < wins ? fill : 'border border-[var(--color-chrome-lo)] bg-transparent'
+          }`}
+          aria-hidden="true"
+        />
+      ))}
+    </div>
+  );
+};
+
+/**
+ * Seed badge -- skewed chip. 1 and 2 carry the gold because a top-two seed is
+ * the only seeding distinction that means something postseason; 3+ falls back
+ * to the league identity fill so the badge still reads as belonging to a league.
+ */
+const SeedBadge: React.FC<{ seed: number; league: AnyLeague; dimmed?: boolean }> = ({ seed, league, dimmed }) => {
+  const isTopSeed = seed <= 2;
+  const leagueFill = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
+  const fill = isTopSeed ? 'bg-[var(--color-gold)]' : leagueFill;
+  return (
     <span
-      key={index}
-      className={`h-1.5 rounded-full ${index < wins ? filledClass : 'bg-white/10'} ${bestOf >= 7 ? 'w-8' : 'w-9'}`}
-    />
-  ));
+      className={`skew-shadow inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center ${
+        dimmed ? 'bg-[var(--color-panel-2)] text-[var(--color-ink-faint)]' : `${fill} text-[var(--color-ink-invert)]`
+      }`}
+      aria-label={`Seed ${seed}`}
+    >
+      <span className="relative z-10 t-stat-sm">{seed}</span>
+    </span>
+  );
+};
 
 const BracketTeamRow: React.FC<{
   participant: SeededPlayoffTeam | null;
   wins: number;
   bestOf: number;
-  accentClass: string;
-  filledClass: string;
-  highlightClass: string;
-  isEmphasized: boolean;
-}> = ({ participant, wins, bestOf, accentClass, filledClass, highlightClass, isEmphasized }) => {
+  league: AnyLeague;
+  isLeader: boolean;
+  pipFill: string;
+}> = ({ participant, wins, bestOf, league, isLeader, pipFill }) => {
   if (!participant) {
     return (
-      <div className="grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3 rounded-xl bg-white/[0.03] px-3 py-3">
-        <div className="h-11 w-11 rounded-lg bg-black/25 border border-white/10 flex items-center justify-center font-mono text-sm text-zinc-500">
-          ?
-        </div>
-        <div className="min-w-0 flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-2xl border border-dashed border-white/10 bg-black/20 flex items-center justify-center font-mono text-lg text-zinc-600">
-            TBD
-          </div>
-          <p className="font-display text-lg uppercase tracking-[0.08em] text-zinc-300 leading-none mt-3">Awaiting Matchup</p>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 mt-1">Awaiting matchup</p>
+      <div className="flex items-center gap-2 border border-dashed border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-2">
+        <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="t-caption text-[var(--color-ink-faint)]">TBD</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3 rounded-xl px-3 py-3 ${isEmphasized ? highlightClass : 'bg-white/[0.03]'}`}>
-      <div className={`h-11 w-11 rounded-lg flex items-center justify-center font-mono text-sm font-bold ${isEmphasized ? 'bg-black/35 text-white' : 'bg-black/25 text-zinc-300'}`}>
-        {participant.seed}
-      </div>
-      <div className="min-w-0 flex flex-col items-center text-center">
-        <TeamLogo team={participant.team} sizeClass="w-16 h-16" />
-        <p className={`font-display text-[1.15rem] uppercase tracking-[0.08em] leading-none break-words mt-3 ${isEmphasized ? accentClass : 'text-zinc-100'}`}>
+    <div
+      className={`flex items-center gap-2 border-l-[3px] px-2 py-2 ${
+        isLeader ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
+      }`}
+    >
+      <SeedBadge seed={participant.seed} league={league} dimmed={!isLeader} />
+      <TeamLogo team={participant.team} sizeClass="h-7 w-7" />
+      <div className="min-w-0 flex-1">
+        <p className={`truncate t-h3 ${isLeader ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
           {participant.team.city}
         </p>
-        <p className="font-display text-[0.8rem] uppercase tracking-[0.1em] text-zinc-400 mt-1 leading-none break-words">
-          {participant.team.name}
+        <p className="truncate t-caption text-[var(--color-ink-faint)]">
+          {participant.team.name} · {fmtRecord(participant.wins, participant.losses)}
         </p>
-        <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500 mt-2">
-          {participant.wins}-{participant.losses}
-        </p>
-        <div className="mt-3 flex items-center gap-1.5">
-          {pipsForSeries(wins, bestOf, isEmphasized ? filledClass : 'bg-zinc-100')}
-        </div>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        <StatValue size="lg" variant={isLeader ? 'accent' : 'default'}>{wins}</StatValue>
+        <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} />
       </div>
     </div>
   );
 };
 
+/**
+ * Series card.
+ *
+ * A series is "live" when it has been decided in at least one game but not
+ * finished. That is derived from the view model rather than passed in, so the
+ * live treatment cannot drift from the data that justifies it.
+ */
 const BracketSeriesCard: React.FC<{
   series: BracketSeriesView;
-  accentClass: string;
-  accentBorderClass: string;
-  highlightClass: string;
-  filledClass: string;
-}> = ({ series, accentClass, accentBorderClass, highlightClass, filledClass }) => (
-  <article className={`h-full rounded-2xl border ${accentBorderClass} bg-[linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.02))] px-4 py-4 shadow-[0_18px_32px_rgba(0,0,0,0.32)] backdrop-blur-sm`}>
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="font-display text-xl uppercase tracking-[0.14em] text-white">{roundTitles[series.round]}</p>
-        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500 mt-1">{series.label}</p>
-      </div>
-      <div className={`rounded-lg border ${accentBorderClass} bg-black/30 px-2.5 py-1 font-mono text-[10px] uppercase ${accentClass}`}>
-        Best of {series.bestOf}
-      </div>
-    </div>
+  cardRef?: React.Ref<HTMLDivElement>;
+  league: AnyLeague;
+  pipFill: string;
+}> = ({ series, cardRef, league, pipFill }) => {
+  const isLive = !series.winner && (series.topWins > 0 || series.bottomWins > 0);
+  const topLeading = series.leader?.team.id === series.topSeed?.team.id;
+  const bottomLeading = series.leader?.team.id === series.bottomSeed?.team.id;
 
-      <div className="space-y-3 mt-4">
-        <BracketTeamRow
-          participant={series.topSeed}
-          wins={series.topWins}
-          bestOf={series.bestOf}
-          accentClass={accentClass}
-          filledClass={filledClass}
-          highlightClass={highlightClass}
-          isEmphasized={series.winner?.team.id === series.topSeed?.team.id || series.leader?.team.id === series.topSeed?.team.id}
-        />
-        <div className="flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-600">vs</div>
-        <BracketTeamRow
-          participant={series.bottomSeed}
-          wins={series.bottomWins}
-          bestOf={series.bestOf}
-          accentClass={accentClass}
-          filledClass={filledClass}
-          highlightClass={highlightClass}
-          isEmphasized={series.winner?.team.id === series.bottomSeed?.team.id || series.leader?.team.id === series.bottomSeed?.team.id}
-        />
-      </div>
+  return (
+    <div ref={cardRef} className="relative">
+      <Panel className={`relative overflow-hidden ${isLive ? 'border-[var(--color-gold)]' : ''}`}>
+        {isLive && (
+          <>
+            <div className="h-[2px] w-full" style={{ background: 'var(--texture-hazard)' }} aria-hidden="true" />
+            <span className="skew-shadow absolute right-0 top-1 inline-flex h-[18px] items-center bg-[var(--color-gold)] px-2">
+              <span className="relative z-10 t-caption text-[var(--color-ink-invert)]">NEXT</span>
+            </span>
+          </>
+        )}
 
-      {!series.winner && (
-        <div className="mt-4 border-t border-white/8 pt-3 text-right">
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{series.statusLabel}</p>
-          <p className={`mt-1 font-display text-[1rem] uppercase tracking-[0.06em] leading-tight break-words ${series.leader ? accentClass : 'text-zinc-200'}`}>
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-chrome-lo)] px-3 py-2">
+          <h3 className="t-label">{roundTitles[series.round]}</h3>
+          <span className="t-caption text-[var(--color-ink-faint)]">BO{series.bestOf}</span>
+        </div>
+
+        <div className="flex flex-col gap-1 p-2">
+          <BracketTeamRow
+            participant={series.topSeed}
+            wins={series.topWins}
+            bestOf={series.bestOf}
+            league={league}
+            isLeader={topLeading}
+            pipFill={pipFill}
+          />
+          <BracketTeamRow
+            participant={series.bottomSeed}
+            wins={series.bottomWins}
+            bestOf={series.bestOf}
+            league={league}
+            isLeader={bottomLeading}
+            pipFill={pipFill}
+          />
+        </div>
+
+        {!series.winner && (
+          <p className="border-t border-[var(--color-chrome-lo)] px-3 py-2 text-right t-caption text-[var(--color-ink-dim)]">
             {series.statusValue}
           </p>
+        )}
+      </Panel>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ * Connector layer
+ *
+ * A single SVG beneath the cards, rather than a dozen positioned divs. The
+ * round geometry is non-trivial enough that the connector path has to live in
+ * one readable place.
+ *
+ * Positions are measured rather than assumed, because the cards are a grid with
+ * vertical offsets whose exact pixel layout depends on content height. A
+ * measured path stays attached to the cards if their content reflows; a
+ * hard-coded one silently detaches.
+ * ------------------------------------------------------------------ */
+
+interface ConnectorSpec {
+  fromId: string;
+  toId: string;
+  active: boolean;
+}
+
+/** Orthogonal three-bend path between two card edges, in either direction. */
+const buildConnectorPath = (
+  from: { x: number; y: number; width: number; height: number },
+  to: { x: number; y: number; width: number; height: number },
+): string => {
+  const fromMidY = from.y + from.height / 2;
+  const toMidY = to.y + to.height / 2;
+  const rightward = to.x > from.x;
+  const startX = rightward ? from.x + from.width : from.x;
+  const endX = rightward ? to.x : to.x + to.width;
+  const midX = (startX + endX) / 2;
+  return `M ${startX} ${fromMidY} L ${midX} ${fromMidY} L ${midX} ${toMidY} L ${endX} ${toMidY}`;
+};
+
+const BracketConnectors: React.FC<{
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  cardRefs: React.RefObject<Record<string, HTMLDivElement | null>>;
+  specs: ConnectorSpec[];
+}> = ({ containerRef, cardRefs, specs }) => {
+  const [paths, setPaths] = React.useState<Array<{ d: string; active: boolean }>>([]);
+  const [box, setBox] = React.useState({ width: 0, height: 0 });
+
+  React.useLayoutEffect(() => {
+    const measure = () => {
+      const container = containerRef.current;
+      if (!container) return;
+      const containerBox = container.getBoundingClientRect();
+      setBox({ width: containerBox.width, height: containerBox.height });
+
+      const next = specs.flatMap((spec) => {
+        const fromEl = cardRefs.current[spec.fromId];
+        const toEl = cardRefs.current[spec.toId];
+        if (!fromEl || !toEl) return [];
+        const fromBox = fromEl.getBoundingClientRect();
+        const toBox = toEl.getBoundingClientRect();
+        return [{
+          d: buildConnectorPath(
+            { x: fromBox.left - containerBox.left, y: fromBox.top - containerBox.top, width: fromBox.width, height: fromBox.height },
+            { x: toBox.left - containerBox.left, y: toBox.top - containerBox.top, width: toBox.width, height: toBox.height },
+          ),
+          active: spec.active,
+        }];
+      });
+      setPaths(next);
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (containerRef.current) observer.observe(containerRef.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [containerRef, cardRefs, specs]);
+
+  if (box.width === 0) return null;
+
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 z-0"
+      width={box.width}
+      height={box.height}
+      aria-hidden="true"
+      focusable="false"
+    >
+      {paths.map((path) => (
+        <path
+          key={path.d}
+          d={path.d}
+          fill="none"
+          stroke={path.active ? 'var(--color-gold)' : 'var(--color-chrome-lo)'}
+          strokeWidth="1"
+          shapeRendering="crispEdges"
+        />
+      ))}
+    </svg>
+  );
+};
+
+const LeagueBracketDesktop: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
+  bracket,
+  league,
+  pipFill,
+}) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const cardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Wild card feeds the divisional, both divisionals feed the league series.
+  // The right-hand side mirrors the left, so the paths run inward.
+  const specs = React.useMemo<ConnectorSpec[]>(() => [
+    { fromId: bracket.wildCard[0].id, toId: bracket.divisional[0].id, active: Boolean(bracket.wildCard[0].winner) },
+    { fromId: bracket.wildCard[1].id, toId: bracket.divisional[1].id, active: Boolean(bracket.wildCard[1].winner) },
+    { fromId: bracket.divisional[0].id, toId: bracket.leagueSeries.id, active: Boolean(bracket.divisional[0].winner) },
+    { fromId: bracket.divisional[1].id, toId: bracket.leagueSeries.id, active: Boolean(bracket.divisional[1].winner) },
+  ], [bracket]);
+
+  const card = (series: BracketSeriesView, offset: string) => (
+    <div className={offset} style={{ position: 'relative', zIndex: 1 }}>
+      <BracketSeriesCard
+        series={series}
+        league={league}
+        pipFill={pipFill}
+        cardRef={(node) => { cardRefs.current[series.id] = node; }}
+      />
+    </div>
+  );
+
+  return (
+    <div ref={containerRef} className="relative hidden xl:block">
+      <BracketConnectors containerRef={containerRef} cardRefs={cardRefs} specs={specs} />
+      <div className="relative grid grid-cols-5 gap-6">
+        {card(bracket.wildCard[0], '')}
+        {card(bracket.divisional[0], 'pt-16')}
+        {card(bracket.leagueSeries, 'pt-32')}
+        {card(bracket.divisional[1], 'pt-16')}
+        {card(bracket.wildCard[1], '')}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Below xl the bracket loses its columns. The connector layer is dropped rather
+ * than compressed, because a five-round horizontal path has nowhere to go on a
+ * narrow screen -- the same reason the design proposal drops skew below 1024px.
+ * Rounds become labelled groups instead.
+ */
+const LeagueBracketStacked: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
+  bracket,
+  league,
+  pipFill,
+}) => {
+  const groups: Array<{ title: string; series: BracketSeriesView[] }> = [
+    { title: 'Wild Card', series: [...bracket.wildCard] },
+    { title: 'Divisional', series: [...bracket.divisional] },
+    { title: 'League Series', series: [bracket.leagueSeries] },
+  ];
+
+  return (
+    <div className="flex flex-col gap-4 xl:hidden">
+      {groups.map((group) => (
+        <div key={group.title}>
+          <p className="t-label mb-2 text-[var(--color-ink-dim)]">{group.title}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {group.series.map((series) => (
+              <BracketSeriesCard key={series.id} series={series} league={league} pipFill={pipFill} />
+            ))}
+          </div>
         </div>
-      )}
-  </article>
-);
+      ))}
+    </div>
+  );
+};
+
+const LeagueSection: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
+  bracket,
+  league,
+  pipFill,
+}) => {
+  const topSeed = bracket.seeds[0];
+  const pipFillVar = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
+
+  return (
+    <Panel className="overflow-hidden">
+      <div className="chrome-bar flex flex-wrap items-end justify-between gap-3 px-4">
+        <h2 className="t-h2">{bracket.league} League</h2>
+        <div className="text-right">
+          <p className="t-caption text-[var(--color-ink-faint)]">TOP SEED</p>
+          <p className="t-stat text-[var(--color-gold)]">
+            {topSeed ? `${topSeed.team.city} ${topSeed.team.name}` : 'TBD'}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-col gap-5 p-4">
+        <LeagueBracketDesktop bracket={bracket} league={league} pipFill={pipFillVar} />
+        <LeagueBracketStacked bracket={bracket} league={league} pipFill={pipFillVar} />
+      </div>
+    </Panel>
+  );
+};
 
 const WorldSeriesTeamPanel: React.FC<{
   participant: SeededPlayoffTeam | null;
   wins: number;
+  bestOf: number;
   leagueLabel: string;
-  accentClass: string;
-  accentBorderClass: string;
   align: 'left' | 'right';
   isWinner: boolean;
-}> = ({ participant, wins, leagueLabel, accentClass, accentBorderClass, align, isWinner }) => {
-  const alignmentClass = align === 'left' ? 'items-start text-left' : 'items-end text-right';
+  pipFill: string;
+}> = ({ participant, wins, bestOf, leagueLabel, align, isWinner, pipFill }) => {
+  const alignment = align === 'left' ? 'items-start text-left' : 'items-end text-right';
 
   if (!participant) {
     return (
-      <div className={`rounded-[2rem] border border-white/10 bg-black/20 px-6 py-8 md:px-8 md:py-10 ${alignmentClass}`}>
-        <div className="rounded-full border border-white/10 bg-white/5 px-4 py-1 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
-          {leagueLabel}
-        </div>
-        <div className="mt-8 flex h-32 w-32 items-center justify-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.03] font-mono text-lg text-zinc-600 md:h-40 md:w-40">
-          TBD
-        </div>
-        <p className="mt-6 font-display text-3xl uppercase tracking-[0.12em] text-zinc-200">Awaiting Winner</p>
-        <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">League title still in progress</p>
-      </div>
+      <Panel variant="sunken" className={`flex flex-col gap-4 p-6 ${alignment}`}>
+        <p className="t-caption text-[var(--color-ink-faint)]">{leagueLabel}</p>
+        <div className="h-24 w-24 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
+        <p className="t-h2 text-[var(--color-ink-dim)]">Awaiting Winner</p>
+      </Panel>
     );
   }
 
   return (
-    <div className={`rounded-[2rem] border px-6 py-8 md:px-8 md:py-10 ${isWinner ? accentBorderClass : 'border-white/10'} ${isWinner ? 'bg-white/[0.08] shadow-[0_28px_60px_rgba(255,255,255,0.08)]' : 'bg-black/20'} ${alignmentClass}`}>
-      <div className={`rounded-full border px-4 py-1 font-mono text-[10px] uppercase tracking-[0.22em] ${isWinner ? `${accentBorderClass} ${accentClass} bg-white/5` : 'border-white/10 bg-white/5 text-zinc-400'}`}>
+    <Panel
+      variant={isWinner ? 'hero' : 'default'}
+      className={`flex flex-col gap-4 p-6 ${alignment} ${isWinner ? 'border-[var(--color-gold)]' : ''}`}
+    >
+      <span className={`t-label ${isWinner ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-dim)]'}`}>
         {leagueLabel}
+      </span>
+      <TeamLogo team={participant.team} sizeClass="h-24 w-24" />
+      <div>
+        <p className={`t-h1 ${isWinner ? 'text-[var(--color-gold-hi)]' : ''}`}>{participant.team.city}</p>
+        <p className="t-h3 mt-1 text-[var(--color-ink-dim)]">{participant.team.name}</p>
+        <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
+          {fmtRecord(participant.wins, participant.losses)} · RD {fmtDiff(participant.runDiff)}
+        </p>
       </div>
-      <div className={`mt-8 flex w-full ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <TeamLogo team={participant.team} sizeClass="w-32 h-32 md:w-40 md:h-40" />
+      <div className={`flex items-end gap-4 ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
+        <StatValue size="lg" variant={isWinner ? 'accent' : 'default'}>{wins}</StatValue>
+        <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} size="md" />
       </div>
-      <p className={`mt-6 font-display text-4xl uppercase leading-none tracking-[0.12em] md:text-5xl ${isWinner ? accentClass : 'text-white'}`}>
-        {participant.team.city}
-      </p>
-      <p className="mt-2 font-display text-xl uppercase tracking-[0.14em] text-zinc-300 md:text-2xl">
-        {participant.team.name}
-      </p>
-      <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">
-        {participant.wins}-{participant.losses} | RD {participant.runDiff > 0 ? '+' : ''}{participant.runDiff}
-      </p>
-      <div className={`mt-8 flex w-full items-end gap-4 ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Series Wins</p>
-          <p className="mt-2 font-display text-5xl uppercase leading-none text-white md:text-6xl">{wins}</p>
-        </div>
-      </div>
-    </div>
+    </Panel>
   );
 };
 
+/**
+ * World Series -- the climax of the screen and the one element permitted to
+ * break the bracket's column symmetry. Full width, centred, spanning the final.
+ */
 const WorldSeriesShowcase: React.FC<{
   series: BracketSeriesView;
   platinumChampion: SeededPlayoffTeam | null;
   prestigeChampion: SeededPlayoffTeam | null;
   overallChampion: SeededPlayoffTeam | null;
 }> = ({ series, platinumChampion, prestigeChampion, overallChampion }) => {
-  const platinumWins = platinumChampion
-    ? series.topSeed?.team.id === platinumChampion.team.id
-      ? series.topWins
-      : series.bottomSeed?.team.id === platinumChampion.team.id
-        ? series.bottomWins
-        : 0
-    : 0;
-  const prestigeWins = prestigeChampion
-    ? series.topSeed?.team.id === prestigeChampion.team.id
-      ? series.topWins
-      : series.bottomSeed?.team.id === prestigeChampion.team.id
-        ? series.bottomWins
-        : 0
-    : 0;
+  const winsFor = (champion: SeededPlayoffTeam | null): number => {
+    if (!champion) return 0;
+    if (series.topSeed?.team.id === champion.team.id) return series.topWins;
+    if (series.bottomSeed?.team.id === champion.team.id) return series.bottomWins;
+    return 0;
+  };
 
+  const platinumWins = winsFor(platinumChampion);
+  const prestigeWins = winsFor(prestigeChampion);
   const platinumWinner = Boolean(overallChampion && platinumChampion && overallChampion.team.id === platinumChampion.team.id);
   const prestigeWinner = Boolean(overallChampion && prestigeChampion && overallChampion.team.id === prestigeChampion.team.id);
 
   return (
-    <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.14),transparent_26%),radial-gradient(circle_at_top_right,rgba(0,94,255,0.16),transparent_28%),radial-gradient(circle_at_bottom_left,rgba(23,182,144,0.12),transparent_30%),linear-gradient(135deg,#151515,#202020 40%,#121212)] p-5 md:p-7">
-      <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(90deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02),rgba(255,255,255,0.05))] px-4 py-4 md:px-6">
-        <div className="flex flex-col gap-4 xl:grid xl:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)] xl:items-center">
-          <WorldSeriesTeamPanel
-            participant={platinumChampion}
-            wins={platinumWins}
-            leagueLabel="Platinum Champion"
-            accentClass="text-platinum"
-            accentBorderClass="border-platinum/35"
-            align="left"
-            isWinner={platinumWinner}
-          />
+    <Panel className="overflow-hidden">
+      <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+        <div className="flex items-center gap-3">
+          <h2 className="t-h2">GPB World Series</h2>
+          <span className="t-caption text-[var(--color-ink-faint)]">BEST OF {series.bestOf}</span>
+        </div>
+        <img src={worldSeriesLogo} alt="" className="h-8 w-auto object-contain" aria-hidden="true" />
+      </div>
 
-          <div className="flex flex-col items-center justify-center px-2 py-4 text-center">
-            <img
-              src={gpbLogo}
-              alt="GPB"
-              className="h-20 w-20 object-contain drop-shadow-[0_16px_40px_rgba(255,255,255,0.16)] md:h-24 md:w-24"
-            />
-            <div className="rounded-full border border-white/10 bg-black/30 px-4 py-1 font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-              Best of {series.bestOf}
-            </div>
-            <div className="mt-6 flex items-center gap-3 md:gap-4">
-              <span className="font-display text-6xl uppercase leading-none text-white md:text-7xl">{platinumWins}</span>
-              <span className="font-mono text-xs uppercase tracking-[0.28em] text-zinc-600">vs</span>
-              <span className="font-display text-6xl uppercase leading-none text-white md:text-7xl">{prestigeWins}</span>
-            </div>
-            <div className="mt-6 flex items-center gap-2">
-              {pipsForSeries(platinumWins, series.bestOf, 'bg-platinum')}
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              {pipsForSeries(prestigeWins, series.bestOf, 'bg-prestige')}
-            </div>
-            <div className="mt-8 rounded-[1.5rem] border border-white/10 bg-black/25 px-5 py-4">
-              <div className="flex items-center gap-2">
-                <Crown className="h-4 w-4 text-zinc-100" />
-                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">World Series Champion</p>
-              </div>
-              {overallChampion ? (
-                <div className="mt-3 flex items-center justify-center gap-3">
-                  <TeamLogo team={overallChampion.team} sizeClass="w-14 h-14" />
-                  <div className="min-w-0 text-left">
-                    <p className="font-display text-2xl uppercase tracking-[0.1em] text-white">{overallChampion.team.city}</p>
-                    <p className="mt-1 font-display text-sm uppercase tracking-[0.14em] text-zinc-300">{overallChampion.team.name}</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-                  Winner crowns here once the final ends
-                </p>
-              )}
-            </div>
-            <img
-              src={worldSeriesLogo}
-              alt="GPB World Series"
-              className="mt-6 h-16 w-auto object-contain drop-shadow-[0_18px_40px_rgba(210,178,92,0.3)] md:h-20"
-            />
-          </div>
+      <div className="grid gap-4 p-4 xl:grid-cols-2">
+        <WorldSeriesTeamPanel
+          participant={platinumChampion}
+          wins={platinumWins}
+          bestOf={series.bestOf}
+          leagueLabel="Platinum Champion"
+          align="left"
+          isWinner={platinumWinner}
+          pipFill="bg-[var(--color-platinum)]"
+        />
+        <WorldSeriesTeamPanel
+          participant={prestigeChampion}
+          wins={prestigeWins}
+          bestOf={series.bestOf}
+          leagueLabel="Prestige Champion"
+          align="right"
+          isWinner={prestigeWinner}
+          pipFill="bg-[var(--color-prestige)]"
+        />
+      </div>
 
-          <WorldSeriesTeamPanel
-            participant={prestigeChampion}
-            wins={prestigeWins}
-            leagueLabel="Prestige Champion"
-            accentClass="text-prestige"
-            accentBorderClass="border-prestige/35"
-            align="right"
-            isWinner={prestigeWinner}
-          />
+      <div className="border-t border-[var(--color-chrome-lo)] px-4 py-6">
+        <div className="flex flex-col items-center gap-4 text-center">
+          {overallChampion ? (
+            <>
+              <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
+              <TeamLogo team={overallChampion.team} sizeClass="h-16 w-16" />
+              <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
+              <p className="t-h2 text-[var(--color-gold)]">{overallChampion.team.name}</p>
+            </>
+          ) : (
+            <>
+              <img src={gpbLogo} alt="" className="h-20 w-auto object-contain opacity-80" aria-hidden="true" />
+              <p className="t-h2 text-[var(--color-ink-dim)]">Champion Crowns Here</p>
+              <p className="t-caption text-[var(--color-ink-faint)]">Winner is decided once the final ends</p>
+            </>
+          )}
         </div>
       </div>
-    </section>
+    </Panel>
   );
 };
-
-const LeagueBracketDesktop: React.FC<{
-  bracket: LeagueBracketView;
-  accentClass: string;
-  accentBorderClass: string;
-  highlightClass: string;
-  filledClass: string;
-}> = ({ bracket, accentClass, accentBorderClass, highlightClass, filledClass }) => (
-  <div className="hidden xl:grid grid-cols-5 gap-5 items-start">
-    <div className="pt-8">
-      <BracketSeriesCard
-        series={bracket.wildCard[0]}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-    <div className="pt-24">
-      <BracketSeriesCard
-        series={bracket.divisional[0]}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-    <div className="pt-40">
-      <BracketSeriesCard
-        series={bracket.leagueSeries}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-    <div className="pt-24">
-      <BracketSeriesCard
-        series={bracket.divisional[1]}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-    <div className="pt-8">
-      <BracketSeriesCard
-        series={bracket.wildCard[1]}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-  </div>
-);
-
-const LeagueBracketMobile: React.FC<{
-  bracket: LeagueBracketView;
-  accentClass: string;
-  accentBorderClass: string;
-  highlightClass: string;
-  filledClass: string;
-}> = ({ bracket, accentClass, accentBorderClass, highlightClass, filledClass }) => (
-  <div className="xl:hidden space-y-4">
-    <div>
-      <p className="font-display text-lg uppercase tracking-widest text-zinc-100 mb-2">Wild Card</p>
-      <div className="space-y-3">
-        {bracket.wildCard.map((series) => (
-          <BracketSeriesCard
-            key={series.id}
-            series={series}
-            accentClass={accentClass}
-            accentBorderClass={accentBorderClass}
-            highlightClass={highlightClass}
-            filledClass={filledClass}
-          />
-        ))}
-      </div>
-    </div>
-    <div>
-      <p className="font-display text-lg uppercase tracking-widest text-zinc-100 mb-2">Divisional</p>
-      <div className="space-y-3">
-        {bracket.divisional.map((series) => (
-          <BracketSeriesCard
-            key={series.id}
-            series={series}
-            accentClass={accentClass}
-            accentBorderClass={accentBorderClass}
-            highlightClass={highlightClass}
-            filledClass={filledClass}
-          />
-        ))}
-      </div>
-    </div>
-    <div>
-      <p className="font-display text-lg uppercase tracking-widest text-zinc-100 mb-2">League Series</p>
-      <BracketSeriesCard
-        series={bracket.leagueSeries}
-        accentClass={accentClass}
-        accentBorderClass={accentBorderClass}
-        highlightClass={highlightClass}
-        filledClass={filledClass}
-      />
-    </div>
-  </div>
-);
-
-const LeagueSection: React.FC<{
-  bracket: LeagueBracketView;
-  accentClass: string;
-  accentBorderClass: string;
-  highlightClass: string;
-  filledClass: string;
-}> = ({ bracket, accentClass, accentBorderClass, highlightClass, filledClass }) => (
-  <section className="rounded-2xl border border-white/10 bg-[linear-gradient(135deg,#191919,#212121,#171717)] p-4 md:p-5">
-    <div className="flex items-end justify-between gap-3 mb-5">
-      <div>
-        <p className={`font-display text-4xl uppercase tracking-[0.18em] ${accentClass}`}>{bracket.league}</p>
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500 mt-1">Bracket state updates from played playoff games</p>
-      </div>
-      <div className="text-right">
-        <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Top Seed</p>
-        <p className={`font-display text-lg uppercase tracking-[0.08em] ${accentClass}`}>
-          {bracket.seeds[0] ? `${bracket.seeds[0].team.city} ${bracket.seeds[0].team.name}` : 'TBD'}
-        </p>
-      </div>
-    </div>
-
-    <LeagueBracketDesktop
-      bracket={bracket}
-      accentClass={accentClass}
-      accentBorderClass={accentBorderClass}
-      highlightClass={highlightClass}
-      filledClass={filledClass}
-    />
-    <LeagueBracketMobile
-      bracket={bracket}
-      accentClass={accentClass}
-      accentBorderClass={accentBorderClass}
-      highlightClass={highlightClass}
-      filledClass={filledClass}
-    />
-  </section>
-);
 
 export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
   teams,
@@ -1009,7 +1083,7 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
   }, [currentDate, playoffGames, selectedDate]);
   const upcomingPlayoffGames = useMemo(
     () => playoffGames.filter((game) => game.status === 'scheduled' && (!playbackAnchorDate || game.date >= playbackAnchorDate)),
-    [playoffGames, playbackAnchorDate],
+    [playbackAnchorDate, playoffGames],
   );
   const allScheduleDates = useMemo<string[]>(() => {
     const dates: string[] = games.map((game) => game.date);
@@ -1021,7 +1095,6 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
     if (!horizonBase) {
       return existingMax;
     }
-
     const horizon = addDaysToISODate(horizonBase, 70);
     if (!existingMax) {
       return horizon;
@@ -1032,189 +1105,137 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
   const canSimToTargetDate = Boolean(activeTargetDate) && (!playbackAnchorDate || activeTargetDate >= playbackAnchorDate);
   const nextPlayoffDate = upcomingPlayoffGames[0]?.date ?? null;
   const gameQueue = upcomingPlayoffGames.slice(0, 12);
-  const firstScheduledPlayoffDate = useMemo(() => {
-    return (
-      playoffGames
-        .filter((game) => game.status === 'scheduled')
-        .map((game) => game.date as string)
-        .sort((left: string, right: string) => left.localeCompare(right))[0] ?? null
-    );
-  }, [playoffGames]);
+  const firstScheduledPlayoffDate = useMemo(
+    () => playoffGames
+      .filter((game) => game.status === 'scheduled')
+      .map((game) => game.date as string)
+      .sort((left, right) => left.localeCompare(right))[0] ?? null,
+    [playoffGames],
+  );
   const completedPlayoffGames = useMemo(
     () => playoffGames.filter((game) => game.status === 'completed' && game.date <= bracket.bracketDate).length,
-    [playoffGames, bracket.bracketDate],
+    [bracket.bracketDate, playoffGames],
   );
   const bracketStatusCopy = useMemo(() => {
-    if (bracket.champion) {
-      return `Bracket completed through ${formatHeaderDate(bracket.bracketDate)}.`;
-    }
-
-    if (completedPlayoffGames > 0) {
-      return `Bracket live through ${formatHeaderDate(bracket.bracketDate)}.`;
-    }
-
-    if (firstScheduledPlayoffDate) {
-      return `Playoffs scheduled to open ${formatHeaderDate(firstScheduledPlayoffDate)}.`;
-    }
-
+    if (bracket.champion) return `Bracket completed through ${formatHeaderDate(bracket.bracketDate)}.`;
+    if (completedPlayoffGames > 0) return `Bracket live through ${formatHeaderDate(bracket.bracketDate)}.`;
+    if (firstScheduledPlayoffDate) return `Playoffs scheduled to open ${formatHeaderDate(firstScheduledPlayoffDate)}.`;
     return seasonComplete
       ? 'Regular season complete. Generate or schedule playoff games to start the bracket.'
       : 'Playoff field projected. Simulate forward to begin bracket games.';
-  }, [bracket.champion, bracket.bracketDate, completedPlayoffGames, firstScheduledPlayoffDate, seasonComplete]);
+  }, [bracket.bracketDate, bracket.champion, completedPlayoffGames, firstScheduledPlayoffDate, seasonComplete]);
   const simControlsLocked = isSimulating;
 
   return (
-    <section className="space-y-8">
-      <article className="rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(23,182,144,0.12),transparent_26%),radial-gradient(circle_at_bottom_right,rgba(167,155,0,0.12),transparent_32%),linear-gradient(135deg,#1a1a1a,#232323,#171717)] p-4 md:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="flex items-center gap-3">
-              <img src={gpbLogo} alt="GPB" className="h-10 w-auto object-contain md:h-12" />
-              <img src={playoffsLogo} alt="Playoffs" className="h-12 w-auto object-contain md:h-16" />
+    <section className="space-y-5">
+      <Panel className="overflow-hidden">
+        {/* The logos get their own band rather than a chrome bar. A chrome bar is
+            32px tall by definition, so anything of real presence has to sit
+            below it -- cramming them into the bar is what made them read as
+            decoration instead of masthead. */}
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-4 py-4">
+          <div className="flex items-center gap-4">
+            <img src={gpbLogo} alt="" className="h-16 w-auto object-contain md:h-20" aria-hidden="true" />
+            <span className="h-16 w-px self-stretch bg-[var(--color-chrome-lo)] md:h-20" aria-hidden="true" />
+            <img src={playoffsLogo} alt="" className="h-16 w-auto object-contain md:h-20" aria-hidden="true" />
+            <div>
+              <h1 className="t-h1">Playoffs</h1>
+              <p className="t-caption mt-1 text-[var(--color-ink-faint)]">{bracketStatusCopy}</p>
             </div>
-            <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
-              {bracketStatusCopy}
-            </p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Next playoff date</p>
-            <p className="mt-1 font-display text-xl uppercase tracking-[0.08em] text-zinc-100">
-              {nextPlayoffDate ? formatHeaderDate(nextPlayoffDate) : 'None Scheduled'}
+          <div className="text-right">
+            <p className="t-caption text-[var(--color-ink-faint)]">NEXT PLAYOFF DATE</p>
+            <p className="t-stat-lg text-[var(--color-gold)]">
+              {nextPlayoffDate ? formatHeaderDate(nextPlayoffDate) : 'NONE SCHEDULED'}
             </p>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto]">
-          <label className="rounded-xl border border-white/10 bg-black/25 px-4 py-3">
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Sim target date</span>
+        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:flex-wrap lg:items-end">
+          <label className="flex flex-col gap-1">
+            <span className="t-caption text-[var(--color-ink-faint)]">SIM TARGET DATE</span>
             <input
               type="date"
               value={activeTargetDate}
               min={allScheduleDates[0]}
               max={maxSelectableDate}
               onChange={(event) => onSelectDate(event.target.value)}
-              className="mt-2 block w-full bg-transparent font-mono text-sm text-white outline-none"
+              className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-1.5 t-stat-sm text-[var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
             />
           </label>
 
-          <button
-            onClick={onSimulateNextPlayoffGame}
-            disabled={simControlsLocked}
-            className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
-          >
-            <div className="flex items-center gap-2">
-              <Play className="h-4 w-4 text-prestige" />
-              <p className="font-headline text-xl uppercase tracking-[0.08em] text-white">Sim Next Game</p>
-            </div>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Advance one playoff game</p>
-          </button>
-
-          <button
+          <RetroButton variant="default" onClick={onSimulateNextPlayoffGame} disabled={simControlsLocked}>
+            <Play className="h-4 w-4" /> Sim Next Game
+          </RetroButton>
+          <RetroButton
+            variant="primary"
             onClick={() => onSimulateToDate(activeTargetDate)}
             disabled={simControlsLocked || !canSimToTargetDate}
-            className="rounded-xl border border-prestige/25 bg-prestige/10 px-4 py-3 text-left transition-colors hover:border-prestige/40 disabled:opacity-50"
           >
-            <div className="flex items-center gap-2">
-              <CalendarDays className="h-4 w-4 text-prestige" />
-              <p className="font-headline text-xl uppercase tracking-[0.08em] text-prestige">Sim To Date</p>
-            </div>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-              {activeTargetDate ? formatHeaderDate(activeTargetDate) : 'Select a target'}
-            </p>
-          </button>
-
-          <button
+            <CalendarDays className="h-4 w-4" /> Sim To Date
+          </RetroButton>
+          <RetroButton
+            variant="default"
             onClick={() => nextPlayoffDate && onSimulateToDate(nextPlayoffDate)}
             disabled={simControlsLocked || !nextPlayoffDate}
-            className="rounded-xl border border-[#d4bb6a]/25 bg-[#d4bb6a]/10 px-4 py-3 text-left transition-colors hover:border-[#d4bb6a]/40 disabled:opacity-50"
           >
-            <div className="flex items-center gap-2">
-              <SkipForward className="h-4 w-4 text-[#ecd693]" />
-              <p className="font-headline text-xl uppercase tracking-[0.08em] text-[#ecd693]">Next Playoff Day</p>
-            </div>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-              {nextPlayoffDate ? formatHeaderDate(nextPlayoffDate) : 'No upcoming playoff date'}
-            </p>
-          </button>
-
-          <button
-            onClick={onCancelSimulation}
-            disabled={!isSimulating}
-            className="rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
-          >
-            <div className="flex items-center gap-2">
-              <PauseCircle className="h-4 w-4 text-zinc-300" />
-              <p className="font-headline text-xl uppercase tracking-[0.08em] text-zinc-100">Stop</p>
-            </div>
-            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-              {isSimulating ? 'Stop after active day' : 'Idle'}
-            </p>
-          </button>
+            <SkipForward className="h-4 w-4" /> Next Playoff Day
+          </RetroButton>
+          <RetroButton variant="ghost" onClick={onCancelSimulation} disabled={!isSimulating}>
+            <PauseCircle className="h-4 w-4" /> Stop
+          </RetroButton>
         </div>
 
-        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
+        <div className="border-t border-[var(--color-chrome-lo)] px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Playoff game queue</p>
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">
-              {upcomingPlayoffGames.length} scheduled
-            </p>
+            <p className="t-caption text-[var(--color-ink-faint)]">PLAYOFF GAME QUEUE</p>
+            <p className="t-caption text-[var(--color-ink-faint)]">{upcomingPlayoffGames.length} SCHEDULED</p>
           </div>
           {gameQueue.length > 0 ? (
-            <div className="mt-3 flex gap-3 overflow-x-auto pb-1 scrollbar-subtle">
+            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
               {gameQueue.map((game) => {
                 const awayTeam = teamsById.get(game.awayTeam) ?? null;
                 const homeTeam = teamsById.get(game.homeTeam) ?? null;
-                const seriesLabel = game.playoff?.seriesLabel ?? 'Playoff';
-                const gameNumberLabel = game.playoff?.gameNumber ? `G${game.playoff.gameNumber}` : 'G?';
                 return (
                   <button
                     key={game.gameId}
                     type="button"
                     onClick={() => onSimulateToGame(game.gameId)}
                     disabled={simControlsLocked}
-                    className="min-w-[240px] rounded-xl border border-white/10 bg-black/25 px-3 py-3 text-left transition-colors hover:border-white/20 disabled:opacity-50"
+                    className="min-w-[200px] shrink-0 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-panel-2)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
                   >
-                    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                      {formatHeaderDate(game.date)} | {gameNumberLabel}
+                    <p className="t-caption text-[var(--color-ink-faint)]">
+                      {formatHeaderDate(game.date)} · G{game.playoff?.gameNumber ?? '?'}
                     </p>
-                    <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.16em] text-[#d8c88b]">{seriesLabel}</p>
-                    <p className="mt-2 font-headline text-xl uppercase tracking-[0.06em] text-white">
+                    <p className="mt-1 truncate t-label text-[var(--color-gold)]">
+                      {game.playoff?.seriesLabel ?? 'Playoff'}
+                    </p>
+                    <p className="mt-1 truncate t-stat-sm">
                       {(awayTeam?.city ?? game.awayTeam)} @ {(homeTeam?.city ?? game.homeTeam)}
                     </p>
-                    <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">Sim Through This Game</p>
                   </button>
                 );
               })}
             </div>
           ) : (
-            <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">
-              No playoff games are currently scheduled.
-            </p>
+            <p className="mt-2 t-caption text-[var(--color-ink-faint)]">No playoff games are currently scheduled.</p>
           )}
         </div>
-      </article>
+      </Panel>
 
-      <LeagueSection
-        bracket={bracket.platinum}
-        accentClass="text-platinum"
-        accentBorderClass="border-platinum/35"
-        highlightClass="bg-platinum/14"
-        filledClass="bg-platinum"
-      />
+      {/* Full width rather than side by side. Two five-round brackets abreast
+          would leave roughly 150px per series card, which cannot hold a logo, a
+          city name and a series record -- and the connector layer is the reason
+          the bracket is worth building this way in the first place. */}
+      <LeagueSection bracket={bracket.platinum} league="Platinum" pipFill="bg-[var(--color-platinum)]" />
+
+      <LeagueSection bracket={bracket.prestige} league="Prestige" pipFill="bg-[var(--color-prestige)]" />
 
       <WorldSeriesShowcase
         series={bracket.worldSeries}
         platinumChampion={bracket.platinum.champion}
         prestigeChampion={bracket.prestige.champion}
         overallChampion={bracket.champion}
-      />
-
-      <LeagueSection
-        bracket={bracket.prestige}
-        accentClass="text-prestige"
-        accentBorderClass="border-prestige/35"
-        highlightClass="bg-prestige/14"
-        filledClass="bg-prestige"
       />
     </section>
   );
