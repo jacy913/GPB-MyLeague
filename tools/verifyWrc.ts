@@ -683,16 +683,40 @@ const main = async (): Promise<void> => {
     .map((counts, index) => ({ id: index, wrc: wrcRows[index] }))
     .filter((entry) => entry.wrc.value !== null)
     .sort((a, b) => (b.wrc.value as number) - (a.wrc.value as number))
-    .slice(0, 5);
-  console.log('\nTOP FIVE BY wRC+');
+    .slice(0, 10);
+  console.log('\nTOP TEN BY wRC+ -- what a leaderboard would actually show');
   top.forEach((entry, index) => {
     const r = entry.wrc;
     console.log(
-      `  ${index + 1}. ${r.value?.toFixed(1)}  (raw ${r.rawValue?.toFixed(1)})  ` +
+      `  ${String(index + 1).padStart(2)}. ${r.value?.toFixed(1).padStart(5)}  ` +
+        `(raw ${r.rawValue?.toFixed(1).padStart(5)})  ` +
         `${r.plateAppearances} PA, wOBA ${r.woba?.toFixed(4)}, ` +
         `shrinkage weight ${r.shrinkageWeight?.toFixed(3)}`,
     );
   });
+
+  /*
+   * PRESENTABILITY, measured rather than argued.
+   *
+   * A leaderboard renders whole numbers, so what matters is how many distinct
+   * integers the top of the board actually produces and how wide the gap is
+   * between rank 1 and rank 10. A board whose top ten reads 116 116 115 115 114
+   * is telling the reader nothing, and no amount of accuracy underneath fixes
+   * that -- the compression is the measurement.
+   *
+   * This is the evidence for the open question about whether run value belongs on
+   * a main board at all, and for the claim in wrcPlus.ts that callers should treat
+   * differences inside a few points as ties.
+   */
+  const topValues = top.map((entry) => entry.wrc.value as number);
+  const asIntegers = new Set(topValues.map((v) => Math.round(v)));
+  const roundedTies = topValues.filter((v, i) => i > 0 && Math.round(v) === Math.round(topValues[i - 1])).length;
+  console.log(
+    `\n  top ten spans ${(topValues[0] - topValues[9]).toFixed(1)} points, ` +
+      `${asIntegers.size} distinct whole numbers from 10 rows, ` +
+      `${roundedTies} adjacent pair${roundedTies === 1 ? '' : 's'} that tie once rounded`,
+  );
+  console.log('  If that tie count is high, the board is reporting noise in its own units');
 
   console.log('\nWHAT THIS DID NOT INDEPENDENTLY CONFIRM');
   console.log('  - The engine already throws when a game\'s hits or runs disagree with its');
