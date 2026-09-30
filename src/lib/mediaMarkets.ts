@@ -68,27 +68,81 @@ export const FIRST_HALF_SHARE = 0.5718;
 
 export interface FuturesInput {
   teams: Team[];
-  /** Each forecaster's league-wide read, already computed. */
-  indexBy: Record<MediaId, Map<string, number>>;
+  /**
+   * Each forecaster's UN-NORMALISED score per club.
+   *
+   * Not the index. The index is a rank rescaled 0-100, so inside a sixteen-team
+   * division it always spans exactly 100 points whether the clubs are miles
+   * apart or level -- it has thrown the underlying strength gap away by
+   * construction. mediaReads says as much about itself.
+   */
+  scoreBy: Record<MediaId, Map<string, number>>;
 }
 
 /**
- * Convert a forecaster's field index into a win probability for a group.
+ * How fast a forecaster's score converts into win probability.
  *
- * A soft-max over the field rather than a fixed per-team number, so a race with
- * one clear favourite produces a decisive price and a tight one produces a
- * long shot list. The temperature is fitted per forecaster in the same way the
- * moneyline slope was: Hollis is near his own fitted value, Sharply is
- * deliberately steeper because being certain is his character.
+ * Multiplier on the exponent, per unit of raw score, so a bigger value means a
+ * steeper read.
+ *
+ * These are SCORE units, not rank units, and the difference is roughly two
+ * orders of magnitude. tools/fitFuturesScale.ts measures the score spread inside
+ * a division: about 0.30 for Hollis, 0.50 for Glorest, 0.15 for Sharply. The
+ * shipped values were 0.42 / 0.38 / 0.62, which against a spread of 0.3 moved
+ * a probability by well under a point -- so every club in a division was posted
+ * at the same price, and the board opened at +143 across the field.
+ *
+ * The behaviour comes from tools/fitFuturesTemperature.ts, which plays seasons
+ * out and checks how often each read names the actual division winner: 62.5 per
+ * cent against 25 per cent for a blind pick, on four-team divisions. A read
+ * that good means the leader genuinely deserves somewhere near 55-60 per cent,
+ * which is what 8.0 produces for Hollis here.
+ *
+ * The three differ without being hand-tuned, because their score spreads
+ * differ. At this temperature Hollis posts a leader near -133, Glorest near
+ * -285 because his raw scores are spread nearly twice as wide, and Sharply
+ * near +144 because his are half as wide. Glorest being the most decisive is
+ * consistent with what the media page already shows about him.
  */
 const FUTURES_TEMPERATURE: Record<MediaId, number> = {
-  hollis: 0.42,
-  glorest: 0.38,
-  sharply: 0.62,
+  hollis: 8.0,
+  glorest: 8.0,
+  sharply: 8.0,
 };
 
-const softMaxProbabilities = (indices: number[], temperature: number): number[] => {
-  const exps = indices.map((index) => Math.exp((index / 100) * temperature));
+/**
+ * A soft-max fitted on a four-team division cannot be reused on a sixteen-team
+ * league.
+ *
+ * The temperature sets the log-odds between neighbouring clubs, so it produces
+ * a fixed RATIO between first and second. Over four clubs a leader at 57 per
+ * cent is a strong read. Over sixteen, the same ratio leaves the leader near 90
+ * per cent and the bottom of the field under 1 per cent -- which is not a
+ * sharper forecast, it is the same forecast spread over four times as many
+ * outcomes, and the tail prices become meaningless longshots that all crowd
+ * against the same cap.
+ *
+ * The correction is the standard one: a log-odds model over N outcomes needs
+ * the exponent divided by the square root of N, which holds the top-two ratio
+ * roughly constant as the field grows. Four clubs is the reference, so the
+ * divisor is sqrt(N / 4).
+ */
+const temperatureFor = (base: number, fieldSize: number): number =>
+  base / Math.sqrt(Math.max(1, fieldSize) / 4);
+
+/**
+ * Soft-max over a group, in the forecaster's own score units.
+ *
+ * A soft-max rather than a fixed per-club number, so a race with one clear
+ * favourite produces a decisive price and a tight one produces a long shot list.
+ * The scores are centred on the group mean before the exponential, so a division
+ * where everyone is strong is not priced differently from one where everyone is
+ * weak.
+ */
+const softMaxProbabilities = (scores: number[], temperature: number): number[] => {
+  if (scores.length === 0) return [];
+  const mean = scores.reduce((sum, value) => sum + value, 0) / scores.length;
+  const exps = scores.map((score) => Math.exp((score - mean) * temperature));
   const total = exps.reduce((sum, value) => sum + value, 0);
   return exps.map((value) => (total > 0 ? value / total : 1 / exps.length));
 };
@@ -109,12 +163,28 @@ const groupMarkets = (
 
   return [...groups.entries()]
     .map(([groupId, members]) => {
-      const probability = {} as Record<MediaId, number>;
+      /*
+       * Each forecaster's own probability for EACH club.
+       *
+       * This used to compute the full soft-max per forecaster, take the maximum,
+       * and then hand that single number to every club in the division. So all
+       * sixteen clubs were posted at the favourite's price -- a division market
+       * where the last-place team and the leader cost the same.
+       *
+       * The soft-max is already a distribution over the field, so every club
+       * simply gets its own element of it.
+       */
+      const probabilityBy = new Map<string, Record<MediaId, number>>();
       MEDIA_PROFILES.forEach((profile) => {
-        const indices = members.map((team) => input.indexBy[profile.id].get(team.id) ?? 50);
-        const probabilities = softMaxProbabilities(indices, FUTURES_TEMPERATURE[profile.id]);
-        const best = probabilities.indexOf(Math.max(...probabilities));
-        probability[profile.id] = probabilities[best] ?? 0;
+        const scores = members.map((team) => input.scoreBy[profile.id].get(team.id) ?? 0);
+        const probabilities = softMaxProbabilities(
+          scores, temperatureFor(FUTURES_TEMPERATURE[profile.id], members.length),
+        );
+        members.forEach((team, position) => {
+          const existing = probabilityBy.get(team.id) ?? {} as Record<MediaId, number>;
+          existing[profile.id] = probabilities[position] ?? 0;
+          probabilityBy.set(team.id, existing);
+        });
       });
 
       return buildFieldMarket({
@@ -126,7 +196,7 @@ const groupMarkets = (
           key: team.id,
           label: team.city,
           sublabel: team.name,
-          probability,
+          probability: probabilityBy.get(team.id) ?? ({} as Record<MediaId, number>),
         })),
       });
     })
@@ -167,16 +237,30 @@ export const buildAwardMarket = (
   const totals = entries.map((entry) => entry.total);
   const mean = totals.reduce((sum, value) => sum + value, 0) / Math.max(1, totals.length);
 
-  const probability = {} as Record<MediaId, number>;
+  /*
+   * Each candidate's own share of the field, per forecaster.
+   *
+   * This had the same shape of bug as the futures builder: the normalised share
+   * of the LEADING candidate was computed and then handed to all eight
+   * candidates, so every player in the race was posted at the same price. A
+   * 20-to-1 outsider and the front-runner both went on the board at whatever
+   * the leader's share was worth.
+   *
+   * The regression is applied to the whole field before normalising, which is
+   * the point of it: pulling the leaders back toward the mean redistributes
+   * probability across the field, and the longshots are what end up holding it.
+   */
+  const probabilityBy = new Map<string, Record<MediaId, number>>();
   MEDIA_PROFILES.forEach((profile) => {
-    const shrunk = entries.map((entry) => {
-      const total = entry.total;
-      return mean + (total - mean) * (1 - AWARD_REGRESSION[profile.id]);
-    });
+    const shrunk = entries.map((entry) => mean + (entry.total - mean) * (1 - AWARD_REGRESSION[profile.id]));
     const floored = shrunk.map((value) => Math.max(0.1, value));
     const sum = floored.reduce((acc, value) => acc + value, 0);
-    const best = floored.indexOf(Math.max(...floored));
-    probability[profile.id] = sum > 0 ? (floored[best] ?? 0) / sum : 1 / floored.length;
+    entries.forEach((entry, position) => {
+      const share = sum > 0 ? (floored[position] ?? 0) / sum : 1 / floored.length;
+      const existing = probabilityBy.get(entry.playerId) ?? {} as Record<MediaId, number>;
+      existing[profile.id] = share;
+      probabilityBy.set(entry.playerId, existing);
+    });
   });
 
   return buildFieldMarket({
@@ -187,7 +271,7 @@ export const buildAwardMarket = (
       key: entry.playerId,
       label: entry.name,
       sublabel: entry.team ? `${entry.team.city} ${entry.team.name}` : 'Free agent',
-      probability,
+      probability: probabilityBy.get(entry.playerId) ?? ({} as Record<MediaId, number>),
     })),
   });
 };

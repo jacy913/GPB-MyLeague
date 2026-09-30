@@ -28,6 +28,47 @@ import { MEDIA_PROFILES, type MediaId } from '../data/media';
 export const HOUSE_MARGIN = 0.045;
 
 /**
+ * How far the house line is pulled back toward even.
+ *
+ * The house is not the average of the three forecasters, because averaging a
+ * well-calibrated read with a badly calibrated one does not land in between.
+ * Lined Sharply posts 0.78 on games that have historically gone 0.53, and that
+ * overconfidence is deliberate -- it is the exploitable flaw the layer is built
+ * around, and flattening it would be correcting a character rather than fixing
+ * a bug. But it does drag the CONSENSUS up, so the house ends up long at 70% in
+ * a band that pays 60%.
+ *
+ * A real book shades toward the centre instead. This is the fitted value, and
+ * the fit is measured on a book that actually charges -- an earlier version was
+ * fitted while the moneyline's two sides were negations of each other, which is
+ * arithmetically zero vig, so its numbers described a book paying out fair
+ * value on both sides.
+ *
+ * Fitted by tools/fitHouseShading.ts and confirmed by
+ * tools/verifyShadedHouse.ts, which replays flat strategies at each shade:
+ *
+ *   shade   fav net    dog net  (three seeds)
+ *   0.00      -997    +197 / +393 / -6     <- bettor profits
+ *   0.10      -996    -246 / +171 / -221
+ *   0.15      -997    -458 / +65 / -324
+ *   0.20      -997    -661 / -38 / -424    <- shipping
+ *   0.30      -996    -995 / -236 / -616
+ *
+ * The spread between seeds is real and worth stating: the at-bat engine carries
+ * unseeded randomness, so the same shade moves by a few hundred dollars between
+ * runs. 0.20 is the mildest shade where BOTH flat strategies lose on every
+ * seed, which is the bar that matters -- a bettor with no edge at all, betting
+ * one side relentlessly, must not print money.
+ *
+ * What this does NOT fix: the worst-priced band is still 9 to 19 points off,
+ * and the best is worth 2 to 3. Shading is a uniform transform, so it scales
+ * every band together and cannot correct error that varies across them. Closing
+ * that residual means moving the forecasters' slopes, which would be editing
+ * the characters rather than the book.
+ */
+export const HOUSE_SHADE = 0.20;
+
+/**
  * Home advantage, in log-odds.
  *
  * The measured value, not the real-baseball one. Repeated runs of the simulator
@@ -105,10 +146,23 @@ export interface FieldMarket {
 /**
  * A market over mutually exclusive outcomes.
  *
- * Margins are taken off the most likely side, which is how a real book prices,
- * and the margin is not shared across the field: a nine-outcome award market
- * taking a cut from every candidate would be punishing outcomes that are
- * already long shots.
+ * The margin is applied to EVERY side, as a straight multiplier. The previous
+ * approach took it off the favourite alone, on the reasoning that a nine-way
+ * award market should not tax longshots. That reasoning was wrong, and the
+ * arithmetic is worth writing down because the failure is not obvious:
+ *
+ *   probabilities sum to 1 by definition. Shrink the favourite by half the
+ *   margin and the field now sums to 1 - margin/2, so the book pays out MORE
+ *   than fair on every outcome, and a bettor can exploit it with no
+ *   forecasting skill at all. Measured on an eight-candidate award field, the
+ *   overround came out at MINUS 2.27 per cent.
+ *
+ *   Shrinking the favourite by the FULL margin instead over-corrects, because
+ *   the favourite was already the only side carrying the entire charge.
+ *
+ * A real book applies vig proportionally to every line, which is what this
+ * does, and the favourite is not specially taxed. tools/checkVig.ts asserts the
+ * implied probabilities sum above 1 for a field, a total, and a moneyline.
  */
 export const buildFieldMarket = (input: {
   kind: MarketKind;
@@ -125,8 +179,7 @@ export const buildFieldMarket = (input: {
   const outcomes = input.entries.map((entry) => {
     const values = MEDIA_PROFILES.map((profile) => clampProbability(entry.probability[profile.id]));
     const consensusProbability = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const isFavourite = entry.key === input.entries[0].key;
-    const houseProbability = clampProbability(consensusProbability - (isFavourite ? HOUSE_MARGIN / 2 : 0));
+    const houseProbability = clampProbability(consensusProbability * (1 + HOUSE_MARGIN));
 
     const odds = {} as Record<MediaId, number>;
     MEDIA_PROFILES.forEach((profile) => { odds[profile.id] = probabilityToAmerican(entry.probability[profile.id]); });
@@ -150,21 +203,21 @@ export const buildFieldMarket = (input: {
     };
   });
 
-  // The favourite is whatever the consensus says it is, not whatever the caller
-  // happened to pass first.
+  /*
+   * Scaling every probability by the same factor makes the field sum to
+   * 1 + HOUSE_MARGIN before rounding, which is the overround the house is
+   * charging. Rounding each price to a whole number of dollars moves that
+   * slightly, by a fraction of a point on the longshots, so it is measured
+   * rather than assumed by tools/checkVig.ts.
+   */
   const ordered = [...outcomes].sort((a, b) => b.consensusProbability - a.consensusProbability);
-  const favouriteKey = ordered[0]?.key;
   return {
     shape: 'field',
     kind: input.kind,
     key: input.key,
     title: input.title,
     subtitle: input.subtitle,
-    outcomes: ordered.map((outcome) => (
-      outcome.key === favouriteKey
-        ? { ...outcome, houseProbability: clampProbability(outcome.consensusProbability - HOUSE_MARGIN / 2), houseOdds: probabilityToAmerican(clampProbability(outcome.consensusProbability - HOUSE_MARGIN / 2)) }
-        : outcome
-    )),
+    outcomes: ordered,
   };
 };
 

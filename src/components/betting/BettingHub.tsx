@@ -232,7 +232,7 @@ const GameBetCard: React.FC<{
 
         <div className="flex flex-col gap-2">
           {side(game.awayTeam, 'away', game.houseOdds)}
-          {side(game.homeTeam, 'home', -game.houseOdds)}
+          {side(game.homeTeam, 'home', game.homeOdds)}
           {total && (
             <>
               <RetroButton
@@ -601,8 +601,12 @@ export const BettingRecord: React.FC<{ bets: PlacedBet[]; balance: number; summa
           <span className="t-caption text-[var(--color-ink-faint)]">
             {summary.wins}-{summary.settled - summary.wins} of {summary.settled} settled
           </span>
-          <span className={`t-stat tabular-nums ${net >= 0 ? 'text-[var(--color-pos)]' : 'text-[var(--color-neg)]'}`}>
-            {net >= 0 ? '+' : '-'}${Math.abs(Math.round(net))}
+          {/* Zero is neither a gain nor a loss, and colouring it green reads as
+              a profit on a wallet that has simply not been used. */}
+          <span className={`t-stat tabular-nums ${
+            net > 0 ? 'text-[var(--color-pos)]' : net < 0 ? 'text-[var(--color-neg)]' : 'text-[var(--color-ink-faint)]'
+          }`}>
+            {net > 0 ? '+' : net < 0 ? '-' : ''}${Math.abs(Math.round(net))}
           </span>
         </div>
       </div>
@@ -689,7 +693,7 @@ export const BetSlip: React.FC<{
         <span className="t-caption text-[var(--color-ink-faint)]">
           {summary.settled === 0
             ? 'No settled bets'
-            : `${summary.wins}/${summary.settled} won · ${summary.profit >= 0 ? '+' : '-'}$${Math.abs(Math.round(summary.profit))}`}
+            : `${summary.wins}/${summary.settled} won · ${summary.profit > 0 ? '+' : summary.profit < 0 ? '-' : ''}$${Math.abs(Math.round(summary.profit))}`}
         </span>
         <span className="t-caption text-[var(--color-ink-faint)]">Record</span>
       </div>

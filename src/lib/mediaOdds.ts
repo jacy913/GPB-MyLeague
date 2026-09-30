@@ -2,7 +2,7 @@ import type { Game, Team } from '../types';
 import { MEDIA_PROFILES, type MediaId } from '../data/media';
 import {
   HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT,
-  probabilityToAmerican, americanToProbability, formatAmerican,
+  probabilityToAmerican, americanToProbability, formatAmerican, HOUSE_SHADE,
 } from './markets';
 
 /*
@@ -11,7 +11,7 @@ import {
  * codebase. These re-exports keep the existing media page imports working and
  * keep the two verified modules reading the same way.
  */
-export { HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT, probabilityToAmerican, americanToProbability, formatAmerican };
+export { HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT, HOUSE_SHADE, probabilityToAmerican, americanToProbability, formatAmerican };
 
 /**
  * Published lines for a slate.
@@ -42,9 +42,20 @@ export interface GameLine {
   odds: Record<MediaId, number>;
   /** Mean of the three probabilities, before margin. */
   consensusProbability: number;
-  /** The line the house would post, after margin. */
+  /** The price the house posts on the away club, margin included. */
   houseProbability: number;
   houseOdds: number;
+  /**
+   * The home price, computed from its own probability.
+   *
+   * Not the negation of houseOdds. A -X/+X pair sums to exactly 1.0000 implied
+   * probability, which is a book charging nothing, and the margin this module
+   * carefully applies would be cancelled out by the negation.
+   */
+  homeProbability: number;
+  homeOdds: number;
+  /** Implied probability of both sides, minus 1. Positive means vig is charged. */
+  overround: number;
   /** Widest probability gap between any two outlets, in points. */
   disagreement: number;
   /** The outlet furthest from the other two on this game. */
@@ -126,10 +137,40 @@ export const buildGameLine = (input: OddsInput): GameLine => {
   });
 
   const values = MEDIA_PROFILES.map((profile) => probability[profile.id]);
-  const consensusProbability = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const rawConsensus = values.reduce((sum, value) => sum + value, 0) / values.length;
 
-  // Margin is taken off the favourite side, which is how a real book prices.
-  const houseProbability = clampProbability(consensusProbability - HOUSE_MARGIN / 2);
+  /*
+   * Shade toward even, then price both sides independently.
+   *
+   * The house's own view is deliberately not the average of the three outlets.
+   * See HOUSE_SHADE for why, and for the measurement behind the value. The
+   * outlets keep their own probabilities and their own characters; only the
+   * number the house posts is pulled back.
+   */
+  const consensusProbability = 0.5 + (rawConsensus - 0.5) * (1 - HOUSE_SHADE);
+
+  /*
+   * Both sides priced independently, each scaled by the margin.
+   *
+   * The board used to take the margin off the favourite and then derive the
+   * other side by negating that price. Negation is arithmetically a zero-vig
+   * pair: -X and +X decode to X/(X+100) and 100/(X+100), which sum to exactly
+   * 1.0000 for every X. So the 4.5 per cent margin was computed, applied, and
+   * then entirely erased before it reached the page, and every moneyline on the
+   * board was posted at fair value.
+   *
+   * That was not cosmetic. With no vig, whichever side the outlets misprice is
+   * simply positive expected value, and since they over-price strong
+   * favourites, flat-betting the underdog printed money across a full season.
+   * Fixing the vig closed most of that leak; the shade closed the rest.
+   *
+   * Scaling both sides by 1 + HOUSE_MARGIN is what produces a real overround.
+   * It has to be a straight multiplier on each: the two probabilities are
+   * complementary, so pushing them apart in opposite directions about 0.5
+   * leaves their sum at exactly 1 and creates no vig at all.
+   */
+  const houseProbability = clampProbability(consensusProbability * (1 + HOUSE_MARGIN));
+  const homeProbability = clampProbability((1 - consensusProbability) * (1 + HOUSE_MARGIN));
 
   const gap = Math.max(...values) - Math.min(...values);
   const median = [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
@@ -147,6 +188,10 @@ export const buildGameLine = (input: OddsInput): GameLine => {
     consensusProbability,
     houseProbability,
     houseOdds: probabilityToAmerican(houseProbability),
+    homeProbability,
+    homeOdds: probabilityToAmerican(homeProbability),
+    /** over implied + under implied - 1. The margin the book is charging. */
+    overround: (houseProbability + homeProbability) - 1,
     disagreement: gap,
     outlier: outlierEntry[0],
   };

@@ -220,8 +220,20 @@ export const summariseWallet = (wallet: Wallet) => {
     open: wallet.bets.filter((bet) => bet.status === 'open').length,
     settled: settled.length,
     wins: won.length,
+    /** Returned minus staked, counting only bets that have finished. */
     profit: returned - staked,
-    net: wallet.balance + staked - STARTING_BALANCE,
+    /*
+     * Running profit against the starting balance, open bets included.
+     *
+     * This is simply balance - STARTING_BALANCE and nothing else. An earlier
+     * version added the settled stake back on top, which double-counted it: the
+     * balance was debited for every stake the moment a bet was placed and
+     * credited back on settlement, so a $50 bet that returned $104 reported a
+     * profit of +$104 rather than the $54 actually made. The screenshot that
+     * caught it showed "+$0" in profit green on a fresh wallet, which was the
+     * same arithmetic reading $0 as a gain.
+     */
+    net: wallet.balance - STARTING_BALANCE,
   };
 };
 

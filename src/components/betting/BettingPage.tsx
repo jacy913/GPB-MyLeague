@@ -148,15 +148,21 @@ const BettingPage: React.FC<BettingPageProps> = ({
 
   /* ---------------- futures: division, league, awards ---------------- */
 
-  const indexBy = useMemo(() => {
-    const out = { hollis: scores.hollis, glorest: scores.glorest, sharply: scores.sharply } as Record<MediaId, Map<string, number>>;
-    return out;
-  }, [scores]);
+  /*
+   * Futures read the RAW scores, not the 0-100 index.
+   *
+   * The index is a rank rescaled 0-100, so inside a sixteen-team division it
+   * spans exactly 100 points whether the clubs are miles apart or dead level.
+   * A price built on it cannot recover the underlying strength gap, and the
+   * symptom was every club in a division posted at the same +143. mediaReads
+   * says as much about its own index in the comment above MediaScores.
+   */
+  const scoreBy = useMemo(() => scores, [scores]);
 
   const futures = useMemo<FieldMarket[]>(() => [
-    ...buildLeagueMarkets({ teams: input.teams, indexBy }),
-    ...buildDivisionMarkets({ teams: input.teams, indexBy }),
-  ], [indexBy, input.teams]);
+    ...buildLeagueMarkets({ teams: input.teams, scoreBy }),
+    ...buildDivisionMarkets({ teams: input.teams, scoreBy }),
+  ], [input.teams, scoreBy]);
 
   const awards = useMemo<FieldMarket[]>(() => {
     const awardInputs = {

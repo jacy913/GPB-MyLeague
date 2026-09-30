@@ -204,6 +204,36 @@ const main = async () => {
   }
 
   /**
+   * Visit a tab on the current screen, for the parts of the page no single
+   * screenshot covers. Season Futures and Awards were wired and type-checked
+   * but never rendered, which is exactly the gap a smoke test leaves.
+   */
+  if (process.env.GPB_TAB) {
+    const { result } = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify(process.env.GPB_TAB)};
+        const b = [...document.querySelectorAll('button,[role="tab"]')]
+          .find((n) => (n.textContent||'').trim().toLowerCase() === want.toLowerCase());
+        if (!b) return 'tab not found: ' + want;
+        b.click();
+        return 'clicked ' + want;
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    console.log('TAB:', result.value);
+    await sleep(2500);
+
+    if (outPng) {
+      const shot = await browser.send(
+        'Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId,
+      );
+      const tabFile = outPng.replace(/\.png$/, `-${process.env.GPB_TAB.replace(/\W+/g, '')}.png`);
+      writeFileSync(tabFile, Buffer.from(shot.data, 'base64'));
+      console.log('SCREENSHOT:', tabFile);
+    }
+  }
+
+  /**
    * Place one bet, to check the slip actually commits and the balance moves.
    *
    * A board that renders and throws on click looks identical to one that works
