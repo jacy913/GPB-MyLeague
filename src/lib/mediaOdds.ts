@@ -1,5 +1,17 @@
 import type { Game, Team } from '../types';
 import { MEDIA_PROFILES, type MediaId } from '../data/media';
+import {
+  HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT,
+  probabilityToAmerican, americanToProbability, formatAmerican,
+} from './markets';
+
+/*
+ * The odds maths now lives in markets.ts, alongside the field and line market
+ * builders, so there is exactly one probability-to-price conversion in the
+ * codebase. These re-exports keep the existing media page imports working and
+ * keep the two verified modules reading the same way.
+ */
+export { HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT, probabilityToAmerican, americanToProbability, formatAmerican };
 
 /**
  * Published lines for a slate.
@@ -39,42 +51,9 @@ export interface GameLine {
   outlier: MediaId;
 }
 
-/**
- * House margin.
- *
- * Applied to the consensus probability, not to each outlet. It is the price of
- * acting on the consensus and it is the only reason backing the house line is
- * not automatically correct.
- */
-export const HOUSE_MARGIN = 0.045;
-
-/**
- * Home advantage, in log-odds.
- *
- * This is the measured value, not the real-baseball one. Repeated runs of the
- * simulator put home winners between 49.9 and 51.4 per cent of decided games,
- * which is to say home field is very nearly neutral in this league. Encoding
- * the real-world 53-54 per cent would be importing a fact about a different
- * simulation, and it would hand every forecaster a systematic error.
- */
-export const HOME_ADVANTAGE_LOGIT = 0.04;
-
 const clampProbability = (value: number): number => Math.max(0.02, Math.min(0.98, value));
 
 const logistic = (value: number): number => 1 / (1 + Math.exp(-value));
-
-/** Probability -> American price. */
-export const probabilityToAmerican = (probability: number): number => {
-  const p = clampProbability(probability);
-  if (p >= 0.5) return Math.round(-100 * p / (1 - p));
-  return Math.round(100 * (1 - p) / p);
-};
-
-/** American price -> probability, with the vig divided back out. */
-export const americanToProbability = (american: number): number => {
-  if (american < 0) return clampProbability(-american / (-american + 100));
-  return clampProbability(100 / (american + 100));
-};
 
 /**
  * Per-outlet logistic slopes, applied to a z-scored gap.
@@ -179,5 +158,3 @@ export const getNextSlateDate = (games: Game[], currentDate: string): string | n
   const future = [...dated].filter((date) => date > currentDate).sort();
   return future[0] ?? null;
 };
-
-export const formatAmerican = (value: number): string => (value > 0 ? `+${value}` : `${value}`);

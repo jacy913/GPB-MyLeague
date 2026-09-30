@@ -24,6 +24,7 @@ export type AppView =
   | 'leaders'
   | 'history'
   | 'media'
+  | 'betting'
   | 'teams'
   | 'players'
   | 'trades'
