@@ -47,7 +47,34 @@ interface UseRosterTransactionsResult {
   handleApprovePendingTrade: (proposalId: string) => Promise<void>;
   handleVetoPendingTrade: (proposalId: string) => void;
   handleFreeAgencyAssignment: (assignment: FreeAgencyAssignment) => Promise<void>;
-  handleFreeAgencyShakeUp: () => Promise<void>;
+  handleFreeAgencyShakeUp: (options?: ShakeUpOptions) => Promise<ShakeUpSummary | null>;
+}
+
+/**
+ * Options for the market shake-up.
+ *
+ * `silent` exists for the pre-simulation call, not for taste. A single-day sim
+ * runs 162 times a season and each one used to fire a "Shake Up completed N
+ * signings" toast, which turned a mechanical housekeeping step into the most
+ * visible thing on the screen. The automatic pass reports its outcome in one
+ * place at the end of the run instead, where the day count and the signing count
+ * can sit next to each other and be read together.
+ */
+export interface ShakeUpOptions {
+  silent?: boolean;
+}
+
+/**
+ * What a shake-up actually did.
+ *
+ * Returned rather than pushed, because the pre-sim caller needs the signing
+ * count for the completion report and the player state to hand to the
+ * simulation -- see the note on `playerStateOverride` in useSimulationEngine.
+ */
+export interface ShakeUpSummary {
+  signings: number;
+  rounds: number;
+  playerState: LeaguePlayerState;
 }
 
 const clonePlayerStatsAndRatings = (nextPlayerState: LeaguePlayerState) => ({
@@ -375,18 +402,46 @@ export const useRosterTransactions = ({
     teams,
   ]);
 
-  const handleFreeAgencyShakeUp = useCallback(async () => {
+  /**
+   * Run the free-agent market to exhaustion.
+   *
+   * Two callers: the Shake Up button, and the funnel that runs before every
+   * simulation. They share this one implementation on purpose -- a second copy
+   * would be a second set of rules about when the market is open, and the two
+   * would drift.
+   *
+   * In silent mode nothing is written and nothing is announced. The result is
+   * handed back for the caller to thread into the simulation as its starting
+   * player state, so the market change and the games that follow are persisted
+   * together as one snapshot rather than as two writes a few milliseconds apart.
+   * Setting state here as well would be actively wrong: React state is async, so
+   * the simulation engine would still read the pre-shake-up value out of its own
+   * closure, run the days, and then overwrite the shake-up with the snapshot.
+   */
+  const handleFreeAgencyShakeUp = useCallback(async (
+    options: ShakeUpOptions = {},
+  ): Promise<ShakeUpSummary | null> => {
     if (!isFreeAgencyMarketOpen) {
-      pushNotice(freeAgencyMarketStatusMessage || `Free agency is closed until ${freeAgencyOpenDate}.`, 'warning');
-      return;
+      if (!options.silent) {
+        pushNotice(freeAgencyMarketStatusMessage || `Free agency is closed until ${freeAgencyOpenDate}.`, 'warning');
+      }
+      return null;
     }
 
     const effectiveDate = resolveEffectiveActionDate(currentDate, selectedDate, games);
     const result = shakeUpFreeAgency(teams, playerState, effectiveDate);
+
     if (result.signings === 0) {
-      pushNotice('Shake Up found no free-agent upgrades for the current rosters.', 'info');
-      return;
+      if (!options.silent) {
+        pushNotice('Shake Up found no free-agent upgrades for the current rosters.', 'info');
+      }
+      return null;
     }
+
+    if (options.silent) {
+      return { signings: result.signings, rounds: result.rounds, playerState: result.playerState };
+    }
+
     setPlayerState(result.playerState);
     saveLocalPlayerStateSafely(result.playerState);
     try {
@@ -396,6 +451,7 @@ export const useRosterTransactions = ({
       console.error('Failed to persist free-agency shake up:', error);
       pushNotice('Shake Up completed locally, but syncing player data failed.', 'warning');
     }
+    return { signings: result.signings, rounds: result.rounds, playerState: result.playerState };
   }, [currentDate, freeAgencyMarketStatusMessage, freeAgencyOpenDate, games, isFreeAgencyMarketOpen, isSupabaseConfigured, playerState, pushNotice, resolveEffectiveActionDate, saveLocalPlayerStateSafely, saveSupabasePlayerState, selectedDate, setPlayerState, teams]);
 
   return {

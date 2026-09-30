@@ -343,6 +343,152 @@ const main = async () => {
     }
   }
 
+  /*
+   * Evaluate in the page and return the value.
+   *
+   * Hoisted to this scope deliberately. It used to be declared inside the
+   * GPB_BET block, which meant every later block that called it -- GPB_SETTLE
+   * included -- only worked if GPB_BET was ALSO set, and threw a bare
+   * ReferenceError otherwise. A harness probe that silently requires another
+   * probe is worse than no probe.
+   */
+  const evalJs = async (expression) => {
+    const { result } = await browser.send(
+      'Runtime.evaluate', { expression, returnByValue: true }, sessionId,
+    );
+    return result.value;
+  };
+
+  /*
+   * Run a simulation from the Simulation Desk and report the completion panel.
+   *
+   * Does NOT navigate afterwards, unlike GPB_SETTLE: the panel is shell-level,
+   * so hopping to Betting would hide whether the dashboard jump actually
+   * happened, which is half of what this is here to check.
+   */
+  if (process.env.GPB_SIM) {
+    await evalJs(`(() => {
+      const nav = [...document.querySelectorAll('button,a')]
+        .find((n) => /^Dashboard$/i.test((n.textContent||'').trim()));
+      if (nav) nav.click();
+      return 'nav';
+    })()`);
+    await sleep(700);
+
+    for (let i = 0; i < Number(process.env.GPB_SIM); i += 1) {
+      // Dismiss a panel left over from the previous iteration.
+      await evalJs(`(() => {
+        const dismiss = [...document.querySelectorAll('button')]
+          .find((n) => /back to dashboard/i.test((n.textContent||'').trim()));
+        if (dismiss) dismiss.click();
+        return 'dismissed';
+      })()`);
+      await sleep(500);
+
+      const hit = await evalJs(`(() => {
+        const b = [...document.querySelectorAll('button')]
+          .find((n) => new RegExp('^sim ' + ${JSON.stringify(process.env.GPB_SIM_SCOPE ?? 'day')} + '$', 'i')
+            .test((n.textContent||'').trim()));
+        if (!b) return 'no button';
+        b.click();
+        return 'sim';
+      })()`);
+      console.log('SIM', i + 1 + ':', hit);
+      if (hit !== 'sim') break;
+
+      // Poll for the panel rather than sleeping a fixed time: the run length
+      // varies with the scope and a fixed sleep either races it or wastes 10s.
+      let seen = false;
+      for (let t = 0; t < 60; t += 1) {
+        const ok = await evalJs(`(() => {
+          const h = [...document.querySelectorAll('h2')].find((x) => /simulation complete/i.test(x.textContent||''));
+          return h ? 'yes' : 'no';
+        })()`);
+        if (ok === 'yes') { seen = true; break; }
+        await sleep(500);
+      }
+      console.log('PANEL', i + 1 + ':', seen ? 'opened' : 'never opened');
+      if (!seen) break;
+
+      console.log('STATE', i + 1 + ':', await evalJs(`(() => {
+        const panel = [...document.querySelectorAll('h2')]
+          .find((x) => /simulation complete/i.test(x.textContent||''))?.closest('div[class*="max-w"]');
+        const active = [...document.querySelectorAll('[aria-current="page"], [aria-selected="true"]')]
+          .map((n) => (n.textContent||'').trim()).slice(0, 3).join('/');
+
+        // The day headline is the number and its unit as two flex children.
+        // A screenshot cannot settle whether the space between them survived
+        // the display face at 30px -- a narrow gap beside "1" reads as absent.
+        // Measuring the gap answers it exactly.
+        //
+        // Located by child text, not by the paragraph's own textContent: the two
+        // spans are adjacent, so that string is "1day", and a \\bday\\b pattern
+        // cannot match across a digit-letter pair because both are word
+        // characters. Matching the regex on the parent returns null and looks
+        // like a layout failure rather than a selector failure.
+        const headline = panel && [...panel.querySelectorAll('p')].find((p) =>
+          [...p.children].some((c) => /^(day|days)$/i.test((c.textContent || '').trim())));
+        const kids = headline ? [...headline.children].map((c) => c.getBoundingClientRect()) : [];
+        const dayGap = kids.length === 2 ? Math.round(kids[1].left - kids[0].right) : null;
+
+        return JSON.stringify({
+          panel: (panel ? panel.innerText : '').replace(/\\s+/g, ' ').slice(0, 240),
+          dayGap,
+          active,
+        });
+      })()`));
+    }
+    // The dashboard re-mounts behind the panel when the run finishes, and it
+    // needs a tick to paint. Without this the final screenshot catches the
+    // view mid-mount and shows a blank body behind a correct panel, which reads
+    // as the dashboard failing to render.
+    await sleep(1200);
+  }
+
+  /*
+   * Press a key for real, through the Input domain.
+   *
+   * Dispatched rather than synthesised with `new KeyboardEvent` inside the page:
+   * an in-page event skips the browser's own key routing, so a handler that only
+   * works because it was called directly still reports as working. Going through
+   * CDP exercises the same path a person's keystroke takes.
+   */
+  if (process.env.GPB_KEY) {
+    for (const spec of process.env.GPB_KEY.split('|').map((s) => s.trim()).filter(Boolean)) {
+      const [name, rawKey] = spec.split('=');
+      const key = rawKey || name;
+      const code = {
+        Escape: { windowsVirtualKeyCode: 27, code: 'Escape', text: '' },
+        Enter: { windowsVirtualKeyCode: 13, code: 'Enter', text: '\r' },
+        Tab: { windowsVirtualKeyCode: 9, code: 'Tab', text: '' },
+        Space: { windowsVirtualKeyCode: 32, code: 'Space', text: ' ' },
+      }[key] || { windowsVirtualKeyCode: 0, code: key, text: key };
+
+      for (const type of ['keyDown', 'keyUp']) {
+        await browser.send('Input.dispatchKeyEvent', {
+          type,
+          key,
+          code: code.code,
+          windowsVirtualKeyCode: code.windowsVirtualKeyCode,
+          nativeVirtualKeyCode: code.windowsVirtualKeyCode,
+          text: type === 'keyDown' ? code.text : undefined,
+        }, sessionId);
+      }
+      console.log('KEY:', name, '->', 'dispatched');
+      // Settle before reporting. React has not processed the event yet at the
+      // instant the key goes down, and AnimatePresence keeps the node mounted
+      // through a 0.32s exit -- so checking straight away reports "still open"
+      // for a panel that closed correctly, which is how a working Escape gets
+      // written off as a broken one.
+      await sleep(800);
+      console.log('  after ' + name + ':', await evalJs(`(() => {
+        const h = [...document.querySelectorAll('h2')].find((x) => /simulation complete/i.test(x.textContent||''));
+        return h ? 'PANEL STILL OPEN' : 'panel closed';
+      })()`));
+      await sleep(200);
+    }
+  }
+
   /**
    * Place one bet, to check the slip actually commits and the balance moves.
    *
@@ -351,13 +497,6 @@ const main = async () => {
    * "a stake is recorded against them".
    */
   if (process.env.GPB_BET) {
-    const evalJs = async (expression) => {
-      const { result } = await browser.send(
-        'Runtime.evaluate', { expression, returnByValue: true }, sessionId,
-      );
-      return result.value;
-    };
-
     console.log('BET:', await evalJs(`(() => {
       const pick = [...document.querySelectorAll('button')].find((b) => /^Over \\d/.test((b.textContent||'').trim()));
       if (!pick) return 'no Over button found';
@@ -380,6 +519,8 @@ const main = async () => {
     })()`));
     await sleep(1500);
 
+  }
+
     /**
      * Play the slate out, so the bet can settle against real results.
      *
@@ -387,7 +528,7 @@ const main = async () => {
      * to see settlement is to let the simulation run past the games the bets are
      * on. This clicks Sim Day repeatedly and then reads the record back.
      */
-    if (process.env.GPB_SETTLE) {
+  if (process.env.GPB_SETTLE) {
       for (let day = 0; day < Number(process.env.GPB_SETTLE); day += 1) {
         const clicked = await evalJs(`(() => {
           const nav = [...document.querySelectorAll('button,a')]
@@ -440,7 +581,6 @@ const main = async () => {
         openBets: open ? (open.closest('div[class*="overflow"]')?.innerText||'').replace(/\\s+/g,' ').slice(0,220) : 'NO OPEN BETS',
       });
     })()`));
-  }
 
   /** Click any visible control by its label. */
   if (process.env.GPB_CLICK) {
@@ -460,6 +600,19 @@ const main = async () => {
       }, sessionId);
       console.log('CLICK:', result.value);
       await sleep(1500);
+
+      // Report the sim receipt's state alongside the click.
+      //
+      // This is what catches a stale receipt. Starting a second run while the
+      // first run's panel is still up used to leave the old day count and
+      // signing figure on screen for the whole second run -- stale numbers that
+      // still look authoritative, which is worse than no panel.
+      console.log('  receipt:', await evalJs(`(() => {
+        const h = [...document.querySelectorAll('h2')].find((x) => /simulation complete/i.test(x.textContent||''));
+        if (!h) return 'no receipt on screen';
+        const p = h.closest('div[class*="max-w"]');
+        return 'OPEN: ' + (p ? (p.innerText||'').replace(/\\s+/g,' ').slice(0,110) : '?');
+      })()`));
     }
   }
 

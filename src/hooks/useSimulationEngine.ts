@@ -72,9 +72,33 @@ interface UseSimulationEngineResult {
   simulationSaveStatus: SimulationSaveStatus;
   simulationProgress: SimulationProgressUpdate | null;
   simulationRunState: SimulationRunState | null;
-  runSimulationTarget: (target: SimulationTarget, options?: { keepCurrentView?: boolean }) => Promise<void>;
+  runSimulationTarget: (target: SimulationTarget, options?: SimulationRunOptions) => Promise<void>;
   cancelSimulationRun: () => void;
   resetSimulationState: () => void;
+}
+
+export interface SimulationRunOptions {
+  /**
+   * Keep the current screen instead of switching to the simulation view while
+   * the run is in flight. Used by the "play this one game" paths, where the
+   * whole point is to stay on the game or the bracket you just asked about.
+   */
+  keepCurrentView?: boolean;
+  /**
+   * The player state the run should start from, overriding this hook's own
+   * captured `playerState`.
+   *
+   * This exists because of the free-agency shake-up that now runs before every
+   * simulation. It produces a new player state, and passing it through setState
+   * would not work: React state is async, so the closure captured by this
+   * callback would still hold the pre-shake-up value, the days would be played
+   * against the old rosters, and the snapshot taken at the end would overwrite
+   * the shake-up entirely -- silently, and with no error anywhere.
+   *
+   * The worker's message contract is unchanged. Only the value sent in it
+   * changes.
+   */
+  playerStateOverride?: LeaguePlayerState;
 }
 
 export const useSimulationEngine = ({
@@ -129,7 +153,7 @@ export const useSimulationEngine = ({
     destroySimulationWorker();
   }, [destroySimulationWorker]);
 
-  const runSimulationTarget = useCallback(async (target: SimulationTarget, options?: { keepCurrentView?: boolean }) => {
+  const runSimulationTarget = useCallback(async (target: SimulationTarget, options?: SimulationRunOptions) => {
     if (isSimulating || isFinalizingSimulation || seasonResetInProgress || isDraftProcessing || games.length === 0) {
       if (isDraftProcessing) {
         pushNotice('Stop the active draft run before starting simulation.', 'warning');
@@ -406,7 +430,9 @@ export const useSimulationEngine = ({
       payload: {
         teams,
         games,
-        playerState,
+        // See SimulationRunOptions.playerStateOverride for why this can differ
+        // from the hook's own playerState.
+        playerState: options?.playerStateOverride ?? playerState,
         settings,
         target,
         startingDate,

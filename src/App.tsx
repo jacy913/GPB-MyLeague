@@ -25,6 +25,7 @@ import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
 import { SeasonAwardsModal } from './components/SeasonAwardsModal';
 import { SimulationFloatingPanel } from './components/SimulationFloatingPanel';
+import { SimCompletePanel } from './components/simulation/SimCompletePanel';
 import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
 import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
@@ -974,6 +975,24 @@ const removePlayersFromStateByIdSet = (
     transactions: playerState.transactions.filter((transaction) => !playerIdsToRemove.has(transaction.playerId)),
   };
 };
+
+/**
+ * What a finished simulation run did.
+ *
+ * Every field here is a number something actually counted. `days` comes from the
+ * date plan handed to the worker, `gamesPlayed` from the worker's own tally, and
+ * `signings` from the market refresh that now runs before every run. Nothing
+ * here is inferred from the scope a manager picked -- "One Week" is not assumed
+ * to mean seven days, it is measured off the plan.
+ */
+interface SimReport {
+  days: number;
+  targetDate: string;
+  gamesPlayed: number;
+  signings: number;
+  signingRounds: number;
+  label: string;
+}
 
 const getSimulationScopeLabel = (target: SimulationTarget): string => {
   if (target.scope === 'day') return 'Simulating day';
@@ -2611,6 +2630,86 @@ function App() {
     });
   }
 
+  const {
+    handleTradeProposal,
+    handleApprovePendingTrade,
+    handleVetoPendingTrade,
+    handleFreeAgencyAssignment,
+    handleFreeAgencyShakeUp,
+  } = useRosterTransactions({
+    currentDate,
+    selectedDate,
+    games,
+    teams,
+    playerState,
+    pendingTrades,
+    freeAgencyOpenDate,
+    isFreeAgencyMarketOpen,
+    freeAgencyMarketStatusMessage,
+    isSupabaseConfigured,
+    setPlayerState,
+    setSelectedTeamId,
+    setPendingTrades,
+    saveLocalPlayerStateSafely,
+    saveSupabasePlayerState,
+    pushNotice,
+    resolveEffectiveActionDate,
+    resolveSeasonYear,
+  });
+
+  /* ------------------------------------------------------------------ *
+   * Simulation entry points
+   *
+   * These live below useRosterTransactions, not above it, because the funnel
+   * needs the shake-up. Every simulation in the product goes through
+   * runSimulationTarget, which is the one place the market can be refreshed
+   * before the days are played.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * What a finished run did, for the completion panel.
+   *
+   * Held in a ref rather than state because it is written at the moment a run
+   * is requested and read when it finishes, and neither of those is a render.
+   */
+  const pendingRunRef = useRef<{
+    days: number;
+    target: SimulationTarget;
+    keepCurrentView: boolean;
+    signings: number;
+    signingRounds: number;
+  } | null>(null);
+
+  /*
+   * The receipt itself.
+   *
+   * Declared up here, ahead of runSimulationTarget, which clears it when a new
+   * run starts. Placing it after the funnel worked at runtime -- the setter is
+   * only ever called from a callback body, well after render has finished -- but
+   * it read as though the funnel referenced a binding that did not exist yet,
+   * and that is the kind of thing that breaks the moment someone moves a line.
+   */
+  const [simReport, setSimReport] = useState<SimReport | null>(null);
+
+  /**
+   * Run every simulation through here.
+   *
+   * The free-agency market is refreshed first, once per run, including for a
+   * single day. It used to be a button a manager had to remember to press, which
+   * meant the league quietly filled up with unsigned talent while games were
+   * played against static rosters -- and because it was manual, nobody could
+   * tell from a save whether the market had been run that week at all.
+   *
+   * The shake-up's player state is handed to the engine as an override rather
+   * than written with setState. React state is async, so the engine's closure
+   * would still hold the pre-shake-up rosters, the days would be played against
+   * them, and the closing snapshot would overwrite the shake-up with no error
+   * anywhere. See SimulationRunOptions.playerStateOverride.
+   *
+   * A run that is blocked by an offseason gate does not shake up. Nothing is
+   * simulated in that case, so changing rosters would be a change to a league
+   * that did not move.
+   */
   const runSimulationTarget = useCallback(async (
     target: SimulationTarget,
     options?: { keepCurrentView?: boolean },
@@ -2618,37 +2717,72 @@ function App() {
     const startingDate = currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
     const plan = buildSimulationDatePlan(games, startingDate, target);
 
-    if (seasonComplete && nextBlockingOffseasonEvent) {
-      if (startingDate >= nextBlockingOffseasonEvent.date) {
-        pushNotice(
-          `${nextBlockingOffseasonEvent.label} must be completed before advancing beyond ${nextBlockingOffseasonEvent.date}.`,
-          'warning',
-        );
-        if (!options?.keepCurrentView && nextBlockingOffseasonEvent.view) {
-          setView(nextBlockingOffseasonEvent.view);
-        }
-        return;
-      }
+    const isBlockedByOffseasonGate = Boolean(
+      seasonComplete
+      && nextBlockingOffseasonEvent
+      && startingDate >= nextBlockingOffseasonEvent.date,
+    );
 
-      if (plan.targetDate > nextBlockingOffseasonEvent.date) {
-        pushNotice(
-          `Simulation capped at ${nextBlockingOffseasonEvent.date} for ${nextBlockingOffseasonEvent.label}.`,
-          'info',
-        );
-        await runSimulationTargetEngine(
-          { scope: 'to_date', targetDate: nextBlockingOffseasonEvent.date },
-          options,
-        );
-        return;
+    if (isBlockedByOffseasonGate && nextBlockingOffseasonEvent) {
+      pushNotice(
+        `${nextBlockingOffseasonEvent.label} must be completed before advancing beyond ${nextBlockingOffseasonEvent.date}.`,
+        'warning',
+      );
+      if (!options?.keepCurrentView && nextBlockingOffseasonEvent.view) {
+        setView(nextBlockingOffseasonEvent.view);
       }
+      return;
     }
 
-    await runSimulationTargetEngine(target, options);
+    // Silent on purpose: see ShakeUpOptions. The signing count is carried into
+    // the completion panel instead of arriving as a toast before the run starts.
+    const shakeUp = await handleFreeAgencyShakeUp({ silent: true });
+
+    /*
+     * Retire the previous receipt now that a new run is starting.
+     *
+     * Without this the old panel sits on screen through the whole next run,
+     * showing the previous run's day count and signing figure over a league
+     * that has already moved on. The numbers are not wrong, they are about a
+     * simulation that is no longer the one running -- which is worse, because
+     * they still look authoritative.
+     */
+    setSimReport(null);
+
+    pendingRunRef.current = {
+      // Counted from the plan, which is the calendar the worker was actually
+      // given. Not a guess about how many days "week" means.
+      days: plan.dates.length,
+      target,
+      keepCurrentView: Boolean(options?.keepCurrentView),
+      signings: shakeUp?.signings ?? 0,
+      signingRounds: shakeUp?.rounds ?? 0,
+    };
+
+    const runOptions = {
+      ...options,
+      playerStateOverride: shakeUp?.playerState,
+    };
+
+    if (seasonComplete && nextBlockingOffseasonEvent && plan.targetDate > nextBlockingOffseasonEvent.date) {
+      pushNotice(
+        `Simulation capped at ${nextBlockingOffseasonEvent.date} for ${nextBlockingOffseasonEvent.label}.`,
+        'info',
+      );
+      await runSimulationTargetEngine(
+        { scope: 'to_date', targetDate: nextBlockingOffseasonEvent.date },
+        runOptions,
+      );
+      return;
+    }
+
+    await runSimulationTargetEngine(target, runOptions);
   }, [
     buildSimulationDatePlan,
     currentDate,
     games,
     getDefaultSeasonStartDate,
+    handleFreeAgencyShakeUp,
     nextBlockingOffseasonEvent,
     pushNotice,
     runSimulationTargetEngine,
@@ -2718,32 +2852,55 @@ function App() {
     setView('simulation');
   }, []);
 
-  const {
-    handleTradeProposal,
-    handleApprovePendingTrade,
-    handleVetoPendingTrade,
-    handleFreeAgencyAssignment,
-    handleFreeAgencyShakeUp,
-  } = useRosterTransactions({
-    currentDate,
-    selectedDate,
-    games,
-    teams,
-    playerState,
-    pendingTrades,
-    freeAgencyOpenDate,
-    isFreeAgencyMarketOpen,
-    freeAgencyMarketStatusMessage,
-    isSupabaseConfigured,
-    setPlayerState,
-    setSelectedTeamId,
-    setPendingTrades,
-    saveLocalPlayerStateSafely,
-    saveSupabasePlayerState,
-    pushNotice,
-    resolveEffectiveActionDate,
-    resolveSeasonYear,
-  });
+  /*
+   * Report a finished run.
+   *
+   * Fires on the transition INTO 'complete', not on every render where the
+   * status happens to be 'complete'. The run state is replaced with a new object
+   * on each update, so keying the effect on the object alone would fire the
+   * panel again on every subsequent state write; the previous status is what
+   * distinguishes an arrival from a continuation.
+   */
+  const previousRunStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const status = simulationRunState?.status ?? null;
+    const previous = previousRunStatusRef.current;
+    previousRunStatusRef.current = status;
+
+    if (status !== 'complete' || previous === 'complete') {
+      return;
+    }
+
+    const pending = pendingRunRef.current;
+    pendingRunRef.current = null;
+
+    if (!pending) {
+      return;
+    }
+
+    setSimReport({
+      days: pending.days,
+      targetDate: simulationRunState?.targetDate ?? currentDate,
+      gamesPlayed: simulationRunState?.simulatedGameCount ?? 0,
+      signings: pending.signings,
+      signingRounds: pending.signingRounds,
+      label: getSimulationScopeLabel(pending.target),
+    });
+
+    /*
+     * Back to the dashboard, except when the caller asked to stay.
+     *
+     * The inline paths -- play the next game, advance to this date, play this
+     * playoff game -- are opened from a game screen or a bracket and pass
+     * keepCurrentView precisely so they do not yank you away from the thing you
+     * asked about. Honouring the dashboard jump for those would strand a manager
+     * on the dashboard mid-bracket, which is worse than the extra click.
+     */
+    if (!pending.keepCurrentView) {
+      setView('dashboard');
+    }
+  }, [currentDate, setView, simulationRunState]);
 
   const applyCompletedGameResults = useCallback(async (completedResults: CompletedGameResult[]) => {
     if (completedResults.length === 0) {
@@ -3429,6 +3586,13 @@ function App() {
         onOpenSimulation={() => setView('simulation')}
         onCancelSimulation={cancelSimulationRun}
       />
+
+      {/*
+        The completion receipt. Below the slip's z-index (70/71) and its own at
+        69, so a bet being reviewed while a run finishes cannot have the run
+        panel stacked over the confirm button.
+      */}
+      <SimCompletePanel report={simReport} onDismiss={() => setSimReport(null)} />
 
       <BroadcastTickerFooter
         simulationPerformanceMode={simulationPerformanceMode}
