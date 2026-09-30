@@ -31,6 +31,8 @@ import { GameScreen } from './GameScreen';
 import { StandingsHub } from './StandingsHub';
 import { LeadersHub } from './LeadersHub';
 import { HistoryHub } from './HistoryHub';
+import { MediaHub } from './media/MediaHub';
+import { resolveSeasonYear } from '../lib/seasonYear';
 import { GPBBook } from './GPBBook';
 import { PlayoffsBracket } from './PlayoffsBracket';
 import { CommissionerNotificationsPanel } from './CommissionerNotificationsPanel';
@@ -566,6 +568,19 @@ export const AppViewRouter = ({
           pitchingStats={playerState.pitchingStats}
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}
+        />
+      )}
+
+      {view === 'media' && (
+        <MediaHub
+          teams={teams}
+          players={playerState.players}
+          battingRatings={playerState.battingRatings}
+          pitchingRatings={playerState.pitchingRatings}
+          battingStats={playerState.battingStats}
+          pitchingStats={playerState.pitchingStats}
+          playerState={playerState}
+          seasonYear={resolveSeasonYear(currentDate, games)}
         />
       )}
 

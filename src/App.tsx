@@ -29,6 +29,7 @@ import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
 import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
 import { NoPlayersGate } from './components/NoPlayersGate';
+import { resolveSeasonYear } from './lib/seasonYear';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
 import { Activity, Bell, Clock3, Menu } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
@@ -258,12 +259,6 @@ const EMPTY_PLAYER_STATE: LeaguePlayerState = {
   pitchingRatings: [],
   rosterSlots: [],
   transactions: [],
-};
-
-const resolveSeasonYear = (currentDate: string | null | undefined, seasonGames: Game[] = []): number => {
-  const sourceDate = currentDate || seasonGames[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear());
-  const year = Number(sourceDate?.slice(0, 4));
-  return Number.isFinite(year) && year > 0 ? year : new Date().getFullYear();
 };
 
 const getTeamWinPct = (team: Team): number => {

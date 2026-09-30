@@ -41,6 +41,35 @@
      --color-gold, so the two ramps escalate by the same visible step. */
   --color-platinum-hi: #6fdcc0;
 
+  /* Media identity — the three forecasters.
+     Role-clamped exactly like league colour: these are identity, never chrome
+     and never status. A media hue is only ever drawn inside a media surface,
+     and never as a pass/fail or good/bad signal, which is why Glorest can sit
+     31.9 delta-E from --color-neg without that being a problem.
+
+     The base tier is for fills, left edges and pips, with dark ink on it. The
+     -hi tier is for text on the dark surfaces, derived as the lightest step
+     from base that still clears AA on the lightest panel. Each ramp was solved
+     for a visible step between its own tiers rather than by eye, and each hue
+     is at least 28 delta-E from every chrome colour and 40 from the other two
+     media, measured in CIE Lab. Contrast is WCAG throughout; delta-E is only
+     used for hue discrimination, because a luminance ratio cannot tell a blue
+     from a violet of the same brightness.
+
+     The hues come from the outlets' own photography, which is why the set is
+     cool blue, neon violet and ember. */
+  --color-media-hollis:     #0876fc;
+  --color-media-hollis-hi:  #3e94fd;
+  --color-media-hollis-dim: rgba(8, 118, 252, 0.18);
+
+  --color-media-sharply:     #c00dfc;
+  --color-media-sharply-hi:  #d55dfd;
+  --color-media-sharply-dim: rgba(192, 13, 252, 0.18);
+
+  --color-media-glorest:     #ed2012;
+  --color-media-glorest-hi:  #f3655b;
+  --color-media-glorest-dim: rgba(237, 32, 18, 0.18);
+
   /* Text ramp */
   --color-ink:         #f2f5ff;
   --color-ink-dim:     #96a1b8;

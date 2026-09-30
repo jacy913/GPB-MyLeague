@@ -15,6 +15,7 @@ export { StatTable, type StatTableDensity, type StatTableColumn, type StatTableR
 export { StatValue, type StatValueVariant, type StatValueSize } from './StatValue';
 export { Meter, type MeterProps } from './Meter';
 export { LeagueBadge, type LeagueBadgeVariant } from './LeagueBadge';
+export { MediaMark, type MediaMarkProps } from './MediaMark';
 export { SectionTitle, type SectionTitleProps } from './SectionTitle';
 
 /**

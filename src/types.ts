@@ -23,6 +23,7 @@ export type AppView =
   | 'league_standings'
   | 'leaders'
   | 'history'
+  | 'media'
   | 'teams'
   | 'players'
   | 'trades'
