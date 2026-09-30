@@ -18,10 +18,20 @@ type HeadlineDeck = {
 };
 
 /**
- * The lead story. This is the only place on the front page permitted display
- * type, and it stays unique -- every other section is t-h3. The previous
- * version ran three competing headline scales (5xl, 4xl, 3xl) across sibling
- * sections, so nothing on the page had a clear entry point.
+ * The lead story.
+ *
+ * Rebuilt after the first full-season playthrough, where this read as a task
+ * list: a display headline, a paragraph, and then a three-column grid of small
+ * bordered cards with a date stamp on each. The secondary stories were styled
+ * as peers of the lead -- same border, same padding, same weight -- so nothing
+ * said which one mattered, and the eye had three candidates to choose from
+ * before it found the story.
+ *
+ * The lead is now unambiguously the lead: display type, a rule under it, and
+ * the summary set larger. The runners-up are demoted to a single ruled list with
+ * no boxes at all, so they read as index entries under the story rather than as
+ * competing cards. Boxes are for things you choose between; a ranked list is for
+ * things you read in order.
  */
 export const HeadlinePanel: React.FC<{
   deck: HeadlineDeck;
@@ -44,29 +54,35 @@ export const HeadlinePanel: React.FC<{
         </span>
       </div>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.3fr)_260px]">
+      <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.4fr)_300px]">
         <div className="min-w-0">
           <h1 className="t-display text-[var(--color-gold-hi)]">{primary.headline}</h1>
-          <p className="t-body mt-3 max-w-2xl text-[var(--color-ink-dim)]">{primary.summary}</p>
+          <div className="mt-4 h-[3px] w-24 bg-[var(--color-gold)]" aria-hidden="true" />
+          <p className="t-body mt-4 max-w-2xl text-[var(--color-ink-dim)]">{primary.summary}</p>
 
           {secondary.length > 0 && (
-            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {secondary.map((card, index) => (
-                <button
-                  key={`${card.headline}-${card.game?.gameId ?? index}`}
-                  type="button"
-                  onClick={() => card.game && onOpenGame(card.game.gameId)}
-                  disabled={!card.game}
-                  className="border-l-[3px] border-l-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 text-left transition-colors hover:border-l-[var(--color-gold)] disabled:cursor-default"
-                >
-                  <p className="t-caption text-[var(--color-ink-faint)]">
-                    {card.game ? formatMiniDate(card.game.date) : 'LEAGUE NOTE'}
-                  </p>
-                  <p className="mt-1 t-stat-sm truncate">{card.headline}</p>
-                  <p className="t-caption mt-1 line-clamp-2 text-[var(--color-ink-dim)]">{card.summary}</p>
-                </button>
-              ))}
-            </div>
+            <>
+              <p className="t-label mt-6 border-t border-[var(--color-chrome-lo)] pt-4 text-[var(--color-ink-faint)]">
+                Also Today
+              </p>
+              <ol className="mt-1">
+                {secondary.map((card, index) => (
+                  <li key={`${card.headline}-${card.game?.gameId ?? index}`}>
+                    <button
+                      type="button"
+                      onClick={() => card.game && onOpenGame(card.game.gameId)}
+                      disabled={!card.game}
+                      className="flex w-full items-baseline gap-4 border-b border-[var(--color-chrome-lo)] py-2.5 text-left transition-colors hover:bg-[var(--color-panel-2)] disabled:cursor-default disabled:hover:bg-transparent"
+                    >
+                      <span className="t-caption w-[6ch] shrink-0 tabular-nums text-[var(--color-gold)]">
+                        {card.game ? formatMiniDate(card.game.date) : 'NOTE'}
+                      </span>
+                      <span className="t-stat-sm min-w-0 flex-1 truncate">{card.headline}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </>
           )}
         </div>
 
@@ -75,24 +91,22 @@ export const HeadlinePanel: React.FC<{
             <button
               type="button"
               onClick={() => primary.game && onOpenGame(primary.game.gameId)}
-              className="flex flex-col gap-3 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] p-3 text-left transition-colors hover:bg-[var(--color-panel-2)]"
+              className="flex flex-col gap-3 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] p-4 text-left transition-colors hover:bg-[var(--color-panel-2)]"
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="t-caption text-[var(--color-ink-faint)]">
-                  {isPlayoffGame(primary.game) ? primary.game.playoff?.seriesLabel ?? 'PLAYOFF SPOTLIGHT' : 'LATEST RESULT'}
-                </p>
-                <div className="flex items-center gap-1">
-                  {awayTeam && <TeamLogo team={awayTeam} sizeClass="h-5 w-5" />}
-                  {homeTeam && <TeamLogo team={homeTeam} sizeClass="h-5 w-5" />}
-                </div>
+              <p className="t-caption text-[var(--color-ink-faint)]">
+                {isPlayoffGame(primary.game) ? primary.game.playoff?.seriesLabel ?? 'Playoff Spotlight' : 'Latest Result'}
+              </p>
+              <div className="flex items-center gap-3">
+                {awayTeam && <TeamLogo team={awayTeam} sizeClass="h-12 w-12" />}
+                <StatValue size="lg" variant="accent">
+                  {primary.game.score.away}-{primary.game.score.home}
+                </StatValue>
+                {homeTeam && <TeamLogo team={homeTeam} sizeClass="h-12 w-12" />}
               </div>
-              <StatValue size="lg" variant="accent">
-                {primary.game.score.away}-{primary.game.score.home}
-              </StatValue>
             </button>
           ) : (
-            <div className="border-l-[3px] border-l-transparent bg-[var(--color-sunken)] p-3">
-              <p className="t-caption text-[var(--color-ink-faint)]">NO GAME IN PLAY</p>
+            <div className="border-l-[3px] border-l-transparent bg-[var(--color-sunken)] p-4">
+              <p className="t-caption text-[var(--color-ink-faint)]">No game in play</p>
             </div>
           )}
         </div>

@@ -75,6 +75,11 @@ export const NAV_FOLDERS: NavFolder[] = [
     icon: LayoutDashboard,
     leaves: [
       { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      // Offseason lives here whether or not it is unlocked. The user asked for
+      // it under Home on the grounds that a locked phase is still something a
+      // manager wants to look at and plan towards, rather than a destination
+      // that should be hidden until the calendar happens to reach it.
+      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
     ],
   },
   {
@@ -84,7 +89,6 @@ export const NAV_FOLDERS: NavFolder[] = [
     accent: 'gold',
     leaves: [
       { view: 'simulation', label: 'Simulate', icon: Activity },
-      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
       { view: 'trades', label: 'Trades', icon: ArrowLeftRight },
       { view: 'free_agency', label: 'Free Agents', icon: BriefcaseBusiness },
       { view: 'draft', label: 'Draft', icon: Clock3 },

@@ -159,7 +159,7 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
         // clips in the smallest slots rather than overflowing them. Not a
         // figure the user compares, so it sits below the 12px stat floor.
         <div
-          className="flex h-full w-full items-center justify-center overflow-hidden text-[0.625rem] uppercase tracking-[0.1em] text-[var(--color-ink-faint)]"
+          className="flex h-full w-full items-center justify-center overflow-hidden text-[0.75rem] uppercase tracking-[0.1em] text-[var(--color-ink-faint)]"
           aria-label={team.name}
         >
           {team.id.slice(0, 3)}

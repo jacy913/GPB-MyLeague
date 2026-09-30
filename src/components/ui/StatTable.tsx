@@ -18,11 +18,11 @@ export type StatTableDensity = 'default' | 'dense' | 'large';
  * are read by comparison rather than scanned.
  */
 const ROW_HEIGHT: Record<StatTableDensity, string> = {
-  dense: '30px',
-  default: '44px',
-  // 52 rather than 48: the crest in a standings row is 40px, and at 48 the mark
-  // plus its border was within a few pixels of the rule above and below it.
-  large: '52px',
+  dense: '34px',
+  default: '50px',
+  // 58 rather than 52: a standings crest is 40px and the figures beside it are
+  // t-stat at 17px, so the row has to clear both plus the rules.
+  large: '58px',
 };
 
 export interface StatTableColumn {
@@ -92,7 +92,7 @@ export const StatTable: React.FC<StatTableProps> = ({
   const rowHeight = ROW_HEIGHT[density];
   // Tracks the row height so the header does not read as a cramped strip above
   // a roomy body.
-  const headerHeight = density === 'dense' ? '30px' : '36px';
+  const headerHeight = density === 'dense' ? '34px' : '40px';
 
   const isNumericColumn = (col: StatTableColumn) =>
     col.isNumeric ?? col.align === 'right';

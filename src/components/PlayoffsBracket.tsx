@@ -612,13 +612,19 @@ const SeedBadge: React.FC<{ seed: number; league: AnyLeague; dimmed?: boolean }>
   const leagueFill = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
   const fill = isTopSeed ? 'bg-[var(--color-gold)]' : leagueFill;
   return (
+    // 30px rather than 22px, and the digit is t-stat at 17px rather than
+    // t-stat-sm. A skewed 22px chip holding a 13px digit was the smallest
+    // element anywhere on the bracket, and the skew eats usable width at the
+    // extremes, so the seed was the one figure on the card that was genuinely
+    // hard to read. The number is also never dimmed to the point of losing it:
+    // a non-leading seed keeps full-strength ink on a recessed chip.
     <span
-      className={`skew-shadow inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center ${
-        dimmed ? 'bg-[var(--color-panel-2)] text-[var(--color-ink-faint)]' : `${fill} text-[var(--color-ink-invert)]`
+      className={`skew-shadow inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center ${
+        dimmed ? 'bg-[var(--color-panel-2)] text-[var(--color-ink-dim)]' : `${fill} text-[var(--color-ink-invert)]`
       }`}
       aria-label={`Seed ${seed}`}
     >
-      <span className="relative z-10 t-stat-sm">{seed}</span>
+      <span className="relative z-10 t-stat">{seed}</span>
     </span>
   );
 };
@@ -629,12 +635,14 @@ const BracketTeamRow: React.FC<{
   bestOf: number;
   league: AnyLeague;
   isLeader: boolean;
+  isClinch?: boolean;
+  winsNeeded?: number;
   pipFill: string;
-}> = ({ participant, wins, bestOf, league, isLeader, pipFill }) => {
+}> = ({ participant, wins, bestOf, league, isLeader, isClinch = false, winsNeeded, pipFill }) => {
   if (!participant) {
     return (
       <div className="flex items-center gap-2 border border-dashed border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-2">
-        <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
+        <span className="h-12 w-12 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <p className="t-caption text-[var(--color-ink-faint)]">TBD</p>
         </div>
@@ -645,11 +653,15 @@ const BracketTeamRow: React.FC<{
   return (
     <div
       className={`flex items-center gap-2 border-l-[3px] px-2 py-2 ${
-        isLeader ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
+        isLeader
+          ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]'
+          : isClinch
+            ? 'border-l-[var(--color-neg)] bg-[var(--color-base-2)]'
+            : 'border-l-transparent'
       }`}
     >
       <SeedBadge seed={participant.seed} league={league} dimmed={!isLeader} />
-      <TeamLogo team={participant.team} sizeClass="h-9 w-9" />
+      <TeamLogo team={participant.team} sizeClass="h-12 w-12" />
       <div className="min-w-0 flex-1">
         <p className={`truncate t-h3 ${isLeader ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
           {participant.team.city}
@@ -659,7 +671,12 @@ const BracketTeamRow: React.FC<{
         </p>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
-        <StatValue size="lg" variant={isLeader ? 'accent' : 'default'}>{wins}</StatValue>
+        <div className="flex items-baseline gap-1.5">
+          {isClinch && winsNeeded !== undefined && (
+            <span className="t-caption text-[var(--color-neg)]">1 from {winsNeeded}</span>
+          )}
+          <StatValue size="lg" variant={isLeader ? 'accent' : 'default'}>{wins}</StatValue>
+        </div>
         <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} />
       </div>
     </div>
@@ -672,6 +689,15 @@ const BracketTeamRow: React.FC<{
  * A series is "live" when it has been decided in at least one game but not
  * finished. That is derived from the view model rather than passed in, so the
  * live treatment cannot drift from the data that justifies it.
+ *
+ * The live treatment was previously a two-pixel hazard stripe along the top plus
+ * a small "NEXT" tag floating over the round title, which said almost nothing
+ * about what was happening and, being drawn in the same gold as the series lead
+ * marker, competed with it. It now says what it means: a gold edge, a filled
+ * IN PROGRESS label in the header, and a line stating the actual stakes -- the
+ * lead, how many games each club needs, and who is eliminated. State is carried
+ * by wording and position as well as colour, so it survives a reader who cannot
+ * separate the two.
  */
 const BracketSeriesCard: React.FC<{
   series: BracketSeriesView;
@@ -683,21 +709,30 @@ const BracketSeriesCard: React.FC<{
   const topLeading = series.leader?.team.id === series.topSeed?.team.id;
   const bottomLeading = series.leader?.team.id === series.bottomSeed?.team.id;
 
+  const winsNeeded = Math.floor(series.bestOf / 2) + 1;
+  const topClinch = isLive && series.topWins === winsNeeded - 1;
+  const bottomClinch = isLive && series.bottomWins === winsNeeded - 1;
+  const eliminated = isLive
+    ? `${series.topWins === winsNeeded - 1 ? series.bottomSeed?.team.city : series.topSeed?.team.city} eliminated`
+    : null;
+
   return (
     <div ref={cardRef} className="relative">
-      <Panel className={`relative overflow-hidden ${isLive ? 'border-[var(--color-gold)]' : ''}`}>
-        {isLive && (
-          <>
-            <div className="h-[2px] w-full" style={{ background: 'var(--texture-hazard)' }} aria-hidden="true" />
-            <span className="skew-shadow absolute right-0 top-1 inline-flex h-[18px] items-center bg-[var(--color-gold)] px-2">
-              <span className="relative z-10 t-caption text-[var(--color-ink-invert)]">NEXT</span>
-            </span>
-          </>
-        )}
-
+      <Panel
+        className={`relative overflow-hidden ${
+          isLive ? 'border-l-[3px] border-l-[var(--color-gold)]' : ''
+        }`}
+      >
         <div className="flex items-center justify-between gap-2 border-b border-[var(--color-chrome-lo)] px-3 py-2">
           <h3 className="t-label">{roundTitles[series.round]}</h3>
-          <span className="t-caption text-[var(--color-ink-faint)]">BO{series.bestOf}</span>
+          <div className="flex items-center gap-2">
+            {isLive && (
+              <span className="inline-flex h-[22px] items-center bg-[var(--color-gold)] px-2">
+                <span className="t-caption text-[var(--color-ink-invert)]">In Progress</span>
+              </span>
+            )}
+            <span className="t-caption text-[var(--color-ink-faint)]">BO{series.bestOf}</span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1 p-2">
@@ -707,6 +742,8 @@ const BracketSeriesCard: React.FC<{
             bestOf={series.bestOf}
             league={league}
             isLeader={topLeading}
+            isClinch={topClinch}
+            winsNeeded={winsNeeded}
             pipFill={pipFill}
           />
           <BracketTeamRow
@@ -715,11 +752,22 @@ const BracketSeriesCard: React.FC<{
             bestOf={series.bestOf}
             league={league}
             isLeader={bottomLeading}
+            isClinch={bottomClinch}
+            winsNeeded={winsNeeded}
             pipFill={pipFill}
           />
         </div>
 
-        {!series.winner && (
+        {isLive ? (
+          <div className="space-y-0.5 border-t border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-3 py-2">
+            <p className="t-caption text-[var(--color-gold-hi)]">
+              {topClinch || bottomClinch
+                ? `Match point — ${topClinch ? series.topSeed?.team.city : series.bottomSeed?.team.city} needs one more`
+                : `${series.leader?.team.city ?? 'Leader'} leads ${series.topWins}-${series.bottomWins}, first to ${winsNeeded}`}
+            </p>
+            {eliminated && <p className="t-caption text-[var(--color-ink-faint)]">{eliminated}</p>}
+          </div>
+        ) : (
           <p className="border-t border-[var(--color-chrome-lo)] px-3 py-2 text-right t-caption text-[var(--color-ink-dim)]">
             {series.statusValue}
           </p>
@@ -939,45 +987,51 @@ const WorldSeriesTeamPanel: React.FC<{
   isWinner: boolean;
   pipFill: string;
 }> = ({ participant, wins, bestOf, leagueLabel, align, isWinner, pipFill }) => {
-  const alignment = align === 'left' ? 'items-start text-left' : 'items-end text-right';
+  const alignRight = align === 'right';
 
   if (!participant) {
     return (
-      <Panel variant="sunken" className={`flex flex-col gap-4 p-6 ${alignment}`}>
+      <div className={`flex flex-col gap-3 ${alignRight ? 'items-end text-right' : 'items-start text-left'}`}>
         <p className="t-caption text-[var(--color-ink-faint)]">{leagueLabel}</p>
-        <div className="h-24 w-24 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
-        <p className="t-h2 text-[var(--color-ink-dim)]">Awaiting Winner</p>
-      </Panel>
+        <span className="h-24 w-24 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />
+        <p className="t-h3 text-[var(--color-ink-dim)]">Awaiting Winner</p>
+      </div>
     );
   }
 
   return (
-    <Panel
-      variant={isWinner ? 'hero' : 'default'}
-      className={`flex flex-col gap-4 p-6 ${alignment} ${isWinner ? 'border-[var(--color-gold)]' : ''}`}
+    <div
+      className={`flex min-w-0 flex-1 flex-col gap-3 ${
+        alignRight ? 'items-end text-right' : 'items-start text-left'
+      } ${isWinner ? 'border-l-[3px] border-l-[var(--color-gold)] pl-3' : ''}`}
     >
       <span className={`t-label ${isWinner ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-dim)]'}`}>
         {leagueLabel}
       </span>
-      <TeamLogo team={participant.team} sizeClass="h-28 w-28" />
-      <div>
-        <p className={`t-h1 ${isWinner ? 'text-[var(--color-gold-hi)]' : ''}`}>{participant.team.city}</p>
-        <p className="t-h3 mt-1 text-[var(--color-ink-dim)]">{participant.team.name}</p>
-        <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
+      <TeamLogo team={participant.team} sizeClass="h-32 w-32" />
+      <div className="min-w-0">
+        <p className={`truncate t-h1 ${isWinner ? 'text-[var(--color-gold-hi)]' : ''}`}>{participant.team.city}</p>
+        <p className="truncate t-h3 mt-1 text-[var(--color-ink-dim)]">{participant.team.name}</p>
+        <p className="t-caption mt-1.5 text-[var(--color-ink-faint)]">
           {fmtRecord(participant.wins, participant.losses)} · RD {fmtDiff(participant.runDiff)}
         </p>
       </div>
-      <div className={`flex items-end gap-4 ${align === 'left' ? 'justify-start' : 'justify-end'}`}>
-        <StatValue size="lg" variant={isWinner ? 'accent' : 'default'}>{wins}</StatValue>
-        <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} size="md" />
-      </div>
-    </Panel>
+      <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} size="md" />
+    </div>
   );
 };
 
 /**
  * World Series -- the climax of the screen and the one element permitted to
- * break the bracket's column symmetry. Full width, centred, spanning the final.
+ * break the bracket's column symmetry.
+ *
+ * Rebuilt after the first full-season playthrough, where it read as two grey
+ * cards and a trophy rather than a championship. Three changes: the two
+ * finalists now sit on either side of a single large score, so the contest is
+ * legible at a glance rather than having to be assembled by reading two separate
+ * cards; the World Series mark is a masthead at 120px instead of a 32px
+ * thumbnail buried in a chrome bar; and the champion block below states the
+ * result in display type instead of a label and a crest.
  */
 const WorldSeriesShowcase: React.FC<{
   series: BracketSeriesView;
@@ -996,18 +1050,31 @@ const WorldSeriesShowcase: React.FC<{
   const prestigeWins = winsFor(prestigeChampion);
   const platinumWinner = Boolean(overallChampion && platinumChampion && overallChampion.team.id === platinumChampion.team.id);
   const prestigeWinner = Boolean(overallChampion && prestigeChampion && overallChampion.team.id === prestigeChampion.team.id);
+  const decided = Boolean(overallChampion);
 
   return (
-    <Panel className="overflow-hidden">
-      <div className="chrome-bar flex items-center justify-between gap-3 px-4">
-        <div className="flex items-center gap-3">
-          <h2 className="t-h2">GPB World Series</h2>
-          <span className="t-caption text-[var(--color-ink-faint)]">BEST OF {series.bestOf}</span>
+    <Panel variant="hero" className="overflow-hidden">
+      {/* Masthead. The mark is the identity of this event and was previously a
+          32px thumbnail sharing a bar with a heading. */}
+      <div className="flex flex-col items-center gap-3 border-b border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-4 py-8">
+        <img
+          src={worldSeriesLogo}
+          alt="GPB World Series"
+          className="h-28 w-auto object-contain md:h-36"
+        />
+        <div className="flex flex-col items-center gap-1 text-center">
+          <h2 className="t-display text-[var(--color-gold-hi)]">World Series</h2>
+          <p className="t-caption text-[var(--color-ink-dim)]">
+            {decided
+              ? `Best of ${series.bestOf} · Final`
+              : platinumChampion && prestigeChampion
+                ? `Best of ${series.bestOf} · In Progress`
+                : `Best of ${series.bestOf} · Awaiting Champions`}
+          </p>
         </div>
-        <img src={worldSeriesLogo} alt="" className="h-8 w-auto object-contain" aria-hidden="true" />
       </div>
 
-      <div className="grid gap-4 p-4 xl:grid-cols-2">
+      <div className="flex flex-col items-stretch gap-4 p-5 md:flex-row md:items-center md:gap-6">
         <WorldSeriesTeamPanel
           participant={platinumChampion}
           wins={platinumWins}
@@ -1017,6 +1084,22 @@ const WorldSeriesShowcase: React.FC<{
           isWinner={platinumWinner}
           pipFill="bg-[var(--color-platinum)]"
         />
+
+        {/* One score, centred between the two finalists, rather than a win count
+            on each card that the reader has to pair up. */}
+        <div className="flex shrink-0 flex-col items-center justify-center gap-1 px-2">
+          <div className="flex items-baseline gap-2 tabular-nums">
+            <span className={`t-stat-lg ${platinumWins > prestigeWins ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink-dim)]'}`}>
+              {platinumChampion ? platinumWins : '–'}
+            </span>
+            <span className="t-h2 text-[var(--color-chrome-hi)]">–</span>
+            <span className={`t-stat-lg ${prestigeWins > platinumWins ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink-dim)]'}`}>
+              {prestigeChampion ? prestigeWins : '–'}
+            </span>
+          </div>
+          <span className="t-caption text-[var(--color-ink-faint)]">Series</span>
+        </div>
+
         <WorldSeriesTeamPanel
           participant={prestigeChampion}
           wins={prestigeWins}
@@ -1028,23 +1111,23 @@ const WorldSeriesShowcase: React.FC<{
         />
       </div>
 
-      <div className="border-t border-[var(--color-chrome-lo)] px-4 py-6">
-        <div className="flex flex-col items-center gap-4 text-center">
-          {overallChampion ? (
-            <>
-              <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
-              <TeamLogo team={overallChampion.team} sizeClass="h-20 w-20" />
-              <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
-              <p className="t-h2 text-[var(--color-gold)]">{overallChampion.team.name}</p>
-            </>
-          ) : (
-            <>
-              <img src={gpbLogo} alt="" className="h-20 w-auto object-contain opacity-80" aria-hidden="true" />
-              <p className="t-h2 text-[var(--color-ink-dim)]">Champion Crowns Here</p>
-              <p className="t-caption text-[var(--color-ink-faint)]">Winner is decided once the final ends</p>
-            </>
-          )}
-        </div>
+      <div className="border-t border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-4 py-8">
+        {overallChampion ? (
+          <div className="flex flex-col items-center gap-3 text-center">
+            <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
+            <TeamLogo team={overallChampion.team} sizeClass="h-28 w-28" />
+            <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
+            <p className="t-h1 text-[var(--color-gold)]">{overallChampion.team.name}</p>
+            <p className="t-caption text-[var(--color-ink-dim)]">
+              {fmtRecord(overallChampion.wins, overallChampion.losses)} · RD {fmtDiff(overallChampion.runDiff)}
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-center">
+            <p className="t-h2 text-[var(--color-ink-dim)]">Champion Crowns Here</p>
+            <p className="t-caption text-[var(--color-ink-faint)]">Winner is decided once the final ends</p>
+          </div>
+        )}
       </div>
     </Panel>
   );
@@ -1222,6 +1305,21 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
         </div>
       </Panel>
 
+      {/* The World Series floats to the top of the screen as soon as either
+          league has a champion. Before that it is a placeholder, so it belongs
+          after the brackets where it costs nothing; the moment a finalist
+          exists the actual final is the most important thing on the page and
+          should not require scrolling past two full brackets to find. Keyed on
+          the champion ids so it promotes once and stays put. */}
+      {(bracket.platinum.champion || bracket.prestige.champion) && (
+        <WorldSeriesShowcase
+          series={bracket.worldSeries}
+          platinumChampion={bracket.platinum.champion}
+          prestigeChampion={bracket.prestige.champion}
+          overallChampion={bracket.champion}
+        />
+      )}
+
       {/* Full width rather than side by side. Two five-round brackets abreast
           would leave roughly 150px per series card, which cannot hold a logo, a
           city name and a series record -- and the connector layer is the reason
@@ -1230,12 +1328,14 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
 
       <LeagueSection bracket={bracket.prestige} league="Prestige" pipFill="bg-[var(--color-prestige)]" />
 
-      <WorldSeriesShowcase
-        series={bracket.worldSeries}
-        platinumChampion={bracket.platinum.champion}
-        prestigeChampion={bracket.prestige.champion}
-        overallChampion={bracket.champion}
-      />
+      {!(bracket.platinum.champion || bracket.prestige.champion) && (
+        <WorldSeriesShowcase
+          series={bracket.worldSeries}
+          platinumChampion={null}
+          prestigeChampion={null}
+          overallChampion={null}
+        />
+      )}
     </section>
   );
 };
