@@ -1,6 +1,7 @@
 import type { Game, Team } from '../types';
 import type { MediaId } from '../data/media';
 import { formatAmerican } from './markets';
+import { propActualStat, type PropStatKey } from './playerProps';
 
 /**
  * Book and wallet.
@@ -24,7 +25,7 @@ export const STARTING_BALANCE = 1000;
 export const MIN_STAKE = 5;
 export const MAX_STAKE = 250;
 
-export type BetKind = 'moneyline' | 'total' | 'first5' | 'division' | 'league' | 'award';
+export type BetKind = 'moneyline' | 'total' | 'first5' | 'prop' | 'division' | 'league' | 'award';
 export type BetStatus = 'open' | 'won' | 'lost' | 'void';
 export type Selection = 'away' | 'home' | 'over' | 'under' | string;
 
@@ -45,6 +46,20 @@ export interface PlacedBet {
   /** Which forecaster's number the bettor used, when they acted on one. */
   backedMedia: MediaId | null;
   note?: string;
+  /**
+   * Prop-specific fields, present only on kind 'prop'.
+   *
+   * The stat and the player are stored as part of the bet rather than looked up
+   * at settlement time. A bet has to remain resololvable after the season that
+   * produced it is over: a player can be traded, a rate can be rebuilt, and a
+   * stat key can be renamed. All of that must not be able to change what a bet
+   * placed last April means.
+   */
+  propStat?: PropStatKey;
+  propPlayerId?: string;
+  propPlayerName?: string;
+  /** The posted line, kept because the displayed line is part of the record. */
+  propLine?: number;
 }
 
 export interface Wallet {
@@ -123,6 +138,44 @@ const resultFor = (bet: PlacedBet, context: SettlementContext): BetVerdict => {
     if (game.status !== 'completed') return { status: 'pending' };
     const awayWon = game.score.away > game.score.home;
     return { status: 'decided', won: awayWon === (bet.selection === 'away') };
+  }
+
+  if (bet.kind === 'prop') {
+    const game = context.games.find((g) => g.gameId === bet.marketKey);
+    if (!game) return { status: 'void' };
+    if (game.status !== 'completed') return { status: 'pending' };
+
+    /*
+     * Props settle from the play log, and the stat is named by the bet rather
+     * than inferred from the market key.
+     *
+     * There is no box score on a saved game -- the engine folds that into season
+     * aggregates and never writes it back -- so the play log is the only record
+     * that survives a save. It rebuilds the player's line exactly; see
+     * verifyPlayLogProps.ts, which measures all fourteen fields at 100.00%
+     * against ground truth obtained by aggregate diffing.
+     *
+     * A completed game whose play log cannot be read is a genuine VOID rather than
+     * a wait. The game is over, the answer will never improve, and holding the
+     * stake indefinitely is the one outcome that is wrong under every
+     * interpretation.
+     */
+    if (!bet.propStat || !bet.propPlayerId || bet.propLine === undefined) {
+      // A prop bet missing its own terms cannot be resolved honestly.
+      return { status: 'void' };
+    }
+    const actual = propActualStat(game, bet.propStat, bet.propPlayerId);
+    if (actual === null) {
+      const log = typeof game.stats?.playLog === 'string' ? game.stats.playLog : '';
+      if (log.length === 0) return { status: 'void' };
+      // The log is readable and the player genuinely is not in it -- did not
+      // appear, or the lineup changed after publication. Under is the answer
+      // that loses the least: a player who never batted cannot have cleared any
+      // line, and a prop on someone who does not play is void rather than a loss.
+      return { status: 'void' };
+    }
+    const cleared = actual > bet.propLine;
+    return { status: 'decided', won: cleared === (bet.selection === 'over') };
   }
 
   if (bet.kind === 'total' || bet.kind === 'first5') {
