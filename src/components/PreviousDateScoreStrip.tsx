@@ -17,9 +17,16 @@ interface PreviousDateScoreStripProps {
 /** Horizontal step between items, applied as margin so every item occupies the same period. */
 const ITEM_STEP = 8;
 /** Crawl speed in px per second. A constant speed is what makes it read as a board. */
-const CRAWL_SPEED = 55;
+const CRAWL_SPEED = 18;
 const MIN_DURATION = 18;
-const MAX_DURATION = 110;
+/**
+ * Raised from 110s alongside the speed change. Duration is travel / speed, so a
+ * 16-game slate at 18px/s wants 192s; the old ceiling would have clamped it back
+ * up to an effective 31px/s, which is closer to the speed the user just asked to
+ * get away from than to the one they asked for. The clamp is still worth having,
+ * because a single very long slate should not produce a four-minute lap.
+ */
+const MAX_DURATION = 260;
 
 interface CrawlEntry {
   gameId: string;
