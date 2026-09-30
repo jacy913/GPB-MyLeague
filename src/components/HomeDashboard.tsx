@@ -9,6 +9,7 @@ import {
   PlayerSeasonPitching,
   PlayerTransaction,
   Team,
+  TeamRosterSlot,
 } from '../types';
 import {
   buildGameIndexes,
@@ -23,6 +24,9 @@ import {
 import { isPlayoffGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
+import { buildMediaReads } from '../lib/mediaReads';
+import { buildGameLine, type GameLine } from '../lib/mediaOdds';
+import { resolveSeasonYear } from '../lib/seasonYear';
 import { HomePanel, getMilestones, sortStandings, type DivisionSnapshot, type Milestone } from './home/shared';
 import { FeaturedGamePanel, HeadlinePanel } from './home/HeadlinePanel';
 import { MvpRacePanel } from './home/MvpRacePanel';
@@ -45,6 +49,18 @@ interface HomeDashboardProps {
   battingRatings: PlayerBattingRatings[];
   pitchingRatings: PlayerPitchingRatings[];
   transactions: PlayerTransaction[];
+  /**
+   * Roster slot rows.
+   *
+   * Passed rather than reconstructed because the front page now prices the
+   * featured matchup, and buildMediaReads grades club strength off these. An
+   * earlier version rebuilt a LeaguePlayerState here with an EMPTY rosterSlots
+   * array to satisfy the type, which quietly downgraded the read and would have
+   * made this screen quote a different price from the Betting page for the same
+   * game. If the two screens are going to show the same number they have to be
+   * reading the same state.
+   */
+  rosterSlots: TeamRosterSlot[];
   currentDate: string;
   selectedDate: string;
   selectedTeamId: string;
@@ -89,6 +105,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   battingRatings,
   pitchingRatings,
   transactions,
+  rosterSlots,
   currentDate,
   selectedDate,
   selectedTeamId,
@@ -261,6 +278,59 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const headline = headlineDeck.primary;
   const featuredGame = useMemo(() => getFeaturedGame(todaysGames, teamsById), [todaysGames, teamsById]);
 
+  /*
+   * The price for the featured matchup.
+   *
+   * Built from the same read module and the same buildGameLine the Betting page
+   * uses, deliberately. The front page is not allowed to invent its own number:
+   * a manager who reads a price here and then walks to Betting has to find the
+   * same price there, or one of the two screens is lying about the house.
+   */
+  const featuredLine = useMemo<GameLine | null>(() => {
+    if (!featuredGame) return null;
+    const away = teamsById.get(featuredGame.game.awayTeam);
+    const home = teamsById.get(featuredGame.game.homeTeam);
+    if (!away || !home) return null;
+
+    const { scores, spread } = buildMediaReads({
+      teams,
+      players,
+      battingRatings,
+      pitchingRatings,
+      battingStats,
+      pitchingStats,
+      playerState: {
+        players,
+        battingStats,
+        pitchingStats,
+        battingRatings,
+        pitchingRatings,
+        rosterSlots,
+        transactions,
+      },
+      seasonYear: resolveSeasonYear(timelineDate, games),
+    });
+
+    const scoreFor = (teamId: string) => ({
+      hollis: scores.hollis.get(teamId) ?? 0.5,
+      glorest: scores.glorest.get(teamId) ?? 0.5,
+      sharply: scores.sharply.get(teamId) ?? 0.5,
+    });
+
+    return buildGameLine({
+      game: featuredGame.game,
+      away,
+      home,
+      awayScores: scoreFor(away.id),
+      homeScores: scoreFor(home.id),
+      spread,
+    });
+  }, [
+    battingRatings, battingStats, featuredGame, games, pitchingRatings,
+    pitchingStats, players, rosterSlots, teams, teamsById, timelineDate,
+    transactions,
+  ]);
+
   const awardInputs = useMemo(() => ({
     players,
     teamsById,
@@ -378,8 +448,19 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     setIsTradeModalOpen(false);
   };
 
-  const heroAwayTeam = headline.game ? teamsById.get(headline.game.awayTeam) ?? null : null;
-  const heroHomeTeam = headline.game ? teamsById.get(headline.game.homeTeam) ?? null : null;
+  /*
+   * The headline panel resolves its own scoreline clubs from whichever slide is
+   * showing. It used to take them as props built here from `headline.game`,
+   * which is the PRIMARY headline only -- so on a carousel the big crest
+   * followed the active slide while the score beside it stayed frozen on the
+   * first, and the two contradicted each other from slide two onward.
+   *
+   * These two lookups are what that used. Kept as a comment rather than deleted
+   * silently, because the failure mode is invisible: both values are valid
+   * teams, and only their disagreement with the active slide is wrong.
+   */
+  // const heroAwayTeam = headline.game ? teamsById.get(headline.game.awayTeam) ?? null : null;
+  // const heroHomeTeam = headline.game ? teamsById.get(headline.game.homeTeam) ?? null : null;
   const featuredAwayTeam = featuredGame ? teamsById.get(featuredGame.game.awayTeam) ?? null : null;
   const featuredHomeTeam = featuredGame ? teamsById.get(featuredGame.game.homeTeam) ?? null : null;
 
@@ -398,8 +479,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]">
         <HeadlinePanel
           deck={headlineDeck}
-          awayTeam={heroAwayTeam}
-          homeTeam={heroHomeTeam}
           timelineDate={timelineDate}
           teamLookup={teamsById}
           onOpenGame={onOpenGame}
@@ -409,9 +488,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <FeaturedGamePanel
             gameId={featuredGame ? featuredGame.game.gameId : null}
             angle={featuredGame ? featuredGame.angle : null}
-            lore={featuredGame ? featuredGame.lore : null}
             away={featuredAwayTeam}
             home={featuredHomeTeam}
+            line={featuredLine}
             date={featuredGame ? featuredGame.game.date : null}
             onOpenGame={onOpenGame}
           />

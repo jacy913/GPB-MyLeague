@@ -336,6 +336,7 @@ export const AppViewRouter = ({
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}
           transactions={playerState.transactions}
+          rosterSlots={playerState.rosterSlots}
           currentDate={currentDate}
           selectedDate={selectedDate}
           selectedTeamId={selectedTeamId}

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { AppView } from '../types';
+import { Chevron, ChevronEdge } from '../components/ui';
 import { NAV_FOLDERS, VIEW_TO_FOLDER, type FolderId } from './folders';
 
 interface FolderNavProps {
@@ -190,17 +190,17 @@ export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className
                 onFocus={() => setActiveItemId(folderId)}
                 onClick={() => toggleFolder(folder.id)}
                 onKeyDown={(event) => handleFolderKeyDown(event, folder.id)}
-                className={`flex h-10 w-full items-center gap-2 border-l-[3px] px-2 text-left t-label transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] ${
+                className={`gold-sweep gold-edge flex h-11 w-full items-center gap-2 pl-4 pr-2 text-left t-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] ${
                   isActiveFolder
-                    ? 'border-[var(--color-gold)] text-[var(--color-gold)]'
+                    ? 'border-l-[3px] border-l-[var(--color-gold)] text-[var(--color-gold)]'
                     : folder.accent === 'gold'
-                      ? 'border-[var(--color-gold-lo)] text-[var(--color-ink-dim)] hover:bg-[var(--color-panel-2)] hover:text-[var(--color-ink)]'
-                      : 'border-transparent text-[var(--color-ink-dim)] hover:bg-[var(--color-panel-2)] hover:text-[var(--color-ink)]'
+                      ? 'border-l-[3px] border-l-[var(--color-gold-lo)] text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]'
+                      : 'border-l-[3px] border-l-transparent text-[var(--color-ink-dim)] hover:text-[var(--color-ink)]'
                 }`}
               >
                 <FolderIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span className="flex-1">{folder.label}</span>
-                {isExpanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                <ChevronEdge count={2} height={7} depth={6} className="opacity-60" />
               </button>
 
               {isExpanded && (
@@ -223,13 +223,15 @@ export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className
                         onFocus={() => setActiveItemId(leafId)}
                         onClick={() => onSetView(leaf.view)}
                         onKeyDown={(event) => handleLeafKeyDown(event, { id: leafId, kind: 'leaf', folderId: folder.id, view: leaf.view })}
-                        className={`flex h-8 w-full items-center gap-2 border-l-[3px] px-2 text-left t-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] ${
+                        className={`gold-sweep gold-edge flex h-9 w-full items-center gap-2 pl-4 pr-2 text-left t-caption focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] ${
                           isActiveLeaf
-                            ? 'border-[var(--color-gold)] bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]'
-                            : 'border-transparent text-[var(--color-ink)] hover:bg-[var(--color-panel-2)] hover:text-[var(--color-gold-hi)]'
+                            ? 'border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]'
+                            : 'border-l-[3px] border-l-transparent text-[var(--color-ink)] hover:text-[var(--color-gold-hi)]'
                         }`}
                       >
-                        {isActiveLeaf ? <span className="text-[var(--color-gold)]" aria-hidden="true">▶</span> : <LeafIcon className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />}
+                        {isActiveLeaf
+                          ? <Chevron depth={7} height={8} className="text-[var(--color-gold)]" />
+                          : <LeafIcon className="h-3.5 w-3.5 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />}
                         <span>{leaf.label}</span>
                       </button>
                     );

@@ -184,23 +184,127 @@ const main = async () => {
     await sleep(3000);
   }
 
-  const probe = await browser.send('Runtime.evaluate', {
-    expression: `(() => {
-      const root = document.getElementById('root');
-      return JSON.stringify({
-        title: document.title,
-        rootChildren: root ? root.children.length : -1,
-        text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 900),
-      });
-    })()`,
-    returnByValue: true,
-  }, sessionId);
-  console.log('PAGE:', probe.result.value);
+  /*
+   * The final screenshot is taken at the very END, after navigation, tab
+   * selection and any bet. It used to fire here, immediately after load, which
+   * meant a run that navigated to Betting and placed a bet still produced a
+   * picture of the dashboard -- the evidence looked like the navigation had
+   * failed when it had actually worked.
+   */
+  const shoot = async (file) => {
+    const shot = await browser.send(
+      'Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId,
+    );
+    writeFileSync(file, Buffer.from(shot.data, 'base64'));
+    console.log('SCREENSHOT:', file);
+  };
 
-  if (outPng) {
-    const shot = await browser.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true }, sessionId);
-    writeFileSync(outPng, Buffer.from(shot.data, 'base64'));
-    console.log('SCREENSHOT:', outPng);
+  /**
+   * Open a specific nav leaf. Expanding folders alone does not pick a view, and
+   * which leaf ends up selected depends on the expansion order, so a screenshot
+   * of "the dashboard" needs the dashboard asked for by name.
+   */
+  /**
+   * Dump a slice of the DOM, for when a screenshot shows something wrong and
+   * the question is which class is actually on the element.
+   */
+  /** Read a computed style property off a matched element. */
+  if (process.env.GPB_CSS) {
+    const [label, prop] = process.env.GPB_CSS.split('|');
+    const css = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify((label || '').toLowerCase())};
+        const n = [...document.querySelectorAll('button, div, span')]
+          .find((b) => (b.textContent||'').trim().toLowerCase() === want);
+        if (!n) return 'not found';
+        const cs = getComputedStyle(n);
+        return JSON.stringify({
+          backgroundImage: cs.backgroundImage.slice(0, 220),
+          backgroundSize: cs.backgroundSize,
+          backgroundPosition: cs.backgroundPosition,
+          isolation: cs.isolation,
+          chev: cs.getPropertyValue('--chev'),
+          clip: cs.clipPath,
+          paddingRight: cs.paddingRight,
+          width: n.getBoundingClientRect().width,
+          textWidth: (() => { const r = document.createRange(); r.selectNodeContents(n); return r.getBoundingClientRect().width; })(),
+        });
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    console.log('CSS:', String(css.result?.value ?? JSON.stringify(css.result)));
+  }
+
+  /** Screenshot a single element, for inspecting a detail at full resolution. */
+  if (process.env.GPB_CLIP && outPng) {
+    const box = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify(process.env.GPB_CLIP)};
+        const n = [...document.querySelectorAll('button')].find((b) => (b.textContent||'').trim().toLowerCase() === want.toLowerCase());
+        if (!n) return null;
+        const r = n.getBoundingClientRect();
+        return JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height, scale: 3 });
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    const parsed = JSON.parse(String(box.result?.value ?? 'null') ?? 'null');
+    if (parsed) {
+      const shot = await browser.send('Page.captureScreenshot', {
+        format: 'png',
+        clip: { x: parsed.x, y: parsed.y, width: parsed.width, height: parsed.height, scale: parsed.scale },
+      }, sessionId);
+      const clipFile = outPng.replace(/\.png$/, '-clip.png');
+      writeFileSync(clipFile, Buffer.from(shot.data, 'base64'));
+      console.log('CLIP:', clipFile, `${Math.round(parsed.width)}x${Math.round(parsed.height)}`);
+    } else {
+      console.log('CLIP: element not found');
+    }
+  }
+
+  if (process.env.GPB_PROBE) {
+    const probe = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify(process.env.GPB_PROBE)};
+        const nodes = [...document.querySelectorAll('button, h2, span, div')];
+        const hit = nodes.filter((n) => (n.textContent || '').trim().toLowerCase().includes(want.toLowerCase()));
+        return hit.slice(-3).map((n) => n.tagName + ' :: ' + (n.className || '(none)').toString().slice(0, 400)).join('  |  ');
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    console.log('PROBE:\n' + String(probe.result?.value ?? JSON.stringify(probe.result)));
+  }
+
+  if (process.env.GPB_VIEW) {
+    const opened = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        // Open every collapsed folder in ONE pass. An earlier version clicked
+        // "the first folder that is not expanded" on each pass, which toggles
+        // the same folder back and forth forever and never reaches the one you
+        // wanted. This is a test-harness bug, not a product one, but it looks
+        // exactly like the app refusing to navigate.
+        const folders = [...document.querySelectorAll('button[aria-expanded]')]
+          .filter((f) => f.getAttribute('aria-expanded') !== 'true');
+        folders.forEach((f) => f.click());
+        return 'expanded ' + folders.length + ' folders';
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    console.log('FOLDERS:', opened.result?.value);
+    await sleep(900);
+
+    const { result } = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify(process.env.GPB_VIEW)};
+        const n = [...document.querySelectorAll('button,a,[role="treeitem"]')]
+          .find((x) => (x.textContent || '').trim().toLowerCase() === want.toLowerCase());
+        if (!n) return 'NOT FOUND: ' + want;
+        n.click();
+        return 'opened ' + want;
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    console.log('VIEW:', result.value);
+    await sleep(2500);
   }
 
   /**
@@ -331,6 +435,69 @@ const main = async () => {
       });
     })()`));
   }
+
+  /**
+   * Capture the gold sweep mid-travel.
+   *
+   * A hover style that only exists while the pointer is down cannot be seen in a
+   * normal screenshot, so the sweep is checked by holding the pointer on a nav
+   * item and grabbing frames across the transition. If the gradient does not
+   * move, the whole point of it is missing and nothing else in the screenshot
+   * would say so.
+   */
+  if (process.env.GPB_HOVER) {
+    const target = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const want = ${JSON.stringify(process.env.GPB_HOVER)};
+        const n = [...document.querySelectorAll('button,a,[role="treeitem"]')]
+          .find((x) => (x.textContent || '').trim().toLowerCase() === want.toLowerCase());
+        if (!n) return null;
+        const r = n.getBoundingClientRect();
+        n.scrollIntoView({ block: 'center' });
+        return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height });
+      })()`,
+      returnByValue: true,
+    }, sessionId);
+    const t = JSON.parse(String(target.result?.value ?? 'null') ?? 'null');
+    if (t) {
+      await browser.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x: t.x, y: t.y, buttons: 0,
+      }, sessionId);
+      for (const [i, delay] of [0, 90, 200, 420].entries()) {
+        await sleep(i === 0 ? 0 : delay);
+        const shot = await browser.send('Page.captureScreenshot', {
+          format: 'png',
+          clip: {
+            x: Math.max(0, t.x - t.w - 20), y: Math.max(0, t.y - t.h - 8),
+            width: t.w + 40, height: t.h * 3 + 24, scale: 3,
+          },
+        }, sessionId);
+        const file = outPng
+          ? outPng.replace(/\.png$/, `-hover${i}.png`)
+          : `hover${i}.png`;
+        writeFileSync(file, Buffer.from(shot.data, 'base64'));
+        console.log('HOVER FRAME:', file);
+      }
+    } else {
+      console.log('HOVER: target not found');
+    }
+  }
+
+  // Final state, after everything above has run.
+  const finalProbe = await browser.send('Runtime.evaluate', {
+    expression: `(() => {
+      const root = document.getElementById('root');
+      return JSON.stringify({
+        title: document.title,
+        rootChildren: root ? root.children.length : -1,
+        text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 400),
+      });
+    })()`,
+    returnByValue: true,
+  }, sessionId);
+  console.log('PAGE:', finalProbe.result.value);
+
+  if (outPng) await shoot(outPng);
 
   console.log('\n--- console (' + logs.length + ') ---');
   const seen = new Set();

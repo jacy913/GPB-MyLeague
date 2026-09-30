@@ -244,6 +244,71 @@
   border-top:    1px solid rgba(255,255,255,0.35);
   border-bottom: 1px solid rgba(0,0,0,0.65);
   border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  position: relative;
+}
+
+/*
+ * Every panel title in the product sits in a chrome bar, so the chevron
+ * language starts here rather than in each screen. A gold stripe is cut into
+ * the leading edge and the whole bar carries a faint set of racing chevrons.
+ *
+ * The stripe is a pseudo-element rather than a border because a border cannot be
+ * clipped to a point, and the angle is the entire effect. The chevron wash
+ * behind the text is drawn on the bar's own gradient at low opacity, which keeps
+ * the bevels intact and costs no extra element.
+ */
+.chrome-bar::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  background: linear-gradient(180deg,
+    var(--color-gold-hi) 0%,
+    var(--color-gold) 55%,
+    var(--color-gold-lo) 100%);
+  clip-path: polygon(0 0, 100% 0, 55% 50%, 100% 100%, 0 100%);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/*
+ * The racing-chevron wash.
+ *
+ * Deliberately faint. A first pass ran it at 0.55 over 2px stripes on a 16px
+ * period and the screenshot showed "Season Cycle" and "Division Snapshot" with
+ * visible diagonal banding across the text -- the texture was competing with
+ * the title rather than sitting behind it. At 0.05 it reads as a brushed
+ * surface, which is the intent: you should notice it if you look for it, not
+ * while you are reading.
+ */
+.chrome-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0.10) 0px,
+    rgba(255, 255, 255, 0.10) 1px,
+    transparent 1px,
+    transparent 14px
+  );
+  opacity: 0.28;
+}
+
+/*
+ * The bar's own content sits clear of the leading stripe.
+ *
+ * The stripe is a pseudo-element on the bar rather than a real element, so
+ * padding has to be added here for every consumer. At 10px wide plus the 16px
+ * the bar already carried, the title text was starting underneath it.
+ */
+.chrome-bar > * {
+  position: relative;
+  z-index: 1;
+  padding-left: 12px;
 }
 
 /* Skew geometries — internal use only, wrapped by SkewedPanel/SkewedTab */
@@ -258,6 +323,158 @@
 }
 @utility notch-bl {
   clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+}
+
+/* ------------------------------------------------------------------ *
+ * Chevrons and parallelograms
+ *
+ * The 2000s Japanese console look is built out of hard diagonal edges: every
+ * racing stripe, every menu bar, every selection cursor on those carts was a
+ * parallelogram, and a "»" chevron marked anything navigable. Rectangles read
+ * as a spreadsheet by comparison.
+ *
+ * These are utilities rather than components because they are shapes, not
+ * content, and they compose onto anything already on the page.
+ * ------------------------------------------------------------------ */
+
+/** A single bar cut on the right, the shape of a racing stripe. */
+@utility stripe {
+  clip-path: polygon(0 0, calc(100% - var(--chev)) 0, 100% 50%, calc(100% - var(--chev)) 100%, 0 100%);
+}
+
+/** The mirror: cut on the left, for the other end of a rule. */
+@utility stripe-rev {
+  clip-path: polygon(var(--chev) 0, 100% 0, 100% 100%, var(--chev) 100%, 0 50%);
+}
+
+/** A right-pointing chevron block, the universal "go here" mark of the era. */
+@utility chev {
+  clip-path: polygon(0 0, calc(100% - var(--chev)) 0, 100% 50%, calc(100% - var(--chev)) 100%, 0 100%);
+}
+@utility chev-rev {
+  clip-path: polygon(var(--chev) 0, 100% 0, 100% 100%, var(--chev) 100%, 0 50%);
+}
+
+/** A notched tag, angled off both corners, for panel titles and chips. */
+@utility parallelogram {
+  clip-path: polygon(var(--chev) 0, 100% 0, calc(100% - var(--chev)) 100%, 0 100%);
+}
+
+/** The stepped arrow used on primary actions: a tail plus a point. */
+@utility arrow-tag {
+  clip-path: polygon(0 0, calc(100% - var(--chev)) 0, 100% 50%, calc(100% - var(--chev)) 100%, var(--chev) 100%, calc(100% - var(--chev)) 50%, var(--chev) 0);
+}
+
+/* The angle. Wide enough to read as a deliberate cut rather than a rounding. */
+:root {
+  --chev: 10px;
+  --chev-wide: 18px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Gold sweep
+ *
+ * A horizontal wipe of colour across a target on hover, rather than the flat
+ * "background got a bit lighter" that every web UI has used since 2004. This is
+ * the highlight bar on a Konami or Capcom cabinet: the gold travels.
+ *
+ * Implemented as a background-position transition on a two-stop gradient rather
+ * than a pseudo-element, because a pseudo-element needs a positioned parent and
+ * would clip against any clip-path on the target itself. Two details make it
+ * read correctly:
+ *
+ *   - the sweep is drawn UNDER the text, so the label never dims mid-wipe
+ *   - it only runs on devices that can hover. On touch a hover never fires, and
+ *     a wipe that only half-completed on tap would leave rows stuck mid-gold.
+ * ------------------------------------------------------------------ */
+/*
+ * The sweep is drawn in its own layer, never in the element's own background.
+ *
+ * A first pass set background-image directly on the target. Where the target
+ * already had a background -- which is most of them, since a button's fill is
+ * always a gradient -- the sweep REPLACED it, and a clipped screenshot of
+ * "Quick Sim" showed half the label sitting on gold and half on navy with a
+ * hard vertical seam down the middle of the text. The wipe was visible at rest
+ * and it had eaten the control's own fill.
+ *
+ * A pseudo-element cannot fix this either: it would be clipped by any
+ * clip-path on the target, and the chevron cut is exactly that. So the sweep
+ * goes in a layer above the fill but below the content, which is what
+ * isolation plus a negative z-index on the content buys.
+ */
+@utility gold-sweep {
+  position: relative;
+  isolation: isolate;
+}
+
+/*
+ * Plain CSS, not @utility.
+ *
+ * Tailwind v4 rejects a utility name containing "::" outright -- the build logs
+ * "@utility gold-sweep::after defines an invalid utility name" and then serves
+ * whatever the last GOOD version of the file contained. That is how a rule
+ * written to fix the sweep kept the broken one live: the error was in the
+ * terminal, not on the page, and the button still rendered with the old
+ * background-size and a hard seam down the middle of its own label.
+ */
+.gold-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    100deg,
+    transparent 0%,
+    transparent 40%,
+    color-mix(in oklab, var(--color-gold) 30%, transparent) 50%,
+    transparent 60%,
+    transparent 100%
+  );
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  transition: background-position 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.gold-sweep > * {
+  position: relative;
+  z-index: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .gold-sweep:hover::after {
+    background-position: -30% 0;
+  }
+}
+
+/* A leading gold bar that drives in from the left edge. */
+@utility gold-edge {
+  position: relative;
+}
+/*
+ * The leading edge bar.
+ *
+ * Also a pseudo-element, which means it collides with the sweep's ::after on the
+ * same element. Hence a different pseudo: ::before for the edge, ::after for the
+ * sweep. The nav rail uses both.
+ */
+.gold-edge::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-gold);
+  transform: scaleY(0.15);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1), opacity 200ms linear;
+  z-index: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .gold-edge:hover::before {
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 /* Shadow wrapper for skewed elements — prevents clip-path clipping the shadow */

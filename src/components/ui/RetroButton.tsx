@@ -8,16 +8,30 @@ interface RetroButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
   size?: RetroButtonSize;
   children: React.ReactNode;
   className?: string;
+  /**
+   * Cut the right edge into a chevron.
+   *
+   * On by default for the primary variant only. A pointed action is the era's
+   * strongest signal and it means "this is the one to press" -- applying it to
+   * every button in the product would be a rash of arrowheads and would say
+   * nothing. Default and ghost stay square.
+   */
+  chevron?: boolean;
 }
 
 /**
  * RetroButton — Beveled control with machined press-into-surface active state.
  *
  * State deltas:
- * - hover: translate -1px, shadow grows to 3px
+ * - hover: gold sweep travels left to right, bevel rises
  * - active: translate 0, shadow removed (pressed into surface)
  * - focus: 2px gold outline, 2px offset
  * - disabled: 40% opacity, no shadow, cursor-not-allowed
+ *
+ * The hover is a wipe rather than a brightness lift. A flat "slightly lighter"
+ * is what every web interface has done since 2004; the gold travelling across
+ * the face is the highlight bar on a cabinet, and it is the single cheapest
+ * thing that makes the product read as that era rather than a spreadsheet.
  */
 export const RetroButton: React.FC<RetroButtonProps> = ({
   variant = 'default',
@@ -25,15 +39,10 @@ export const RetroButton: React.FC<RetroButtonProps> = ({
   children,
   className = '',
   disabled,
+  chevron,
   ...props
 }) => {
   const base = 'relative inline-flex items-center justify-center transition-all duration-[var(--dur-fast)] ease-[var(--ease-snap)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none';
-
-  const sizeClass: Record<RetroButtonSize, string> = {
-    sm: 't-caption px-3 py-1.5',
-    md: 't-label px-4 py-2',
-    lg: 't-h3 px-6 py-3',
-  };
 
   const variantClasses: Record<RetroButtonVariant, string> = {
     primary: `
@@ -68,9 +77,26 @@ export const RetroButton: React.FC<RetroButtonProps> = ({
     `,
   };
 
+  const pointed = chevron ?? variant === 'primary';
+
+  /*
+   * The chevron cut removes a wedge from the RIGHT of the box, and the content
+   * is centred in the whole box, so the last few characters ended up underneath
+   * the cut -- "Quick Sim" rendered as "Quick| Sim" with the m sheared off.
+   *
+   * The fix is padding on the cut side, not a narrower cut: a shallower angle
+   * stops reading as a chevron at all, and the wedge is what carries the era.
+   * The padding is a fraction of the cut so the point stays sharp.
+   */
+  const sizeClass: Record<RetroButtonSize, string> = {
+    sm: pointed ? 't-caption pl-3 pr-5 py-1.5' : 't-caption px-3 py-1.5',
+    md: pointed ? 't-label pl-4 pr-7 py-2' : 't-label px-4 py-2',
+    lg: pointed ? 't-h3 pl-6 pr-10 py-3' : 't-h3 px-6 py-3',
+  };
+
   return (
     <button
-      className={`${base} ${sizeClass[size]} ${variantClasses[variant].replace(/\s+/g, ' ').trim()} ${className}`}
+      className={`${base} ${pointed ? 'chev gold-sweep' : 'gold-sweep'} ${sizeClass[size]} ${variantClasses[variant].replace(/\s+/g, ' ').trim()} ${className}`}
       disabled={disabled}
       {...props}
     >
