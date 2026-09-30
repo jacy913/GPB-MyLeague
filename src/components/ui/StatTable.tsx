@@ -28,6 +28,13 @@ const ROW_HEIGHT: Record<StatTableDensity, string> = {
 export interface StatTableColumn {
   key: string;
   header: string;
+  /**
+   * Replaces the header text when the label will not fit the column -- an icon
+   * or a mark. The header text stays required and is used for the accessible
+   * name and the tooltip, so a column is never identified by a picture alone.
+   */
+  headerNode?: React.ReactNode;
+  headerTitle?: string;
   align?: 'left' | 'right';
   width?: string; // ch units, e.g., '5ch'
   isNumeric?: boolean;
@@ -146,7 +153,17 @@ export const StatTable: React.FC<StatTableProps> = ({
                 aria-sort={sortColumn === col.sortKey ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span>{col.header}</span>
+                  {col.headerNode ? (
+                    <span className="flex w-full items-center justify-center" title={col.headerTitle ?? col.header}>
+                      {/* The label stays in the DOM for screen readers even when
+                          a mark is drawn, so the column is never identified by a
+                          picture alone. */}
+                      <span className="sr-only">{col.headerTitle ?? col.header}</span>
+                      {col.headerNode}
+                    </span>
+                  ) : (
+                    <span>{col.header}</span>
+                  )}
                   {col.sortKey && onSort && (
                     <span className="inline-flex items-center" aria-hidden="true">
                       {sortColumn === col.sortKey ? (

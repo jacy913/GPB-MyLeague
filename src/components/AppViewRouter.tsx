@@ -574,6 +574,8 @@ export const AppViewRouter = ({
       {view === 'media' && (
         <MediaHub
           teams={teams}
+          games={games}
+          currentDate={currentDate}
           players={playerState.players}
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}

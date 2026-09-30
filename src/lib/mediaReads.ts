@@ -57,6 +57,30 @@ export interface MediaReadInput {
   seasonYear: number;
 }
 
+/**
+ * Raw per-method scores, before league normalisation.
+ *
+ * The normalised index on the read table is a rank, so two clubs ranked 1 and 2
+ * can be far apart in quality. A per-game price needs the underlying gap, so the
+ * un-normalised scores are exposed too. lib/mediaOdds.ts consumes these rather
+ * than re-deriving each method's inputs, which would be a second copy of the
+ * read logic free to drift away from the one the page displays.
+ */
+export type MediaScores = Record<MediaId, Map<string, number>>;
+
+/**
+ * Standard deviation of each method's raw score across the field.
+ *
+ * The per-outlet score is a 0-1 weighted sum, so the gap between any two clubs
+ * is a small number and a logistic applied straight to it produces prices that
+ * are almost all within a few points of even. Measured over two seasons, every
+ * one of nearly five thousand priced games landed between 45 and 55 per cent,
+ * which is a coin flip wearing a price. Dividing the gap by this figure first
+ * turns it into a z-score, so each outlet's spread is measured against its own
+ * scale and the three remain comparable.
+ */
+export type MediaScoreSpread = Record<MediaId, number>;
+
 export interface TeamRead {
   team: Team;
   /** Normalised 0-100 position within this forecaster's view. */
@@ -85,6 +109,8 @@ export interface MediaDisagreement {
 
 export interface MediaReadResult {
   reads: Record<MediaId, MediaRead>;
+  scores: MediaScores;
+  spread: MediaScoreSpread;
   disagreements: MediaDisagreement[];
 }
 
@@ -255,12 +281,25 @@ export const buildMediaReads = (input: MediaReadInput): MediaReadResult => {
     : 75;
 
   const reads = {} as Record<MediaId, MediaRead>;
+  const scores = {} as MediaScores;
+  const spread = {} as MediaScoreSpread;
   MEDIA_PROFILES.forEach((profile) => {
     const scorer = SCORERS[profile.method];
+    const raw = input.teams.map((team) => ({ team, score: scorer(team, derived, rosterMean) }));
+    scores[profile.id] = new Map(raw.map((row) => [row.team.id, row.score]));
+
+    // Gap between two clubs drawn from the same distribution has a spread of
+    // roughly sqrt(2) times the spread of the distribution itself. Clamped so a
+    // degenerate field -- every club rating identically at season start -- does
+    // not divide by zero and post a flat line for the whole season.
+    const meanScore = raw.reduce((sum, row) => sum + row.score, 0) / Math.max(1, raw.length);
+    const variance = raw.reduce((sum, row) => sum + (row.score - meanScore) ** 2, 0) / Math.max(1, raw.length);
+    spread[profile.id] = Math.max(0.02, Math.sqrt(2 * variance));
+
     reads[profile.id] = {
       mediaId: profile.id,
       method: profile.method,
-      rows: normalise(input.teams.map((team) => ({ team, score: scorer(team, derived, rosterMean) }))),
+      rows: normalise(raw),
     };
   });
 
@@ -299,5 +338,5 @@ export const buildMediaReads = (input: MediaReadInput): MediaReadResult => {
     })
     .sort((a, b) => b.indexSpread - a.indexSpread || b.rankSpread - a.rankSpread);
 
-  return { reads, disagreements };
+  return { reads, scores, spread, disagreements };
 };

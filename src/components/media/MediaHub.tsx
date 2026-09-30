@@ -1,32 +1,67 @@
 import React, { useMemo, useState } from 'react';
+import { BarChart3, Users } from 'lucide-react';
+import type { Game } from '../../types';
 import type { MediaId } from '../../data/media';
-import { MEDIA_BY_ID, MEDIA_PROFILES } from '../../data/media';
-import { buildMediaReads } from '../../lib/mediaReads';
-import type { MediaReadInput } from '../../lib/mediaReads';
-import { Panel } from '../ui';
+import { MEDIA_BY_ID } from '../../data/media';
+import { buildMediaReads, type MediaReadInput } from '../../lib/mediaReads';
+import { buildGameLine, getNextSlateDate, HOUSE_MARGIN, type GameLine } from '../../lib/mediaOdds';
+import { Panel, SegmentedControl } from '../ui';
 import { MediaCards, MediaMethodPanel, MediaVoicePanel } from './MediaCard';
-import { MediaDataPanels } from './MediaTables';
+import { MediaDisagreementTable, MediaRanking } from './MediaTables';
+import { MediaOddsSlate } from './MediaOddsSlate';
+
+interface MediaHubProps extends MediaReadInput {
+  games: Game[];
+  currentDate: string;
+}
 
 /**
  * The Media.
  *
- * Three forecasters, each with a live read on all thirty-two clubs, and the
- * table showing where the three disagree. There is deliberately no track record
- * here: nothing has been predicted yet, so any accuracy figure would be
- * invented. What is shown instead is the basis of each read -- the actual
- * weights -- which is auditable, plus each outlet's stated weakness, which is
- * what a manager needs in order to know when to believe it and when to fade it.
+ * Three forecasters, each with a live read on all thirty-two clubs, the prices
+ * they are posting for the next slate, and the table showing where the three
+ * cannot agree.
  *
- * The odds layer will sit on top of this rather than beside it. A read across a
- * league is the same computation as a read between two clubs, narrowed, so this
- * is the forecaster the betting work will present rather than a parallel model
- * that could disagree with it.
+ * The two club tables are one surface with a switcher rather than two stacked.
+ * Thirty-two rows twice is the entire page twice over, and the two views answer
+ * different questions about the same data: one asks what a single outlet thinks,
+ * the other asks where the three part company. Choosing between them by position
+ * on the page forces a scroll to answer either.
+ *
+ * There is deliberately no track record. Nothing has settled yet, so any
+ * accuracy figure would be invented. What is shown is the basis of each read --
+ * the actual weights -- which is auditable, and each outlet's stated weakness,
+ * which is what a manager needs in order to know when to believe it and when to
+ * fade it. Brier score arrives free once settlement exists.
  */
-export const MediaHub: React.FC<MediaReadInput> = (input) => {
+export const MediaHub: React.FC<MediaHubProps> = ({ games, currentDate, ...input }) => {
   const [selectedId, setSelectedId] = useState<MediaId>('hollis');
+  const [tableView, setTableView] = useState<'read' | 'split'>('split');
   const profile = MEDIA_BY_ID[selectedId];
 
-  const { reads, disagreements } = useMemo(() => buildMediaReads(input), [input]);
+  const readInput = input as MediaReadInput;
+  const { reads, scores, spread, disagreements } = useMemo(() => buildMediaReads(readInput), [readInput]);
+
+  const slateDate = useMemo(() => getNextSlateDate(games, currentDate), [currentDate, games]);
+
+  const lines = useMemo<GameLine[]>(() => {
+    if (!slateDate) return [];
+    return games
+      .filter((game) => game.date === slateDate)
+      .map((game) => {
+        const away = input.teams.find((team) => team.id === game.awayTeam);
+        const home = input.teams.find((team) => team.id === game.homeTeam);
+        if (!away || !home) return null;
+        const scoreFor = (teamId: string) => ({
+          hollis: scores.hollis.get(teamId) ?? 0.5,
+          glorest: scores.glorest.get(teamId) ?? 0.5,
+          sharply: scores.sharply.get(teamId) ?? 0.5,
+        });
+        return buildGameLine({ game, away, home, awayScores: scoreFor(away.id), homeScores: scoreFor(home.id), spread });
+      })
+      .filter((line): line is GameLine => line !== null)
+      .sort((a, b) => a.awayTeam.city.localeCompare(b.awayTeam.city));
+  }, [games, input.teams, scores, slateDate, spread]);
 
   const hasSeasonOutput = input.teams.some((team) => team.wins + team.losses > 0);
 
@@ -53,16 +88,15 @@ export const MediaHub: React.FC<MediaReadInput> = (input) => {
           className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4"
           style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
         >
-          <div className="min-w-0">
-            <h2 className="t-h3" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
-              {profile.name}
-            </h2>
-          </div>
+          <h2 className="t-h3" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
+            {profile.name}
+          </h2>
           <span className="t-caption text-[var(--color-ink-faint)]">
-            {MEDIA_PROFILES.findIndex((entry) => entry.id === selectedId) + 1} of {MEDIA_PROFILES.length}
+            {profile.outlet} · {profile.role}
           </span>
         </div>
         <div className="flex flex-col gap-5 p-4">
+          <p className="t-body max-w-3xl text-[var(--color-ink-dim)]">{profile.thesis}</p>
           <MediaMethodPanel profile={profile} />
           <div>
             <p className="t-label mb-2 text-[var(--color-ink-faint)]">In their own words</p>
@@ -71,7 +105,46 @@ export const MediaHub: React.FC<MediaReadInput> = (input) => {
         </div>
       </Panel>
 
-      <MediaDataPanels read={reads[selectedId]} profile={profile} disagreements={disagreements} />
+      <MediaOddsSlate lines={lines} slateDate={slateDate} />
+
+      <Panel className="overflow-hidden">
+        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+          <div className="flex items-center gap-2">
+            {tableView === 'split'
+              ? <BarChart3 className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
+              : <Users className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />}
+            <h2 className="t-h3">
+              {tableView === 'split' ? 'Where They Disagree' : `${profile.outlet} Club Ranking`}
+            </h2>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="t-caption text-[var(--color-ink-faint)]">
+              {tableView === 'split' ? 'All three, sortable' : `${reads[selectedId].rows.length} clubs`}
+            </span>
+            <SegmentedControl
+              aria-label="Club table"
+              mode="fill"
+              value={tableView}
+              onChange={(value) => setTableView(value as 'read' | 'split')}
+              options={[
+                { value: 'split', label: 'Comparison' },
+                { value: 'read', label: profile.outlet },
+              ]}
+            />
+          </div>
+        </div>
+        <div className="p-2">
+          {tableView === 'split'
+            ? <MediaDisagreementTable rows={disagreements} />
+            : <MediaRanking read={reads[selectedId]} profile={profile} />}
+        </div>
+      </Panel>
+
+      <p className="t-caption px-1 text-[var(--color-ink-faint)]">
+        The house line shown above is the mean of the three posted probabilities with a{' '}
+        {Math.round(HOUSE_MARGIN * 100)}% margin, not the mean of the three prices. Nothing is
+        wagered here yet; these are the numbers the betting layer will read.
+      </p>
     </section>
   );
 };

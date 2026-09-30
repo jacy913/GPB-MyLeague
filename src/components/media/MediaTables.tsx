@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { TrendingDown, TrendingUp } from 'lucide-react';
-import type { MediaProfile } from '../../data/media';
+import type { MediaId, MediaProfile } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
 import type { MediaDisagreement, MediaRead } from '../../lib/mediaReads';
 import { Panel, StatTable, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
+import { MEDIA_MARKS_SQUARE } from './mediaImages';
 
 /** Proportional bar for a 0-100 index. Reads the same value it prints. */
 const IndexBar: React.FC<{ value: number; accent: string }> = ({ value, accent }) => (
@@ -101,19 +102,47 @@ export const MediaRanking: React.FC<{
  * three are.
  */
 export const MediaDisagreementTable: React.FC<{ rows: MediaDisagreement[] }> = ({ rows }) => {
+  const [sortKey, setSortKey] = useState<string>('spread');
+
   const columns = useMemo<StatTableColumn[]>(() => [
     { key: 'team', header: 'CLUB' },
     ...MEDIA_PROFILES.map((profile) => ({
+      // Header is the outlet's mark, not its name. The name lives in the title
+      // attribute and the card above; a nine-character word does not fit a 72px
+      // column, and a logo identifies an outlet faster than an abbreviation
+      // does once you know them.
       key: profile.id,
-      header: profile.outlet.toUpperCase(),
+      header: '',
+      headerNode: (
+        <img
+          src={MEDIA_MARKS_SQUARE[profile.id]}
+          alt=""
+          aria-hidden="true"
+          className="mx-auto h-7 w-7 object-contain"
+        />
+      ),
+      headerTitle: profile.outlet,
       align: 'right' as const,
       isNumeric: true,
-      width: '6ch',
+      width: '7ch',
+      sortKey: profile.id,
     })),
-    { key: 'spread', header: 'SPREAD', align: 'right' as const, isNumeric: true, width: '7ch' },
+    { key: 'spread', header: 'SPREAD', align: 'right' as const, isNumeric: true, width: '7ch', sortKey: 'spread' },
   ], []);
 
-  const tableRows = useMemo<StatTableRow[]>(() => rows.map((entry) => ({
+  const ordered = useMemo(() => {
+    const direction = sortKey === 'spread' ? -1 : 1;
+    const key = sortKey;
+    return [...rows].sort((a, b) => {
+      if (key === 'spread') return (a.indexSpread - b.indexSpread) * direction;
+      if (key === 'team') return a.team.city.localeCompare(b.team.city);
+      const left = a.reads[key as MediaId]?.index ?? 0;
+      const right = b.reads[key as MediaId]?.index ?? 0;
+      return (left - right) * direction;
+    });
+  }, [rows, sortKey]);
+
+  const tableRows = useMemo<StatTableRow[]>(() => ordered.map((entry) => ({
     id: entry.team.id,
     highlight: entry.indexSpread >= 60,
     cells: {
@@ -132,7 +161,7 @@ export const MediaDisagreementTable: React.FC<{ rows: MediaDisagreement[] }> = (
           <span
             className="t-stat-sm tabular-nums"
             style={{ color: isOutlier ? `var(--color-media-${profile.accent}-hi)` : undefined }}
-            title={isOutlier ? 'Furthest from the middle of the three' : undefined}
+            title={isOutlier ? `${profile.outlet}: furthest from the middle of the three` : undefined}
           >
             {read ? `#${read.rank}` : '--'}
           </span>
@@ -144,51 +173,23 @@ export const MediaDisagreementTable: React.FC<{ rows: MediaDisagreement[] }> = (
         </span>
       ),
     },
-  })), [rows]);
+  })), [ordered]);
 
   return (
     <div>
       <p className="t-caption mb-2 text-[var(--color-ink-faint)]">
-        Spread is the widest index gap between any two forecasters. The widest rows are the
-        clubs they cannot agree on.
+        Click an outlet to sort by where it ranks the club, or by how far it sits from the other two.
+        The widest rows are the clubs the three cannot agree on.
       </p>
       <StatTable
         columns={columns}
         rows={tableRows}
         density="default"
+        sortColumn={sortKey}
+        onSort={setSortKey}
         aria-label="Forecaster disagreement by club"
       />
     </div>
   );
 };
 
-/** Page wrapper for the two data surfaces. */
-export const MediaDataPanels: React.FC<{
-  read: MediaRead;
-  profile: MediaProfile;
-  disagreements: MediaDisagreement[];
-}> = ({ read, profile, disagreements }) => (
-  <>
-    <Panel>
-      <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <h2 className="t-h3" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
-          {profile.outlet} Club Ranking
-        </h2>
-        <span className="t-caption text-[var(--color-ink-faint)]">{read.rows.length} clubs</span>
-      </div>
-      <div className="p-2">
-        <MediaRanking read={read} profile={profile} />
-      </div>
-    </Panel>
-
-    <Panel>
-      <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <h2 className="t-h3">Where They Disagree</h2>
-        <span className="t-caption text-[var(--color-ink-faint)]">All three forecasters</span>
-      </div>
-      <div className="p-2">
-        <MediaDisagreementTable rows={disagreements} />
-      </div>
-    </Panel>
-  </>
-);
