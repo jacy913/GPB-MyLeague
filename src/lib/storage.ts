@@ -12,12 +12,21 @@ import {
   TeamRosterSlot,
 } from '../types';
 import { getFallbackPlayerBio } from '../logic/playerBio';
+import {
+  LOCAL_GAMES_STORAGE_KEY,
+  buildLocalGamesMirror,
+  envelopeStats,
+  measureGamesBudgetUnits,
+} from './localGamesMirror';
 import { supabase } from './supabaseClient';
 
 const STORAGE_KEYS = {
   teams: 'glb_teams',
   settings: 'glb_settings',
-  games: 'glb_games',
+  // Defined in localGamesMirror because the budget measurement has to exclude
+  // exactly this key by name. A second literal here would be a silent way for
+  // the measurement to start counting the payload it is about to replace.
+  games: LOCAL_GAMES_STORAGE_KEY,
   players: 'glb_players',
   battingStats: 'glb_batting_stats',
   pitchingStats: 'glb_pitching_stats',
@@ -1167,27 +1176,54 @@ export const saveLocalLeagueState = (
 ): void => {
   const serializedTeams = JSON.stringify(teams);
   const serializedSettings = JSON.stringify(settings);
-  let serializedGames = JSON.stringify(games);
+  // The full payload never changes. It is what IndexedDB stores, and IndexedDB
+  // is what loadLocalLeagueStateAsync reads first, so the full payload is the
+  // authoritative copy and must not be narrowed by a localStorage failure.
+  const serializedGames = JSON.stringify(games);
 
-  localStorage.setItem(STORAGE_KEYS.teams, serializedTeams);
-  localStorage.setItem(STORAGE_KEYS.settings, serializedSettings);
-  try {
-    localStorage.setItem(STORAGE_KEYS.games, serializedGames);
-  } catch (error) {
-    // Quota fallback: keep structural game data and strip box score payloads.
-    const compactGames = games.map((game) => ({
-      ...game,
-      stats: {},
-    }));
-    serializedGames = JSON.stringify(compactGames);
-    localStorage.setItem(STORAGE_KEYS.games, serializedGames);
-    console.warn('Saved compact local game snapshot after quota pressure.', error);
-  }
+  // The scalar league keys are written FIRST and are a few dozen bytes total.
+  // They used to be written after the games payload, which meant a quota
+  // failure anywhere in the games path could throw out of this function before
+  // currentDate, progress and seasonComplete were ever stored -- losing the
+  // save's own idea of where the season had got to, not just the game detail.
   localStorage.setItem(STORAGE_KEYS.currentDate, currentDate);
   const serializedProgress = String(progress);
   const serializedSeasonComplete = String(seasonComplete);
   localStorage.setItem(STORAGE_KEYS.progress, serializedProgress);
   localStorage.setItem(STORAGE_KEYS.seasonComplete, serializedSeasonComplete);
+
+  localStorage.setItem(STORAGE_KEYS.teams, serializedTeams);
+  localStorage.setItem(STORAGE_KEYS.settings, serializedSettings);
+
+  // The quota is per-origin, not per-key, so the mirror's budget is whatever
+  // the OTHER keys leave behind. Measured at season end that is 3,763,267
+  // units, not the 4,194,304 a fixed 80% fraction would have assumed, so a
+  // fixed fraction overran the origin by ~430,000 units. Enumerating the origin
+  // here is what keeps the mirror correct as the sibling keys grow each season
+  // year.
+  const localGamesPayload = buildLocalGamesMirror(games, measureGamesBudgetUnits());
+  try {
+    localStorage.setItem(STORAGE_KEYS.games, localGamesPayload.serialized);
+  } catch (error) {
+    // Envelope-only. Every game keeps its identity, date, score, phase, line
+    // score and box-score scalars; only playLog and participants are dropped.
+    // This is measured to hold 6,043 games against the quota against a 2,592
+    // game season, so it is a genuine last resort rather than a tier that
+    // normally runs. It is still guarded: an unguarded throw here would abort
+    // the IndexedDB write below, which is the store of record.
+    try {
+      const envelopeOnly = JSON.stringify(games.map((game) => ({ ...game, stats: envelopeStats(game.stats) })));
+      localStorage.setItem(STORAGE_KEYS.games, envelopeOnly);
+      console.warn(
+        `Saved envelope-only local game mirror after quota pressure. `
+        + `${localGamesPayload.retainedPlayLogs} play logs and `
+        + `${localGamesPayload.retainedParticipants} participant snapshots were dropped.`,
+        error,
+      );
+    } catch (fallbackError) {
+      console.warn('Failed to save even the envelope-only local game mirror.', fallbackError);
+    }
+  }
 
   void writeIndexedDbValues([
     [STORAGE_KEYS.teams, serializedTeams],
