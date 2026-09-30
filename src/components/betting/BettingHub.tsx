@@ -1,22 +1,30 @@
-import React, { useState } from 'react';
-import { LineChart, Receipt, Trophy, Users } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
 import type { FieldMarket, LineMarket } from '../../lib/markets';
 import { formatAmerican } from '../../lib/markets';
 import type { GameLine } from '../../lib/mediaOdds';
+import { propMarketTitle, propSelectionLabel } from '../../lib/mediaProps';
+import { MAX_PROPS_PER_OUTLET } from '../../lib/mediaProps';
+import { propSidePrices, type PropMarket, type PropSide, type PropStatKey, type PropTemperament } from '../../lib/playerProps';
 import type { PlacedBet, BetKind, BetStatus, Selection } from '../../lib/wallet';
 import { MAX_STAKE, MIN_STAKE, STARTING_BALANCE, settleReturn } from '../../lib/wallet';
+import type { PropFocus } from '../../hooks/useBettingSlip';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
 import { Panel, RetroButton, SegmentedControl, TeamLogo } from '../ui';
 
-type BettingView = 'slate' | 'futures' | 'awards';
+type BettingView = 'slate' | 'props' | 'futures' | 'awards';
 
 interface BettingSlateProps {
   view: BettingView;
   onView: (view: BettingView) => void;
   lines: LineMarket[];
   moneyline: GameLine[];
+  /** Each outlet's published props for the slate, at most five apiece. */
+  propBoards: Map<MediaId, PropMarket[]>;
+  /** A prop arrived at from The Media: the id, and the outlet whose card was clicked. */
+  focusedProp: PropFocus | null;
   futures: FieldMarket[];
   awards: FieldMarket[];
   slateDate: string | null;
@@ -30,6 +38,10 @@ interface BettingSlateProps {
     price: number;
     line?: number;
     backedMedia: MediaId | null;
+    propStat?: PropStatKey;
+    propPlayerId?: string;
+    propPlayerName?: string;
+    propLine?: number;
   }) => void;
   balance: number;
 }
@@ -47,51 +59,70 @@ interface BettingSlateProps {
  * version of this that is a decision rather than a coin toss.
  */
 export const BettingHub: React.FC<BettingSlateProps> = ({
-  view, onView, lines, moneyline, futures, awards, slateDate, bets, onPlace, balance,
-}) => (
-  <section className="space-y-5">
-    <Panel variant="hero" className="p-4 md:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="t-h1">Betting</h1>
-          <p className="t-body mt-2 max-w-3xl text-[var(--color-ink-dim)]">
-            Every price here is the mean of the three published probabilities, with a margin on top.
-            Where an outlet sits well away from the other two, that is the number worth fading.
-          </p>
+  view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, slateDate, bets, onPlace, balance,
+}) => {
+  const propCount = MEDIA_PROFILES.reduce((sum, profile) => sum + (propBoards.get(profile.id)?.length ?? 0), 0);
+
+  return (
+    <section className="space-y-5">
+      <Panel variant="hero" className="p-4 md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="t-h1">Betting</h1>
+            <p className="t-body mt-2 max-w-3xl text-[var(--color-ink-dim)]">
+              Every price here is the mean of the three published probabilities, with a margin on top.
+              Where an outlet sits well away from the other two, that is the number worth fading.
+            </p>
+          </div>
+          <div className="border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-4 py-3 text-right">
+            <p className="t-caption text-[var(--color-ink-faint)]">Balance</p>
+            <p className="t-stat-lg text-[var(--color-gold-hi)]">${Math.round(balance)}</p>
+          </div>
         </div>
-        <div className="border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-4 py-3 text-right">
-          <p className="t-caption text-[var(--color-ink-faint)]">Balance</p>
-          <p className="t-stat-lg text-[var(--color-gold-hi)]">${Math.round(balance)}</p>
-        </div>
+      </Panel>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          aria-label="Betting market"
+          mode="fill"
+          value={view}
+          onChange={(value) => onView(value as BettingView)}
+          options={[
+            { value: 'slate', label: 'Next Slate' },
+            { value: 'props', label: propCount > 0 ? `Props (${propCount})` : 'Props' },
+            { value: 'futures', label: 'Season Futures' },
+            { value: 'awards', label: 'Awards' },
+          ]}
+        />
+        {view === 'slate' && (
+          <span className="t-caption text-[var(--color-ink-faint)]">
+            {slateDate ? `${slateDate} · ${lines.length} ${lines.length === 1 ? 'game' : 'games'}` : 'No slate ahead'}
+          </span>
+        )}
+        {view === 'props' && (
+          <span className="t-caption text-[var(--color-ink-faint)]">
+            {slateDate ? `${slateDate} · up to ${MAX_PROPS_PER_OUTLET} per outlet` : 'No slate ahead'}
+          </span>
+        )}
       </div>
-    </Panel>
 
-    <div className="flex flex-wrap items-center gap-3">
-      <SegmentedControl
-        aria-label="Betting market"
-        mode="fill"
-        value={view}
-        onChange={(value) => onView(value as BettingView)}
-        options={[
-          { value: 'slate', label: 'Next Slate' },
-          { value: 'futures', label: 'Season Futures' },
-          { value: 'awards', label: 'Awards' },
-        ]}
-      />
-      {view === 'slate' && (
-        <span className="t-caption text-[var(--color-ink-faint)]">
-          {slateDate ? `${slateDate} · ${lines.length} ${lines.length === 1 ? 'game' : 'games'}` : 'No slate ahead'}
-        </span>
+      <OpenBets bets={bets} />
+
+      {view === 'slate' && <SlateView lines={lines} moneyline={moneyline} onPlace={onPlace} balance={balance} />}
+      {view === 'props' && (
+        <PropsView
+          boards={propBoards}
+          focusedProp={focusedProp}
+          onPlace={onPlace}
+          balance={balance}
+          slateDate={slateDate}
+        />
       )}
-    </div>
-
-    <OpenBets bets={bets} />
-
-    {view === 'slate' && <SlateView lines={lines} moneyline={moneyline} onPlace={onPlace} balance={balance} />}
-    {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} />}
-    {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} />}
-  </section>
-);
+      {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} />}
+      {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} />}
+    </section>
+  );
+};
 
 /* ------------------------------------------------------------------ *
  * Slate -- moneyline, total and first five
@@ -364,6 +395,248 @@ const TotalMarketCard: React.FC<{
         </div>
       </div>
     </Panel>
+  );
+};
+
+/* ------------------------------------------------------------------ *
+ * Props
+ * ------------------------------------------------------------------ */
+
+/**
+ * Temperament, as a border colour.
+ *
+ * Green for safe, orange for hot, and the border is the whole of the treatment.
+ * The thresholds behind them are measured rather than chosen: SAFE_PROBABILITY_FLOOR
+ * and HOT_PROBABILITY_CEILING in mediaProps.ts were cut where the fitted
+ * distribution says the behaviour changes, and ranking every published prop into
+ * quintiles puts the safest fifth at 65.3% realised against 23.7% for the hottest
+ * (107,016 observations, confirmed out of sample at 63.3% and 24.0%).
+ *
+ * So this is a claim about frequency, and frequency belongs on the outside of the
+ * row where it is read before the price rather than after.
+ */
+const TEMPERAMENT: Record<PropTemperament, { border: string; label: string; Icon: React.FC<{ className?: string }> }> = {
+  safe: { border: 'var(--color-pos)', label: 'Safe', Icon: ShieldCheck },
+  hot: { border: 'var(--color-warn)', label: 'Hot', Icon: Flame },
+};
+
+const PropsView: React.FC<{
+  boards: Map<MediaId, PropMarket[]>;
+  focusedProp: PropFocus | null;
+  slateDate: string | null;
+  balance: number;
+  onPlace: BettingSlateProps['onPlace'];
+}> = ({ boards, focusedProp, slateDate, balance, onPlace }) => {
+  /*
+   * Scroll the arrived-at row into view.
+   *
+   * Keyed by outlet AND prop, because the same prop is published by every outlet
+   * that picked it and the betting page renders one row per outlet. Keyed by prop
+   * alone, the map keeps only the last row registered -- the bottom one -- and
+   * the manager arrives at the bottom of the page having been sent to a card
+   * they did not click, with the card they did click scrolled off the top.
+   * Measured at 315px above the fold before this was keyed by outlet.
+   *
+   * The effect keys on the whole focus, so it fires once per arrival and not on
+   * every render. Keyed on truthiness instead, returning to a prop already looked
+   * at would yank the view away from wherever the manager had since wandered.
+   */
+  const rowRefs = useRef(new Map<string, HTMLDivElement | null>());
+  useEffect(() => {
+    if (!focusedProp) return;
+    rowRefs.current.get(propRowKey(focusedProp))?.scrollIntoView({ block: 'center' });
+  }, [focusedProp]);
+
+  const total = MEDIA_PROFILES.reduce((sum, profile) => sum + (boards.get(profile.id)?.length ?? 0), 0);
+
+  if (total === 0) {
+    return (
+      <Panel className="p-6">
+        <p className="t-body text-[var(--color-ink-dim)]">
+          {slateDate
+            ? 'No props are published for this slate. Props are priced from each player’s own rate, shrunk toward the league, so a player with no games behind him has no rate to price from and the model will not invent one.'
+            : 'No further games are scheduled this season.'}
+        </p>
+      </Panel>
+    );
+  }
+
+  return (
+    <div className="grid gap-4">
+      <p className="t-caption px-1 text-[var(--color-ink-faint)]">
+        Each outlet publishes up to {MAX_PROPS_PER_OUTLET} props a day. The border says how the
+        outlet rates it: green for a prop its own read says lands more often than not, orange for one
+        it expects to lose. Prices are the mean of the three published probabilities plus the margin.
+      </p>
+
+      {MEDIA_PROFILES.map((profile) => {
+        const markets = boards.get(profile.id) ?? [];
+        if (markets.length === 0) return null;
+        return (
+          <Panel key={profile.id} className="overflow-hidden">
+            <div
+              className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4"
+              style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <img
+                  src={MEDIA_MARKS_SQUARE[profile.id]}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-6 w-6 object-contain"
+                />
+                <h2 className="t-h3 truncate" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
+                  {profile.outlet}
+                </h2>
+              </div>
+              <span className="t-caption text-[var(--color-ink-faint)]">
+                {markets.length} of {MAX_PROPS_PER_OUTLET} slots used
+              </span>
+            </div>
+
+            <div className="grid gap-2 p-3">
+              {markets.map((market) => {
+                const key = propRowKey({ propId: market.propId, mediaId: profile.id });
+                return (
+                  <PropBetRow
+                    key={key}
+                    market={market}
+                    mediaId={profile.id}
+                    rowKey={key}
+                    // Only the clicked copy is ringed. The other outlets' copies of
+                    // the same prop are still on screen, and ringing all of them
+                    // would leave the manager unsure which one to act on.
+                    focused={focusedProp !== null && key === propRowKey(focusedProp)}
+                    balance={balance}
+                    onPlace={onPlace}
+                    registerRef={(node) => rowRefs.current.set(key, node)}
+                  />
+                );
+              })}
+            </div>
+          </Panel>
+        );
+      })}
+    </div>
+  );
+};
+
+/** Ref key for one row: a prop is only unique within an outlet's board. */
+const propRowKey = (focus: { propId: string; mediaId: MediaId }) => `${focus.mediaId}:${focus.propId}`;
+
+const PropBetRow: React.FC<{
+  market: PropMarket;
+  mediaId: MediaId;
+  rowKey: string;
+  focused: boolean;
+  balance: number;
+  onPlace: BettingSlateProps['onPlace'];
+  registerRef: (node: HTMLDivElement | null) => void;
+}> = ({ market, mediaId, rowKey, focused, balance, onPlace, registerRef }) => {
+  const temperament = TEMPERAMENT[market.temperament[mediaId]];
+  const { Icon } = temperament;
+  const house = propSidePrices(market.consensusProbability);
+  const own = propSidePrices(market.probability[mediaId]);
+  const marketTitle = propMarketTitle(market);
+
+  /**
+   * The outlet's own number, on the side it favours.
+   *
+   * Only offered where the outlet is far enough from the other two for taking
+   * someone's number to be a decision rather than a vote. The same rule the
+   * futures rows use, and deliberately the same threshold: a "fade to theirs"
+   * button on a market where the three agree within two points is a button that
+   * cannot lose money for a reason nobody can see.
+   */
+  const ownSide: PropSide = market.probability[mediaId] >= 0.5 ? 'over' : 'under';
+  const ownPrice = ownSide === 'over' ? own.overPrice : own.underPrice;
+  const canFade = market.spread >= 0.06;
+
+  const place = (side: PropSide, price: number, backed: MediaId | null) => onPlace({
+    kind: 'prop',
+    marketKey: market.gameId,
+    marketTitle,
+    selection: side,
+    selectionLabel: propSelectionLabel(market, mediaId, side),
+    price,
+    line: market.line,
+    backedMedia: backed,
+    propStat: market.stat,
+    propPlayerId: market.playerId,
+    propPlayerName: market.playerName,
+    propLine: market.line,
+  });
+
+  return (
+    <div
+      ref={registerRef}
+      // The row's identity, in the DOM as well as in the ref map.
+      //
+      // A prop is published by up to three outlets and rendered once per outlet,
+      // so the props view carries several rows that a prop id alone cannot tell
+      // apart. Without a way to name a row from outside, "the highlight landed on
+      // the wrong copy" is indistinguishable from "the highlight did not land",
+      // and both read as the same 0 from a query. Measured that way already: a
+      // scroll target picked by prop id alone scrolled to the last outlet's copy
+      // with the clicked one 315px above the fold, and the only evidence was
+      // that no row matched.
+      data-prop-row={rowKey}
+      data-focused={focused ? 'true' : undefined}
+      className={`flex flex-wrap items-center gap-3 border bg-[var(--color-sunken)] px-3 py-2 ${
+        focused ? 'ring-2 ring-[var(--color-gold)]' : ''
+      }`}
+      style={{ borderColor: temperament.border, borderLeftWidth: '3px' }}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="t-stat truncate">{market.playerName}</span>
+          <span className="t-caption text-[var(--color-ink-faint)]">
+            O/U {market.line} {market.statPlural}
+          </span>
+          <span
+            className="inline-flex items-center gap-1 border px-1.5 py-0.5 t-caption"
+            style={{ borderColor: temperament.border, color: temperament.border }}
+          >
+            <Icon className="h-3 w-3" aria-hidden="true" />
+            {temperament.label}
+          </span>
+        </div>
+        <p className="t-caption text-[var(--color-ink-faint)]">
+          {MEDIA_BY_ID[mediaId].outlet} reads {Math.round(market.probability[mediaId] * 100)}% over
+          {canFade && ` · ${Math.round(market.spread * 100)}pt from the other two`}
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <RetroButton
+          variant="primary"
+          size="sm"
+          disabled={balance < MIN_STAKE}
+          onClick={() => place('over', house.overPrice, null)}
+        >
+          Over {formatAmerican(house.overPrice)}
+        </RetroButton>
+        <RetroButton
+          variant="default"
+          size="sm"
+          disabled={balance < MIN_STAKE}
+          onClick={() => place('under', house.underPrice, null)}
+        >
+          Under {formatAmerican(house.underPrice)}
+        </RetroButton>
+        {canFade && (
+          <RetroButton
+            variant="ghost"
+            size="sm"
+            disabled={balance < MIN_STAKE}
+            title={`Take ${MEDIA_BY_ID[mediaId].outlet}'s own read of this prop instead of the house line`}
+            onClick={() => place(ownSide, ownPrice, mediaId)}
+          >
+            Fade to theirs
+          </RetroButton>
+        )}
+      </div>
+    </div>
   );
 };
 

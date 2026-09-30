@@ -593,6 +593,8 @@ export const AppViewRouter = ({
           pitchingStats={playerState.pitchingStats}
           playerState={playerState}
           seasonYear={resolveSeasonYear(currentDate, games)}
+          onNavigateToBetting={() => onSetView('betting')}
+          onPropFocus={bettingSlip.focusProp}
         />
       )}
 

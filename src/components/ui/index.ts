@@ -10,6 +10,7 @@ export { PanelHeader, type PanelHeaderVariant } from './PanelHeader';
 export { SkewedPanel, type SkewDirection } from './SkewedPanel';
 export { SkewedTab, type SkewedTabVariant, type SkewedTabDirection } from './SkewedTab';
 export { RetroButton, type RetroButtonVariant, type RetroButtonSize } from './RetroButton';
+export { Modal } from './Modal';
 export { SegmentedControl, type SegmentedControlMode } from './SegmentedControl';
 export { StatTable, type StatTableDensity, type StatTableColumn, type StatTableRow } from './StatTable';
 export { StatValue, type StatValueVariant, type StatValueSize } from './StatValue';

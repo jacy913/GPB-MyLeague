@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Gauge } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Gauge } from 'lucide-react';
 import type { MediaProfile } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
 import { MEDIA_IMAGES, MEDIA_MARKS } from './mediaImages';
@@ -17,8 +17,11 @@ import { MEDIA_IMAGES, MEDIA_MARKS } from './mediaImages';
 export const MediaCard: React.FC<{
   profile: MediaProfile;
   selected: boolean;
+  /** Selecting the outlet, which also collapses or opens their details box. */
   onSelect: (id: MediaProfile['id']) => void;
-}> = ({ profile, selected, onSelect }) => {
+  /** Open the details popup for this outlet. */
+  onOpenDetails: (id: MediaProfile['id']) => void;
+}> = ({ profile, selected, onSelect, onOpenDetails }) => {
   const image = MEDIA_IMAGES[profile.id];
   return (
   <button
@@ -82,6 +85,31 @@ export const MediaCard: React.FC<{
           <Gauge className="h-3 w-3" aria-hidden="true" />
           {Math.round(profile.confidence * 100)}% conviction
         </span>
+
+        {/*
+         * Details, beside the conviction chip because the two answer the same
+         * question from opposite ends: conviction says how sure this outlet is,
+         * details says what they are sure about. They sit together because a
+         * manager weighing whether to act on an outlet wants both before acting,
+         * not one now and the other after a page change.
+         *
+         * A separate control rather than making the whole card open the popup,
+         * because the card already selects. Two behaviours on one target means
+         * the second is only discoverable by trying it, and the popup is the more
+         * expensive of the two -- it builds five props and a slate's worth of
+         * lines. Keeping it behind a labelled control means it is also the
+         * thing a screen reader announces, rather than an unlabelled region of
+         * clickable pixels.
+         */}
+        <button
+          type="button"
+          onClick={() => onOpenDetails(profile.id)}
+          className="ml-auto inline-flex items-center gap-1 border border-[var(--color-chrome-lo)] bg-[var(--color-panel-2)] px-1.5 py-0.5 t-caption text-[var(--color-ink-dim)] transition-colors hover:border-[var(--color-chrome-hi)] hover:text-[var(--color-gold-hi)]"
+          aria-label={`Details and published lines for ${profile.outlet}`}
+        >
+          details
+          <ChevronRight className="h-3 w-3" aria-hidden="true" />
+        </button>
       </div>
     </div>
   </button>
@@ -92,7 +120,8 @@ export const MediaCard: React.FC<{
 export const MediaCards: React.FC<{
   selectedId: MediaProfile['id'];
   onSelect: (id: MediaProfile['id']) => void;
-}> = ({ selectedId, onSelect }) => (
+  onOpenDetails: (id: MediaProfile['id']) => void;
+}> = ({ selectedId, onSelect, onOpenDetails }) => (
   <div className="grid gap-4 lg:grid-cols-3">
     {MEDIA_PROFILES.map((profile) => (
       <MediaCard
@@ -100,6 +129,7 @@ export const MediaCards: React.FC<{
         profile={profile}
         selected={profile.id === selectedId}
         onSelect={onSelect}
+        onOpenDetails={onOpenDetails}
       />
     ))}
   </div>

@@ -367,6 +367,36 @@ const main = async () => {
    * happened, which is half of what this is here to check.
    */
   if (process.env.GPB_SIM) {
+    /*
+     * Clear the empty-player gate first.
+     *
+     * Every run gets a throwaway profile, so a fresh one lands on a save with 32
+     * clubs, a schedule, and no players -- and there is no Sim Day button to
+     * press, so the run reports "no button" and stops. That is a real condition,
+     * not a harness fault: the gate is the one that catches a universe build
+     * interrupted by a refresh. Clearing it here is what makes a single session
+     * able to reach a played season, which anything about season aggregates
+     * needs.
+     */
+    await evalJs(`(() => {
+      const b = [...document.querySelectorAll('button')]
+        .find((n) => /rebuild/i.test((n.textContent||'').trim()));
+      if (!b) return 'no repair gate';
+      b.click();
+      return 'repairing';
+    })()`);
+    // Repair generates and develops every player, so it is not quick. Poll for
+    // the gate to disappear rather than sleeping a guessed interval.
+    for (let t = 0; t < 90; t += 1) {
+      const gone = await evalJs(`(() => {
+        const b = [...document.querySelectorAll('button')]
+          .find((n) => /rebuild/i.test((n.textContent||'').trim()));
+        return b ? 'no' : 'yes';
+      })()`);
+      if (gone === 'yes') break;
+      await sleep(1000);
+    }
+
     await evalJs(`(() => {
       const nav = [...document.querySelectorAll('button,a')]
         .find((n) => /^Dashboard$/i.test((n.textContent||'').trim()));
@@ -661,6 +691,33 @@ const main = async () => {
     } else {
       console.log('HOVER: target not found');
     }
+  }
+
+  /*
+   * An arbitrary measurement, last.
+   *
+   * The fixed probes all run BEFORE GPB_SIM, because the file reads top to
+   * bottom and the simulation block sits in the middle. Anything that needs a
+   * played season -- which is most of what props depend on, since a prop is
+   * priced off season aggregates -- therefore had nowhere to ask its question.
+   * This takes an expression and evaluates it once everything else has run, so a
+   * probe can measure the state the run actually produced.
+   *
+   * GPB_EVAL_MORE repeats the step, because a single expression cannot drive a
+   * click and then measure the consequence of it. Each is a whole expression
+   * returning anything JSON-serialisable; the harness prints whatever comes back.
+   */
+  for (const key of ['GPB_EVAL', 'GPB_EVAL_MORE', 'GPB_EVAL_THIRD']) {
+    if (!process.env[key]) continue;
+    const result = await browser.send('Runtime.evaluate', {
+      expression: String(process.env[key]),
+      returnByValue: true,
+      awaitPromise: true,
+    }, sessionId);
+    const value = result.exceptionDetails
+      ? 'THREW: ' + (result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
+      : result.result.value;
+    console.log(`${key}:`, typeof value === 'string' ? value : JSON.stringify(value));
   }
 
   // Final state, after everything above has run.

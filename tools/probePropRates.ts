@@ -15,9 +15,8 @@ import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import {
   BATTING_PROP_STATS,
-  leaguePropBaselines, playerPropRate, propOverProbability,
+  leaguePropBaselines, playerPropRate, propModelFor, propOverProbability,
   propStatMaps, reconstructPlayerGameLines, shrunkPerGame,
-  PROP_MODEL,
 } from '../src/lib/playerProps';
 import type { LeaguePlayerState } from '../src/types';
 
@@ -76,7 +75,13 @@ const main = async (): Promise<void> => {
   for (const [key, value] of Object.entries(baselines)) {
     console.log(`  ${key.padEnd(20)} ${value.toFixed(4)}`);
   }
-  console.log(`model: priorGames=${PROP_MODEL.priorGames} dispersion=${PROP_MODEL.dispersion}`);
+  // Constants are per stat now, so the header lists them all rather than
+  // pretending there is one pair. See PROP_MODEL_CONSTANTS in playerProps.ts.
+  console.log('fitted per-stat constants:');
+  for (const stat of BATTING_PROP_STATS) {
+    const constants = propModelFor(stat);
+    console.log(`  ${stat.padEnd(20)} priorGames=${constants.priorGames} dispersion=${constants.dispersion}`);
+  }
   console.log('');
 
   // Raw league-average actual, straight from the aggregate. This is the number
@@ -97,7 +102,7 @@ const main = async (): Promise<void> => {
     if (shown >= 10 || row.gamesPlayed <= 0) return;
     shown += 1;
     const raw = row.hits / row.gamesPlayed;
-    const shrunk = shrunkPerGame(row.hits, row.gamesPlayed, baselines.hits, PROP_MODEL.priorGames);
+    const shrunk = shrunkPerGame(row.hits, row.gamesPlayed, baselines.hits, propModelFor('hits').priorGames);
     console.log(
       `  ${playerId.slice(4, 12)} G${String(row.gamesPlayed).padStart(3)} ` +
       `H${String(row.hits).padStart(4)} raw ${raw.toFixed(3)} shrunk ${shrunk.toFixed(3)}`,
@@ -124,10 +129,10 @@ const main = async (): Promise<void> => {
         const ladder = LADDER[stat];
         if (!ladder) continue;
         const rate = playerPropRate(stat, playerId, maps.batting, maps.pitching);
-        const mean = shrunkPerGame(rate.seasonTotal, rate.gamesPlayed, baselines[stat], PROP_MODEL.priorGames);
+        const mean = shrunkPerGame(rate.seasonTotal, rate.gamesPlayed, baselines[stat], propModelFor(stat).priorGames);
         const rawLine = Math.round((mean + ladder.offset) / 0.5) * 0.5;
         const offered = Math.min(ladder.max, Math.max(ladder.min, rawLine));
-        const predicted = propOverProbability(mean, offered);
+        const predicted = propOverProbability(mean, offered, propModelFor(stat).dispersion);
         const actual = boxScore(stat, line);
         const won = actual > offered;
         totalProps += 1; totalWon += won ? 1 : 0;

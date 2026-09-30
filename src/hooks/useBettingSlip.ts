@@ -7,6 +7,7 @@ import {
 } from '../lib/wallet';
 import type { SeasonHistoryEntry, Team, Game } from '../types';
 import { MIN_STAKE, MAX_STAKE } from '../lib/wallet';
+import type { PropStatKey } from '../lib/playerProps';
 
 /**
  * The slip, as shared state.
@@ -32,6 +33,27 @@ export interface SlipEntry {
   price: number;
   line?: number;
   backedMedia: MediaId | null;
+  /**
+   * Prop terms, present only on kind 'prop'.
+   *
+   * These have to travel through the slip rather than being looked up at
+   * settlement, and the reason is a settled bug worth recording: resultFor
+   * treats a prop with no stat, no player or no line as unresolvable and voids
+   * it. A prop bet confirmed through a slip entry that did not carry these would
+   * therefore have been accepted, deducted from the balance, shown on the record
+   * as pending, and then voided at the moment it completed -- silently refunding
+   * a bet the manager thought they were on, with no error anywhere.
+   */
+  propStat?: PropStatKey;
+  propPlayerId?: string;
+  propPlayerName?: string;
+  propLine?: number;
+}
+
+/** A prop to highlight, and the outlet's copy of it that was clicked. */
+export interface PropFocus {
+  propId: string;
+  mediaId: MediaId;
 }
 
 export interface BettingSlipState {
@@ -52,6 +74,32 @@ export interface BettingSlipState {
   removeBet: (id: string) => void;
   summary: ReturnType<typeof summariseWallet>;
   openBets: PlacedBet[];
+
+  /**
+   * A prop the manager arrived from, on another screen.
+   *
+   * Held in the shell rather than in either screen because the reference has to
+   * survive the navigation: the id is derived from the game, the player, the stat
+   * and the line, so the betting page cannot reconstruct it and the media page
+   * cannot re-supply it once it has unmounted. A prop id passed as a navigation
+   * argument would be gone before the page that could use it rendered.
+   *
+   * The outlet travels with it, and it has to. The same prop is published by
+   * several outlets on the same slate, so the betting page renders it once per
+   * outlet that picked it -- up to three identical rows, one per panel. A bare id
+   * cannot say which of them was the one clicked, and a lookup by id finds the
+   * last one registered, which is the bottom of the page rather than the top.
+   * Measured: with three outlets on the same prop, the row scrolled to was the
+   * third outlet's, 315px above the fold by the time it settled -- a highlight
+   * that lands on the wrong copy and off screen at the same time.
+   *
+   * Deliberately not cleared automatically. It is cleared when the manager acts
+   * on the prop, so that arriving on the betting page and then tabbing through it
+   * does not lose the thing they came to look at -- but a highlight that outlives
+   * several minutes of unrelated betting would be noise.
+   */
+  focusedProp: PropFocus | null;
+  focusProp: (focus: PropFocus | null) => void;
 }
 
 export interface SettlementInput {
@@ -67,6 +115,7 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
   const [stake, setStake] = useState(50);
   const [notice, setNotice] = useState<string | null>(null);
   const [isOpen, setOpen] = useState(false);
+  const [focusedProp, setFocusedProp] = useState<PropFocus | null>(null);
 
   useEffect(() => {
     saveWallet(wallet);
@@ -113,6 +162,11 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
   const select = useCallback((entry: SlipEntry) => {
     setSlip(entry);
     setNotice(null);
+    // Acting on the prop retires the pointer to it. The highlight exists to say
+    // "this is the one you came for"; once it is in the slip the slip is the
+    // better place to look, and leaving the marker on the board would make a
+    // prop that is already committed look like one still being considered.
+    if (entry.kind === 'prop') setFocusedProp(null);
     // Opening on add is the e-commerce convention and the whole reason this
     // was worth lifting out of the page: you press a price, you see what you
     // just picked, and the confirm is right there.
@@ -143,8 +197,12 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
         backedMedia: slip.backedMedia,
         // A total needs the line that was actually posted, carried on the bet.
         // Recomputing it later would settle against a number the bettor never
-        // saw.
+        // saw. Same reasoning for a prop's own line.
         note: slip.line === undefined ? undefined : String(slip.line),
+        propStat: slip.propStat,
+        propPlayerId: slip.propPlayerId,
+        propPlayerName: slip.propPlayerName,
+        propLine: slip.propLine,
       });
       if ('error' in result) {
         setNotice(result.error);
@@ -179,6 +237,7 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
     () => wallet.bets.filter((bet) => bet.status === 'open'),
     [wallet.bets],
   );
+  const focusProp = useCallback((focus: PropFocus | null) => setFocusedProp(focus), []);
 
   return {
     wallet, slip, stake, notice, isOpen,
@@ -186,6 +245,7 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
     close: useCallback(() => setOpen(false), []),
     toggle: useCallback(() => setOpen((v) => !v), []),
     select, clear, setStake, confirm, removeBet, summary, openBets, settle,
+    focusedProp, focusProp,
   };
 };
 

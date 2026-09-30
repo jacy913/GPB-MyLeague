@@ -15,6 +15,7 @@ import {
   getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
 } from '../../logic/playerStats';
 import { buildAwardsForBoard, type AwardEntry } from '../../lib/awardRace';
+import { usePropBoard } from '../../hooks/usePropBoard';
 import type { BettingSlipState } from '../../hooks/useBettingSlip';
 import { BettingHub } from './BettingHub';
 import { resolveSeasonYear } from '../../lib/seasonYear';
@@ -77,8 +78,8 @@ interface BettingPageProps extends MediaReadInput {
 const BettingPage: React.FC<BettingPageProps> = ({
   games, currentDate, slip: slipState, ...input
 }) => {
-  const { wallet, openBets, summary, select, isOpen, open, close } = slipState;
-  const [view, setView] = useState<'slate' | 'futures' | 'awards'>('slate');
+  const { wallet, openBets, summary, select, isOpen, open, close, focusedProp } = slipState;
+  const [view, setView] = useState<'slate' | 'props' | 'futures' | 'awards'>('slate');
 
   const readInput = input as MediaReadInput;
   const { scores, spread } = useMemo(() => buildMediaReads(readInput), [readInput]);
@@ -89,6 +90,40 @@ const BettingPage: React.FC<BettingPageProps> = ({
 
   const slateDate = useMemo(() => getNextSlateDate(games, currentDate), [currentDate, games]);
   const teamById = useMemo(() => new Map(input.teams.map((t) => [t.id, t])), [input.teams]);
+
+  /**
+   * The prop board, shared with The Media through the same hook.
+   *
+   * The point of the shared builder is that a prop staked here is the same prop
+   * shown there, at the same line and the same price. Two independent builds
+   * would agree until the inputs drifted, and the drift would be invisible: the
+   * manager would have a receipt for a line that no longer appears anywhere.
+   */
+  const { byOutlet: propBoards } = usePropBoard({
+    games,
+    playerState: input.playerState,
+    slateDate,
+    teamScores: scores,
+    scoreSpread: spread,
+  });
+
+  /**
+   * Arriving at a prop puts the props in front of you.
+   *
+   * The media page hands over a prop reference and nothing else, because the page
+   * was already mounted and could not take an argument. Landing on the moneyline
+   * view with a highlight somewhere below it would be technically present and
+   * practically not, so the view follows the arrival.
+   *
+   * Keyed on the whole reference rather than on "is it set", so returning to a
+   * prop you have already looked at does not yank the view away from wherever you
+   * have since wandered. That is why the reference is cleared on interaction in
+   * useBettingSlip rather than here -- a stale non-null check would undo a
+   * deliberate switch of view on the next render of anything.
+   */
+  useEffect(() => {
+    if (focusedProp) setView('props');
+  }, [focusedProp]);
 
   /* ---------------- slate: moneyline and run totals ---------------- */
 
@@ -181,6 +216,8 @@ const BettingPage: React.FC<BettingPageProps> = ({
         onView={setView}
         lines={lines}
         moneyline={moneyline}
+        propBoards={propBoards}
+        focusedProp={focusedProp}
         futures={futures}
         awards={awards}
         slateDate={slateDate}
