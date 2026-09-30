@@ -524,6 +524,25 @@ const main = async () => {
         // without rendering anything is the failure this catches.
         parlaysExpanded: parlays ? parlays.getAttribute('aria-expanded') : 'button missing',
         slipOpen: Boolean(document.querySelector('[role="dialog"]')),
+        /*
+         * Table geometry: header cells / body cells, per table. A mismatch is
+         * the column-misalignment bug, and it is invisible in a downscaled
+         * screenshot because both rows look individually plausible -- you have
+         * to count them.
+         */
+        tables: [...document.querySelectorAll('table')].slice(0, 8).map((t) => {
+          const head = t.querySelector('thead tr');
+          const first = t.querySelector('tbody tr');
+          if (!head || !first) return 'none';
+          // Cell counts can agree while the geometry is wrong, so compare the
+          // actual left edges too. Matching left edges is the real assertion.
+          const hx = [...head.children].map((c) => Math.round(c.getBoundingClientRect().left));
+          const bx = [...first.children].map((c) => Math.round(c.getBoundingClientRect().left));
+          const drift = hx.map((x, i) => (bx[i] === undefined ? 999 : x - bx[i]));
+          const maxDrift = Math.max(...drift.map(Math.abs));
+          return head.children.length + '/' + first.children.length
+            + ' drift ' + (drift.join(',') || '-') + ' max ' + maxDrift;
+        }).join(' | '),
         text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 400),
       });
     })()`,

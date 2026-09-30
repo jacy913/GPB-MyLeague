@@ -28,10 +28,14 @@ export const TeamDirectory: React.FC<{
     <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
       <div className="flex min-w-0 items-center gap-3">
         <TeamLogo team={selectedTeam} sizeClass="h-9 w-9" />
-        <div className="min-w-0">
-          <p className="t-caption text-[var(--color-ink-faint)]">TEAM DIRECTORY</p>
-          <p className="truncate t-h3">{selectedTeam.city} {selectedTeam.name}</p>
-        </div>
+        {/*
+          No eyebrow. "TEAM DIRECTORY" sat above the club name and said nothing
+          the name did not, in the one place on this screen where a manager
+          already knows which club they are looking at. The button to the right
+          is what changes the club, so that is the only thing the bar needs to
+          explain.
+        */}
+        <p className="truncate t-h3">{selectedTeam.city} {selectedTeam.name}</p>
       </div>
       <RetroButton variant="default" size="sm" onClick={onToggle} aria-expanded={isOpen}>
         Choose Team
@@ -90,15 +94,29 @@ export const ClubHero: React.FC<{
   return (
     <Panel variant="hero" className="overflow-hidden">
       <div className="grid gap-4 p-4 xl:grid-cols-[200px_minmax(0,1fr)_260px]">
-        <div className="flex flex-col items-center justify-center gap-2 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-4 text-center">
-          <TeamLogo team={team} sizeClass="h-28 w-28" />
-          <p className="t-h2 text-[var(--color-gold-hi)]">{team.city}</p>
-          <p className="t-h3 text-[var(--color-ink-dim)]">{team.name}</p>
+        {/*
+          The crest plate.
+
+          The city and the club name used to sit under the logo here, which left
+          112px for a crest on a 200px column and printed the club name three
+          times on one screen -- once under the logo, once as the page heading,
+          and once in the directory bar above.
+
+          With both lines gone the plate is a crest in a frame, so the frame can
+          stop competing with it: 160px of logo on a 200px column, and the
+          column is now visibly holding a crest rather than a name card.
+        */}
+        <div className="flex items-center justify-center border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-3">
+          <TeamLogo team={team} sizeClass="h-40 w-40" />
         </div>
 
         <div className="min-w-0">
-          <p className="t-caption text-[var(--color-ink-faint)]">{team.league} · {team.division}</p>
-          <h1 className="t-h1 mt-1">{team.city} {team.name}</h1>
+          {/*
+            No "Prestige · Central" eyebrow above the name. The Division and
+            League tiles below already carry both, with the same words, and an
+            eyebrow that repeats a tile two rows down is decoration.
+          */}
+          <h1 className="t-h1">{team.city} {team.name}</h1>
           <p className="t-body mt-2 text-[var(--color-ink-dim)]">{describeTeam(team, divisionRank, leagueRank)}</p>
           <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
             <StatTile label="Runs Rank" value={`#${runRank}`} detail={`${team.runsScored} RS`} />

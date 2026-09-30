@@ -72,6 +72,34 @@ const selectClass =
   'w-full appearance-none bg-transparent pr-6 t-caption text-[var(--color-ink)] outline-none';
 
 /**
+ * A label and a number, for the inside of a 38px chrome bar.
+ *
+ * Deliberately not a StatTile. A tile is a boxed object with the label above the
+ * value and about 60px of height, which is the right shape for a panel body and
+ * the wrong shape for a title bar -- see the note at the call site for what
+ * four of them in a title bar actually did.
+ *
+ * At module scope, not inside the hub: a component declared in a render body is
+ * a new type on every render, so React throws the subtree away and rebuilds it.
+ */
+const HeaderFigure: React.FC<{
+  label: string;
+  value: string | number;
+  emphasis?: boolean;
+}> = ({ label, value, emphasis }) => (
+  <span className="flex items-baseline gap-1.5 whitespace-nowrap">
+    <span className="text-[var(--color-ink-faint)]">{label}</span>
+    <span
+      className={`t-stat-sm tabular-nums ${
+        emphasis ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'
+      }`}
+    >
+      {value}
+    </span>
+  </span>
+);
+
+/**
  * League player database. Filtering, sorting and selection are unchanged; the
  * presentation is rebuilt on the shared primitives.
  */
@@ -297,20 +325,59 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
   return (
     <section className="space-y-5">
       <Panel className="overflow-hidden">
-        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-          <h1 className="t-h2">Rosters</h1>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <StatTile label="Loaded" value={players.length} />
-            <StatTile label="Filtered" value={filteredPlayers.length} />
-            <StatTile label="With Team" value={players.filter((player) => player.teamId).length} />
-            <StatTile label="Season" value={latestSeasonYear ?? '---'} />
+        {/*
+          The bar is 38px. That is the whole budget, and it is not negotiable
+          without re-cutting the bevels on every panel in the product.
+
+          This header previously held a four-tile grid whose cells are 60px
+          tall, so the tiles broke out of the bar's background and hung below it
+          like a second, unlabelled row. Worse, flex-wrap put the title on one
+          line and the overflow on another, so "Rosters" appeared to head nothing.
+
+          The counts are worth having -- a 1,282-player pool is not obvious -- but
+          they are single figures, not tiles. Inline they fit, they do not
+          overflow, and "Showing 928 of 1282" says in five words what four
+          labelled boxes said in eight.
+        */}
+        <div className="chrome-bar flex items-center justify-between gap-4 px-4">
+          <h1 className="t-h3 shrink-0">Players</h1>
+          <div className="flex shrink-0 items-center gap-4 t-caption">
+            <HeaderFigure
+              label="Showing"
+              value={filteredPlayers.length}
+              emphasis
+            />
+            <HeaderFigure label="Of" value={players.length} />
+            <HeaderFigure
+              label="Signed"
+              value={players.filter((player) => player.teamId).length}
+            />
+            <HeaderFigure label="Season" value={latestSeasonYear ?? '---'} />
           </div>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto p-3">
+        {/*
+          The club strip is a horizontal scroller, and a scroller that ends in
+          a hard edge mid-crest reads as a clipping bug rather than as "there is
+          more this way" -- which is the only reason to keep scrolling it. A
+          mask fades the trailing 40px out, so the strip announces itself.
+
+          The mask is on the scroll container, not on a wrapper, so it scrolls
+          with the content's own coordinate space and costs no extra element.
+        */}
+        <div
+          className="flex gap-1 overflow-x-auto p-3
+            [mask-image:linear-gradient(90deg,#000_0,#000_calc(100%-40px),transparent_100%)]
+            [mask-repeat:no-repeat] [-webkit-mask-image:linear-gradient(90deg,#000_0,#000_calc(100%-40px),transparent_100%)]"
+        >
           {scopeButton('all', 'ALL')}
           {scopeButton('free_agents', 'FREE AGENTS')}
           {scopeButton('retired', 'RETIRED')}
+          {/* Separates the three scopes, which are not teams, from the clubs. */}
+          <span
+            aria-hidden="true"
+            className="mx-1 w-px shrink-0 self-stretch bg-[var(--color-chrome-hi)]"
+          />
           {[...teams]
             .sort((left, right) => left.city.localeCompare(right.city))
             .map((team) => {

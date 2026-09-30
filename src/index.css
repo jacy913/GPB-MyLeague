@@ -257,6 +257,31 @@
  * behind the text is drawn on the bar's own gradient at low opacity, which keeps
  * the bevels intact and costs no extra element.
  */
+/*
+ * NOT a table row.
+ *
+ * `position: relative` is what lets the stripe and wash be positioned inside a
+ * chrome bar, but setting it on a <tr> takes that row out of the table's column
+ * width algorithm. The header then sizes itself from its own cell contents
+ * while the body sizes itself from the data, and the two stop agreeing.
+ *
+ * Measured on the free agency board before this rule: header cell left edges
+ * sat 141, 65, 42, 41, 39 and 235 pixels right of the body cells beneath
+ * them. Six cells in both rows, six labels in sensible places, and AGE printed
+ * under POS. Nothing about the markup was wrong.
+ *
+ * A header row is also the one place the diagonal stripe and the racing wash
+ * make no sense anyway: they were decoration on furniture, and furniture is
+ * what breaks when you put decoration inside a table.
+ */
+tr.chrome-bar {
+  position: static;
+}
+tr.chrome-bar::before,
+tr.chrome-bar::after {
+  content: none;
+}
+
 .chrome-bar::before {
   content: '';
   position: absolute;
