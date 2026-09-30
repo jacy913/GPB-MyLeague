@@ -263,7 +263,7 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 10px;
+  width: 8px;
   background: linear-gradient(180deg,
     var(--color-gold-hi) 0%,
     var(--color-gold) 55%,
@@ -279,7 +279,7 @@
  * Deliberately faint. A first pass ran it at 0.55 over 2px stripes on a 16px
  * period and the screenshot showed "Season Cycle" and "Division Snapshot" with
  * visible diagonal banding across the text -- the texture was competing with
- * the title rather than sitting behind it. At 0.05 it reads as a brushed
+ * the title rather than sitting behind it. At 0.28 it reads as a brushed
  * surface, which is the intent: you should notice it if you look for it, not
  * while you are reading.
  */
@@ -299,16 +299,20 @@
 }
 
 /*
- * The bar's own content sits clear of the leading stripe.
+ * Layering only -- and deliberately NOT any padding.
  *
- * The stripe is a pseudo-element on the bar rather than a real element, so
- * padding has to be added here for every consumer. At 10px wide plus the 16px
- * the bar already carried, the title text was starting underneath it.
+ * An earlier version added padding-left here to clear the leading stripe, and
+ * that broke every table in the product. StatTable puts chrome-bar on a <tr>,
+ * so `> *` selects the <th> cells, and a <td> body cell received no matching
+ * padding: the header row shifted 12px right of its own data. The symptom on
+ * the free agency board was AGE appearing under the POS heading. The stripe is
+ * 8px and a numeric header already carries px-2, so the clearance exists
+ * without a rule, and any rule here has to apply to headers and cells alike or
+ * it desynchronises them.
  */
 .chrome-bar > * {
   position: relative;
   z-index: 1;
-  padding-left: 12px;
 }
 
 /* Skew geometries — internal use only, wrapped by SkewedPanel/SkewedTab */

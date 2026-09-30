@@ -282,7 +282,13 @@ const main = async () => {
         // the same folder back and forth forever and never reaches the one you
         // wanted. This is a test-harness bug, not a product one, but it looks
         // exactly like the app refusing to navigate.
-        const folders = [...document.querySelectorAll('button[aria-expanded]')]
+        //
+        // Scoped to the nav's treeitem role, NOT to [aria-expanded] alone. The
+        // header's Parlays button is a disclosure too and carries
+        // aria-expanded, so a bare attribute selector opened the betting slip
+        // on every run and then the explicit click closed it again -- which read
+        // as the button doing nothing.
+        const folders = [...document.querySelectorAll('button[role="treeitem"][aria-expanded]')]
           .filter((f) => f.getAttribute('aria-expanded') !== 'true');
         folders.forEach((f) => f.click());
         return 'expanded ' + folders.length + ' folders';
@@ -436,6 +442,27 @@ const main = async () => {
     })()`));
   }
 
+  /** Click any visible control by its label. */
+  if (process.env.GPB_CLICK) {
+    for (const label of process.env.GPB_CLICK.split('|').map((s) => s.trim()).filter(Boolean)) {
+      const { result } = await browser.send('Runtime.evaluate', {
+        expression: `(() => {
+          const want = ${JSON.stringify(label.toLowerCase())};
+          const n = [...document.querySelectorAll('button,a,[role="tab"],[role="treeitem"]')]
+            .find((x) => (x.textContent || '').trim().toLowerCase().includes(want));
+          if (!n) return 'not found: ' + want;
+          const before = n.getAttribute('aria-expanded');
+          n.click();
+          return 'clicked <' + n.tagName + '> "' + (n.textContent || '').trim().slice(0, 30)
+            + '" aria-expanded ' + before;
+        })()`,
+        returnByValue: true,
+      }, sessionId);
+      console.log('CLICK:', result.value);
+      await sleep(1500);
+    }
+  }
+
   /**
    * Capture the gold sweep mid-travel.
    *
@@ -487,9 +514,16 @@ const main = async () => {
   const finalProbe = await browser.send('Runtime.evaluate', {
     expression: `(() => {
       const root = document.getElementById('root');
+      const parlays = [...document.querySelectorAll('button')]
+        .find((b) => /parlays/i.test(b.textContent || ''));
       return JSON.stringify({
         title: document.title,
         rootChildren: root ? root.children.length : -1,
+        // Whether the header's Parlays control reports itself expanded, and
+        // whether a dialog is actually in the tree. A button that toggles state
+        // without rendering anything is the failure this catches.
+        parlaysExpanded: parlays ? parlays.getAttribute('aria-expanded') : 'button missing',
+        slipOpen: Boolean(document.querySelector('[role="dialog"]')),
         text: (document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 400),
       });
     })()`,

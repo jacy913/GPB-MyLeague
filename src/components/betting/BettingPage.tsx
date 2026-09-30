@@ -15,9 +15,8 @@ import {
   getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
 } from '../../logic/playerStats';
 import { buildAwardsForBoard, type AwardEntry } from '../../lib/awardRace';
-import type { PlacedBet, BetKind, Selection, Wallet } from '../../lib/wallet';
-import { placeBet, settleWallet, summariseWallet, loadWallet, saveWallet, MIN_STAKE } from '../../lib/wallet';
-import { BettingHub, BetSlip, BettingRecord, type WalletSummary } from './BettingHub';
+import type { BettingSlipState } from '../../hooks/useBettingSlip';
+import { BettingHub } from './BettingHub';
 import { resolveSeasonYear } from '../../lib/seasonYear';
 
 /**
@@ -57,9 +56,8 @@ const latestPitchingRatings = (
 interface BettingPageProps extends MediaReadInput {
   games: Game[];
   currentDate: string;
-  wallet: Wallet;
-  onWallet: (wallet: Wallet) => void;
-  seasonHistory: SeasonHistoryEntry[];
+  /** The shell's slip, so the page and the panel cannot disagree. */
+  slip: BettingSlipState;
 }
 
 /**
@@ -71,22 +69,16 @@ interface BettingPageProps extends MediaReadInput {
  * not also show. The split is intentional: The Media is their opinion, this is
  * your stake against it.
  *
- * Settlement is the other half. Bets are recorded when they are taken and are
- * only ever decided against games that completed after that, so this cannot be
- * peeked at. Games settle from the final score, first-five from the line score
- * the engine already persisted, and season markets from archived history.
+ * The wallet and the slip are NOT owned here. They belong to the shell, in
+ * useBettingSlip, because a price added on this screen has to be reviewable
+ * from any other screen, and because settlement has to keep running when the
+ * manager has navigated away to watch a game finish.
  */
 const BettingPage: React.FC<BettingPageProps> = ({
-  games, currentDate, wallet, onWallet, seasonHistory, ...input
+  games, currentDate, slip: slipState, ...input
 }) => {
+  const { wallet, openBets, summary, select, isOpen, open, close } = slipState;
   const [view, setView] = useState<'slate' | 'futures' | 'awards'>('slate');
-  const [slip, setSlip] = useState<{
-    kind: BetKind; marketKey: string; marketTitle: string;
-    selection: Selection; selectionLabel: string; price: number; line?: number;
-    backedMedia: MediaId | null;
-  } | null>(null);
-  const [stake, setStake] = useState(50);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const readInput = input as MediaReadInput;
   const { scores, spread } = useMemo(() => buildMediaReads(readInput), [readInput]);
@@ -182,104 +174,6 @@ const BettingPage: React.FC<BettingPageProps> = ({
       .map(([key, title, entries]) => buildAwardMarket(key, title, entries));
   }, [input.playerState, teamById]);
 
-  /* ---------------- settlement ---------------- */
-
-  /**
-   * Settle on every render that has new results.
-   *
-   * Deliberately derived rather than fired from an effect on one specific game
-   * completing: a game can be played by a bulk "sim to end of month" run that
-   * settles forty games at once, and an effect keyed to a single game would miss
-   * every one of them.
-   */
-  const settled = useMemo<Wallet>(() => {
-    if (wallet.bets.every((bet) => bet.status !== 'open')) return wallet;
-    const latest = seasonHistory[seasonHistory.length - 1];
-    return settleWallet(wallet, {
-      games,
-      teams: input.teams,
-      currentDate,
-      seasonComplete: Boolean(latest),
-      seasonWinners: latest
-        ? {
-          seasonYear: latest.seasonYear,
-          divisions: new Map(latest.divisionWinners.map((w) => [`${w.league} ${w.division}`, w.teamId])),
-          leagues: new Map(latest.divisionWinners.map((w) => [w.league, w.teamId])),
-        }
-        : null,
-      awardWinners: latest
-        ? new Map<string, string>([
-          ['batting_mvp', latest.battingMvp?.playerId],
-          ['pitching_mvp', latest.pitchingMvp?.playerId],
-        ].filter((pair): pair is [string, string] => Boolean(pair[1])))
-        : null,
-    });
-  }, [currentDate, games, input.teams, seasonHistory, wallet]);
-
-  /**
-   * Commit settlement in an effect, never during render.
-   *
-   * An earlier version did `if (settled !== wallet) onWallet(settled)` inline in
-   * the render body. That is a setState on the PARENT fired while a child is
-   * rendering, which React does not allow: the parent re-renders, the child
-   * re-renders, computes a fresh settlement, and calls setState again before the
-   * first pass has finished. The screen never paints and the console fills with
-   * "Cannot update a component while rendering a different component."
-   *
-   * The identity check is also load-bearing rather than a micro-optimisation.
-   * settleWallet returns a NEW object on every call, so without it the effect
-   * would re-fire forever even once the bets had all settled.
-   */
-  useEffect(() => {
-    if (settled !== wallet) onWallet(settled);
-  }, [onWallet, settled, wallet]);
-
-  /* ---------------- actions ---------------- */
-
-  const addToSlip = useCallback((entry: NonNullable<typeof slip>) => {
-    setSlip(entry);
-    setNotice(null);
-  }, []);
-
-  const confirm = useCallback(() => {
-    if (!slip) return;
-    if (stake < MIN_STAKE) {
-      setNotice(`Minimum stake is ${MIN_STAKE}.`);
-      return;
-    }
-    const result = placeBet(wallet, {
-      kind: slip.kind,
-      marketKey: slip.marketKey,
-      marketTitle: slip.marketTitle,
-      selection: slip.selection,
-      selectionLabel: slip.selectionLabel,
-      stake,
-      price: slip.price,
-      placedOn: currentDate,
-      backedMedia: slip.backedMedia,
-      // The run total needs its line carried on the bet, because the only way to
-      // settle it later is to compare the final score against the number that
-      // was actually posted, not against a line recomputed after the fact.
-      note: slip.line === undefined ? undefined : String(slip.line),
-    });
-    if ('error' in result) {
-      setNotice(result.error);
-      return;
-    }
-    /*
-     * The commit. This line was missing, so placeBet built a correct new wallet
-     * and the result was thrown away: the slip cleared, a confirmation message
-     * appeared, the balance stayed at $1000, and nothing was ever recorded.
-     * Everything about it looked correct in the browser, which is why it is
-     * worth stating that a passing click-through is not the same as a bet.
-     */
-    onWallet(result.wallet);
-    setSlip(null);
-    setNotice(`Staked ${stake} on ${slip.selectionLabel}.`);
-  }, [currentDate, onWallet, slip, stake, wallet]);
-
-  const summary = summariseWallet(settled);
-
   return (
     <section className="space-y-5">
       <BettingHub
@@ -290,50 +184,36 @@ const BettingPage: React.FC<BettingPageProps> = ({
         futures={futures}
         awards={awards}
         slateDate={slateDate}
-        bets={settled.bets}
-        balance={settled.balance}
-        onPlace={addToSlip}
+        bets={wallet.bets}
+        balance={wallet.balance}
+        onPlace={select}
       />
 
-      <BetSlip
-        entry={slip}
-        stake={stake}
-        onStake={setStake}
-        onConfirm={confirm}
-        onClear={() => { setSlip(null); setNotice(null); }}
-        notice={notice}
-        summary={summary}
-        backedBy={slip?.backedMedia ? MEDIA_BY_ID[slip.backedMedia].outlet : null}
-      />
-
-      <BettingRecord bets={settled.bets} balance={settled.balance} summary={summary} />
+      {/*
+        A standing reminder that something is waiting, with the running figure on
+        it. The slip itself lives in the shell now, so this is the only place on
+        this screen that says a bet is pending -- and it stays quiet until there
+        is something to report.
+      */}
+      {openBets.length > 0 && (
+        <button
+          type="button"
+          onClick={() => (isOpen ? close() : open())}
+          className="gold-sweep gold-edge flex w-full items-center justify-between gap-3 border border-[var(--color-chrome-lo)] border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-4 py-3 text-left hover:border-[var(--color-gold)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
+        >
+          <span className="t-stat-sm">
+            {openBets.length} open {openBets.length === 1 ? 'bet' : 'bets'} ·{' '}
+            ${openBets.reduce((s, b) => s + b.stake, 0)} at risk
+          </span>
+          <span className="t-caption text-[var(--color-gold)]">
+            {isOpen ? 'Hide slip' : 'Open slip'} ·
+            {summary.profit > 0 ? '+' : summary.profit < 0 ? '-' : ''}${Math.abs(Math.round(summary.profit))}
+          </span>
+        </button>
+      )}
     </section>
   );
 };
 
-/* ------------------------------------------------------------------ *
- * Persistence wrapper
- * ------------------------------------------------------------------ */
-
-type WalletProps = Pick<BettingPageProps, 'wallet' | 'onWallet'>;
-
-/**
- * Holds the wallet and writes it back to storage.
- *
- * A thin wrapper rather than useState inside the page, because the page already
- * has a lot of derivation in it and the storage lifetime is a separate concern:
- * the wallet must survive the page unmounting when the manager navigates away,
- * which a local useState would not.
- */
-const PersistentBettingPage: React.FC<Omit<BettingPageProps, 'wallet' | 'onWallet'>> = (props) => {
-  const [wallet, setWallet] = useState<Wallet>(loadWallet);
-
-  useEffect(() => {
-    saveWallet(wallet);
-  }, [wallet]);
-
-  return <BettingPage {...props} wallet={wallet} onWallet={setWallet} />;
-};
-
-export type { WalletProps };
-export { PersistentBettingPage as BettingPage };
+export type { BettingPageProps };
+export { BettingPage };

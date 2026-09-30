@@ -33,6 +33,8 @@ import { LeadersHub } from './LeadersHub';
 import { HistoryHub } from './HistoryHub';
 import { MediaHub } from './media/MediaHub';
 import { BettingPage } from './betting/BettingPage';
+import { BettingRecordScreen } from './betting/BettingRecordScreen';
+import type { BettingSlipState } from '../hooks/useBettingSlip';
 import { resolveSeasonYear } from '../lib/seasonYear';
 import { GPBBook } from './GPBBook';
 import { PlayoffsBracket } from './PlayoffsBracket';
@@ -132,6 +134,10 @@ interface AppViewRouterProps {
   draftHistory: DraftHistoryEntry[];
   isDraftProcessing: boolean;
   seasonHistory: SeasonHistoryEntry[];
+  /** The shell's slip. The Betting screen and the panel read the same state. */
+  bettingSlip: BettingSlipState;
+  /** Drops out of the record screen, which has no nav leaf to fall back on. */
+  setViewFallback: () => void;
   settings: SimulationSettings;
   dataSource: 'supabase' | 'local';
   newUniversePreview: BuildNewUniverseResult | null;
@@ -240,6 +246,8 @@ export const AppViewRouter = ({
   draftHistory,
   isDraftProcessing,
   seasonHistory,
+  bettingSlip,
+  setViewFallback,
   settings,
   dataSource,
   newUniversePreview,
@@ -601,6 +609,21 @@ export const AppViewRouter = ({
           playerState={playerState}
           seasonHistory={seasonHistory}
           seasonYear={resolveSeasonYear(currentDate, games)}
+          slip={bettingSlip}
+        />
+      )}
+
+      {/*
+        The record. Reached from the slip and from nowhere else -- there is no
+        leaf for it in NAV_FOLDERS, so the rail cannot offer it. A manager who
+        navigates here by some other route gets sent back rather than stranded
+        on a screen with no way back to the slip.
+      */}
+      {view === 'betting_record' && (
+        <BettingRecordScreen
+          bets={bettingSlip.wallet.bets}
+          balance={bettingSlip.wallet.balance}
+          onBackToSlip={() => { setViewFallback(); bettingSlip.open(); }}
         />
       )}
 

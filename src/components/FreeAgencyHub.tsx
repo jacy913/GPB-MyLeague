@@ -122,7 +122,11 @@ const faColumns: StatTableColumn[] = [
   { key: 'age', header: 'AGE', align: 'right', isNumeric: true, width: '4ch' },
   { key: 'bat', header: 'B/T', align: 'right', isNumeric: true, width: '5ch' },
   { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '4ch' },
-  { key: 'offers', header: 'OFFER INTEREST' },
+  // 26ch is room for six 32px crests on ONE line plus the gap. Without an
+  // explicit width the column was free to collapse to a single crest, the
+  // flex-wrap in the cell then stacked all six vertically, and every row grew
+  // to about 250px -- the tallest thing in the product, on a list of 154.
+  { key: 'offers', header: 'OFFER INTEREST', width: '26ch' },
 ];
 
 export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({

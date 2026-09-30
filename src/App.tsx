@@ -31,7 +31,7 @@ import { AppViewRouter } from './components/AppViewRouter';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
-import { Activity, Bell, Clock3, Menu } from 'lucide-react';
+import { Activity, Bell, Clock3, Menu, Receipt } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
 import { MobileFolderMenu } from './navigation/MobileFolderMenu';
 import gpbLogo from './assets/gpb.png';
@@ -61,6 +61,8 @@ import {
   saveSupabasePlayerState,
 } from './lib/storage';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
+import { useBettingSlip } from './hooks/useBettingSlip';
+import { BettingSlip } from './components/betting/BettingSlip';
 import { useBroadcastFlair } from './hooks/useBroadcastFlair';
 import { useLeagueBootstrap } from './hooks/useLeagueBootstrap';
 import { useDraftCenterActions, type DraftCenterState } from './hooks/useDraftCenterActions';
@@ -1189,6 +1191,17 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
   const [view, setView] = useState<AppView>('dashboard');
+
+  /*
+   * The betting slip lives here rather than on the Betting screen.
+   *
+   * It is the one piece of state that has to outlive a page: a price added in
+   * one view must still be reviewable in another, and a bet has to settle while
+   * the manager is somewhere else entirely watching the game finish. The screen
+   * reads this same state, so the two cannot disagree about what is in it.
+   *
+   * Declared after the league state it settles against, below.
+   */
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
@@ -1208,6 +1221,24 @@ function App() {
   const [seasonResetStatus, setSeasonResetStatus] = useState<SeasonResetStatus>(IDLE_SEASON_RESET_STATUS);
   const [draftCenter, setDraftCenter] = useState<DraftCenterState>({ activeClass: null, history: [] });
   const [seasonHistory, setSeasonHistory] = useState<SeasonHistoryEntry[]>([]);
+
+  // Declared here, after the state it settles against. See the note above.
+  const bettingSlip = useBettingSlip();
+  const { openBets: openBetList, wallet: bettingWallet, settle: settleBets } = bettingSlip;
+  const openBetCount = openBetList.length;
+
+  /*
+   * Settlement runs from the shell, not from the Betting page.
+   *
+   * A bet settles when its game finishes, and a manager who placed it will have
+   * navigated somewhere else by then. Keyed on the game list, so a bulk "sim to
+   * end of month" that settles forty games at once is caught in one pass rather
+   * than one effect per game.
+   */
+  useEffect(() => {
+    if (openBetList.length === 0) return;
+    settleBets({ games, teams, currentDate, seasonHistory });
+  }, [currentDate, games, openBetList.length, seasonHistory, settleBets, teams]);
   const [isSeasonHistoryLoaded, setIsSeasonHistoryLoaded] = useState(false);
   const [offseasonWorkflow, setOffseasonWorkflow] = useState<OffseasonWorkflowState>(IDLE_OFFSEASON_WORKFLOW_STATE);
   const [isDraftProcessing, setIsDraftProcessing] = useState(false);
@@ -3219,19 +3250,31 @@ function App() {
                 <Clock3 className="h-4 w-4 text-[var(--color-platinum)]" />
                 <span className="t-caption">{currentTimelineTimeLabel}</span>
               </div>
-              <div className="hidden items-center gap-2 text-[var(--color-ink-dim)] md:flex">
-                <span className={`h-2 w-2 ${dataSource === 'supabase' ? 'bg-[var(--color-platinum)]' : 'bg-[var(--color-prestige)]'}`} />
-                <span className="t-caption">{dataSource === 'supabase' ? 'SUPABASE' : 'LOCAL'}</span>
-              </div>
+              {/*
+                Parlays. Replaces the notification bell and the storage-mode
+                readout, both of which lived here and neither of which earned
+                it: the bell was a second inbox for a product with one, and
+                "LOCAL" told a manager something they cannot act on.
+
+                This one carries a count, so it earns the position -- the count
+                is money.
+              */}
               <button
-                onClick={() => setView('notifications')}
-                className={`relative p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] ${view === 'notifications' ? 'bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]' : 'text-[var(--color-ink-dim)] hover:bg-[var(--color-panel-2)]'}`}
-                title="Commissioner Notifications"
+                type="button"
+                onClick={bettingSlip.toggle}
+                aria-label="Betting slip"
+                aria-expanded={bettingSlip.isOpen}
+                className={`gold-sweep gold-edge relative flex items-center gap-2 border-l-[3px] px-3 py-2 t-caption uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] ${
+                  bettingSlip.isOpen
+                    ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]'
+                    : 'border-l-transparent text-[var(--color-ink-dim)] hover:text-[var(--color-gold-hi)]'
+                }`}
               >
-                <Bell className="w-5 h-5" />
-                {commissionerNotices.length > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center bg-[var(--color-platinum)] px-1 t-caption text-[var(--color-ink-invert)]">
-                    {commissionerNotices.length > 9 ? '9+' : commissionerNotices.length}
+                <Receipt className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Parlays</span>
+                {openBetCount > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center bg-[var(--color-gold)] px-1 tabular-nums text-[var(--color-ink-invert)]">
+                    {openBetCount}
                   </span>
                 )}
               </button>
@@ -3270,6 +3313,8 @@ function App() {
             playerState={playerState}
             currentDate={currentDate}
             selectedDate={selectedDate}
+            bettingSlip={bettingSlip}
+            setViewFallback={() => setView('betting')}
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
             offseasonStage={offseasonStage}
@@ -3337,6 +3382,28 @@ function App() {
           setTradeInterruptionPrompt(null);
           setView('trades');
         }}
+      />
+
+      {/*
+        The slip, over whatever screen is showing. Mounted at the shell rather
+        than inside Betting so it survives navigation, and opened automatically
+        when a price is pressed -- the e-commerce convention, and the reason the
+        state had to be lifted in the first place.
+      */}
+      <BettingSlip
+        isOpen={bettingSlip.isOpen}
+        onClose={bettingSlip.close}
+        onOpenRecord={() => { bettingSlip.close(); setView('betting_record'); }}
+        entry={bettingSlip.slip}
+        stake={bettingSlip.stake}
+        onStake={bettingSlip.setStake}
+        onConfirm={() => bettingSlip.confirm(currentDate || currentTimelineDate)}
+        onClear={bettingSlip.clear}
+        notice={bettingSlip.notice}
+        balance={bettingWallet.balance}
+        openBets={openBetList}
+        settledBets={bettingWallet.bets.filter((bet) => bet.status !== 'open')}
+        summary={bettingSlip.summary}
       />
 
       <SeasonAwardsModal

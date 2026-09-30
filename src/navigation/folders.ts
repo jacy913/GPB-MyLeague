@@ -161,6 +161,17 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
   history: 'league',
   media: 'league',
   betting: 'league',
+  /*
+   * The record has no leaf on purpose.
+   *
+   * VIEW_TO_FOLDER only decides which folder auto-expands, so naming the folder
+   * here is enough to make the rail behave if the view is ever set directly --
+   * while the absence of an entry in the `leaves` array above is what keeps the
+   * button off the screen. The record is reached from the slip and nowhere
+   * else, so a screen most managers open twice a season does not get a
+   * permanent place in a twenty-item sidebar.
+   */
+  betting_record: 'league',
   map: 'league',
   teams: 'teams',
   players: 'teams',
