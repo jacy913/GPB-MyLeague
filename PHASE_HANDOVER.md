@@ -60,6 +60,7 @@ non-UX commit.
 
 | Commit | Scope |
 |---|---|
+| `ae3d07d` | Put wRC+ on the player card, which is where the compression can be explained |
 | `c83d466` | Measure whether wRC+ is presentable on a leaderboard before building one |
 | `8fb2610` | The four deferred metric boards, and one that was silently broken on the way |
 | `2db19ad` | Track PHASE_HANDOVER.md in git |
@@ -1085,6 +1086,58 @@ and shrinkage weight beside it. The base-state weight upgrade would help, but it
 attacks the *occupancy* approximation, not this, and the two are independent
 problems. Doing it will not un-compress the board.
 
+## Where run value ended up: the player card (`ae3d07d`)
+
+`c83d466` measured that a top-ten wRC+ leaderboard is not worth building. This is
+the other half of that answer: run value goes on the **card**, where the reader is
+looking at one player and the number has room to be qualified.
+
+The batting panel gains two rows, `wOBA` and `wRC+`, beside `AVG` and `OPS` —
+they answer the same question those two answer. Under them sits one caption:
+
+> 100 is league average. Shrunk toward average: 69 unshrunk, 41% trusted.
+
+That line is the whole reason this is a card and not a board. It shows the figure
+before the correction and how much survived, which is the part a ranked list has
+nowhere to put. Deliberately **not a tooltip** — tooltips are invisible on touch,
+and the caveat is exactly the part that stops the number being over-read.
+
+`wRC+` is rounded to a whole number. Not laziness: the top ten produce 5 distinct
+integers from 10 rows, so a decimal implies precision the measurement lacks. The
+caption carries the raw figure so the shrinkage stays visible.
+
+### The part that was easy to get wrong: which league
+
+The card shows whichever row `getPreferredBattingStatsByPlayerId` picks — latest
+season, preferring regular season, falling back to another phase when a player has
+only that one. A baseline derived any other way could **score a player against a
+league they are not shown in**.
+
+So `runValueBaseline` takes that same map, and both callers (`PlayersHub`,
+`TeamsHub`) pass it down rather than each deriving their own. `RosterPanel` receives
+it as a prop because a league average has to come from the whole league's rows and
+that panel only holds one club's roster.
+
+Players below the variance floor are still pooled into the league *rate* — it is
+PA-weighted, so a small row barely moves it, and excluding them would make the
+league figure jump as individuals crossed the floor. `leagueBaseline` applies the
+floor only where it belongs, to the spread.
+
+### Verified in the browser on both cards
+
+| card | wRC+ | caption | arithmetic |
+| --- | --- | --- | --- |
+| Players | 99 | 98 unshrunk, 28% trusted | `100 + 0.28(98−100) = 99.4` |
+| Roster | 88 | 69 unshrunk, 41% trusted | `100 + 0.405(69.5−100) = 87.6` |
+
+A player with no batting line shows `---` for both figures and no caption — the
+existing convention, not a new one. Caption box measures **315×39 with no
+clipping**. All tables 0 drift; only console error is the pre-existing
+`animationPlayState` one.
+
+`verifyMetrics` PASS, `verifyWrc` 22/22, `tsc` at its 10 pre-existing diagnostics,
+build 6.14s.
+
 ## Deviations from the proposal — all deliberate, all recorded in commit messages
 
 1. **Leaders: no `SB` category.** There is no stolen-bases field anywhere in the
@@ -1115,7 +1168,7 @@ problems. Doing it will not un-compress the board.
 
 ## Current state
 
-`HEAD` is `c83d466`, **pushed and in sync with `origin/local`**, and the working
+`HEAD` is `ae3d07d`, **pushed and in sync with `origin/local`**, and the working
 tree is clean. This file is now **tracked** (`2db19ad`) — it had been untracked by
 choice, on the reasoning that it is a working document rather than a deliverable.
 That reasoning did not hold up: four of the Stage B design decisions were settled by
@@ -1148,10 +1201,10 @@ stored; and **wOBA precision tracks home run count, not plate appearances** (+0.
    XBH, on the derived 82-AB floor, verified in the browser. Note the floor is a
    *display* floor; `wrcPlus` shrinks on precision rather than filtering, so it does
    not use it as a gate.
-2. **wRC+ is deliberately NOT on a leaderboard yet**, on measured evidence: the top
-   ten spans 4.0 points and produces 5 distinct whole numbers from 10 rows. See the
-   presentability section above. The natural home is a player card, where the
-   compression can be explained rather than implied.
+2. **wRC+ is deliberately NOT on a leaderboard**, on measured evidence: the top ten
+   spans 4.0 points and produces 5 distinct whole numbers from 10 rows. It is on
+   the **player card** instead (`ae3d07d`), where the shrinkage is shown beside the
+   figure rather than implied by a ranked list. See the presentability section.
 3. The **development feedback loop** (~1.5h, and it is the one item that could
    destabilise a season) and the **batted-ball model**, which is the only work that
    needs the standing presentation-only scope relaxed.
@@ -1516,18 +1569,13 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
    `2db19ad`.** Asked four times. It stays a working document in tone, but tracked,
    because two of its claims had gone stale and wrong and an untracked file is
    invisible to review.
-10. **Where should wRC+ live?** Stage B and the four boards are done (`02b90f0`,
-   `8fb2610`). The measurement says a top-ten wRC+ leaderboard is **not worth
-   building**: the top ten spans 4.0 points and yields 5 distinct whole numbers from
-   10 rows, so five players would visibly tie. The remaining choice is where run
-   value belongs — a player card showing the shrunk value with the raw value and
-   shrinkage weight beside it, an awards-panel line, or nowhere yet. **My
-   recommendation is the player card**, because that is the one place a reader is
-   looking at a single player and the compression is explainable in a sentence
-   rather than misleading across a ranked list.
+10. **Where should wRC+ live?** **Answered and done: the player card** (`ae3d07d`).
+    A top-ten leaderboard is not worth building (top ten span 4.0 points, 5 distinct
+    integers from 10 rows), so wRC+ and wOBA sit in the card's batting panel with the
+    unshrunk figure and the shrinkage percentage in a caption beneath.
 
-   Beyond that: the **development feedback loop** (~1.5h, the one item that could
-   destabilise a season) and the **batted-ball model** (the one item needing the
-   scope relaxation). Upgrading wOBA to per-outcome-and-base-state weights needs no
-   relaxation and is nearly free, but it addresses the occupancy approximation and
-   **will not** fix the wRC+ compression — the two are independent problems.
+    What remains is the **development feedback loop** (~1.5h, the one item that could
+    destabilise a season) and the **batted-ball model** (the one item needing the
+    scope relaxation). Upgrading wOBA to per-outcome-and-base-state weights needs no
+    relaxation and is nearly free, but it addresses the occupancy approximation and
+    **will not** change the wRC+ compression — the two are independent.
