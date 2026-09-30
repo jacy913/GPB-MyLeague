@@ -99,86 +99,116 @@ export interface SettlementContext {
   awardWinners: Map<string, string> | null;
 }
 
-const gameFinal = (game: Game | undefined): Game | null =>
-  game && game.status === 'completed' ? game : null;
+/**
+ * What can be said about a bet right now.
+ *
+ * PENDING is the state this whole function used to be missing. An earlier
+ * version returned only won/voided, so a bet on a game that had not been played
+ * yet -- which is every bet, immediately after it is placed -- fell into the
+ * same branch as a genuinely abandoned game and was voided, refunding the stake
+ * at once. The board looked correct and the money never left.
+ *
+ * The distinction that matters: VOID is for a market that can no longer be
+ * decided, and must never be used to mean "not yet".
+ */
+type BetVerdict =
+  | { status: 'pending' }
+  | { status: 'void' }
+  | { status: 'decided'; won: boolean };
 
-const resultFor = (
-  bet: PlacedBet,
-  context: SettlementContext,
-): { won: boolean; voided: boolean } => {
+const resultFor = (bet: PlacedBet, context: SettlementContext): BetVerdict => {
   if (bet.kind === 'moneyline') {
-    const game = gameFinal(context.games.find((g) => g.gameId === bet.marketKey));
-    if (!game) return { won: false, voided: true };
+    const game = context.games.find((g) => g.gameId === bet.marketKey);
+    if (!game) return { status: 'void' };
+    if (game.status !== 'completed') return { status: 'pending' };
     const awayWon = game.score.away > game.score.home;
-    const pickedAway = bet.selection === 'away';
-    return { won: awayWon === pickedAway, voided: false };
+    return { status: 'decided', won: awayWon === (bet.selection === 'away') };
   }
 
   if (bet.kind === 'total' || bet.kind === 'first5') {
     const game = context.games.find((g) => g.gameId === bet.marketKey);
-    const final = gameFinal(game);
-    if (!final) return { won: false, voided: true };
+    if (!game) return { status: 'void' };
+    if (game.status !== 'completed') return { status: 'pending' };
 
     let actual: number;
     if (bet.kind === 'total') {
-      actual = final.score.away + final.score.home;
+      actual = game.score.away + game.score.home;
     } else {
-      const raw = final.stats?.lineScore;
-      if (typeof raw !== 'string' || raw.length === 0) return { won: false, voided: true };
+      const raw = game.stats?.lineScore;
+      // A completed game with no usable line score is genuinely unresolvable,
+      // so this one really is a void rather than a wait.
+      if (typeof raw !== 'string' || raw.length === 0) return { status: 'void' };
       try {
         const parsed = JSON.parse(raw) as Array<{ inning: number; away: number; home: number }>;
         actual = parsed.filter((line) => line.inning <= 5).reduce((sum, l) => sum + l.away + l.home, 0);
       } catch {
-        return { won: false, voided: true };
+        return { status: 'void' };
       }
     }
 
     const line = Number(bet.note ?? NaN);
-    if (!Number.isFinite(line)) return { won: false, voided: true };
-    const over = actual > line;
-    return { won: over === (bet.selection === 'over'), voided: false };
+    if (!Number.isFinite(line)) return { status: 'void' };
+    return { status: 'decided', won: (actual > line) === (bet.selection === 'over') };
   }
 
-  // Season-long markets only resolve once a season is archived.
-  if (!context.seasonComplete || !context.seasonWinners) return { won: false, voided: true };
-  if (bet.placedOn >= `${context.seasonWinners.seasonYear}-12-31`) return { won: false, voided: true };
+  /*
+   * Season-long markets resolve only once a season is archived, so until then
+   * they are PENDING rather than void. This is the same bug as the game case
+   * above in a slower form: a futures bet would have been refunded on the very
+   * next render.
+   *
+   * The date check is the guard against settling a bet against a season it was
+   * not placed in. A bet taken on or after 31 December of the archived season
+   * belongs to the next one, and this archive cannot decide it.
+   */
+  if (!context.seasonComplete || !context.seasonWinners) return { status: 'pending' };
+  if (bet.placedOn >= `${context.seasonWinners.seasonYear}-12-31`) return { status: 'pending' };
 
   if (bet.kind === 'division') {
     const winner = context.seasonWinners.divisions.get(bet.marketKey);
-    return { won: Boolean(winner) && winner === bet.selection, voided: false };
+    if (!winner) return { status: 'void' };
+    return { status: 'decided', won: winner === bet.selection };
   }
   if (bet.kind === 'league') {
     const winner = context.seasonWinners.leagues.get(bet.marketKey);
-    return { won: Boolean(winner) && winner === bet.selection, voided: false };
+    if (!winner) return { status: 'void' };
+    return { status: 'decided', won: winner === bet.selection };
   }
   if (bet.kind === 'award') {
     const winner = context.awardWinners?.get(bet.marketKey);
-    return { won: Boolean(winner) && winner === bet.selection, voided: false };
+    if (!winner) return { status: 'void' };
+    return { status: 'decided', won: winner === bet.selection };
   }
-  return { won: false, voided: true };
+  return { status: 'void' };
 };
 
 /**
  * Settle everything that can now be settled.
  *
- * Open bets that cannot yet be decided are left alone. Voided bets return their
- * stake, which is what a book does when a game is postponed.
+ * Open bets stay open and untouched until something can actually be said about
+ * them. Voided bets return their stake, which is what a book does when a game is
+ * postponed or a market is pulled.
  */
 export const settleWallet = (wallet: Wallet, context: SettlementContext): Wallet => {
   let balance = wallet.balance;
+  let changed = false;
   const bets = wallet.bets.map((bet) => {
     if (bet.status !== 'open') return bet;
-    const { won, voided } = resultFor(bet, context);
-    if (voided) {
+    const verdict = resultFor(bet, context);
+    if (verdict.status === 'pending') return bet;
+    changed = true;
+    if (verdict.status === 'void') {
       balance += bet.stake;
       return { ...bet, status: 'void' as BetStatus };
     }
-    if (!won) return { ...bet, status: 'lost' as BetStatus };
+    if (!verdict.won) return { ...bet, status: 'lost' as BetStatus };
     const payout = settleReturn(bet.stake, bet.price, true);
     balance += payout;
     return { ...bet, status: 'won' as BetStatus, payout };
   });
-  return { balance, bets };
+  // Identity is preserved when nothing settled, so the caller's effect comparing
+  // by reference does not fire on every render of every game.
+  return changed ? { balance, bets } : wallet;
 };
 
 export const summariseWallet = (wallet: Wallet) => {

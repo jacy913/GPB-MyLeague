@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Game, SeasonHistoryEntry } from '../../types';
+import type {
+  Game, SeasonHistoryEntry, PlayerBattingRatings, PlayerPitchingRatings,
+} from '../../types';
 import type { MediaId } from '../../data/media';
 import { MEDIA_BY_ID } from '../../data/media';
 import { buildMediaReads, type MediaReadInput } from '../../lib/mediaReads';
@@ -9,11 +11,48 @@ import {
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
+import {
+  getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
+} from '../../logic/playerStats';
 import { buildAwardsForBoard, type AwardEntry } from '../../lib/awardRace';
 import type { PlacedBet, BetKind, Selection, Wallet } from '../../lib/wallet';
 import { placeBet, settleWallet, summariseWallet, loadWallet, saveWallet, MIN_STAKE } from '../../lib/wallet';
 import { BettingHub, BetSlip, BettingRecord, type WalletSummary } from './BettingHub';
 import { resolveSeasonYear } from '../../lib/seasonYear';
+
+/**
+ * The newest row per player, as a Map.
+ *
+ * awardRace reads Maps keyed by player id, while the app stores flat arrays.
+ * HomeDashboard does this same conversion for the home page's award panel.
+ * Passing an array where a Map is expected type-checks, because AwardInputs is
+ * not exported and the inference stays loose, then throws at runtime on
+ * "battingStats.get is not a function" and takes the entire screen down with it.
+ */
+const latestByPlayerId = <T extends { playerId: string; seasonYear: number }>(
+  rows: T[],
+): Map<string, T> => {
+  const map = new Map<string, T>();
+  for (const row of [...rows].sort((a, b) => a.seasonYear - b.seasonYear)) map.set(row.playerId, row);
+  return map;
+};
+
+/**
+ * Map<string, PlayerBattingRatings> without widening T to the bare constraint.
+ *
+ * An earlier version constrained the helper to just playerId and seasonYear,
+ * which is enough to group the rows but erases every other property on the way
+ * out, so the Map came back as Map<string, {playerId, seasonYear}> and the
+ * award race lost the ratings it reads. The two explicit overloads keep T
+ * intact for each concrete shape.
+ */
+const latestBattingRatings = (
+  rows: PlayerBattingRatings[],
+): Map<string, PlayerBattingRatings> => latestByPlayerId<PlayerBattingRatings>(rows);
+
+const latestPitchingRatings = (
+  rows: PlayerPitchingRatings[],
+): Map<string, PlayerPitchingRatings> => latestByPlayerId<PlayerPitchingRatings>(rows);
 
 interface BettingPageProps extends MediaReadInput {
   games: Game[];
@@ -120,15 +159,13 @@ const BettingPage: React.FC<BettingPageProps> = ({
   ], [indexBy, input.teams]);
 
   const awards = useMemo<FieldMarket[]>(() => {
-    // The award race reads raw player maps, not a PlayerState bundle, so the
-    // inputs are unpacked here rather than passed through.
     const awardInputs = {
       players: input.playerState.players,
       teamsById: teamById,
-      battingStats: input.playerState.battingStats,
-      pitchingStats: input.playerState.pitchingStats,
-      battingRatings: input.playerState.battingRatings,
-      pitchingRatings: input.playerState.pitchingRatings,
+      battingStats: getPreferredBattingStatsByPlayerId(input.playerState.battingStats),
+      pitchingStats: getPreferredPitchingStatsByPlayerId(input.playerState.pitchingStats),
+      battingRatings: latestBattingRatings(input.playerState.battingRatings),
+      pitchingRatings: latestPitchingRatings(input.playerState.pitchingRatings),
     };
     const built: Array<[string, string, AwardEntry[]]> = [
       ['batting_mvp', 'Batting MVP', buildAwardsForBoard('batting', awardInputs, 8)],
@@ -149,7 +186,7 @@ const BettingPage: React.FC<BettingPageProps> = ({
    * settles forty games at once, and an effect keyed to a single game would miss
    * every one of them.
    */
-  const settled = useMemo(() => {
+  const settled = useMemo<Wallet>(() => {
     if (wallet.bets.every((bet) => bet.status !== 'open')) return wallet;
     const latest = seasonHistory[seasonHistory.length - 1];
     return settleWallet(wallet, {
@@ -173,7 +210,23 @@ const BettingPage: React.FC<BettingPageProps> = ({
     });
   }, [currentDate, games, input.teams, seasonHistory, wallet]);
 
-  if (settled !== wallet) onWallet(settled);
+  /**
+   * Commit settlement in an effect, never during render.
+   *
+   * An earlier version did `if (settled !== wallet) onWallet(settled)` inline in
+   * the render body. That is a setState on the PARENT fired while a child is
+   * rendering, which React does not allow: the parent re-renders, the child
+   * re-renders, computes a fresh settlement, and calls setState again before the
+   * first pass has finished. The screen never paints and the console fills with
+   * "Cannot update a component while rendering a different component."
+   *
+   * The identity check is also load-bearing rather than a micro-optimisation.
+   * settleWallet returns a NEW object on every call, so without it the effect
+   * would re-fire forever even once the bets had all settled.
+   */
+  useEffect(() => {
+    if (settled !== wallet) onWallet(settled);
+  }, [onWallet, settled, wallet]);
 
   /* ---------------- actions ---------------- */
 
@@ -207,9 +260,17 @@ const BettingPage: React.FC<BettingPageProps> = ({
       setNotice(result.error);
       return;
     }
+    /*
+     * The commit. This line was missing, so placeBet built a correct new wallet
+     * and the result was thrown away: the slip cleared, a confirmation message
+     * appeared, the balance stayed at $1000, and nothing was ever recorded.
+     * Everything about it looked correct in the browser, which is why it is
+     * worth stating that a passing click-through is not the same as a bet.
+     */
+    onWallet(result.wallet);
     setSlip(null);
     setNotice(`Staked ${stake} on ${slip.selectionLabel}.`);
-  }, [currentDate, slip, stake, wallet]);
+  }, [currentDate, onWallet, slip, stake, wallet]);
 
   const summary = summariseWallet(settled);
 

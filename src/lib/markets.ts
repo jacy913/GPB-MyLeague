@@ -182,6 +182,29 @@ export interface LineMarket {
   fair: Record<MediaId, number>;
   /** Each forecaster's probability the total beats the house line. */
   overProbability: Record<MediaId, number>;
+  /**
+   * Posted price for the over and the under, each derived from its own true
+   * probability at the posted line.
+   *
+   * These are not negations of one another, even though for a two-sided market
+   * they nearly are. Negating was tried and is wrong for a specific reason: it
+   * was applied to the model's own belief rather than to the probability at the
+   * posted line, so the two sides could disagree with each other about which
+   * way round the game was.
+   *
+   * There is deliberately NO margin in these prices. On a total the vig is in
+   * the line, and charging it here as well doubled it. See buildLineMarket.
+   */
+  overPrice: number;
+  underPrice: number;
+  /**
+   * over implied + under implied - 1.
+   *
+   * Approximately zero, and that is the correct value here rather than a
+   * missing margin. The vig on a total is carried by the line, so this measures
+   * only whether the two prices are internally consistent.
+   */
+  overround: number;
   houseLine: number;
   /** Widest gap between any two fair totals. */
   spread: number;
@@ -198,7 +221,24 @@ export const buildLineMarket = (input: {
   slope: Record<MediaId, number>;
 }): LineMarket => {
   const values = MEDIA_PROFILES.map((profile) => input.fair[profile.id]);
-  const houseLine = values.reduce((sum, value) => sum + value, 0) / values.length + LINE_MARGIN;
+
+  /**
+   * Round the line to the posted grid BEFORE anything is priced off it.
+   *
+   * The line is quoted in half-runs, so the number a bettor actually bets
+   * against is not the number the model produced. An earlier version computed
+   * the prices from the unrounded value and only rounded for display, which
+   * meant the price described a 6.85 line while the bet settled against 7.00.
+   * That gap is worth about 3.7 per cent of free expected value on the under
+   * at that line, and it is invisible on the page because the two numbers
+   * disagree by a quarter of a run.
+   *
+   * So the rounding happens first, and every probability below is derived from
+   * the posted line. The rounding error itself is a residual the half-run grid
+   * cannot avoid, and tools/checkTotalVig.ts bounds it.
+   */
+  const meanFair = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const houseLine = Math.round((meanFair + LINE_MARGIN) * 2) / 2;
 
   const overProbability = {} as Record<MediaId, number>;
   MEDIA_PROFILES.forEach((profile) => {
@@ -206,6 +246,33 @@ export const buildLineMarket = (input: {
       logistic((input.fair[profile.id] - houseLine) * input.slope[profile.id]),
     );
   });
+
+  /**
+   * The two sides, priced from the consensus rather than by negating.
+   *
+   * On a total the margin lives in the LINE, and only there. houseLine is the
+   * mean fair total plus LINE_MARGIN runs, which is why the measured over rate
+   * sits a few points under even. The price pair's job is to quote each side at
+   * what is actually true once that line is posted -- no more.
+   *
+   * An earlier version scaled both sides by 1 + HOUSE_MARGIN as well, and that
+   * charged the vig twice: the line moved 0.4 runs off fair while the price
+   * moved a further 20 points, and the over carried roughly -8.7 per cent
+   * expected value where it should have been near -2. Nothing about it looked
+   * wrong on the page, which is why tools/checkTotalVig.ts asserts the bettor's
+   * edge directly rather than trusting the overround to imply it.
+   *
+   * Note that pushing each side away from even does NOT work either, and looks
+   * like it should: the two probabilities are complementary, so (0.5-a) + (0.5+a)
+   * is 1, and scaling both about 0.5 leaves the sum at exactly 1.
+   */
+  const meanOver = values.reduce((sum, value) => sum + logistic((value - houseLine) * 0.55), 0)
+    / values.length;
+  const overPriceProbability = clampProbability(meanOver);
+  const underPriceProbability = clampProbability(1 - meanOver);
+  const overPrice = probabilityToAmerican(overPriceProbability);
+  const underPrice = probabilityToAmerican(underPriceProbability);
+  const overround = (overPriceProbability + underPriceProbability) - 1;
 
   const median = [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const outlier = MEDIA_PROFILES
@@ -220,12 +287,10 @@ export const buildLineMarket = (input: {
     subtitle: input.subtitle,
     fair: input.fair,
     overProbability,
-    // Rounded to the half-run rather than the quarter. A quarter-run grid
-    // implies a precision the underlying run model does not have: the measured
-    // spread of a single game's total is about three runs, so a quarter run is
-    // a fifteenth of the noise. Half-runs match the increment a real board uses
-    // and stop the page implying a distinction it cannot make.
-    houseLine: Math.round(houseLine * 2) / 2,
+    overPrice,
+    underPrice,
+    overround,
+    houseLine,
     spread: Math.max(...values) - Math.min(...values),
     outlier,
   };

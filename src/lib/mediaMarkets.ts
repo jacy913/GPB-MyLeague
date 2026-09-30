@@ -33,17 +33,22 @@ export const LEAGUE_RUNS_PER_TEAM_GAME = 3.83;
  * sides are genuinely even, and for a skewed distribution that is well BELOW
  * the mean, not at it.
  *
- * Posting at the mean is not a small error. Measured over 4,800 settled games,
- * a line at the model's own mean goes over 39.7 per cent of the time, which
+ * Posting at the mean is not a small error. A line at the model's own mean goes
+ * over roughly 39.9 per cent of the time across 4,800 settled games, which
  * hands the under a standing profit on essentially every game in the league --
- * a far larger leak than the margin itself. At 89 per cent of the mean the
- * measured over rate is 49.6 per cent, which is even to within a rounding
- * step, and that is the number this constant carries.
+ * a far larger leak than the margin itself.
  *
- * Fitted by tools/fitHouseShading.ts, which sweeps the fraction and reports the
- * measured over rate at each one.
+ * The value is 0.92, fitted by tools/fitHouseShading.ts, which sweeps the
+ * fraction against the model's OWN total with the same half-run rounding the
+ * board posts. At 0.92 with a 0.25 run margin the measured over rate is 0.4588
+ * against a 0.46 target, 0.12 points off.
+ *
+ * An earlier fit gave 0.89 and looked defensible, but it had measured against a
+ * baseline that already had this constant and the margin baked into it, so
+ * every candidate was transformed twice. The tool now divides both back out
+ * before sweeping, and 0.89 in the output reproduces exactly what ships.
  */
-export const TOTAL_LINE_CENTRE = 0.89;
+export const TOTAL_LINE_CENTRE = 0.92;
 
 /**
  * Share of a game's runs that land in the first five innings.

@@ -32,7 +32,7 @@ import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { recalculateTeamRatingsFromRosters, getTeamRosterStrength } from '../src/logic/teamStrength';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { buildGameLine } from '../src/lib/mediaOdds';
-import { buildTotalMarkets } from '../src/lib/mediaMarkets';
+import { buildTotalMarkets, TOTAL_LINE_CENTRE } from '../src/lib/mediaMarkets';
 import { probabilityToAmerican } from '../src/lib/mediaOdds';
 import { MEDIA_PROFILES } from '../src/data/media';
 import { settleReturn, STARTING_BALANCE } from '../src/lib/wallet';
@@ -98,7 +98,22 @@ const main = async (): Promise<void> => {
         },
         teamById,
       );
-      const fairTotals = new Map(lines.map((l) => [l.key.replace('total:', ''), l.houseLine]));
+      /*
+       * The model's OWN total, before the board touches it.
+       *
+       * Two things had to be undone here. An earlier version captured
+       * houseLine, which already carries the centre factor and the margin, and
+       * then swept both again on top -- so every candidate was double
+       * transformed and the fit asked for a centre of 1.0 for a model it had
+       * already shrunk to 0.89. The constant is divided back out below so the
+       * sweep measures the raw model, and a centre of 0.89 in the output
+       * reproduces exactly what ships.
+       */
+      const rawTotals = new Map(lines.map((l) => [
+        l.key.replace('total:', ''),
+        (MEDIA_PROFILES.reduce((sum, p) => sum + l.fair[p.id], 0) / MEDIA_PROFILES.length)
+          / TOTAL_LINE_CENTRE,
+      ]));
 
       const pending = state.games.filter((g) => g.date === slateDate).map((game) => {
         const away = teamById.get(game.awayTeam);
@@ -118,7 +133,7 @@ const main = async (): Promise<void> => {
         const played = state.games.find((g) => g.gameId === line.gameId);
         if (!played || played.status !== 'completed') return;
         moneylines.push({ consensus: line.consensusProbability, hit: played.score.away > played.score.home });
-        const fair = fairTotals.get(line.gameId);
+        const fair = rawTotals.get(line.gameId);
         if (fair !== undefined) totals.push({ fair, actual: played.score.away + played.score.home });
       });
     }
@@ -221,26 +236,43 @@ const main = async (): Promise<void> => {
   console.log('   standing profit on every game in the league. The line has to be');
   console.log('   centred where the outcome is actually even.\n');
 
-  console.log('   Where is the over rate even, as a fraction of the mean?');
-  const ratios = [0.86, 0.89, 0.92, 0.95, 0.98, 1.0].map((r) => {
-    let over = 0;
-    totals.forEach(({ fair, actual }) => { if (actual > fair * r) over += 1; });
-    return { r, rate: over / Math.max(1, totals.length) };
+  console.log('   Where is the over rate even, on the HALF-RUN grid the board posts?');
+  console.log('   The grid matters: the line is quoted in half-runs, so a centre that');
+  console.log('   is even in theory can land half a run away in practice, and that');
+  console.log('   rounding error is itself a leak. The figure below is measured with');
+  console.log('   the same rounding the market applies.\n');
+  console.log('   centre   margin   over rate   bettor edge');
+  const candidates = [0.84, 0.86, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00];
+  const margins = [0.15, 0.25, 0.35];
+  // The target is the over rate a 0.25-run margin is worth, not simply even.
+  // A game total's standard deviation is about three runs, so a quarter run is
+  // roughly an eighth of a standard deviation and prices out near 0.46.
+  const TARGET = 0.46;
+  let best = { centre: 0, margin: 0, rate: 0, error: 9 };
+  candidates.forEach((centre) => {
+    margins.forEach((margin) => {
+      let over = 0;
+      totals.forEach(({ fair, actual }) => {
+        const line = Math.round((fair * centre + margin) * 2) / 2;
+        if (actual > line) over += 1;
+      });
+      const rate = over / Math.max(1, totals.length);
+      const error = Math.abs(rate - TARGET);
+      if (error < best.error) best = { centre, margin, rate, error };
+      console.log(
+        `   ${centre.toFixed(2).padStart(7)}${margin.toFixed(2).padStart(9)}` +
+        `${rate.toFixed(4).padStart(13)}${(error * 100).toFixed(2).padStart(11)} pts`,
+      );
+    });
   });
-  ratios.forEach(({ r, rate }) => {
-    console.log(`     ${(r * 100).toFixed(0).padStart(4)}% of mean   over rate ${rate.toFixed(4)}` +
-      `${Math.abs(rate - 0.5) < 0.012 ? '   <-- even' : ''}`);
-  });
-
-  console.log('\n   Margin added on top of a correctly centred line:');
-  console.log('   margin   over rate');
-  for (const margin of [0, 0.15, 0.25, 0.35]) {
-    let over = 0;
-    totals.forEach(({ fair, actual }) => { if (actual > fair * 0.92 + margin) over += 1; });
-    console.log(`   ${margin.toFixed(2).padStart(6)}   ${(over / Math.max(1, totals.length)).toFixed(4)}`);
-  }
-  console.log('\n   A healthy book has the over rate a few points under even, and the');
-  console.log('   margin is what takes it there. The rest of the gap is a level error.');
+  console.log(`\n   Target over rate ${TARGET.toFixed(2)}, for a 0.25 run margin on a 3-run spread.`);
+  console.log(`   Best: centre ${best.centre}, margin ${best.margin}, over rate ${best.rate.toFixed(4)},` +
+    ` ${(best.error * 100).toFixed(2)} points off.`);
+  console.log('\n   The over rate only moves in steps here, because the half-run grid is');
+  console.log('   coarse against a three-run spread. That quantisation is itself a');
+  console.log('   residual: there is no line that lands on the target exactly, and the');
+  console.log('   gap that remains is the best the grid allows. tools/checkTotalVig.ts');
+  console.log('   measures what that residual is worth to a bettor.');
 };
 
 void main();

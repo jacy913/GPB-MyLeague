@@ -599,6 +599,7 @@ export const AppViewRouter = ({
           pitchingStats={playerState.pitchingStats}
           playerState={playerState}
           seasonHistory={seasonHistory}
+          seasonYear={resolveSeasonYear(currentDate, games)}
         />
       )}
 

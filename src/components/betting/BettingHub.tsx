@@ -141,13 +141,6 @@ const GameBetCard: React.FC<{
   balance: number;
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ game, total, balance, onPlace }) => {
-  const overProbability = total
-    ? MEDIA_PROFILES.reduce((sum, profile) => sum + total.overProbability[profile.id], 0) / MEDIA_PROFILES.length
-    : 0.5;
-  const overPrice = overProbability >= 0.5
-    ? Math.round(-100 * overProbability / (1 - overProbability))
-    : Math.round(100 * (1 - overProbability) / overProbability);
-
   const side = (
     team: GameLine['awayTeam'],
     pick: 'away' | 'home',
@@ -189,11 +182,18 @@ const GameBetCard: React.FC<{
         <div className="flex flex-col gap-3">
           <div>
             <p className="t-caption text-[var(--color-ink-faint)]">Moneyline — each outlet's price</p>
-            <div className="mt-2 grid gap-1 sm:grid-cols-3">
+            {/*
+              Flex with content-width cells, not a three-column grid. A grid
+              divides the available width three ways, so on a wide card each
+              outlet's price sat alone in the middle of a long empty bar. These
+              are three short numbers about to be compared, and they should sit
+              next to each other rather than be spread across the panel.
+            */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {MEDIA_PROFILES.map((profile) => (
                 <div
                   key={profile.id}
-                  className="flex items-center justify-between border-l-[3px] bg-[var(--color-sunken)] px-2 py-1.5"
+                  className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-sunken)] px-2 py-1.5"
                   style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
                 >
                   <img
@@ -215,7 +215,7 @@ const GameBetCard: React.FC<{
           {total && (
             <div>
               <p className="t-caption text-[var(--color-ink-faint)]">
-                Run total — house line {total.houseLine.toFixed(2)}
+                Run total — house line {total.houseLine.toFixed(1)}
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-3">
                 {MEDIA_PROFILES.map((profile) => (
@@ -244,13 +244,13 @@ const GameBetCard: React.FC<{
                   marketKey: game.gameId,
                   marketTitle: `${game.awayTeam.city} at ${game.homeTeam.city} total`,
                   selection: 'over',
-                  selectionLabel: `Over ${total.houseLine.toFixed(2)}`,
-                  price: overPrice,
+                  selectionLabel: `Over ${total.houseLine.toFixed(1)}`,
+                  price: total.overPrice,
                   line: total.houseLine,
                   backedMedia: null,
                 })}
               >
-                Over {total.houseLine.toFixed(2)} {formatAmerican(overPrice)}
+                Over {total.houseLine.toFixed(1)} {formatAmerican(total.overPrice)}
               </RetroButton>
               <RetroButton
                 variant="ghost"
@@ -261,13 +261,13 @@ const GameBetCard: React.FC<{
                   marketKey: game.gameId,
                   marketTitle: `${game.awayTeam.city} at ${game.homeTeam.city} total`,
                   selection: 'under',
-                  selectionLabel: `Under ${total.houseLine.toFixed(2)}`,
-                  price: -overPrice,
+                  selectionLabel: `Under ${total.houseLine.toFixed(1)}`,
+                  price: total.underPrice,
                   line: total.houseLine,
                   backedMedia: null,
                 })}
               >
-                Under {total.houseLine.toFixed(2)} {formatAmerican(-overPrice)}
+                Under {total.houseLine.toFixed(1)} {formatAmerican(total.underPrice)}
               </RetroButton>
             </>
           )}
@@ -283,11 +283,6 @@ const TotalMarketCard: React.FC<{
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ market, onPlace, balance }) => {
   const firstHalf = market.kind === 'first5';
-
-  const overProbability = MEDIA_PROFILES.reduce((sum, profile) => sum + market.overProbability[profile.id], 0) / 3;
-  const overPrice = overProbability >= 0.5
-    ? Math.round(-100 * overProbability / (1 - overProbability))
-    : Math.round(100 * (1 - overProbability) / overProbability);
 
   return (
     <Panel className="overflow-hidden">
@@ -328,7 +323,7 @@ const TotalMarketCard: React.FC<{
             ))}
           </div>
           <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
-            Spread across the three: {market.spread.toFixed(1)} {firstHalf ? 'runs' : 'runs'}. House line {market.houseLine.toFixed(2)} including margin.
+            House line {market.houseLine.toFixed(1)} including margin, {market.spread.toFixed(1)} runs apart across the three.
           </p>
         </div>
 
@@ -342,13 +337,13 @@ const TotalMarketCard: React.FC<{
               marketKey: market.key.replace(/^(total|first5):/, ''),
               marketTitle: `${market.title} ${firstHalf ? 'first five' : 'total'}`,
               selection: 'over',
-              selectionLabel: `Over ${market.houseLine.toFixed(2)}`,
-              price: overPrice,
+              selectionLabel: `Over ${market.houseLine.toFixed(1)}`,
+              price: market.overPrice,
               line: market.houseLine,
               backedMedia: null,
             })}
           >
-            Over {market.houseLine.toFixed(2)} {formatAmerican(overPrice)}
+            Over {market.houseLine.toFixed(1)} {formatAmerican(market.overPrice)}
           </RetroButton>
           <RetroButton
             variant="default"
@@ -358,13 +353,13 @@ const TotalMarketCard: React.FC<{
               marketKey: market.key.replace(/^(total|first5):/, ''),
               marketTitle: `${market.title} ${firstHalf ? 'first five' : 'total'}`,
               selection: 'under',
-              selectionLabel: `Under ${market.houseLine.toFixed(2)}`,
-              price: -overPrice,
+              selectionLabel: `Under ${market.houseLine.toFixed(1)}`,
+              price: market.underPrice,
               line: market.houseLine,
               backedMedia: null,
             })}
           >
-            Under {market.houseLine.toFixed(2)} {formatAmerican(-overPrice)}
+            Under {market.houseLine.toFixed(1)} {formatAmerican(market.underPrice)}
           </RetroButton>
         </div>
       </div>
@@ -557,7 +552,7 @@ export const OpenBets: React.FC<{ bets: PlacedBet[] }> = ({ bets }) => {
               </p>
               <p className="t-caption text-[var(--color-ink-faint)]">
                 {bet.marketTitle}
-                {bet.note && ` · line ${Number(bet.note).toFixed(2)}`}
+                {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -710,7 +705,7 @@ export const BetSlip: React.FC<{
           <p className="t-stat-lg">{entry.selectionLabel}</p>
           <p className="t-caption text-[var(--color-ink-faint)]">
             {entry.marketTitle} · {formatAmerican(entry.price)}
-            {entry.line !== undefined && ` · line ${entry.line.toFixed(2)}`}
+            {entry.line !== undefined && ` · line ${entry.line.toFixed(1)}`}
           </p>
           {backedBy && (
             <p className="t-caption mt-1 text-[var(--color-warn)]">
