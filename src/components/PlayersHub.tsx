@@ -252,7 +252,7 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
     return {
       id: player.playerId,
       cells: {
-        club: team ? <TeamLogo team={team} sizeClass="h-6 w-6" /> : <span className="t-caption text-[var(--color-ink-faint)]">--</span>,
+        club: team ? <TeamLogo team={team} sizeClass="h-8 w-8" /> : <span className="t-caption text-[var(--color-ink-faint)]">--</span>,
         name: <span className="truncate t-stat-sm">{playerLabel(player)}</span>,
         pos: player.primaryPosition,
         age: player.age,
@@ -315,7 +315,7 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
                       : 'border-transparent hover:border-[var(--color-chrome-lo)]'
                   }`}
                 >
-                  <TeamLogo team={team} sizeClass="h-9 w-9" />
+                  <TeamLogo team={team} sizeClass="h-11 w-11" />
                 </button>
               );
             })}

@@ -109,6 +109,17 @@ export const sortStandings = (left: Team, right: Team): number => {
 };
 
 /** Panel frame. Every front-page section is one of these plus its content. */
+/**
+ * Panel with a single-line header.
+ *
+ * The header used to carry an eyebrow above the title, which made every panel
+ * two lines of chrome tall. Most eyebrows restated the title -- "Milestones"
+ * above "Season Cycle" -- so the second line bought nothing and cost a line of
+ * height on every container in the product. The eyebrow prop is kept for call
+ * sites that still pass it, but it now renders inline on the same line, before
+ * the title, as a quiet kicker rather than a second row. Where it is pure noise
+ * the call site should drop it; the two dashboard ones did.
+ */
 export const HomePanel: React.FC<{
   title: string;
   eyebrow?: string;
@@ -118,11 +129,15 @@ export const HomePanel: React.FC<{
   className?: string;
 }> = ({ title, eyebrow, aside, children, bodyClassName = 'p-4', className = '' }) => (
   <section className={`panel overflow-hidden ${className}`}>
-    <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-      <div className="min-w-0">
-        {eyebrow && <p className="t-caption text-[var(--color-ink-faint)]">{eyebrow}</p>}
-        <h2 className="t-h3 truncate">{title}</h2>
-      </div>
+    <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4">
+      <h2 className="t-h3 min-w-0 truncate">
+        {eyebrow && (
+          <span className="mr-2 align-middle t-caption font-normal uppercase tracking-[0.18em] text-[var(--color-ink-faint)]">
+            {eyebrow}
+          </span>
+        )}
+        {title}
+      </h2>
       {aside}
     </div>
     <div className={bodyClassName}>{children}</div>

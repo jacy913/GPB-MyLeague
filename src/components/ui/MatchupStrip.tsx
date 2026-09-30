@@ -14,10 +14,16 @@ export interface MatchupStripProps {
   className?: string;
 }
 
+/**
+ * Crests run about a third larger than they did. They are the one piece of
+ * artwork in the product and they were being reduced to 24px role-player in
+ * dense rows, which is too small to read as a mark. sm stays under the 44px
+ * default row height so a crest in a table never crowds its own row.
+ */
 const scales = {
-  sm: { logo: 'h-6 w-6', city: 't-stat-sm', team: 't-caption', record: 't-caption' },
-  md: { logo: 'h-10 w-10', city: 't-h3', team: 't-caption', record: 't-stat-sm' },
-  h: { logo: 'h-16 w-16', city: 't-h2', team: 't-h3', record: 't-stat' },
+  sm: { logo: 'h-8 w-8', city: 't-stat-sm', team: 't-caption', record: 't-caption' },
+  md: { logo: 'h-12 w-12', city: 't-h3', team: 't-caption', record: 't-stat-sm' },
+  h: { logo: 'h-20 w-20', city: 't-h2', team: 't-h3', record: 't-stat' },
 } as const;
 
 /**

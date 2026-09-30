@@ -192,7 +192,7 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                     )}
                   </div>
                   <div className="flex items-center gap-3">
-                    {draftSummary?.onClockTeam && <TeamLogo team={draftSummary.onClockTeam} sizeClass="h-14 w-14" />}
+                    {draftSummary?.onClockTeam && <TeamLogo team={draftSummary.onClockTeam} sizeClass="h-16 w-16" />}
                     <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] px-3 py-2 text-right">
                       <p className="t-caption text-[var(--color-ink-faint)]">PROGRESS</p>
                       <p className="t-stat-lg mt-0.5">{draftSummary ? `${draftSummary.completed}/${draftSummary.total}` : '0/0'}</p>
@@ -311,7 +311,7 @@ export const DraftHub: React.FC<DraftHubProps> = ({
                         )}
                       </div>
                       <StatValue size="lg" variant="accent">{pick.overall}</StatValue>
-                      {team && <TeamLogo team={team} sizeClass="h-9 w-9" />}
+                      {team && <TeamLogo team={team} sizeClass="h-11 w-11" />}
                     </div>
                   );
                 })

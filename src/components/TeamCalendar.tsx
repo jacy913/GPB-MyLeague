@@ -358,7 +358,7 @@ export const TeamCalendar: React.FC<TeamCalendarProps> = ({
                 <div className="sticky left-0 z-20 border-r border-white/10 bg-[#151515]/95 px-4 py-3">
                   <div className="flex items-center gap-3">
                     <div className={`rounded-2xl border px-2 py-2 ${getTeamAccentClasses(team)}`}>
-                      <TeamLogo team={team} sizeClass="w-12 h-12" />
+                      <TeamLogo team={team} sizeClass="w-14 h-14" />
                     </div>
                     <div className="min-w-0">
                       <p className="font-display text-2xl uppercase tracking-[0.08em] text-white leading-none">
@@ -428,7 +428,7 @@ export const TeamCalendar: React.FC<TeamCalendarProps> = ({
                           )}
                         </div>
                         <div className="mt-2 flex items-center gap-2">
-                          {opponent ? <TeamLogo team={opponent} sizeClass="w-8 h-8" /> : <div className="w-8 h-8" />}
+                          {opponent ? <TeamLogo team={opponent} sizeClass="w-10 h-10" /> : <div className="w-8 h-8" />}
                           <div className="min-w-0">
                             <p className="font-display text-lg uppercase tracking-[0.08em] text-white leading-none">
                               {opponent ? opponent.id.toUpperCase() : opponentId.toUpperCase()}

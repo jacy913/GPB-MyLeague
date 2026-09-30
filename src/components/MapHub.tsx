@@ -479,7 +479,7 @@ export const MapHub: React.FC<MapHubProps> = ({ teams }) => {
                     onPointerCancel={handleMarkerPointerUp}
                   >
                     <div className={`rounded-full border bg-black/45 p-1.5 shadow-[0_6px_16px_rgba(0,0,0,0.55)] transition-colors ${isMarkerEditMode ? 'border-[#d4bb6a]/80' : 'border-white/35'}`}>
-                      <TeamLogo team={team} sizeClass="h-6 w-6" />
+                      <TeamLogo team={team} sizeClass="h-8 w-8" />
                     </div>
                   </div>
                 );

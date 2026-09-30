@@ -20,7 +20,6 @@ export const MilestoneTimeline: React.FC<{
 }> = ({ milestones, timelineDate, nextMilestone, isSimulating, onOpenSimulation }) => (
   <HomePanel
     title="Season Cycle"
-    eyebrow="Milestones"
     aside={
       <div className="flex flex-wrap items-center gap-2">
         <span className="t-caption text-[var(--color-ink-faint)]">

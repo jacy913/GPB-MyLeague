@@ -20,7 +20,9 @@ export type StatTableDensity = 'default' | 'dense' | 'large';
 const ROW_HEIGHT: Record<StatTableDensity, string> = {
   dense: '30px',
   default: '44px',
-  large: '48px',
+  // 52 rather than 48: the crest in a standings row is 40px, and at 48 the mark
+  // plus its border was within a few pixels of the rule above and below it.
+  large: '52px',
 };
 
 export interface StatTableColumn {

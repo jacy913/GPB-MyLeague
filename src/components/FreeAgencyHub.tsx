@@ -237,7 +237,7 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
         ) : (
           <span className="flex flex-wrap items-center gap-1">
             {visibleOfferTeams.map((team) => (
-              <TeamLogo key={`${entry.player.playerId}-${team.id}`} team={team} sizeClass="h-6 w-6" />
+              <TeamLogo key={`${entry.player.playerId}-${team.id}`} team={team} sizeClass="h-8 w-8" />
             ))}
             {hiddenOfferTeamCount > 0 && (
               <span className="t-caption text-[var(--color-gold)]">+{hiddenOfferTeamCount}</span>
@@ -321,7 +321,7 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                     className="flex flex-col gap-3 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-3 transition-colors hover:border-[var(--color-gold)]"
                   >
                     <div className="flex items-start gap-3">
-                      <TeamLogo team={offer.team} sizeClass="h-12 w-12" />
+                      <TeamLogo team={offer.team} sizeClass="h-14 w-14" />
                       <div className="min-w-0 flex-1">
                         <p className="t-caption text-[var(--color-ink-faint)]">OFFER {index + 1}</p>
                         <p className="truncate t-h3">{offer.team.city} {offer.team.name}</p>
@@ -435,7 +435,7 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
                 <div className="flex flex-col gap-3">
                   <Panel variant="sunken" className="flex flex-col gap-2 p-3">
                     <div className="flex items-center gap-3">
-                      <TeamLogo team={pendingOffer.team} sizeClass="h-12 w-12" />
+                      <TeamLogo team={pendingOffer.team} sizeClass="h-14 w-14" />
                       <div className="min-w-0">
                         <p className="t-caption text-[var(--color-ink-faint)]">SIGNING TEAM</p>
                         <p className="truncate t-h3">{pendingOffer.team.city} {pendingOffer.team.name}</p>

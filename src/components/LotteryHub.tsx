@@ -132,7 +132,7 @@ export const LotteryHub: React.FC<LotteryHubProps> = ({
         overall: <StatValue size="sm" variant={isLotteryWindow ? 'accent' : 'default'}>{row.overallPick}</StatValue>,
         team: (
           <span className="flex items-center gap-2">
-            {team && <TeamLogo team={team} sizeClass="h-6 w-6" />}
+            {team && <TeamLogo team={team} sizeClass="h-8 w-8" />}
             <span className="truncate t-stat-sm">{team ? `${team.city} ${team.name}` : row.teamId.toUpperCase()}</span>
           </span>
         ),

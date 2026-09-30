@@ -77,7 +77,7 @@ const nameCell = (entry: StatEntry, index: number): React.ReactNode => (
     title={entry.name}
   >
     <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-    {entry.team ? <TeamLogo team={entry.team} sizeClass="h-4 w-4" /> : null}
+    {entry.team ? <TeamLogo team={entry.team} sizeClass="h-6 w-6" /> : null}
     <span className="truncate t-stat-sm">{entry.name}</span>
   </button>
 );
@@ -151,7 +151,7 @@ const AwardRace: React.FC<{
             >
               <div className="flex items-center gap-3">
                 <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-                {entry.team ? <TeamLogo team={entry.team} sizeClass="h-6 w-6" /> : null}
+                {entry.team ? <TeamLogo team={entry.team} sizeClass="h-8 w-8" /> : null}
                 <div className="min-w-0 flex-1">
                   <p className={`truncate t-stat-sm ${isLeader ? 'text-[var(--color-gold-hi)]' : ''}`}>
                     {entry.name}
@@ -424,7 +424,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
           name: (
             <span className="flex w-full items-center gap-2 overflow-hidden">
               <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-              <TeamLogo team={team} sizeClass="h-4 w-4" />
+              <TeamLogo team={team} sizeClass="h-6 w-6" />
               <span className="truncate t-stat-sm">{team.city} {team.name}</span>
             </span>
           ),

@@ -157,7 +157,7 @@ export function PreviousDateScoreStrip({
       className="flex shrink-0 items-center gap-2 border border-[var(--color-chrome-lo)] border-l-[3px] border-l-[var(--color-chrome-lo)] bg-[var(--color-panel)] px-2 py-1 transition-colors hover:bg-[var(--color-panel-2)]"
     >
       {entry.awayTeam
-        ? <TeamLogo team={entry.awayTeam} sizeClass="h-6 w-6" />
+        ? <TeamLogo team={entry.awayTeam} sizeClass="h-8 w-8" />
         : <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
 
       <span className="flex items-center gap-1.5 tabular-nums">
@@ -173,7 +173,7 @@ export function PreviousDateScoreStrip({
       </span>
 
       {entry.homeTeam
-        ? <TeamLogo team={entry.homeTeam} sizeClass="h-6 w-6" />
+        ? <TeamLogo team={entry.homeTeam} sizeClass="h-8 w-8" />
         : <span className="h-6 w-6 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
 
       <span className={`w-[4ch] shrink-0 text-right t-caption ${entry.playoff ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'}`}>

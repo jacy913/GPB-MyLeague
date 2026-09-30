@@ -6,7 +6,7 @@ import {
   SeasonHistoryEntry,
   Team,
 } from '../types';
-import { TeamLogo } from './ui';
+import { Panel, RetroButton, TeamLogo } from './ui';
 import mvpBeltImage from '../assets/mvpbelt.png';
 import trophyImage from '../assets/trophy.png';
 import worldSeriesMvpImage from '../assets/worldseriesmvp.png';
@@ -67,6 +67,14 @@ const resolveTeamFromWinner = (
   return buildFallbackTeam(winner.teamId, winner.teamCity, winner.teamName);
 };
 
+/**
+ * Award tile.
+ *
+ * Structure, crest sizes and image sizes are unchanged from the pre-migration
+ * version -- only the surface is retokenised. The award artwork is the one place
+ * in the product that keeps a soft drop shadow, because these are photographs of
+ * physical objects rather than UI chrome, and a hard cut would look pasted on.
+ */
 const AwardTile: React.FC<{
   title: string;
   subtitle: string;
@@ -75,43 +83,47 @@ const AwardTile: React.FC<{
   imageSrc: string;
   imageAlt: string;
 }> = ({ title, subtitle, winner, winnerTeam, imageSrc, imageAlt }) => (
-  <article className="rounded-2xl border border-white/10 bg-black/25 p-4 md:p-5">
+  <Panel className="flex flex-col p-4 md:p-5">
     <div className="flex items-start justify-between gap-5">
       <div>
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">{subtitle}</p>
-        <p className="mt-1 font-headline text-2xl uppercase tracking-[0.08em] text-white">{title}</p>
+        <p className="t-caption text-[var(--color-ink-faint)]">{subtitle}</p>
+        <p className="t-h3 mt-1">{title}</p>
       </div>
       <img src={imageSrc} alt={imageAlt} className="h-28 w-auto object-contain drop-shadow-[0_10px_22px_rgba(0,0,0,0.42)] md:h-32" />
     </div>
     {winner ? (
-      <div className="mt-4 flex items-center gap-4 rounded-xl border border-white/10 bg-black/25 p-3">
-        {winnerTeam ? <TeamLogo team={winnerTeam} sizeClass="h-24 w-24" /> : <div className="h-24 w-24 rounded-xl border border-white/10 bg-black/25" />}
+      <Panel variant="sunken" className="mt-4 flex items-center gap-4 p-3">
+        {winnerTeam
+          ? <TeamLogo team={winnerTeam} sizeClass="h-24 w-24" />
+          : <span className="h-24 w-24 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
         <div className="min-w-0">
-          <p className="font-display text-2xl uppercase tracking-[0.06em] text-white">{winner.playerName}</p>
-          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400">
+          <p className="t-h2 truncate">{winner.playerName}</p>
+          <p className="t-caption mt-1 text-[var(--color-ink-dim)]">
             {winner.teamCity && winner.teamName ? `${winner.teamCity} ${winner.teamName}` : 'No Team'}
           </p>
-          <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-platinum">{winner.summary}</p>
+          <p className="t-caption mt-2 text-[var(--color-platinum)]">{winner.summary}</p>
         </div>
-      </div>
+      </Panel>
     ) : (
-      <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">Not available</p>
+      <p className="t-caption mt-4 text-[var(--color-ink-faint)]">Not available</p>
     )}
-  </article>
+  </Panel>
 );
 
 const DivisionWinnerTile: React.FC<{ winner: SeasonHistoryDivisionWinner; winnerTeam: Team | null }> = ({ winner, winnerTeam }) => (
-  <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-3">
-    <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500">{winner.league} {winner.division}</p>
+  <Panel variant="sunken" className="p-3">
+    <p className="t-caption text-[var(--color-ink-faint)]">{winner.league} {winner.division}</p>
     <div className="mt-2 flex items-center gap-3">
-      {winnerTeam ? <TeamLogo team={winnerTeam} sizeClass="h-20 w-20" /> : <div className="h-20 w-20 rounded-xl border border-white/10 bg-black/25" />}
+      {winnerTeam
+        ? <TeamLogo team={winnerTeam} sizeClass="h-20 w-20" />
+        : <span className="h-20 w-20 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
       <div className="min-w-0">
-        <p className="font-display text-2xl uppercase tracking-[0.06em] text-white truncate">{winner.teamCity}</p>
-        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-400 truncate">{winner.teamName}</p>
-        <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-platinum">{winner.wins}-{winner.losses}</p>
+        <p className="t-h2 truncate">{winner.teamCity}</p>
+        <p className="t-caption truncate text-[var(--color-ink-dim)]">{winner.teamName}</p>
+        <p className="t-caption mt-1 text-[var(--color-platinum)]">{winner.wins}-{winner.losses}</p>
       </div>
     </div>
-  </div>
+  </Panel>
 );
 
 export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) => {
@@ -132,13 +144,12 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
 
   if (orderedHistory.length === 0) {
     return (
-      <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#171717,#202020,#111111)] p-6 md:p-8">
-        <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">History</p>
-        <p className="mt-2 font-headline text-4xl uppercase tracking-[0.08em] text-white">No seasons archived</p>
-        <p className="mt-3 max-w-2xl text-sm text-zinc-400">
+      <Panel variant="hero" className="p-6 md:p-8">
+        <h1 className="t-h1">No Seasons Archived</h1>
+        <p className="t-body mt-3 max-w-2xl text-[var(--color-ink-dim)]">
           Complete a full season and this page will automatically save champions, division winners, and MVP awards.
         </p>
-      </section>
+      </Panel>
     );
   }
 
@@ -152,69 +163,68 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
   const worldSeriesMvpTeam = resolveTeamFromWinner(entry.worldSeriesMvp, teamsById);
 
   return (
-    <section className="rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,#171717,#202020,#111111)] p-5 md:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="space-y-4">
+      <Panel variant="hero" className="flex flex-wrap items-center justify-between gap-3 p-4 md:p-5">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-zinc-500">Season {entry.seasonYear}</p>
-          <p className="mt-1 font-headline text-4xl uppercase tracking-[0.08em] text-white">Snapshot</p>
-          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-500">Saved {formatCompletedAt(entry.completedAt)}</p>
+          <h1 className="t-h1">Season {entry.seasonYear}</h1>
+          <p className="t-caption mt-1 text-[var(--color-ink-faint)]">Saved {formatCompletedAt(entry.completedAt)}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
+          <RetroButton
+            variant="ghost"
+            size="sm"
             onClick={() => setActiveIndex((current) => Math.max(0, current - 1))}
             disabled={activeIndex === 0}
-            className="rounded-xl border border-white/10 bg-black/25 p-2 text-zinc-300 transition-colors hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Previous season snapshot"
           >
-            <ChevronLeft className="h-5 w-5" />
-          </button>
-          <div className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400">
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </RetroButton>
+          <span className="t-stat-sm tabular-nums text-[var(--color-ink-dim)]">
             {activeIndex + 1} / {orderedHistory.length}
-          </div>
-          <button
-            type="button"
+          </span>
+          <RetroButton
+            variant="ghost"
+            size="sm"
             onClick={() => setActiveIndex((current) => Math.min(orderedHistory.length - 1, current + 1))}
             disabled={activeIndex >= orderedHistory.length - 1}
-            className="rounded-xl border border-white/10 bg-black/25 p-2 text-zinc-300 transition-colors hover:border-white/25 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Next season snapshot"
           >
-            <ChevronRight className="h-5 w-5" />
-          </button>
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </RetroButton>
         </div>
-      </div>
+      </Panel>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-        <article className="relative overflow-hidden rounded-2xl border border-[#d4bb6a]/25 bg-[linear-gradient(140deg,rgba(212,187,106,0.16),rgba(255,255,255,0.02),rgba(0,0,0,0.15))] p-4 md:p-5 min-h-[420px] md:min-h-[520px]">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#d8c88b]">Champion</p>
-              <p className="mt-1 font-headline text-3xl uppercase tracking-[0.08em] text-white">World Series Winner</p>
-            </div>
-          </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        {/* The champion panel keeps its warmer surface. It is the one card on
+            this screen that is about a specific achievement rather than a list,
+            and a gold edge is the only place the league accent reads as
+            celebration rather than as an active state. */}
+        <article className="relative min-h-[420px] overflow-hidden border border-[var(--color-gold-dim)] bg-[var(--color-panel)] p-4 md:min-h-[520px] md:p-5">
+          <p className="t-caption text-[var(--color-gold)]">Champion</p>
+          <h2 className="t-h2 mt-1">World Series Winner</h2>
           <img
             src={trophyImage}
             alt="Championship trophy"
-            className="pointer-events-none absolute right-2 bottom-0 h-[300px] w-auto object-contain drop-shadow-[0_24px_44px_rgba(0,0,0,0.55)] md:right-4 md:h-[430px]"
+            className="pointer-events-none absolute bottom-0 right-2 h-[300px] w-auto object-contain drop-shadow-[0_24px_44px_rgba(0,0,0,0.55)] md:right-4 md:h-[430px]"
           />
           {champion && championTeam ? (
             <div className="relative z-10 mt-5 max-w-[62%]">
               <TeamLogo team={championTeam} sizeClass="h-32 w-32 md:h-40 md:w-40" />
-              <p className="mt-3 font-display text-4xl uppercase tracking-[0.06em] text-white">{champion.teamCity}</p>
-              <p className="font-headline text-3xl uppercase tracking-[0.08em] text-[#ecd693]">{champion.teamName}</p>
-              <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-300">
+              <p className="t-h1 mt-3">{champion.teamCity}</p>
+              <p className="t-h2 text-[var(--color-gold-hi)]">{champion.teamName}</p>
+              <p className="t-caption mt-2">
                 Regular Season {champion.wins}-{champion.losses}
               </p>
             </div>
           ) : (
-            <p className="relative z-10 mt-4 font-mono text-[11px] uppercase tracking-[0.16em] text-zinc-500">Champion unavailable</p>
+            <p className="relative z-10 mt-4 t-caption text-[var(--color-ink-faint)]">Champion unavailable</p>
           )}
         </article>
 
-        <article className="rounded-2xl border border-white/10 bg-black/20 p-4 md:p-5">
+        <Panel className="p-4 md:p-5">
           <div className="flex items-center gap-2">
-            <Trophy className="h-4 w-4 text-platinum" />
-            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-zinc-500">Division Winners</p>
+            <Trophy className="h-4 w-4 text-[var(--color-platinum)]" aria-hidden="true" />
+            <h2 className="t-label">Division Winners</h2>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {entry.divisionWinners.map((winner) => (
@@ -225,10 +235,10 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
               />
             ))}
           </div>
-        </article>
+        </Panel>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-3">
         <AwardTile
           title="Batting MVP"
           subtitle="Regular Season"

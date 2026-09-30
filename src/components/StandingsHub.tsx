@@ -152,7 +152,7 @@ const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, o
         team: (
           <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-3 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label={`Open ${row.team.city} ${row.team.name} roster`}>
             <span className="w-[3ch] shrink-0 text-right t-stat text-[var(--color-ink-faint)]">{index + 1}</span>
-            <TeamLogo team={row.team} sizeClass="h-8 w-8" />
+            <TeamLogo team={row.team} sizeClass="h-10 w-10" />
             <span className={`truncate t-stat ${isDivisionWinner ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
               {isDivisionWinner && <span className="mr-1.5 text-[var(--color-gold)]" aria-label="Division leader">◆</span>}
               {row.team.city} <span className="text-[var(--color-ink-dim)]">{row.team.name}</span>

@@ -105,7 +105,7 @@ export const SeasonAwardsModal = ({
                       >
                         <div className="flex items-center gap-3">
                           {candidateTeam ? (
-                            <TeamLogo team={candidateTeam} sizeClass="h-12 w-12" />
+                            <TeamLogo team={candidateTeam} sizeClass="h-14 w-14" />
                           ) : (
                             <div className="h-12 w-12 rounded-lg border border-white/10 bg-black/30" />
                           )}
@@ -148,7 +148,7 @@ export const SeasonAwardsModal = ({
                       >
                         <div className="flex items-center gap-3">
                           {candidateTeam ? (
-                            <TeamLogo team={candidateTeam} sizeClass="h-12 w-12" />
+                            <TeamLogo team={candidateTeam} sizeClass="h-14 w-14" />
                           ) : (
                             <div className="h-12 w-12 rounded-lg border border-white/10 bg-black/30" />
                           )}
@@ -196,7 +196,7 @@ export const SeasonAwardsModal = ({
                       >
                         <div className="flex items-center gap-3">
                           {candidateTeam ? (
-                            <TeamLogo team={candidateTeam} sizeClass="h-12 w-12" />
+                            <TeamLogo team={candidateTeam} sizeClass="h-14 w-14" />
                           ) : (
                             <div className="h-12 w-12 rounded-lg border border-white/10 bg-black/30" />
                           )}

@@ -175,7 +175,7 @@ const SidePanel: React.FC<{
     <Panel variant="sunken" className="flex flex-col gap-3 p-3">
       <div className="flex items-center gap-3">
         {team
-          ? <TeamLogo team={team} sizeClass="h-12 w-12" />
+          ? <TeamLogo team={team} sizeClass="h-14 w-14" />
           : <span className="flex h-12 w-12 items-center justify-center border border-dashed border-[var(--color-chrome-lo)]">
               <UserRound className="h-5 w-5 text-[var(--color-ink-faint)]" aria-hidden="true" />
             </span>}

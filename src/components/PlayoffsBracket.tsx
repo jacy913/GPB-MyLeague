@@ -649,7 +649,7 @@ const BracketTeamRow: React.FC<{
       }`}
     >
       <SeedBadge seed={participant.seed} league={league} dimmed={!isLeader} />
-      <TeamLogo team={participant.team} sizeClass="h-7 w-7" />
+      <TeamLogo team={participant.team} sizeClass="h-9 w-9" />
       <div className="min-w-0 flex-1">
         <p className={`truncate t-h3 ${isLeader ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
           {participant.team.city}
@@ -959,7 +959,7 @@ const WorldSeriesTeamPanel: React.FC<{
       <span className={`t-label ${isWinner ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-dim)]'}`}>
         {leagueLabel}
       </span>
-      <TeamLogo team={participant.team} sizeClass="h-24 w-24" />
+      <TeamLogo team={participant.team} sizeClass="h-28 w-28" />
       <div>
         <p className={`t-h1 ${isWinner ? 'text-[var(--color-gold-hi)]' : ''}`}>{participant.team.city}</p>
         <p className="t-h3 mt-1 text-[var(--color-ink-dim)]">{participant.team.name}</p>
@@ -1033,7 +1033,7 @@ const WorldSeriesShowcase: React.FC<{
           {overallChampion ? (
             <>
               <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
-              <TeamLogo team={overallChampion.team} sizeClass="h-16 w-16" />
+              <TeamLogo team={overallChampion.team} sizeClass="h-20 w-20" />
               <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
               <p className="t-h2 text-[var(--color-gold)]">{overallChampion.team.name}</p>
             </>

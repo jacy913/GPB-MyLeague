@@ -428,7 +428,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
         <div className="flex flex-col gap-5">
-          <HomePanel title="Simulation Desk" eyebrow="Quick Actions">
+          <HomePanel title="Simulation Desk">
             <div className="flex flex-wrap gap-2">
               {simActions.map((action) => (
                 <RetroButton
@@ -464,7 +464,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             onSelect={setActiveDivisionIndex}
           />
 
-          <HomePanel title="Daily Slate" eyebrow="League Date" bodyClassName="p-4">
+          <HomePanel title="Daily Slate" bodyClassName="p-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <p className="t-caption text-[var(--color-ink-faint)]">CURRENT DAY</p>
