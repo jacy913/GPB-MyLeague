@@ -788,6 +788,15 @@ const scoreChance = (session: GameSessionState, runnerId: string | null, baseRat
  * It is inert unless startGameEngineProbe() is called and nothing is persisted,
  * so ordinary simulation pays nothing for it. The league lab switches it on when
  * it needs to attribute scoring, then reads and resets it.
+ *
+ * WHY THE JOINT TABLE EXISTS. The marginals above are enough to describe the run
+ * environment but not to fit anything to it. runsByOutcome says an HR scored N
+ * runs over M plate appearances; it cannot say whether those plate appearances
+ * were mostly bases-loaded, in which case the fitted "value of a home run" has
+ * silently absorbed the runner context and will misattribute it. Any regression
+ * of runs on outcome needs the (outcome x runners-on) joint, so that occupancy can
+ * be held as a control instead of being confounded with the outcome. That is what
+ * runsByOutcomeAndOccupancy and plateAppearancesByOutcomeAndOccupancy provide.
  */
 export interface GameEngineProbe {
   plateAppearances: number;
@@ -796,9 +805,18 @@ export interface GameEngineProbe {
   baseCounts: [number, number, number, number];
   runsByOutcome: Record<string, number>;
   plateAppearancesByOutcome: Record<string, number>;
+  /**
+   * Joint outcome x occupancy, each indexed by 0, 1, 2, 3 runners aboard at the
+   * time of the plate appearance. Keyed by AtBatOutcome; a cell counts plate
+   * appearances, the other sums the runs scored on them.
+   */
+  runsByOutcomeAndOccupancy: Record<string, [number, number, number, number]>;
+  plateAppearancesByOutcomeAndOccupancy: Record<string, [number, number, number, number]>;
 }
 
 let activeProbe: GameEngineProbe | null = null;
+
+const emptyJointRow = (): [number, number, number, number] => [0, 0, 0, 0];
 
 export const startGameEngineProbe = (): void => {
   activeProbe = {
@@ -807,7 +825,22 @@ export const startGameEngineProbe = (): void => {
     baseCounts: [0, 0, 0, 0],
     runsByOutcome: {},
     plateAppearancesByOutcome: {},
+    runsByOutcomeAndOccupancy: {},
+    plateAppearancesByOutcomeAndOccupancy: {},
   };
+};
+
+// Copied rather than returned by reference so a caller holding a previous
+// reading cannot mutate the live probe, and so the rows are not aliased between
+// the two joint tables.
+const cloneJointRows = (
+  rows: Record<string, [number, number, number, number]>,
+): Record<string, [number, number, number, number]> => {
+  const copy: Record<string, [number, number, number, number]> = {};
+  Object.keys(rows).forEach((key) => {
+    copy[key] = [...rows[key]] as [number, number, number, number];
+  });
+  return copy;
 };
 
 export const readGameEngineProbe = (): GameEngineProbe | null =>
@@ -818,6 +851,8 @@ export const readGameEngineProbe = (): GameEngineProbe | null =>
         baseCounts: [...activeProbe.baseCounts] as [number, number, number, number],
         runsByOutcome: { ...activeProbe.runsByOutcome },
         plateAppearancesByOutcome: { ...activeProbe.plateAppearancesByOutcome },
+        runsByOutcomeAndOccupancy: cloneJointRows(activeProbe.runsByOutcomeAndOccupancy),
+        plateAppearancesByOutcomeAndOccupancy: cloneJointRows(activeProbe.plateAppearancesByOutcomeAndOccupancy),
       }
     : null;
 
@@ -835,6 +870,15 @@ const recordProbeAtBat = (bases: BaseState, outcome: AtBatOutcome, runsScored: n
   activeProbe.baseCounts[occupied] += 1;
   activeProbe.runsByOutcome[outcome] = (activeProbe.runsByOutcome[outcome] ?? 0) + runsScored;
   activeProbe.plateAppearancesByOutcome[outcome] = (activeProbe.plateAppearancesByOutcome[outcome] ?? 0) + 1;
+  // Joint cell, so occupancy can be controlled for rather than confounded with
+  // the outcome. `occupied` is bounded 0..3 by the expression above, which is the
+  // same bound the baseCounts tuple is sized for.
+  const runsRow = activeProbe.runsByOutcomeAndOccupancy[outcome] ?? emptyJointRow();
+  runsRow[occupied] += runsScored;
+  activeProbe.runsByOutcomeAndOccupancy[outcome] = runsRow;
+  const paRow = activeProbe.plateAppearancesByOutcomeAndOccupancy[outcome] ?? emptyJointRow();
+  paRow[occupied] += 1;
+  activeProbe.plateAppearancesByOutcomeAndOccupancy[outcome] = paRow;
 };
 
 const assignRunsAndRbi = (
