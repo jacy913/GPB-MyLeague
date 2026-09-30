@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtAvg, fmtDiff, fmtEra, fmtIp, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
+import { battingMetrics, pitchingMetrics, toBattingCounts, toPitchingCounts } from '../lib/analytics/metrics';
 import { buildBattingAwards, buildPitchingAwards, type AwardEntry } from '../lib/awardRace';
 import { OddsBar, Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
@@ -35,22 +36,48 @@ const getWinPct = (team: Team): number => {
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
 
 /**
- * Slugging percentage, derived from the raw counting stats.
+ * Slugging percentage and on-base percentage, delegated to the metric layer.
  *
- * playerStats.ts computes this to derive `ops`, then discards it -- only `avg`
- * and `ops` are persisted onto the stat row. Recomputing it here is therefore
- * necessary, and the formula is copied from that file so a leaderboard can
- * never disagree with the OPS it sits beside.
+ * These used to be recomputed here, with a comment claiming the formula was
+ * copied from playerStats.ts "so a leaderboard can never disagree with the OPS
+ * it sits beside". It was not the same expression. playerStats.ts:116-117
+ * computes
+ *
+ *     singles = hits - doubles - triples - homeRuns
+ *     totalBases = singles + 2*d + 3*t + 4*h
+ *
+ * which expands to hits + 1*d + 2*t + 3*h, while this file had
+ * hits + 2*d + 3*t + 3*h. That overstates total bases by exactly
+ * (doubles + triples).
+ *
+ * Measured over a 30-day season with tools/probeTotalBases.ts: the
+ * accumulator's formula reproduced the persisted OPS for every player, and this
+ * one did so for none of the 307 players who had a double or a triple. The
+ * largest overstatement was 0.250 in slugging, where one player read .906
+ * against a true .757. The SLG board and the SLG figure printed beside OPS were
+ * both wrong, and in the same direction for every player, so the board was
+ * systematically inflating extra-base hitters.
+ *
+ * The shared module is now the single definition, so this class of drift is
+ * closed rather than patched: the board cannot disagree with OPS because there
+ * is only one SLG.
  */
-const totalBases = (stat: PlayerSeasonBatting): number =>
-  stat.hits + stat.doubles * 2 + stat.triples * 3 + stat.homeRuns * 3;
+/**
+ * At-bats required for a rate board. Derived, not chosen: 0.282 is the measured
+ * league BABIP, and 0.282 * (1 - 0.282) / 0.05^2 is the sample size at which a
+ * binomial proportion's standard error reaches 0.05. Rounded up to 82.
+ * tools/verifyMetrics.ts recomputes this and prints it.
+ */
+const BATTING_QUALIFYING_AT_BATS = 82;
 
-const slugging = (stat: PlayerSeasonBatting): number =>
-  stat.atBats > 0 ? totalBases(stat) / stat.atBats : 0;
+/**
+ * Outs required for a pitching rate board, i.e. five innings. This one is a
+ * convention rather than a derived figure, and is labelled as such so nobody
+ * later mistakes it for a fitted constant.
+ */
+const PITCHING_QUALIFYING_OUTS = 20;
 
-/** On-base percentage, derived the same way. */
-const onBasePct = (stat: PlayerSeasonBatting): number =>
-  stat.atBats + stat.walks > 0 ? (stat.hits + stat.walks) / (stat.atBats + stat.walks) : 0;
+const slugging = (stat: PlayerSeasonBatting): number => battingMetrics(toBattingCounts(stat)).slg ?? 0;
 
 interface CategoryBoard {
   key: string;
@@ -237,36 +264,53 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   // simulation, so an SB board would have to be invented from nothing. OBP
   // replaces it: fully derivable from fields that are stored, and more
   // informative alongside OPS.
+  // Qualification floors.
+  //
+  // BATTING_QUALIFYING_AT_BATS is the at-bat count at which the standard error
+  // of a league-average rate falls to 0.05, derived in tools/verifyMetrics.ts
+  // from the measured league BABIP of 0.282. It is a stated design choice about
+  // what counts as a meaningful sample, not a measured constant, and it was
+  // previously an unexplained 120. PITCHING_QUALIFYING_OUTS is the equivalent
+  // thought in outs: 20 outs is five innings, a conventional minimum, and is
+  // labelled as a convention rather than a fitted figure.
   const battingCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => [
-    { key: 'avg', title: 'Batting Average', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= 120).length },
+    { key: 'avg', title: 'Batting Average', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
     { key: 'hr', title: 'Home Runs', direction: 'desc', qualified: false, count: battingEntries.length },
     { key: 'rbi', title: 'RBI', direction: 'desc', qualified: false, count: battingEntries.length },
-    { key: 'ops', title: 'OPS', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= 120).length },
-    { key: 'slg', title: 'Slugging', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= 120).length },
-    { key: 'obp', title: 'On-Base', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= 120).length },
+    { key: 'ops', title: 'OPS', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
+    { key: 'slg', title: 'Slugging', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
+    { key: 'obp', title: 'On-Base', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
   ], [battingEntries]);
 
   const battingBoards = useMemo<CategoryBoard[]>(() => battingCategories.map((category) => {
     const pool = category.qualified
-      ? battingEntries.filter((entry) => (entry.stat as PlayerSeasonBatting).atBats >= 120)
+      ? battingEntries.filter((entry) => (entry.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS)
       : battingEntries;
 
+    // AVG and OPS are recomputed rather than read off the row, because the row
+    // stores both rounded to 3dp (playerStats.ts:125-126). Sorting on the stored
+    // value would tie players who differ by up to 0.001. The stored figure is
+    // still what gets displayed, so a displayed value cannot disagree with what
+    // the player card shows; only the ordering is computed at full precision.
+    const metricsOf = (stat: PlayerSeasonBatting) => battingMetrics(toBattingCounts(stat));
     const valueOf = (entry: StatEntry): number => {
       const stat = entry.stat as PlayerSeasonBatting;
-      if (category.key === 'avg') return stat.avg;
       if (category.key === 'hr') return stat.homeRuns;
       if (category.key === 'rbi') return stat.rbi;
-      if (category.key === 'ops') return stat.ops;
-      if (category.key === 'slg') return slugging(stat);
-      return onBasePct(stat);
+      const m = metricsOf(stat);
+      if (category.key === 'avg') return m.avg ?? 0;
+      if (category.key === 'ops') return m.ops ?? 0;
+      if (category.key === 'slg') return m.slg ?? 0;
+      return m.obp ?? 0;
     };
     const detailOf = (entry: StatEntry): string => {
       const stat = entry.stat as PlayerSeasonBatting;
-      if (category.key === 'avg') return fmtAvg(stat.avg);
+      if (category.key === 'avg') return `${stat.hits} H / ${stat.atBats} AB`;
       if (category.key === 'hr') return `${stat.rbi} RBI`;
       if (category.key === 'rbi') return `${stat.homeRuns} HR`;
       if (category.key === 'ops') return `${slugging(stat).toFixed(3)} SLG`;
       if (category.key === 'slg') return `${stat.ops.toFixed(3)} OPS`;
+      if (category.key === 'obp') return `${slugging(stat).toFixed(3)} SLG`;
       return `${stat.walks} BB`;
     };
     const formatValue = (entry: StatEntry): string => {
@@ -276,7 +320,10 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       if (category.key === 'rbi') return String(stat.rbi);
       if (category.key === 'ops') return stat.ops.toFixed(3);
       if (category.key === 'slg') return slugging(stat).toFixed(3);
-      return onBasePct(stat).toFixed(3);
+      // A qualified board guarantees at-bats, so OBP is defined. The `?? 0`
+      // is unreachable here and is written as a fallback rather than a claim
+      // that a zero on-base percentage is a real measurement.
+      return (battingMetrics(toBattingCounts(stat)).obp ?? 0).toFixed(3);
     };
 
     const sorted = [...pool].sort((left, right) => {
@@ -307,7 +354,9 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
   // -- pitching categories -----------------------------------------------
   const pitchingCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => {
-    const qualified = pitchingEntries.filter((entry) => (entry.stat as PlayerSeasonPitching).inningsPitched >= 60);
+    const qualified = pitchingEntries.filter(
+      (entry) => (entry.stat as PlayerSeasonPitching).inningsPitched * 3 >= PITCHING_QUALIFYING_OUTS,
+    );
     return [
       { key: 'wins', title: 'Wins', direction: 'desc', qualified: false, count: pitchingEntries.length },
       { key: 'k', title: 'Strikeouts', direction: 'desc', qualified: false, count: pitchingEntries.length },
@@ -320,34 +369,41 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
   const pitchingBoards = useMemo<CategoryBoard[]>(() => pitchingCategories.map((category) => {
     const pool = category.qualified
-      ? pitchingEntries.filter((entry) => (entry.stat as PlayerSeasonPitching).inningsPitched >= 60)
+      ? pitchingEntries.filter((entry) => (entry.stat as PlayerSeasonPitching).inningsPitched * 3 >= PITCHING_QUALIFYING_OUTS)
       : pitchingEntries;
 
+    // Era, WHIP and K/9 are recomputed from counts rather than read off the
+    // stat row, because the row stores them pre-rounded to 2dp
+    // (playerStats.ts:150-151). Sorting ERA by the stored value would tie two
+    // pitchers at 2.50 who are in truth 0.01 apart, and the stored WHIP cannot
+    // be reconciled with a displayed count at all.
+    const metricsOf = (stat: PlayerSeasonPitching) => pitchingMetrics(toPitchingCounts(stat));
     const valueOf = (entry: StatEntry): number => {
       const stat = entry.stat as PlayerSeasonPitching;
       if (category.key === 'wins') return stat.wins;
       if (category.key === 'k') return stat.strikeouts;
-      if (category.key === 'era') return stat.era;
-      if (category.key === 'whip') return stat.whip;
       if (category.key === 'ip') return stat.inningsPitched;
-      return stat.inningsPitched > 0 ? (stat.strikeouts / stat.inningsPitched) * 9 : 0;
+      const m = metricsOf(stat);
+      if (category.key === 'era') return m.era ?? 0;
+      if (category.key === 'whip') return m.whip ?? 0;
+      return m.kPer9 ?? 0;
     };
     const formatValue = (entry: StatEntry): string => {
       const stat = entry.stat as PlayerSeasonPitching;
       if (category.key === 'wins') return String(stat.wins);
       if (category.key === 'k') return String(stat.strikeouts);
-      if (category.key === 'era') return fmtEra(stat.era);
-      if (category.key === 'whip') return fmtWhip(stat.whip);
       if (category.key === 'ip') return fmtIp(stat.inningsPitched);
-      return (stat.inningsPitched > 0 ? (stat.strikeouts / stat.inningsPitched) * 9 : 0).toFixed(2);
+      const m = metricsOf(stat);
+      if (category.key === 'era') return fmtEra(m.era ?? 0);
+      if (category.key === 'whip') return fmtWhip(m.whip ?? 0);
+      return (m.kPer9 ?? 0).toFixed(2);
     };
     const detailOf = (entry: StatEntry): string => {
       const stat = entry.stat as PlayerSeasonPitching;
       if (category.key === 'era') return fmtIp(stat.inningsPitched);
-      if (category.key === 'whip') return fmtEra(stat.era);
+      if (category.key === 'whip') return `${stat.hitsAllowed + stat.walks} baserunners`;
       if (category.key === 'ip') return `${stat.strikeouts} K`;
       if (category.key === 'k9') return `${stat.strikeouts} K`;
-      if (category.key === 'wins') return fmtRecord(stat.wins, stat.losses);
       return fmtRecord(stat.wins, stat.losses);
     };
 
