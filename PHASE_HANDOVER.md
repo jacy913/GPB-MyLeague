@@ -4,8 +4,8 @@ Updated 2026-10-01. UX Phases 0–3.2 and Groups A–E are **committed**, as is 
 media module, the betting layer, the global betting slip, and the whole player-prop
 stack — the fitted model, its settlement gate, and the media/betting UI that
 presents and places props. **Everything is now pushed**; `origin/local` tracks the
-local `local` branch and the two are in sync at `454cde2`. The working tree is
-clean apart from this file, which is untracked by choice.
+local `local` branch and the two are in sync at `c83d466`. The working tree is
+clean, and **this file is now tracked** (`2db19ad`) after four requests for it.
 
 This revision is a rewrite, not a patch. The previous one was stale in three ways
 that would each have misled a session: it described the betting layer as though
@@ -21,16 +21,27 @@ box score, and the three outlets tilt props by a **modelling choice** that is
 explicitly not a measured character property. Both are easy to misread from the
 code.
 
-**Three things landed after the last revision, and two of them change what this
-file should say.** The storage layer was rebuilt after measuring that localStorage
-quota pressure was destroying the play log; the offline metric layer was added and
-verified; and that work turned up a live bug in the Slugging leaderboard, where
-the board's total-bases formula had drifted from the accumulator's. The park-factor
-question is now **settled by measurement** — there are none, and wRC+ must be
-park-neutral — which removes a large planned chunk of work. See
+**Six things have landed since, and four of them change what this file should say.**
+The storage layer was rebuilt after measuring that localStorage quota pressure was
+destroying the play log; the offline metric layer was added and verified, and that
+work turned up a live bug in the Slugging leaderboard where the board's total-bases
+formula had drifted from the accumulator's; the park-factor question is now
+**settled by measurement** — there are none, and wRC+ must be park-neutral — which
+removed a large planned chunk of work; **Stage B added wOBA fitted to this league and
+a park-neutral batter-only wRC+**; the four deferred metric boards shipped; and wRC+
+was then **measured and deliberately kept off the leaderboard**. See
 [Storage](#storage-the-play-log-was-being-destroyed),
-[Metrics](#the-offline-metric-layer) and
+[Metrics](#the-offline-metric-layer),
+[Run value](#run-value-woba-fitted-here-and-a-park-neutral-wrc-02b90f0),
+[Boards](#the-four-deferred-metric-boards-8fb2610) and
 [Open questions](#open-questions-for-the-user).
+
+Two of those findings reshape work that has not started, and both were corrections
+to claims this file previously made. **A season is not a pure function of its
+universe seed**, because `generateSchedule` shuffles dates with an unseeded
+`Math.random` — so league-level constants must be measured, never stored. And
+**wOBA precision tracks home run count, not plate appearances** (+0.807 vs −0.048),
+which matters for any sample-size floor anyone writes next.
 
 ## Source design document
 
@@ -49,6 +60,9 @@ non-UX commit.
 
 | Commit | Scope |
 |---|---|
+| `c83d466` | Measure whether wRC+ is presentable on a leaderboard before building one |
+| `8fb2610` | The four deferred metric boards, and one that was silently broken on the way |
+| `2db19ad` | Track PHASE_HANDOVER.md in git |
 | `02b90f0` | Stage B: wOBA fitted to this league, and a park-neutral wRC+ |
 | `454cde2` | Stop the slugging board from disagreeing with the OPS beside it |
 | `e7272d2` | Derive season metrics from counts, and verify them against the engine |
@@ -588,6 +602,9 @@ total bases, BB%/K%/K-BB%, K/9, BB/9, (K-BB)/9, KBB, WHIP, ERA and per-game rate
 pure functions of **integer counts**. No engine change, no new persisted field, and
 nothing a forecast reads, so forecaster and prop output is byte-identical.
 
+BABIP, ISO, K − BB% and XBH are now on the batting boards (`8fb2610`) — see
+[The four deferred metric boards](#the-four-deferred-metric-boards-8fb2610).
+
 **Every rate must be derived from counts, never from the stored rate.** The season
 rows store pre-rounded figures — `avg` and `ops` to 3dp (`playerStats.ts:125-126`),
 `era` and `whip` to 2dp (`:150-151`). Recomposing ISO as `slg - avg` from stored
@@ -980,6 +997,94 @@ cross-check at all because the probe does not record which player was batting.
 Stage A is unaffected — `verifyMetrics` still 10/10, `tsc` holds at its 10
 pre-existing diagnostics.
 
+## The four deferred metric boards (`8fb2610`)
+
+BABIP, Isolated Power, K − BB% and Extra-Base Hits, added to the batting boards —
+the work deferred to last by explicit choice. All four already existed as verified
+functions in `metrics.ts`; **no rate is re-derived in the screen.**
+
+### The real fix was making the categories declarative
+
+Each board was three parallel if-chains on `category.key` — sort value, detail cell,
+display string — each ending in a **fallthrough to On-Base**. A category added to the
+list without touching all three, or a mistyped key, rendered a perfectly
+plausible-looking On-Base board instead of failing.
+
+That is the same shape as the SLG bug already recorded above: a board that looks
+right and is measuring the wrong thing. Each category now carries its own
+accessors, so the compiler enforces they exist and **there is no default to fall
+into.**
+
+### K − BB% sorts ascending, and that was wrong on the first pass
+
+Every other batting category sorts descending. K − BB% is the one where **low is
+good**, so descending led the board with the league's *worst* plate discipline — the
+first browser render put a player with **42 strikeouts against 7 walks at rank 1**.
+
+Reading the code did not catch this. Running it did. The category comment records it
+so the next person does not "fix" the direction back.
+
+### Two smaller correctness fixes found the same way
+
+- The expanded panel's header read **`N QUALIFIED` unconditionally**, which was
+  already loose for counting boards and became plainly wrong once a third
+  unqualified board joined them — it displayed **"710 QUALIFIED" over Home Runs**.
+  It now reads `PLAYERS` where the at-bat floor does not apply.
+- ISO was formatted with a leading plus. It cannot be negative here (`metrics.ts`:
+  `totalBases >= hits` always), so the sign was decoration *and* it broke visual
+  consistency with the `.397` and `.344` beside it. Now `fmtAvg`, same as BABIP.
+
+### One floor for four new boards, deliberately
+
+82 at-bats was derived from the measured league BABIP of 0.282 at target SE 0.05, so
+it is **exactly right for BABIP**. ISO and K − BB% ride on it because a per-stat floor
+is a per-stat argument to defend, and 82 is conservative for both: ISO is a
+difference of two positively correlated proportions, so its standard error is
+smaller than the parts suggest, and K − BB% rests on large, well-behaved counts. The
+simplification is stated at the constant rather than left to be found.
+
+### Verified in the browser, not by reading it
+
+Over 60 simulated days: all ten boards render; every qualified board reports the same
+290 hitters and the three counting boards 710; chrome-bar heights are **exactly 38px
+on every panel**; panels lay out in three rows; no horizontal overflow; every table
+reports **3/3 header-to-body drift 0**. The only console error is the pre-existing
+`animationPlayState` one.
+
+Arithmetic spot-checked against rendered output: `66 H / 172 BIP` reads `.384`;
+`14 2B + 3 3B + 16 HR` reads `33 XBH`; `35 (K−BB) / ~166 PA` reads `+21.1`.
+
+## Is wRC+ presentable on a leaderboard? Measured: no, not yet (`c83d466`)
+
+The question below asks where to go next, and its recommendation said the
+base-state weight upgrade matters *"if wOBA is going on a main board"* — which made
+presentability a prerequisite rather than a preference. `verifyWrc` now prints the
+top ten by shrunk wRC+ (the rows a board would render) plus the two numbers that
+decide it.
+
+Measured over 90 days, 292 qualified hitters:
+
+| quantity | measured |
+| --- | --- |
+| top ten spans | **4.0 points** |
+| distinct whole numbers from 10 rows | **5** |
+| adjacent pairs that tie once rounded | **5** |
+
+Ranks 2 through 9 sit inside **1.7 points**. At the integer precision a leaderboard
+renders, that board reads roughly `117 116 116 115 115 115 115 114 114 113` — five
+players visibly tied, and the ordering below rank 1 carrying nothing the reader can
+act on.
+
+**This is the compression from the Stage B section appearing in its own units**, and
+it is not a rounding problem. The shrunk values *are* the measurement; that spread is
+what a full season of this engine can resolve about player differences.
+
+So: **do not put wRC+ on a top-ten leaderboard yet.** It belongs where the compression
+is explainable rather than implied — a player card, or a board showing the raw value
+and shrinkage weight beside it. The base-state weight upgrade would help, but it
+attacks the *occupancy* approximation, not this, and the two are independent
+problems. Doing it will not un-compress the board.
+
 ## Deviations from the proposal — all deliberate, all recorded in commit messages
 
 1. **Leaders: no `SB` category.** There is no stolen-bases field anywhere in the
@@ -1010,10 +1115,12 @@ pre-existing diagnostics.
 
 ## Current state
 
-`HEAD` is `02b90f0`, **pushed and in sync with `origin/local`**. The working tree
-is clean apart from this file, which is untracked by choice — it is a working
-document, not a deliverable. (Asked three times whether it should be tracked; the
-answer has not come, so it stays untracked and nothing depends on that either way.)
+`HEAD` is `c83d466`, **pushed and in sync with `origin/local`**, and the working
+tree is clean. This file is now **tracked** (`2db19ad`) — it had been untracked by
+choice, on the reasoning that it is a working document rather than a deliverable.
+That reasoning did not hold up: four of the Stage B design decisions were settled by
+reading numbers out of it, and two claims in it had gone stale and wrong in ways that
+would have misled the next session. Open Question 9 is closed.
 
 Three subsystems are now complete end to end, each calibrated against settled games
 rather than asserted: the media module (three forecasters, Booth 0.2467 / Glorest
@@ -1037,17 +1144,22 @@ stored; and **wOBA precision tracks home run count, not plate appearances** (+0.
 
 **The work now staged, in the order it was decided:**
 
-1. **The new metric leaderboards** — BABIP, ISO, BB%/K%, XBH — deferred to last
-   by explicit choice. They sit on the derived 82-AB floor, which is already
-   proven: 284 batters clear it at 45 days against 268 under the old unexplained
-   120. Note the floor is a *display* floor; `wrcPlus` shrinks on precision rather
-   than filtering, so it does not use it as a gate.
-2. The **development feedback loop** (~1.5h, and it is the one item that could
+1. **The new metric leaderboards are done** (`8fb2610`) — BABIP, ISO, K − BB% and
+   XBH, on the derived 82-AB floor, verified in the browser. Note the floor is a
+   *display* floor; `wrcPlus` shrinks on precision rather than filtering, so it does
+   not use it as a gate.
+2. **wRC+ is deliberately NOT on a leaderboard yet**, on measured evidence: the top
+   ten spans 4.0 points and produces 5 distinct whole numbers from 10 rows. See the
+   presentability section above. The natural home is a player card, where the
+   compression can be explained rather than implied.
+3. The **development feedback loop** (~1.5h, and it is the one item that could
    destabilise a season) and the **batted-ball model**, which is the only work that
    needs the standing presentation-only scope relaxed.
-3. Optionally, upgrading wOBA to per-outcome-and-base-state weights. The probe
+4. Optionally, upgrading wOBA to **per-outcome-and-base-state weights**. The probe
    already holds the joint table so it is nearly free, and the single-weight
-   approximation is coarsest exactly where interesting hitters live.
+   approximation is coarsest exactly where interesting hitters live. Note this
+   attacks the occupancy problem, **not** the wRC+ compression — the two are
+   independent, and doing it will not make a top-ten wRC+ board worth building.
 
 **A shared `Modal` primitive exists** at `src/components/ui/Modal.tsx`. The app
 had four hand-rolled dialogs with divergent scrim, z-index and Escape behaviour;
@@ -1326,6 +1438,13 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
   sits about as far from average as the error in measuring it. PA-weighted sd is
   ~21 raw and ~7 shrunk. A full season can separate a clearly above-average hitter
   from the pack and no more. Display differences inside a few points as ties.
+- **A top-ten wRC+ leaderboard would be actively misleading**, measured rather than
+  assumed: the top ten spans 4.0 points and produces 5 distinct whole numbers from 10
+  rows, with 5 adjacent pairs tying once rounded. Ranks 2-9 sit inside 1.7 points.
+  Deliberately not built. See the presentability section.
+- **The batting boards all share one 82-AB floor.** It was derived from BABIP, so it
+  is exactly right there and conservative for ISO and K − BB%. Stated at the constant
+  rather than left to be discovered; a per-stat floor is a per-stat argument.
 - **There is no pitching wRC+, and no park adjustment.** Both deliberate, both
   documented in the Stage B section: there is nothing at the pitch level to fit
   run-prevention weights from, and no park factor exists to divide out (measured
@@ -1393,21 +1512,22 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
    and live/in-play lines are not. The first-five market is the cheapest of what
    remains because the settlement path already exists and it is the only one with
    no pricing problem to solve first.
-9. **Should `PHASE_HANDOVER.md` be tracked in git?** Asked four times now, never
-   answered, so it stays untracked. It is a working document, not a deliverable,
-   and nothing in the repo references it — but it carries the measured constants
-   that later work must not silently contradict, so tracking it has an argument.
-   Cheap to change either way; say the word and it goes in.
-10. **How far to take the metric layer.** Stage B is done (`02b90f0`), so this is
-   now a question about what comes *after* it. The honest options are: stop here;
-   take the **batted-ball model**, the one item that needs the presentation-only
-   scope relaxed, because a batted-ball profile is destroyed by the time the play
-   log is written; or upgrade wOBA to **per-outcome-and-base-state weights**, which
-   needs no scope relaxation and is nearly free since the probe already holds the
-   joint table. That last one would remove the largest known approximation in the
-   metric layer — occupancy spreads of 1.0 to 3.0 runs per outcome — at the cost of
-   making wOBA depend on runner context, which the current single-weight form is
-   deliberately not. **Recommendation: the new leaderboards first**, since they are
-   already deferred to last and the 82-AB floor is proven; then the base-state
-   weights if wOBA is going on a main board; and the batted-ball model only if it is
-   wanted.
+9. ~~**Should `PHASE_HANDOVER.md` be tracked in git?**~~ **Closed: yes, tracked in
+   `2db19ad`.** Asked four times. It stays a working document in tone, but tracked,
+   because two of its claims had gone stale and wrong and an untracked file is
+   invisible to review.
+10. **Where should wRC+ live?** Stage B and the four boards are done (`02b90f0`,
+   `8fb2610`). The measurement says a top-ten wRC+ leaderboard is **not worth
+   building**: the top ten spans 4.0 points and yields 5 distinct whole numbers from
+   10 rows, so five players would visibly tie. The remaining choice is where run
+   value belongs — a player card showing the shrunk value with the raw value and
+   shrinkage weight beside it, an awards-panel line, or nowhere yet. **My
+   recommendation is the player card**, because that is the one place a reader is
+   looking at a single player and the compression is explainable in a sentence
+   rather than misleading across a ranked list.
+
+   Beyond that: the **development feedback loop** (~1.5h, the one item that could
+   destabilise a season) and the **batted-ball model** (the one item needing the
+   scope relaxation). Upgrading wOBA to per-outcome-and-base-state weights needs no
+   relaxation and is nearly free, but it addresses the occupancy approximation and
+   **will not** fix the wRC+ compression — the two are independent problems.
