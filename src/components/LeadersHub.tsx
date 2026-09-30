@@ -79,6 +79,153 @@ const PITCHING_QUALIFYING_OUTS = 20;
 
 const slugging = (stat: PlayerSeasonBatting): number => battingMetrics(toBattingCounts(stat)).slg ?? 0;
 
+/**
+ * The batting boards, in display order.
+ *
+ * These four were deferred to last by explicit choice and are the reason this list
+ * is declarative rather than branching. All four are already computed and verified
+ * in `src/lib/analytics/metrics.ts`; nothing here re-derives a rate.
+ *
+ * THE FLOOR IS ONE NUMBER FOR ALL QUALIFIED BOARDS, and that is a deliberate
+ * simplification worth knowing about. 82 at-bats was derived from the measured
+ * league BABIP of 0.282 and a target standard error of 0.05, so it is exactly the
+ * right floor for BABIP. The other three ride on it because a per-stat floor would
+ * be a per-stat argument to defend, and 82 is conservative for all of them rather
+ * than permissive: ISO is a difference of two positively correlated proportions,
+ * so its standard error is smaller than the sum of the two parts would suggest, and
+ * K-BB% rests on walk and strikeout counts that are large and well behaved.
+ */
+const BATTING_CATEGORIES: readonly BattingCategory[] = [
+  {
+    key: 'avg',
+    title: 'Batting Average',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).avg ?? 0,
+    // The stored figure is what gets displayed, so a displayed average cannot
+    // disagree with the player card; only the ordering is computed at full precision.
+    format: (stat) => fmtAvg(stat.avg),
+    detail: (stat) => `${stat.hits} H / ${stat.atBats} AB`,
+  },
+  {
+    key: 'hr',
+    title: 'Home Runs',
+    direction: 'desc',
+    qualified: false,
+    value: (stat) => stat.homeRuns,
+    format: (stat) => String(stat.homeRuns),
+    detail: (stat) => `${stat.rbi} RBI`,
+  },
+  {
+    key: 'rbi',
+    title: 'RBI',
+    direction: 'desc',
+    qualified: false,
+    value: (stat) => stat.rbi,
+    format: (stat) => String(stat.rbi),
+    detail: (stat) => `${stat.homeRuns} HR`,
+  },
+  {
+    key: 'ops',
+    title: 'OPS',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).ops ?? 0,
+    format: (stat) => stat.ops.toFixed(3),
+    detail: (stat) => `${slugging(stat).toFixed(3)} SLG`,
+  },
+  {
+    key: 'slg',
+    title: 'Slugging',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).slg ?? 0,
+    format: (stat) => slugging(stat).toFixed(3),
+    detail: (stat) => `${stat.ops.toFixed(3)} OPS`,
+  },
+  {
+    key: 'obp',
+    title: 'On-Base',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).obp ?? 0,
+    format: (stat) => battingMetrics(toBattingCounts(stat)).obp?.toFixed(3) ?? '—',
+    detail: (stat) => `${slugging(stat).toFixed(3)} SLG`,
+  },
+  {
+    // BABIP is hits among balls in play over balls in play, NOT hits over at-bats.
+    // The two differ by strikeouts and home runs, and metrics.ts records the
+    // 0.768-versus-0.277 bug that came from confusing them. Reached through
+    // `metrics.babip` so that definition cannot be re-litigated in a screen.
+    key: 'babip',
+    title: 'BABIP',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).babip?.value ?? 0,
+    format: (stat) => {
+      const babip = battingMetrics(toBattingCounts(stat)).babip;
+      return babip ? fmtAvg(babip.value) : '—';
+    },
+    detail: (stat) => {
+      const m = battingMetrics(toBattingCounts(stat));
+      // Hits among balls in play, which is total hits less home runs. `hits` is a
+      // count on the stat row rather than on BattingMetrics, which carries only
+      // the derived totals.
+      return `${stat.hits - stat.homeRuns} H / ${m.ballsInPlay} BIP`;
+    },
+  },
+  {
+    key: 'iso',
+    title: 'Isolated Power',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).iso ?? 0,
+    // Formatted like every other rate board, without a leading plus. ISO cannot be
+    // negative in this engine (metrics.ts: totalBases >= hits always), so a sign
+    // would be decoration, and it would break visual consistency with the .384
+    // and .368 beside it.
+    format: (stat) => {
+      const iso = battingMetrics(toBattingCounts(stat)).iso;
+      return iso === null ? '—' : fmtAvg(iso);
+    },
+    detail: (stat) => `${stat.doubles + stat.triples + stat.homeRuns} XBH`,
+  },
+  {
+    // K minus BB% is one board rather than two because it is the figure that
+    // actually separates hitters, and a leaderboard has one value column. The
+    // detail cell carries both counts so neither rate is lost.
+    //
+    // 'asc' is load-bearing and was wrong on the first pass. Every other batting
+    // category sorts descending, and K-BB% is the one where LOW is good, so a
+    // descending sort leads the board with the league's worst plate discipline.
+    // Caught in the browser, not by reading it: the first render put a player
+    // with 42 K against 7 BB at rank 1.
+    key: 'kbb',
+    title: 'K − BB%',
+    direction: 'asc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).kMinusBbPct ?? 0,
+    format: (stat) => {
+      const diff = battingMetrics(toBattingCounts(stat)).kMinusBbPct;
+      if (diff === null) return '—';
+      // Percentage points with an explicit sign, because unlike ISO this one is
+      // routinely positive in this league and the sign is the point: the leaders
+      // sit near zero or below.
+      return `${diff >= 0 ? '+' : '-'}${Math.abs(diff * 100).toFixed(1)}`;
+    },
+    detail: (stat) => `${stat.strikeouts} K / ${stat.walks} BB`,
+  },
+  {
+    key: 'xbh',
+    title: 'Extra-Base Hits',
+    direction: 'desc',
+    qualified: false,
+    value: (stat) => stat.doubles + stat.triples + stat.homeRuns,
+    format: (stat) => String(stat.doubles + stat.triples + stat.homeRuns),
+    detail: (stat) => `${stat.doubles} 2B / ${stat.triples} 3B / ${stat.homeRuns} HR`,
+  },
+];
+
 interface CategoryBoard {
   key: string;
   title: string;
@@ -88,6 +235,35 @@ interface CategoryBoard {
   columns: StatTableColumn[];
   rows: StatTableRow[];
   count: number;
+}
+
+/**
+ * A batting category, declared once with everything it needs to render.
+ *
+ * This used to be three parallel if-chains on `category.key` -- one for the sort
+ * value, one for the detail cell, one for the display string -- each ending in a
+ * fallthrough to On-Base. A fallthrough is the problem: a mistyped key, or a
+ * category added to the list without touching all three chains, rendered a
+ * perfectly plausible-looking On-Base board instead of failing. A category here
+ * carries its own accessors, so the compiler enforces that it has them and there
+ * is no default to fall into.
+ *
+ * Every rate is read from `battingMetrics`, which recomputes from integer counts.
+ * The stored row is pre-rounded (3dp for avg/ops, per playerStats.ts:125-126), so
+ * sorting on it would tie players who are not tied.
+ */
+interface BattingCategory {
+  key: string;
+  title: string;
+  direction: 'desc' | 'asc';
+  /** Whether the at-bat floor applies. Counting stats say no. */
+  qualified: boolean;
+  /** Sort value. Higher is better unless `direction` is 'asc'. */
+  value: (stat: PlayerSeasonBatting) => number;
+  /** Secondary figure in the third column. */
+  detail: (stat: PlayerSeasonBatting) => string;
+  /** The primary figure, as displayed. */
+  format: (stat: PlayerSeasonBatting) => string;
 }
 
 interface StatEntry {
@@ -264,6 +440,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   // simulation, so an SB board would have to be invented from nothing. OBP
   // replaces it: fully derivable from fields that are stored, and more
   // informative alongside OPS.
+  //
   // Qualification floors.
   //
   // BATTING_QUALIFYING_AT_BATS is the at-bat count at which the standard error
@@ -273,62 +450,23 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   // previously an unexplained 120. PITCHING_QUALIFYING_OUTS is the equivalent
   // thought in outs: 20 outs is five innings, a conventional minimum, and is
   // labelled as a convention rather than a fitted figure.
-  const battingCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => [
-    { key: 'avg', title: 'Batting Average', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
-    { key: 'hr', title: 'Home Runs', direction: 'desc', qualified: false, count: battingEntries.length },
-    { key: 'rbi', title: 'RBI', direction: 'desc', qualified: false, count: battingEntries.length },
-    { key: 'ops', title: 'OPS', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
-    { key: 'slg', title: 'Slugging', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
-    { key: 'obp', title: 'On-Base', direction: 'desc', qualified: true, count: battingEntries.filter((e) => (e.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS).length },
-  ], [battingEntries]);
-
-  const battingBoards = useMemo<CategoryBoard[]>(() => battingCategories.map((category) => {
+  const battingBoards = useMemo<CategoryBoard[]>(() => BATTING_CATEGORIES.map((category) => {
     const pool = category.qualified
       ? battingEntries.filter((entry) => (entry.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS)
       : battingEntries;
 
-    // AVG and OPS are recomputed rather than read off the row, because the row
-    // stores both rounded to 3dp (playerStats.ts:125-126). Sorting on the stored
-    // value would tie players who differ by up to 0.001. The stored figure is
-    // still what gets displayed, so a displayed value cannot disagree with what
-    // the player card shows; only the ordering is computed at full precision.
-    const metricsOf = (stat: PlayerSeasonBatting) => battingMetrics(toBattingCounts(stat));
-    const valueOf = (entry: StatEntry): number => {
-      const stat = entry.stat as PlayerSeasonBatting;
-      if (category.key === 'hr') return stat.homeRuns;
-      if (category.key === 'rbi') return stat.rbi;
-      const m = metricsOf(stat);
-      if (category.key === 'avg') return m.avg ?? 0;
-      if (category.key === 'ops') return m.ops ?? 0;
-      if (category.key === 'slg') return m.slg ?? 0;
-      return m.obp ?? 0;
-    };
-    const detailOf = (entry: StatEntry): string => {
-      const stat = entry.stat as PlayerSeasonBatting;
-      if (category.key === 'avg') return `${stat.hits} H / ${stat.atBats} AB`;
-      if (category.key === 'hr') return `${stat.rbi} RBI`;
-      if (category.key === 'rbi') return `${stat.homeRuns} HR`;
-      if (category.key === 'ops') return `${slugging(stat).toFixed(3)} SLG`;
-      if (category.key === 'slg') return `${stat.ops.toFixed(3)} OPS`;
-      if (category.key === 'obp') return `${slugging(stat).toFixed(3)} SLG`;
-      return `${stat.walks} BB`;
-    };
-    const formatValue = (entry: StatEntry): string => {
-      const stat = entry.stat as PlayerSeasonBatting;
-      if (category.key === 'avg') return fmtAvg(stat.avg);
-      if (category.key === 'hr') return String(stat.homeRuns);
-      if (category.key === 'rbi') return String(stat.rbi);
-      if (category.key === 'ops') return stat.ops.toFixed(3);
-      if (category.key === 'slg') return slugging(stat).toFixed(3);
-      // A qualified board guarantees at-bats, so OBP is defined. The `?? 0`
-      // is unreachable here and is written as a fallback rather than a claim
-      // that a zero on-base percentage is a real measurement.
-      return (battingMetrics(toBattingCounts(stat)).obp ?? 0).toFixed(3);
-    };
-
+    // Ties break on average, which is the broadest single skill measure available
+    // on every row. Using it as a tiebreaker rather than a sort key means two
+    // players who are genuinely level on a board still appear in a stable order
+    // rather than in whatever order the array happened to arrive in.
     const sorted = [...pool].sort((left, right) => {
-      const delta = valueOf(left) - valueOf(right);
-      return (category.direction === 'desc' ? -delta : delta) || (left.stat as PlayerSeasonBatting).avg - (right.stat as PlayerSeasonBatting).avg;
+      const delta =
+        category.value(left.stat as PlayerSeasonBatting) -
+        category.value(right.stat as PlayerSeasonBatting);
+      if (delta !== 0) {
+        return category.direction === 'desc' ? -delta : delta;
+      }
+      return (left.stat as PlayerSeasonBatting).avg - (right.stat as PlayerSeasonBatting).avg;
     });
 
     const columns: StatTableColumn[] = [
@@ -338,19 +476,23 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     ];
 
     return {
-      ...category,
+      key: category.key,
+      title: category.title,
+      direction: category.direction,
+      qualified: category.qualified,
+      count: pool.length,
       columns,
       rows: sorted.slice(0, TOP_ROWS).map((entry, index) => ({
         id: entry.playerId,
         className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
         cells: {
           name: nameCell(entry, index),
-          value: <StatValue size="sm" variant="accent">{formatValue(entry)}</StatValue>,
-          detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{detailOf(entry)}</span>,
+          value: <StatValue size="sm" variant="accent">{category.format(entry.stat as PlayerSeasonBatting)}</StatValue>,
+          detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{category.detail(entry.stat as PlayerSeasonBatting)}</span>,
         },
       })),
     };
-  }), [battingCategories, battingEntries]);
+  }), [battingEntries]);
 
   // -- pitching categories -----------------------------------------------
   const pitchingCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => {
@@ -547,12 +689,14 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       ) : (
         <>
           {/* Expand one, browse many: the selected category at full width, the
-              rest as a dense grid where six are visible at once. */}
+              rest as a dense grid that wraps to three or four across. */}
           {expanded && (
             <Panel className="overflow-hidden">
               <div className="chrome-bar flex items-center justify-between gap-3 px-4">
                 <h2 className="t-h3">{expanded.title}</h2>
-                <span className="t-caption text-[var(--color-ink-faint)]">{expanded.count} QUALIFIED</span>
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                    {expanded.count} {expanded.qualified ? 'QUALIFIED' : 'PLAYERS'}
+                  </span>
               </div>
               <StatTable
                 columns={expanded.columns}
