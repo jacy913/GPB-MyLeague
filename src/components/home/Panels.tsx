@@ -89,7 +89,7 @@ export const ActionCenter: React.FC<{
   freeAgentCount: number;
   selectedTeam: Team | null;
 }> = ({ onProposeTrade, onOpenFreeAgency, onOpenTeams, onOpenStandings, freeAgentCount, selectedTeam }) => (
-  <HomePanel title="Action Center" eyebrow="Front Office" aside={<Users className="h-4 w-4 text-[var(--color-ink-faint)]" aria-hidden="true" />}>
+  <HomePanel title="Action Center" aside={<Users className="h-4 w-4 text-[var(--color-ink-faint)]" aria-hidden="true" />}>
     <div className="grid gap-2 md:grid-cols-2">
       <ActionTile
         title="Propose Trade"
@@ -157,7 +157,6 @@ export const DivisionSnapshotPanel: React.FC<{
   return (
     <HomePanel
       title="Division Snapshot"
-      eyebrow="Club Focus"
       aside={
         <div className="flex items-center gap-1">
           {snapshots.map((snapshot, index) => (

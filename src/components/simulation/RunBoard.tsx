@@ -76,7 +76,7 @@ export const RunBoard: React.FC<{
     'w-full appearance-none border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 t-stat-sm text-[var(--color-ink)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]';
 
   return (
-    <SimPanel title="Run Target" eyebrow="Command Board" aside={<ShieldAlert className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />}>
+    <SimPanel title="Run Target" aside={<ShieldAlert className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />}>
       <div className="grid gap-2 sm:grid-cols-2">
         {targetButton('Sim Day', 'Resolve the slate and advance one step.', () => onStart({ scope: 'day' }), controlsLocked)}
         {targetButton('Sim Week', 'Walk forward until the week closes.', () => onStart({ scope: 'week' }), controlsLocked)}
@@ -182,7 +182,6 @@ export const LiveRun: React.FC<{
   return (
     <SimPanel
       title={run ? run.label : 'Awaiting Command'}
-      eyebrow="Live Run"
       aside={<Clock3 className={`h-4 w-4 ${toneText[tone]}`} aria-hidden="true" />}
     >
       <Panel variant="sunken" className="p-3">
@@ -264,7 +263,6 @@ export const SeasonFlow: React.FC<{
 }> = ({ steps, nextSeasonReady, onResetSeason, canReset }) => (
   <SimPanel
     title="League Flow"
-    eyebrow="Season Timeline"
     aside={
       <span className={`t-caption ${nextSeasonReady ? 'text-[var(--color-pos)]' : 'text-[var(--color-ink-faint)]'}`}>
         {nextSeasonReady ? 'Ready for next season reset' : 'Complete the active phase to progress'}
@@ -342,7 +340,7 @@ export const CommissionGuidance: React.FC<{ resetLabel?: string; saveLabel?: str
 );
 
 export const CommissionerNotes = () => (
-  <SimPanel title="How The Sim Runs" eyebrow="Commissioner Guidance">
+  <SimPanel title="How The Sim Runs">
     <div className="flex flex-col gap-2">
       <p className="t-caption text-[var(--color-ink-dim)]">
         The sim advances in daily steps. That keeps the calendar visible, avoids opaque batch

@@ -164,19 +164,24 @@ export const toneText: Record<'info' | 'warn' | 'pos' | 'neg' | 'muted' | 'gold'
 
 /* ---- shared compositions ---- */
 
+/**
+ * Panel with a single-line header.
+ *
+ * The eyebrow prop is gone. Every one of them restated the panel title in a
+ * smaller, fainter line above it -- "Command Board" above "Run Target",
+ * "Commissioner Guidance" above "How The Sim Runs" -- so each container spent
+ * two lines of chrome saying one thing. The eyebrow was required, which meant
+ * every call site had to invent one.
+ */
 export const SimPanel: React.FC<{
   title: string;
-  eyebrow: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
   bodyClassName?: string;
-}> = ({ title, eyebrow, aside, children, bodyClassName = 'p-4' }) => (
+}> = ({ title, aside, children, bodyClassName = 'p-4' }) => (
   <Panel className="overflow-hidden">
     <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-      <div className="min-w-0">
-        <p className="t-caption text-[var(--color-ink-faint)]">{eyebrow}</p>
-        <h2 className="t-h3 truncate">{title}</h2>
-      </div>
+      <h2 className="t-h3 min-w-0 truncate">{title}</h2>
       {aside}
     </div>
     <div className={bodyClassName}>{children}</div>

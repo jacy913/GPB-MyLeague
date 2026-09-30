@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Newspaper } from 'lucide-react';
 import type { Game, Team } from '../../types';
 import { isPlayoffGame } from '../../logic/playoffs';
+import gpbLogo from '../../assets/gpb.png';
 import { MatchupStrip, Panel, StatValue, TeamLogo } from '../ui';
 import { HomePanel, formatHeadlineDate, formatMiniDate } from './shared';
+
+/** How long a headline holds the screen before the deck advances. */
+const SLIDE_INTERVAL_MS = 7000;
 
 type HeadlineCard = {
   headline: string;
@@ -18,29 +22,56 @@ type HeadlineDeck = {
 };
 
 /**
- * The lead story.
+ * The lead story, as a carousel.
  *
- * Rebuilt after the first full-season playthrough, where this read as a task
- * list: a display headline, a paragraph, and then a three-column grid of small
- * bordered cards with a date stamp on each. The secondary stories were styled
- * as peers of the lead -- same border, same padding, same weight -- so nothing
- * said which one mattered, and the eye had three candidates to choose from
- * before it found the story.
+ * The deck already carries an ordered set of stories and the panel showed only
+ * the first, with the rest demoted to a list underneath -- which is a page, not a
+ * headline. It rotates through them now, one story at a time at full weight.
  *
- * The lead is now unambiguously the lead: display type, a rule under it, and
- * the summary set larger. The runners-up are demoted to a single ruled list with
- * no boxes at all, so they read as index entries under the story rather than as
- * competing cards. Boxes are for things you choose between; a ranked list is for
- * things you read in order.
+ * Each slide leads with a large crest of the club the story is about, resolved
+ * from the game the story came from: the winner of that game, since every
+ * generated headline is written from the winning side. A story with no game
+ * behind it is a league note and has no club, so it shows the GPB mark instead
+ * of leaving a hole.
+ *
+ * The featured club is derived here rather than added to HeadlineCard on
+ * purpose. The engine is presentation-agnostic and already hands over the game
+ * each story came from; threading a teamId through it would have put a
+ * presentation concern into the story builder.
  */
 export const HeadlinePanel: React.FC<{
   deck: HeadlineDeck;
   awayTeam: Team | null;
   homeTeam: Team | null;
   timelineDate: string;
+  teamLookup: Map<string, Team>;
   onOpenGame: (gameId: string) => void;
-}> = ({ deck, awayTeam, homeTeam, timelineDate, onOpenGame }) => {
+}> = ({ deck, awayTeam, homeTeam, timelineDate, teamLookup, onOpenGame }) => {
   const { primary, secondary, sourceDate } = deck;
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  const slides = useMemo(() => [primary, ...secondary], [primary, secondary]);
+  const slideCount = slides.length;
+  const active = slides[Math.min(index, slideCount - 1)] ?? primary;
+
+  useEffect(() => {
+    setIndex(0);
+  }, [primary.headline]);
+
+  useEffect(() => {
+    if (paused || slideCount <= 1) return undefined;
+    const timer = window.setTimeout(() => {
+      setIndex((current) => (current + 1) % slideCount);
+    }, SLIDE_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [index, paused, slideCount]);
+
+  const featuredTeam = useMemo(() => {
+    if (!active.game) return null;
+    const { awayTeam: awayId, homeTeam: homeId, score } = active.game;
+    return teamLookup.get(score.away > score.home ? awayId : homeId) ?? null;
+  }, [active, teamLookup]);
 
   return (
     <Panel variant="hero" className="overflow-hidden">
@@ -49,65 +80,72 @@ export const HeadlinePanel: React.FC<{
           <Newspaper className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
           <h2 className="t-label">Headline Of The Day</h2>
         </div>
-        <span className="t-caption text-[var(--color-ink-faint)]">
-          {sourceDate ? formatHeadlineDate(sourceDate) : formatHeadlineDate(timelineDate)}
-        </span>
+        <div className="flex items-center gap-3">
+          {slideCount > 1 && (
+            <div className="flex items-center gap-1.5" role="tablist" aria-label="Headlines">
+              {slides.map((slide, slideIndex) => (
+                <button
+                  key={`${slide.headline}-${slideIndex}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={slideIndex === index}
+                  aria-label={`Headline ${slideIndex + 1} of ${slideCount}`}
+                  onClick={() => setIndex(slideIndex)}
+                  className={`h-2 w-6 transition-colors ${
+                    slideIndex === index
+                      ? 'bg-[var(--color-gold)]'
+                      : 'bg-[var(--color-chrome-lo)] hover:bg-[var(--color-chrome-hi)]'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+          <span className="t-caption text-[var(--color-ink-faint)]">
+            {sourceDate ? formatHeadlineDate(sourceDate) : formatHeadlineDate(timelineDate)}
+          </span>
+        </div>
       </div>
 
-      <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.4fr)_300px]">
-        <div className="min-w-0">
-          <h1 className="t-display text-[var(--color-gold-hi)]">{primary.headline}</h1>
-          <div className="mt-4 h-[3px] w-24 bg-[var(--color-gold)]" aria-hidden="true" />
-          <p className="t-body mt-4 max-w-2xl text-[var(--color-ink-dim)]">{primary.summary}</p>
-
-          {secondary.length > 0 && (
-            <>
-              <p className="t-label mt-6 border-t border-[var(--color-chrome-lo)] pt-4 text-[var(--color-ink-faint)]">
-                Also Today
-              </p>
-              <ol className="mt-1">
-                {secondary.map((card, index) => (
-                  <li key={`${card.headline}-${card.game?.gameId ?? index}`}>
-                    <button
-                      type="button"
-                      onClick={() => card.game && onOpenGame(card.game.gameId)}
-                      disabled={!card.game}
-                      className="flex w-full items-baseline gap-4 border-b border-[var(--color-chrome-lo)] py-2.5 text-left transition-colors hover:bg-[var(--color-panel-2)] disabled:cursor-default disabled:hover:bg-transparent"
-                    >
-                      <span className="t-caption w-[6ch] shrink-0 tabular-nums text-[var(--color-gold)]">
-                        {card.game ? formatMiniDate(card.game.date) : 'NOTE'}
-                      </span>
-                      <span className="t-stat-sm min-w-0 flex-1 truncate">{card.headline}</span>
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </>
+      <div
+        className="grid gap-5 p-5 lg:grid-cols-[260px_minmax(0,1fr)]"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocus={() => setPaused(true)}
+        onBlur={() => setPaused(false)}
+      >
+        {/* The mark is the anchor for the slide. 200px so it reads as the subject
+            of the story rather than as an icon next to a paragraph. */}
+        <div className="flex items-center justify-center border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-4">
+          {featuredTeam ? (
+            <TeamLogo team={featuredTeam} sizeClass="h-44 w-44" />
+          ) : (
+            <img src={gpbLogo} alt="GPB" className="h-40 w-auto object-contain" />
           )}
         </div>
 
-        <div className="flex flex-col gap-3">
-          {primary.game ? (
+        <div className="flex min-w-0 flex-col justify-center">
+          <p className="t-caption text-[var(--color-gold)]">
+            {featuredTeam ? `${featuredTeam.league} · ${featuredTeam.city} ${featuredTeam.name}` : 'League Office'}
+          </p>
+          <h1 className="t-display mt-2 text-[var(--color-gold-hi)]">{active.headline}</h1>
+          <div className="mt-4 h-[3px] w-24 bg-[var(--color-gold)]" aria-hidden="true" />
+          <p className="t-body mt-4 max-w-2xl text-[var(--color-ink-dim)]">{active.summary}</p>
+
+          {active.game && (
             <button
               type="button"
-              onClick={() => primary.game && onOpenGame(primary.game.gameId)}
-              className="flex flex-col gap-3 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] p-4 text-left transition-colors hover:bg-[var(--color-panel-2)]"
+              onClick={() => active.game && onOpenGame(active.game.gameId)}
+              className="mt-5 flex w-fit items-center gap-3 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 text-left transition-colors hover:border-[var(--color-gold)]"
             >
-              <p className="t-caption text-[var(--color-ink-faint)]">
-                {isPlayoffGame(primary.game) ? primary.game.playoff?.seriesLabel ?? 'Playoff Spotlight' : 'Latest Result'}
-              </p>
-              <div className="flex items-center gap-3">
-                {awayTeam && <TeamLogo team={awayTeam} sizeClass="h-12 w-12" />}
-                <StatValue size="lg" variant="accent">
-                  {primary.game.score.away}-{primary.game.score.home}
-                </StatValue>
-                {homeTeam && <TeamLogo team={homeTeam} sizeClass="h-12 w-12" />}
-              </div>
+              <span className="t-caption text-[var(--color-ink-faint)]">
+                {isPlayoffGame(active.game) ? active.game.playoff?.seriesLabel ?? 'Playoff' : 'Latest Result'}
+              </span>
+              {awayTeam && <TeamLogo team={awayTeam} sizeClass="h-8 w-8" />}
+              <StatValue variant="accent">
+                {active.game.score.away}-{active.game.score.home}
+              </StatValue>
+              {homeTeam && <TeamLogo team={homeTeam} sizeClass="h-8 w-8" />}
             </button>
-          ) : (
-            <div className="border-l-[3px] border-l-transparent bg-[var(--color-sunken)] p-4">
-              <p className="t-caption text-[var(--color-ink-faint)]">No game in play</p>
-            </div>
           )}
         </div>
       </div>
@@ -129,7 +167,6 @@ export const FeaturedGamePanel: React.FC<{
   return (
     <HomePanel
       title="Featured Matchup"
-      eyebrow="Today's Featured Game"
       aside={date ? <span className="t-caption text-[var(--color-ink-faint)]">{formatMiniDate(date)}</span> : undefined}
     >
       {hasGame ? (

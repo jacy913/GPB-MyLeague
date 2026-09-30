@@ -238,12 +238,12 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
   }, [selectedBattingRatings, selectedPitchingRatings, selectedPlayer]);
 
   const columns: StatTableColumn[] = [
-    { key: 'club', header: 'CLUB', width: '5ch' },
+    { key: 'club', header: 'CLUB', width: '6ch' },
     { key: 'name', header: 'NAME' },
-    { key: 'pos', header: 'POS', align: 'right', isNumeric: true, width: '5ch' },
-    { key: 'age', header: 'AGE', align: 'right', isNumeric: true, width: '4ch' },
-    { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '4ch' },
-    { key: 'pot', header: 'POT', align: 'right', isNumeric: true, width: '4ch' },
+    { key: 'pos', header: 'POS', align: 'right', isNumeric: true, width: '6ch' },
+    { key: 'age', header: 'AGE', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'ovr', header: 'OVR', align: 'right', isNumeric: true, width: '5ch' },
+    { key: 'pot', header: 'POT', align: 'right', isNumeric: true, width: '5ch' },
   ];
 
   const rows: StatTableRow[] = filteredPlayers.map((player) => {
@@ -252,12 +252,25 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
     return {
       id: player.playerId,
       cells: {
-        club: team ? <TeamLogo team={team} sizeClass="h-8 w-8" /> : <span className="t-caption text-[var(--color-ink-faint)]">--</span>,
-        name: <span className="truncate t-stat-sm">{playerLabel(player)}</span>,
+        // Abbreviation rather than the crest. Unlike the roster list, club
+        // membership actually varies row to row here, so the column cannot just
+        // be dropped -- but a 32px mark on every row made the name column the
+        // narrowest thing on the screen, and the abbreviation carries the same
+        // information in a third of the width.
+        club: team
+          ? <span className="t-stat-sm text-[var(--color-ink-dim)]">{team.id.toUpperCase()}</span>
+          : <span className="t-caption text-[var(--color-ink-faint)]">--</span>,
+        name: <span className="truncate t-stat">{playerLabel(player)}</span>,
         pos: player.primaryPosition,
         age: player.age,
-        ovr: <StatValue size="sm" variant={overallVariant(overall || null)}>{overall || '---'}</StatValue>,
-        pot: potentialOf(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId) || '---',
+        // OVR is the figure this list exists to rank, so it is set larger than
+        // every other value in the row.
+        ovr: <StatValue variant={overallVariant(overall || null)}>{overall || '---'}</StatValue>,
+        pot: (
+          <StatValue size="sm" variant="default">
+            {potentialOf(player.playerId, latestBattingRatingsByPlayerId, latestPitchingRatingsByPlayerId) || '---'}
+          </StatValue>
+        ),
       },
     };
   });
@@ -360,7 +373,6 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
             attributePoints={selectedAttributePoints}
             battingStat={selectedBattingStats}
             pitchingStat={selectedPitchingStats}
-            eyebrow={selectedTeam ? `${selectedTeam.city} ${selectedTeam.name}` : 'Player Card'}
             title={selectedPlayer ? playerLabel(selectedPlayer) : 'Player Pool Pending'}
             subline={selectedPlayer
               ? `${selectedPlayer.primaryPosition}${selectedPlayer.secondaryPosition ? ` / ${selectedPlayer.secondaryPosition}` : ''} · ${selectedPlayer.status.replace('_', ' ')}`
@@ -371,7 +383,6 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
 
         <ClubPanel
           title="Player List"
-          eyebrow=""
           aside={<span className="t-caption text-[var(--color-ink-faint)]">{filteredPlayers.length} RESULTS</span>}
           bodyClassName="p-0"
         >
@@ -385,7 +396,7 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
             <StatTable
               columns={columns}
               rows={rows}
-              density="dense"
+              density="default"
               onRowSelect={(id) => setSelectedPlayerId(String(id))}
               selectedRowId={selectedPlayerId}
               aria-label="League player database"

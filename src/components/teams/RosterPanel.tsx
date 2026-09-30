@@ -41,11 +41,12 @@ export const RosterPanel: React.FC<{
     id: entry.player.playerId,
     cells: {
       slot: formatRosterSlotLabel(entry.slotCode),
+      // No crest on each row. This list is every player at one club, so the crest
+      // was the same thirty times over and cost 32px of width on the only column
+      // that varies. The club is in the header; the card beside the list already
+      // carries the mark.
       name: (
-        <span className="flex min-w-0 items-center gap-2">
-          <TeamLogo team={team} sizeClass="h-6 w-6" />
-          <span className="truncate t-stat-sm">{entry.player.firstName} {entry.player.lastName}</span>
-        </span>
+        <span className="truncate t-stat">{entry.player.firstName} {entry.player.lastName}</span>
       ),
       pos: (
         <span className="truncate t-stat-sm text-[var(--color-ink-dim)]">
@@ -54,15 +55,16 @@ export const RosterPanel: React.FC<{
         </span>
       ),
       age: entry.player.age,
-      ovr: <StatValue size="sm" variant={overallVariant(entry.overall || null)}>{entry.overall || EMPTY}</StatValue>,
-      pot: entry.potentialOverall || EMPTY,
+      // OVR is the number a manager sorts this list by, so it is the one figure
+      // in the row that is set larger than everything beside it.
+      ovr: <StatValue variant={overallVariant(entry.overall || null)}>{entry.overall || EMPTY}</StatValue>,
+      pot: <StatValue size="sm" variant="default">{entry.potentialOverall || EMPTY}</StatValue>,
     },
   }));
 
   return (
     <ClubPanel
       title="Roster"
-      eyebrow=""
       aside={
         <span className="t-caption text-[var(--color-ink-faint)]">
           {bySlotCount}/{TEAM_ACTIVE_ROSTER_SIZE} assigned · {backups.length}/{RESERVE_ROSTER_SLOTS.length} backups
@@ -80,7 +82,6 @@ export const RosterPanel: React.FC<{
             attributePoints={attributePoints}
             battingStat={selected?.battingStat ?? null}
             pitchingStat={selected?.pitchingStat ?? null}
-            eyebrow={`${team.city} ${team.name}`}
             title={selected ? `${selected.player.firstName} ${selected.player.lastName}` : 'Roster Pending'}
             subline={selected
               ? `${formatRosterSlotLabel(selected.slotCode)} · ${selected.player.primaryPosition}${selected.player.secondaryPosition ? ` / ${selected.player.secondaryPosition}` : ''} · ${selected.player.status.replace('_', ' ')}`
@@ -140,7 +141,7 @@ export const RosterPanel: React.FC<{
             <StatTable
               columns={columns}
               rows={rows}
-              density="dense"
+              density="default"
               onRowSelect={(id) => onSelectPlayer(String(id))}
               selectedRowId={selected?.player.playerId ?? null}
               aria-label="Roster player list"

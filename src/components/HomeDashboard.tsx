@@ -401,6 +401,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           awayTeam={heroAwayTeam}
           homeTeam={heroHomeTeam}
           timelineDate={timelineDate}
+          teamLookup={teamsById}
           onOpenGame={onOpenGame}
         />
 

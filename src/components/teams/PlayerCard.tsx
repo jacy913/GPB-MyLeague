@@ -20,11 +20,10 @@ export const PlayerCard: React.FC<{
   attributePoints: Array<{ label: string; value: number }>;
   battingStat: PlayerSeasonBatting | null;
   pitchingStat: PlayerSeasonPitching | null;
-  eyebrow: string;
   title: string;
   subline: string;
   emptyAttributes: string;
-}> = ({ player, team, overall, attributePoints, battingStat, pitchingStat, eyebrow, title, subline, emptyAttributes }) => (
+}> = ({ player, team, overall, attributePoints, battingStat, pitchingStat, title, subline, emptyAttributes }) => (
   <div className="flex flex-col gap-3">
     <div className="flex items-start gap-3">
       {team
@@ -35,8 +34,10 @@ export const PlayerCard: React.FC<{
           </div>
         )}
       <div className="min-w-0 flex-1">
-        <p className="t-caption text-[var(--color-ink-faint)]">{eyebrow}</p>
-        <h2 className="t-h2 mt-1 break-words">{title}</h2>
+        {/* No club-name line above the player name. The crest sits immediately to
+            the left of this block at 80px, so the text restated what the mark
+            already says and cost a line. */}
+        <h2 className="t-h2 break-words">{title}</h2>
         <p className="t-caption mt-1 text-[var(--color-ink-dim)]">{subline}</p>
         <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
           {player

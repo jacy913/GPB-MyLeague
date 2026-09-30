@@ -16,17 +16,22 @@ interface PreviousDateScoreStripProps {
 
 /** Horizontal step between items, applied as margin so every item occupies the same period. */
 const ITEM_STEP = 8;
-/** Crawl speed in px per second. A constant speed is what makes it read as a board. */
-const CRAWL_SPEED = 18;
+/**
+ * Crawl speed in px per second. A constant speed is what makes it read as a
+ * board. Halved twice on request, from 55 to 18 to 9.
+ */
+const CRAWL_SPEED = 9;
 const MIN_DURATION = 18;
 /**
- * Raised from 110s alongside the speed change. Duration is travel / speed, so a
- * 16-game slate at 18px/s wants 192s; the old ceiling would have clamped it back
- * up to an effective 31px/s, which is closer to the speed the user just asked to
- * get away from than to the one they asked for. The clamp is still worth having,
- * because a single very long slate should not produce a four-minute lap.
+ * Raised from 110s alongside each speed change. Duration is travel / speed, so
+ * a 16-game slate at 9px/s wants a 384 second lap; the old ceiling would have
+ * clamped it back to an effective 31px/s, which is faster than the speed just
+ * asked for. The clamp is still worth having, so a pathologically long slate
+ * cannot produce a lap longer than a coffee break.
  */
-const MAX_DURATION = 260;
+const MAX_DURATION = 420;
+/** How long the crawl stays frozen after the pointer leaves, before it resumes. */
+const RESUME_DELAY_MS = 3000;
 
 interface CrawlEntry {
   gameId: string;
@@ -80,6 +85,46 @@ export function PreviousDateScoreStrip({
   const [copyWidth, setCopyWidth] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [paused, setPaused] = useState(false);
+  const resumeTimerRef = useRef<number | null>(null);
+
+  const clearResumeTimer = useCallback(() => {
+    if (resumeTimerRef.current !== null) {
+      window.clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Hover freezes the crawl where it is, and leaving it does not send the belt
+   * back to the start.
+   *
+   * The bug this fixes: the style used to set `animation` to undefined while
+   * paused. Removing a CSS animation does not freeze it, it destroys it, so the
+   * element snapped back to its untransformed position on every hover and the
+   * lap began again from zero. That is why a result further down the belt could
+   * never be reached -- the crawl restarted faster each time the pointer crossed
+   * it, so the effective speed was the base speed divided by the number of
+   * crossings.
+   *
+   * The animation is now always present and only animationPlayState is toggled,
+   * which holds the playhead where it is. Re-entering cancels the pending
+   * resume; leaving waits out RESUME_DELAY_MS so the pointer can be moved away
+   * without the belt lurching the instant the cursor clears it.
+   */
+  const handlePointerEnter = useCallback(() => {
+    clearResumeTimer();
+    setPaused(true);
+  }, [clearResumeTimer]);
+
+  const handlePointerLeave = useCallback(() => {
+    clearResumeTimer();
+    resumeTimerRef.current = window.setTimeout(() => {
+      resumeTimerRef.current = null;
+      setPaused(false);
+    }, RESUME_DELAY_MS);
+  }, [clearResumeTimer]);
+
+  useEffect(() => clearResumeTimer, [clearResumeTimer]);
 
   const entries = useMemo<CrawlEntry[]>(
     () => gamesForBannerDate.map((game) => {
@@ -217,10 +262,10 @@ export function PreviousDateScoreStrip({
           ref={viewportRef}
           role="region"
           aria-label="Previous date scores"
-          onMouseEnter={() => setPaused(true)}
-          onMouseLeave={() => setPaused(false)}
-          onFocus={() => setPaused(true)}
-          onBlur={() => setPaused(false)}
+          onMouseEnter={handlePointerEnter}
+          onMouseLeave={handlePointerLeave}
+          onFocus={handlePointerEnter}
+          onBlur={handlePointerLeave}
           className="relative min-w-0 flex-1 overflow-hidden"
           style={{
             maskImage: 'linear-gradient(90deg, transparent, #000 20px, #000 calc(100% - 20px), transparent)',
@@ -237,9 +282,9 @@ export function PreviousDateScoreStrip({
           <div
             className="flex w-max"
             style={{
-              animation: reducedMotion || paused
-                ? undefined
-                : `score-crawl ${duration}s linear infinite`,
+              // Never unset. Toggling animationPlayState is what holds the
+              // playhead; removing the animation would reset it to zero.
+              animation: reducedMotion ? undefined : `score-crawl ${duration}s linear infinite`,
               animationPlayState: paused ? 'paused' : 'running',
             }}
           >

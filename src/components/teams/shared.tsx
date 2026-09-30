@@ -189,20 +189,17 @@ export const overallVariant = (overall: number | null): 'accent' | 'default' | '
   return 'neg';
 };
 
+/** Single-line header. No eyebrow, for the same reason as HomePanel. */
 export const ClubPanel: React.FC<{
   title: string;
-  eyebrow?: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
   bodyClassName?: string;
   className?: string;
-}> = ({ title, eyebrow, aside, children, bodyClassName = 'p-4', className = '' }) => (
+}> = ({ title, aside, children, bodyClassName = 'p-4', className = '' }) => (
   <Panel className={`overflow-hidden ${className}`}>
     <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-      <div className="min-w-0">
-        {eyebrow && <p className="t-caption text-[var(--color-ink-faint)]">{eyebrow}</p>}
-        <h2 className="t-h3 truncate">{title}</h2>
-      </div>
+      <h2 className="t-h3 min-w-0 truncate">{title}</h2>
       {aside}
     </div>
     <div className={bodyClassName}>{children}</div>

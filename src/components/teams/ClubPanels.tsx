@@ -141,7 +141,6 @@ const depthColumns: StatTableColumn[] = [
 
 const DepthList: React.FC<{
   title: string;
-  eyebrow: string;
   entries: TeamRosterEntry[];
   team: Team;
   selectedPlayerId: string | null;
@@ -149,23 +148,21 @@ const DepthList: React.FC<{
   emptyTitle: string;
   emptyBody: string;
   aside: string;
-}> = ({ title, eyebrow, entries, team, selectedPlayerId, onSelectPlayer, emptyTitle, emptyBody, aside }) => {
+}> = ({ title, entries, team, selectedPlayerId, onSelectPlayer, emptyTitle, emptyBody, aside }) => {
   const rows: StatTableRow[] = entries.map((entry) => ({
     id: entry.player.playerId,
     cells: {
       slot: entry.slotCode,
-      player: (
-        <span className="flex min-w-0 items-center gap-2">
-          <TeamLogo team={team} sizeClass="h-5 w-5" />
-          <span className="truncate t-stat-sm">{entry.player.firstName} {entry.player.lastName}</span>
-        </span>
-      ),
-      ovr: <StatValue size="sm" variant={entry.overall >= 88 ? 'accent' : 'default'}>{entry.overall || '---'}</StatValue>,
+      // No crest per row, same reason as the main roster list: these are all one
+      // club, so the mark repeated every 28px and the only varying column was
+      // the name.
+      player: <span className="truncate t-stat">{entry.player.firstName} {entry.player.lastName}</span>,
+      ovr: <StatValue variant={entry.overall >= 88 ? 'accent' : 'default'}>{entry.overall || '---'}</StatValue>,
     },
   }));
 
   return (
-    <ClubPanel title={title} eyebrow={eyebrow} aside={<span className="t-caption text-[var(--color-ink-faint)]">{aside}</span>} bodyClassName="p-0">
+    <ClubPanel title={title} aside={<span className="t-caption text-[var(--color-ink-faint)]">{aside}</span>} bodyClassName="p-0">
       {rows.length === 0 ? (
         <p className="p-6 text-center t-body text-[var(--color-ink-dim)]">
           <span className="block t-h3 text-[var(--color-ink)]">{emptyTitle}</span>
@@ -195,7 +192,6 @@ export const DepthChart: React.FC<{
   <div className="grid gap-5 xl:grid-cols-2">
     <DepthList
       title="Batting Order"
-      eyebrow="Lineup Logic"
       entries={battingOrder}
       team={team}
       selectedPlayerId={selectedPlayerId}
@@ -206,7 +202,6 @@ export const DepthChart: React.FC<{
     />
     <DepthList
       title="Starting Rotation"
-      eyebrow="Pitching Staff"
       entries={startingRotation}
       team={team}
       selectedPlayerId={selectedPlayerId}
@@ -230,7 +225,6 @@ export const SchedulePanel: React.FC<{
 }> = ({ team, nextGame, lastFive, teamsById, games, onOpenGame }) => (
   <ClubPanel
     title="Next Game"
-    eyebrow="Schedule Outlook"
     aside={<CalendarClock className="h-4 w-4 text-[var(--color-ink-faint)]" aria-hidden="true" />}
   >
     {nextGame ? (
@@ -294,7 +288,7 @@ export const ClubSnapshot: React.FC<{
   teamHits: number;
   lastFiveRecord: { wins: number; losses: number };
 }> = ({ team, teamHits, lastFiveRecord }) => (
-  <ClubPanel title="Club Snapshot" eyebrow="Season Totals" aside={<Star className="h-4 w-4 text-[var(--color-ink-faint)]" aria-hidden="true" />}>
+  <ClubPanel title="Club Snapshot" aside={<Star className="h-4 w-4 text-[var(--color-ink-faint)]" aria-hidden="true" />}>
     <div className="flex flex-col gap-2">
       <StatTile label="Last 5" value={`${lastFiveRecord.wins}-${lastFiveRecord.losses}`} />
       <StatTile label="Baseline Wins" value={team.previousBaselineWins} />

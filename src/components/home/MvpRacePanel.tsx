@@ -27,7 +27,6 @@ export const MvpRacePanel: React.FC<{
   return (
     <HomePanel
       title="Award Race"
-      eyebrow={board === 'batting' ? 'Batting MVP' : 'Pitching MVP'}
       aside={board === 'batting'
         ? <Crown className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
         : <Trophy className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />}

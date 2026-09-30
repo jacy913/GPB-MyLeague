@@ -1055,23 +1055,16 @@ const WorldSeriesShowcase: React.FC<{
   return (
     <Panel variant="hero" className="overflow-hidden">
       {/* Masthead. The mark is the identity of this event and was previously a
-          32px thumbnail sharing a bar with a heading. */}
-      <div className="flex flex-col items-center gap-3 border-b border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-4 py-8">
+          32px thumbnail sharing a bar with a heading. The wordmark is the only
+          text here: the "World Series / Best of 7 / Awaiting Champions" stack
+          underneath it repeated what the artwork says and then added a status
+          line that duplicated the series score already shown below. */}
+      <div className="flex items-center justify-center border-b border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-4 py-8">
         <img
           src={worldSeriesLogo}
           alt="GPB World Series"
-          className="h-28 w-auto object-contain md:h-36"
+          className="h-32 w-auto object-contain md:h-40"
         />
-        <div className="flex flex-col items-center gap-1 text-center">
-          <h2 className="t-display text-[var(--color-gold-hi)]">World Series</h2>
-          <p className="t-caption text-[var(--color-ink-dim)]">
-            {decided
-              ? `Best of ${series.bestOf} · Final`
-              : platinumChampion && prestigeChampion
-                ? `Best of ${series.bestOf} · In Progress`
-                : `Best of ${series.bestOf} · Awaiting Champions`}
-          </p>
-        </div>
       </div>
 
       <div className="flex flex-col items-stretch gap-4 p-5 md:flex-row md:items-center md:gap-6">

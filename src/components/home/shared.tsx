@@ -112,32 +112,21 @@ export const sortStandings = (left: Team, right: Team): number => {
 /**
  * Panel with a single-line header.
  *
- * The header used to carry an eyebrow above the title, which made every panel
- * two lines of chrome tall. Most eyebrows restated the title -- "Milestones"
- * above "Season Cycle" -- so the second line bought nothing and cost a line of
- * height on every container in the product. The eyebrow prop is kept for call
- * sites that still pass it, but it now renders inline on the same line, before
- * the title, as a quiet kicker rather than a second row. Where it is pure noise
- * the call site should drop it; the two dashboard ones did.
+ * No eyebrow. It was an optional second line above the title that restated it in
+ * a smaller, fainter face -- "Milestones" above "Season Cycle" -- and the
+ * intermediate revision that folded it inline still read as clutter. The title
+ * carries the meaning on its own.
  */
 export const HomePanel: React.FC<{
   title: string;
-  eyebrow?: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
   bodyClassName?: string;
   className?: string;
-}> = ({ title, eyebrow, aside, children, bodyClassName = 'p-4', className = '' }) => (
+}> = ({ title, aside, children, bodyClassName = 'p-4', className = '' }) => (
   <section className={`panel overflow-hidden ${className}`}>
     <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4">
-      <h2 className="t-h3 min-w-0 truncate">
-        {eyebrow && (
-          <span className="mr-2 align-middle t-caption font-normal uppercase tracking-[0.18em] text-[var(--color-ink-faint)]">
-            {eyebrow}
-          </span>
-        )}
-        {title}
-      </h2>
+      <h2 className="t-h3 min-w-0 truncate">{title}</h2>
       {aside}
     </div>
     <div className={bodyClassName}>{children}</div>

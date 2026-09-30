@@ -40,7 +40,6 @@ export const SeasonCalendar: React.FC<{
 }) => (
   <SimPanel
     title="Season Calendar"
-    eyebrow="Schedule"
     aside={
       <div className="flex items-center gap-1">
         <RetroButton variant="ghost" size="sm" onClick={() => onShiftMonth(-1)} aria-label="Previous month">
