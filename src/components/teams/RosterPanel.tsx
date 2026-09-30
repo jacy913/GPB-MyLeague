@@ -2,6 +2,7 @@ import React from 'react';
 import { UserRound, Users } from 'lucide-react';
 import type { Team } from '../../types';
 import { RESERVE_ROSTER_SLOTS, TEAM_ACTIVE_ROSTER_SIZE } from '../../types';
+import type { LeagueBaseline } from '../../lib/analytics/wrcPlus';
 import { Panel, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
 import { PlayerCard } from './PlayerCard';
 import {
@@ -23,10 +24,17 @@ export const RosterPanel: React.FC<{
   selected: TeamRosterEntry | null;
   selectedOverall: number | null;
   attributePoints: Array<{ label: string; value: number }>;
+  /**
+   * League-relative run value baseline. Passed down rather than derived here,
+   * because a league average has to come from the whole league's batting rows and
+   * this panel only holds one club's roster. TeamsHub builds it from the same
+   * preferred-stat map the entry rows come from.
+   */
+  leagueBaseline: LeagueBaseline | null;
   onSelectPlayer: (playerId: string) => void;
 }> = ({
   team, entries, bySlotCount, backups, backupBatters, backupPitchers,
-  activeRosterSeasonYear, selected, selectedOverall, attributePoints, onSelectPlayer,
+  activeRosterSeasonYear, selected, selectedOverall, attributePoints, leagueBaseline, onSelectPlayer,
 }) => {
   const columns: StatTableColumn[] = [
     { key: 'slot', header: 'SLOT', align: 'right', isNumeric: true, width: '8ch' },
@@ -82,6 +90,7 @@ export const RosterPanel: React.FC<{
             attributePoints={attributePoints}
             battingStat={selected?.battingStat ?? null}
             pitchingStat={selected?.pitchingStat ?? null}
+            leagueBaseline={leagueBaseline}
             title={selected ? `${selected.player.firstName} ${selected.player.lastName}` : 'Roster Pending'}
             subline={selected
               ? `${formatRosterSlotLabel(selected.slotCode)} · ${selected.player.primaryPosition}${selected.player.secondaryPosition ? ` / ${selected.player.secondaryPosition}` : ''} · ${selected.player.status.replace('_', ' ')}`

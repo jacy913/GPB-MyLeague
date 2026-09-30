@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { Panel, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
-import { ClubPanel, StatTile, overallVariant } from './teams/shared';
+import { ClubPanel, StatTile, overallVariant, runValueBaseline } from './teams/shared';
 import { PlayerCard } from './teams/PlayerCard';
 
 interface PlayersHubProps {
@@ -159,6 +159,14 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
   const latestPitchingStatByPlayerId = useMemo(
     () => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
     [pitchingStats],
+  );
+
+  // The league every wRC+ on this screen is measured against. Built from the same
+  // map that decides which row each card shows, so a player is never scored against
+  // a league they are not displayed in.
+  const leagueRunValueBaseline = useMemo(
+    () => runValueBaseline(latestBattingStatByPlayerId),
+    [latestBattingStatByPlayerId],
   );
 
   const availablePositions = useMemo(
@@ -440,6 +448,7 @@ export const PlayersHub: React.FC<PlayersHubProps> = ({
             attributePoints={selectedAttributePoints}
             battingStat={selectedBattingStats}
             pitchingStat={selectedPitchingStats}
+            leagueBaseline={leagueRunValueBaseline}
             title={selectedPlayer ? playerLabel(selectedPlayer) : 'Player Pool Pending'}
             subline={selectedPlayer
               ? `${selectedPlayer.primaryPosition}${selectedPlayer.secondaryPosition ? ` / ${selectedPlayer.secondaryPosition}` : ''} · ${selectedPlayer.status.replace('_', ' ')}`

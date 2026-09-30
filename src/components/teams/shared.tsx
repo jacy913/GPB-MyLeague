@@ -13,6 +13,8 @@ import {
   type Team,
 } from '../../types';
 import { fmtAvg, fmtEra, fmtPct, fmtRecord, fmtWhip } from '../../logic/statFormatting';
+import { toBattingCounts } from '../../lib/analytics/metrics';
+import { leagueBaseline, wrcPlus, type LeagueBaseline, type WrcPlusResult } from '../../lib/analytics/wrcPlus';
 import { Panel, StatValue } from '../ui';
 
 /**
@@ -233,14 +235,98 @@ export const StatList: React.FC<{ rows: Array<[string, string]> }> = ({ rows }) 
 
 export const EMPTY = '---';
 
-export const battingLineRows = (stat: PlayerSeasonBatting | null): Array<[string, string]> => [
-  ['AVG', stat ? fmtAvg(stat.avg) : EMPTY],
-  ['OPS', stat ? stat.ops.toFixed(3) : EMPTY],
-  ['AB', stat ? String(stat.atBats) : EMPTY],
-  ['H', stat ? String(stat.hits) : EMPTY],
-  ['HR', stat ? String(stat.homeRuns) : EMPTY],
-  ['RBI', stat ? String(stat.rbi) : EMPTY],
-];
+/**
+ * The league a run value is measured against.
+ *
+ * Built from the SAME rows the cards display, not from a re-derived filter. The
+ * card shows whichever row `getPreferredBattingStatsByPlayerId` picks -- the latest
+ * season, preferring regular season, falling back to another phase when a player
+ * has only that one -- so a baseline computed any other way could score a player
+ * against a league they are not shown in. Deriving both from one map makes that
+ * impossible.
+ *
+ * Players below the variance floor are still pooled into the league rate, because
+ * that average is weighted by plate appearance and a small row barely moves it;
+ * excluding them would make the league figure jump as individuals crossed the
+ * floor. `leagueBaseline` applies the floor only where it belongs, to the spread.
+ */
+export const runValueBaseline = (
+  preferredByPlayerId: ReadonlyMap<string, PlayerSeasonBatting>,
+): LeagueBaseline | null =>
+  leagueBaseline(
+    Array.from(preferredByPlayerId.values())
+      .filter((stat) => stat.plateAppearances > 0)
+      .map(toBattingCounts),
+  );
+
+const playerWrc = (
+  stat: PlayerSeasonBatting | null,
+  baseline: LeagueBaseline | null,
+): WrcPlusResult | null => {
+  if (!stat || !baseline) return null;
+  return wrcPlus(toBattingCounts(stat), baseline);
+};
+
+export interface BattingCardContent {
+  rows: Array<[string, string]>;
+  /**
+   * One line of context for the wRC+ figure, or null when there is nothing to say.
+   *
+   * This is the whole reason run value lives on a card rather than a leaderboard.
+   * Measured over 90 days, the top ten wRC+ values span 4.0 points and give 5
+   * distinct whole numbers from 10 rows -- a ranked board of them reports noise in
+   * its own units. On a card the reader is looking at one player, so the figure can
+   * sit beside what it was before the correction and how much of it survived, which
+   * is the part a board has nowhere to put.
+   */
+  runValueNote: string | null;
+}
+
+/**
+ * The batting line, with run value folded in beside the rate stats, plus its caveat.
+ *
+ * wOBA and wRC+ sit with AVG and OPS rather than in a panel of their own, because
+ * they answer the same question those two answer and a reader looking at a hitter
+ * expects to find them there. Rates first, then run value, then the counts.
+ *
+ * wRC+ is rounded to a whole number. That is not laziness: the top ten hitters span
+ * 4.0 points and produce 5 distinct integers from 10 rows, so a decimal would imply
+ * a precision the measurement does not have. The note carries the raw figure so the
+ * size of the shrinkage stays visible.
+ *
+ * Rows and note come back together from one call, because both are derived from the
+ * same wRC+ and computing it twice to render one card was the shape of bug this
+ * file has been bitten by before.
+ */
+export const battingCardContent = (
+  stat: PlayerSeasonBatting | null,
+  baseline: LeagueBaseline | null,
+): BattingCardContent => {
+  const wrc = playerWrc(stat, baseline);
+
+  const rows: Array<[string, string]> = [
+    ['AVG', stat ? fmtAvg(stat.avg) : EMPTY],
+    ['OPS', stat ? stat.ops.toFixed(3) : EMPTY],
+    // wOBA is a rate on this league's runs-per-plate-appearance scale, so it reads
+    // near .146 rather than a baseball-conventional .320. The leading dot matches
+    // AVG and SLG beside it; the magnitude is on this engine's scale, which is what
+    // woba.ts documents.
+    ['wOBA', wrc?.woba != null ? fmtAvg(wrc.woba) : EMPTY],
+    ['wRC+', wrc?.value != null ? String(Math.round(wrc.value)) : EMPTY],
+    ['AB', stat ? String(stat.atBats) : EMPTY],
+    ['H', stat ? String(stat.hits) : EMPTY],
+    ['HR', stat ? String(stat.homeRuns) : EMPTY],
+    ['RBI', stat ? String(stat.rbi) : EMPTY],
+  ];
+
+  const runValueNote =
+    wrc && wrc.value !== null && wrc.rawValue !== null && wrc.shrinkageWeight !== null
+      ? `100 is league average. Shrunk toward average: ${Math.round(wrc.rawValue)} ` +
+        `unshrunk, ${Math.round(wrc.shrinkageWeight * 100)}% trusted.`
+      : null;
+
+  return { rows, runValueNote };
+};
 
 export const pitchingLineRows = (stat: PlayerSeasonPitching | null): Array<[string, string]> => [
   ['ERA', stat ? fmtEra(stat.era) : EMPTY],

@@ -22,6 +22,7 @@ import {
   compareStandings,
   generateBattingOrder,
   getHitsForTeam,
+  runValueBaseline,
   type TeamRosterEntry,
 } from './teams/shared';
 
@@ -77,6 +78,13 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   const latestBattingStatsByPlayerId = useMemo(
     () => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'),
     [battingStats],
+  );
+
+  // The league the roster card's wRC+ is measured against. Same map the entry rows
+  // are drawn from, so a card is never scored against a league it is not shown in.
+  const leagueRunValueBaseline = useMemo(
+    () => runValueBaseline(latestBattingStatsByPlayerId),
+    [latestBattingStatsByPlayerId],
   );
   const latestBattingRatingsByPlayerId = useMemo(() => {
     const map = new Map<string, PlayerBattingRatings>();
@@ -363,6 +371,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
         selected={selectedRosterPlayer}
         selectedOverall={selectedRosterOverall}
         attributePoints={selectedRosterAttributePoints}
+        leagueBaseline={leagueRunValueBaseline}
         onSelectPlayer={setSelectedRosterPlayerId}
       />
 

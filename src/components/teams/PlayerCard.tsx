@@ -1,9 +1,15 @@
 import React from 'react';
 import { Shield } from 'lucide-react';
 import type { Player, PlayerSeasonBatting, PlayerSeasonPitching, Team } from '../../types';
+import type { LeagueBaseline } from '../../lib/analytics/wrcPlus';
 import { AttributeRadar } from '../AttributeRadar';
 import { Panel, RatingRing, TeamLogo } from '../ui';
-import { EMPTY, StatList, battingLineRows, pitchingLineRows } from './shared';
+import {
+  EMPTY,
+  StatList,
+  battingCardContent,
+  pitchingLineRows,
+} from './shared';
 
 /**
  * Player card.
@@ -12,6 +18,11 @@ import { EMPTY, StatList, battingLineRows, pitchingLineRows } from './shared';
  * block -- the same four vitals, the same OVR dial, the same attribute radar and
  * the same two stat lists. They were already drifting: one showed a dash for a
  * missing player, the other showed a different sentence.
+ *
+ * `leagueBaseline` is passed in rather than derived here, because a league average
+ * has to be built from the same rows the card displays. See `runValueBaseline` in
+ * shared.tsx. Both callers hold the full batting list, so neither is missing
+ * anything the card needs.
  */
 export const PlayerCard: React.FC<{
   player: Player | null;
@@ -20,10 +31,17 @@ export const PlayerCard: React.FC<{
   attributePoints: Array<{ label: string; value: number }>;
   battingStat: PlayerSeasonBatting | null;
   pitchingStat: PlayerSeasonPitching | null;
+  leagueBaseline: LeagueBaseline | null;
   title: string;
   subline: string;
   emptyAttributes: string;
-}> = ({ player, team, overall, attributePoints, battingStat, pitchingStat, title, subline, emptyAttributes }) => (
+}> = ({ player, team, overall, attributePoints, battingStat, pitchingStat, leagueBaseline, title, subline, emptyAttributes }) => {
+  // Computed once. Rows and the caveat both come from the same wRC+, and calling
+  // the helper twice to render one card would be two chances for the two halves to
+  // disagree.
+  const batting = battingCardContent(battingStat, leagueBaseline);
+
+  return (
   <div className="flex flex-col gap-3">
     <div className="flex items-start gap-3">
       {team
@@ -74,7 +92,15 @@ export const PlayerCard: React.FC<{
     <div className="grid gap-2 md:grid-cols-2">
       <Panel variant="sunken" className="p-3">
         <p className="t-label mb-1 text-[var(--color-ink-dim)]">Batting</p>
-        <StatList rows={battingLineRows(battingStat)} />
+        <StatList rows={batting.rows} />
+        {/* The wRC+ caveat sits under the figure it qualifies rather than in a
+            tooltip, because a tooltip is invisible on touch and this is the part
+            that stops the number being over-read. */}
+        {batting.runValueNote ? (
+          <p className="mt-2 t-caption leading-snug text-[var(--color-ink-faint)]">
+            {batting.runValueNote}
+          </p>
+        ) : null}
       </Panel>
       <Panel variant="sunken" className="p-3">
         <p className="t-label mb-1 text-[var(--color-ink-dim)]">Pitching</p>
@@ -82,4 +108,5 @@ export const PlayerCard: React.FC<{
       </Panel>
     </div>
   </div>
-);
+  );
+};
