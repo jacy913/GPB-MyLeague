@@ -172,6 +172,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
    * permanent place in a twenty-item sidebar.
    */
   betting_record: 'league',
+  leaders_dashboards: 'league',
   map: 'league',
   teams: 'teams',
   players: 'teams',

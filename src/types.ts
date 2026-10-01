@@ -22,6 +22,19 @@ export type AppView =
   | 'simulation'
   | 'league_standings'
   | 'leaders'
+  /**
+   * The visual half of the Leaders screen.
+   *
+   * A separate view rather than a third control inside `leaders`, because that screen
+   * already stacks two segmented controls (scope, then board) and the dashboard needs
+   * its own again (which plot, which split). Three nested controls is a navigation
+   * problem, not a layout one.
+   *
+   * There is no leaf for it in NAV_FOLDERS, exactly as for `betting_record`: it is
+   * reached from a switch on the Leaders screen and from nowhere else, so the rail never
+   * offers it. Both screens carry the switch, so neither can strand a reader here.
+   */
+  | 'leaders_dashboards'
   | 'history'
   | 'media'
   | 'betting'

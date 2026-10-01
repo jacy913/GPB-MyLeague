@@ -27,6 +27,20 @@ interface LeadersHubProps {
   pitchingStats: PlayerSeasonPitching[];
   battingRatings: PlayerBattingRatings[];
   pitchingRatings: PlayerPitchingRatings[];
+  /**
+   * Opens the dashboards half of the screen.
+   *
+   * A callback rather than a view switch inside this component, because Dashboards is a
+   * sibling route (`leaders_dashboards`) rather than a third mode here. This screen
+   * already stacks two segmented controls -- scope, then board -- and the dashboards need
+   * their own again for which plot and which split. Three nested controls would be a
+   * navigation problem wearing a layout costume.
+   *
+   * Required rather than optional so that every caller has to decide where the switch
+   * goes. A screen that can be reached with no way onward is the failure this split has
+   * to avoid, and an optional prop would make it a compile-time possibility.
+   */
+  onOpenDashboards: () => void;
 }
 
 type LeadersMode = 'players' | 'teams';
@@ -531,6 +545,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   pitchingStats,
   battingRatings,
   pitchingRatings,
+  onOpenDashboards,
 }) => {
   const [mode, setMode] = useState<LeadersMode>('players');
   const [playerBoard, setPlayerBoard] = useState<PlayerBoard>('batting');
@@ -864,12 +879,33 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       <Panel className="overflow-hidden">
         <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
           <h1 className="t-h2">Leaders</h1>
-          <SegmentedControl
-            aria-label="Leader scope"
-            value={mode}
-            onChange={(value) => setMode(value as LeadersMode)}
-            options={[{ value: 'players', label: 'Players' }, { value: 'teams', label: 'Teams' }]}
-          />
+          {/*
+            THE HALF-SCREEN SWITCH.
+
+            Present on both halves at the same height, so "which am I on" is never
+            something a reader has to infer from layout. The control beside it is the
+            SCOPE control and is deliberately a separate one rather than another segment
+            in this: scope and screen are different questions, and nesting them would
+            mean a reader reaching for Teams lands on a different screen instead.
+          */}
+          <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl
+              aria-label="Leader scope"
+              value={mode}
+              onChange={(value) => setMode(value as LeadersMode)}
+              options={[{ value: 'players', label: 'Players' }, { value: 'teams', label: 'Teams' }]}
+            />
+            <SegmentedControl
+              aria-label="Leaders view"
+              mode="fill"
+              value="tables"
+              onChange={(value) => { if (value === 'dashboards') onOpenDashboards(); }}
+              options={[
+                { value: 'tables', label: 'Tables' },
+                { value: 'dashboards', label: 'Dashboards' },
+              ]}
+            />
+          </div>
         </div>
         {mode === 'players' && (
           <div className="border-t border-[var(--color-chrome-lo)] px-4 py-3">

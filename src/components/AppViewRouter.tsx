@@ -34,6 +34,7 @@ import { HistoryHub } from './HistoryHub';
 import { MediaHub } from './media/MediaHub';
 import { BettingPage } from './betting/BettingPage';
 import { BettingRecordScreen } from './betting/BettingRecordScreen';
+import { LeadersDashboard } from './leaders/LeadersDashboard';
 import type { BettingSlipState } from '../hooks/useBettingSlip';
 import { resolveSeasonYear } from '../lib/seasonYear';
 import { GPBBook } from './GPBBook';
@@ -578,6 +579,25 @@ export const AppViewRouter = ({
           pitchingStats={playerState.pitchingStats}
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}
+          onOpenDashboards={() => onSetView('leaders_dashboards')}
+        />
+      )}
+
+      {/*
+        The dashboards half of Leaders.
+
+        A route rather than a third control inside `leaders`, because that screen already
+        stacks two segmented controls and this one needs its own again. Same pattern as
+        `betting_record` above: no nav leaf, reached only from a switch on the sibling
+        screen, and both screens carry the switch so neither can strand a reader.
+      */}
+      {view === 'leaders_dashboards' && (
+        <LeadersDashboard
+          teams={teams}
+          players={playerState.players}
+          battingStats={playerState.battingStats}
+          pitchingStats={playerState.pitchingStats}
+          onOpenTables={() => onSetView('leaders')}
         />
       )}
 
