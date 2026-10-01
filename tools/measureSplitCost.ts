@@ -226,46 +226,72 @@ const main = async (): Promise<void> => {
   let eventsRead = 0;
   let gamesWithLogs = 0;
 
-  const started = Date.now();
+  /*
+   * PHASE 1 -- PRODUCE THE GAMES, OUTSIDE THE TIMER.
+   *
+   * THE TIMER USED TO WRAP THE SIMULATION, and it reported 8.42s.
+   *
+   * The original loop was `for each day: { simulate; derive from that day's games }`, with
+   * `Date.now()` taken before the `for`. That measured ninety days of simulating a
+   * thirty-two-team league AND the derivation, and reported the sum as the cost of the
+   * derivation. Simulating is enormously more expensive than parsing -- it is the engine
+   * generating every box score in the first place -- so the number was off by a factor of
+   * about twenty-five, and the architecture it justified was chosen against a cost that
+   * does not exist.
+   *
+   * `measureSplitBackfill.ts` measures the same derivation with the parse hoisted out and
+   * puts the derivation at 0.33s for the same window. The two tools disagreeing is what
+   * surfaced it, which is the argument for having measured twice.
+   *
+   * The simulation is now run to completion first and its games collected, so the timer
+   * below covers the derivation and nothing else. It has to stay that way: putting
+   * `manager.run` back inside this loop restores a number that looks plausible and is
+   * wrong by 25x, and nothing about the printed output would reveal it.
+   */
+  const pendingGames: Game[] = [];
   for (let day = 0; day < DAYS; day += 1) {
     const r = await manager.run({ scope: 'day' });
     for (const game of r.games) {
-      if (game.status !== 'completed') continue;
-      if (completed.has(game.gameId)) continue;
+      if (game.status !== 'completed' || completed.has(game.gameId)) continue;
       completed.add(game.gameId);
-
-      const raw = game.stats?.playLog;
-      if (typeof raw !== 'string' || raw.length === 0) continue;
-      gamesWithLogs += 1;
-
-      let events: LogEvent[];
-      try {
-        events = JSON.parse(raw) as LogEvent[];
-      } catch {
-        continue;
-      }
-
-      const [away, home] = teamOfGame(game);
-      for (const event of events) {
-        if (!event.batterId || !event.outcome) continue;
-        if (event.outcome === 'PITCHING_CHANGE' || event.outcome === 'HALF_END' || event.outcome === 'GAME_END') continue;
-        eventsRead += 1;
-
-        const isHomeBatting = event.battingTeamId === home;
-        const row = splitOf(event.batterId);
-        addSplit(row.season, event.outcome);
-        addSplit(isHomeBatting ? row.home : row.road, event.outcome);
-
-        const pitcherHand = event.pitcherId ? throwHandById.get(event.pitcherId) : undefined;
-        if (pitcherHand === 'L') addSplit(row.vs_left, event.outcome);
-        else if (pitcherHand === 'R') addSplit(row.vs_right, event.outcome);
-
-        if (isHighLeverage(event.outs ?? 0, countRunners(event))) {
-          addSplit(row.high_leverage, event.outcome);
-        }
-      }
+      pendingGames.push(game);
     }
     state = r.playerState; games = r.games; teams = r.teams;
+  }
+
+  // -- PHASE 2: the derivation, and only the derivation -------------------------
+  const started = Date.now();
+  for (const game of pendingGames) {
+    const raw = game.stats?.playLog;
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    gamesWithLogs += 1;
+
+    let events: LogEvent[];
+    try {
+      events = JSON.parse(raw) as LogEvent[];
+    } catch {
+      continue;
+    }
+
+    const home = game.homeTeam;
+    for (const event of events) {
+      if (!event.batterId || !event.outcome) continue;
+      if (event.outcome === 'PITCHING_CHANGE' || event.outcome === 'HALF_END' || event.outcome === 'GAME_END') continue;
+      eventsRead += 1;
+
+      const isHomeBatting = event.battingTeamId === home;
+      const row = splitOf(event.batterId);
+      addSplit(row.season, event.outcome);
+      addSplit(isHomeBatting ? row.home : row.road, event.outcome);
+
+      const pitcherHand = event.pitcherId ? throwHandById.get(event.pitcherId) : undefined;
+      if (pitcherHand === 'L') addSplit(row.vs_left, event.outcome);
+      else if (pitcherHand === 'R') addSplit(row.vs_right, event.outcome);
+
+      if (isHighLeverage(event.outs ?? 0, countRunners(event))) {
+        addSplit(row.high_leverage, event.outcome);
+      }
+    }
   }
   const elapsed = Date.now() - started;
 
@@ -278,14 +304,29 @@ const main = async (): Promise<void> => {
   console.log(`  wall time             ${(elapsed / 1000).toFixed(2)}s`);
   console.log(`  per completed game    ${(elapsed / Math.max(1, completed.size)).toFixed(2)}ms`);
   console.log(`  per simulated day     ${(elapsed / Math.max(1, DAYS)).toFixed(0)}ms`);
-  console.log(`  events per second     ${Math.round(eventsRead / Math.max(1, elapsed / 1000)).toLocaleString()}`);
+  // `Math.max(1, elapsed / 1000)` is the guard against dividing by zero, and it is wrong.
+// It clamps the DIVISOR, so any run finishing in under a second divides by 1 and reports
+// throughput numerically equal to the event count -- 121,719 events/second for a run that
+// actually took 0.29s and did 420,000 a second. The bug was invisible precisely BECAUSE the
+// timer used to include the simulation and so never produced a sub-second run; fixing the
+// timer exposed it. The guard belongs on a floor that cannot swallow a real value.
+  const elapsedSeconds = Math.max(0.001, elapsed / 1000);
+  console.log(`  events per second     ${Math.round(eventsRead / elapsedSeconds).toLocaleString()}`);
   // Extrapolated by DAYS, and the distinction matters. The first version of this line
   // extrapolated by `games` and multiplied by 180, on the assumption that a season is 180
   // games -- it is not, it is about 180 DAYS, which at 16 games a day for 32 clubs is
   // nearer 2,880 games. That reported a full-season cost of 0.52s, which was sixteen
   // times too optimistic and would have made an 8-second rebuild look free.
+  //
+  // It is kept, because the extrapolation basis is the thing that was wrong and not the
+  // arithmetic. The measured figure above is now the derivation alone and is small enough
+  // that the extrapolation is no longer load-bearing for the architecture -- but the same
+  // "is this per-day or per-season quantity" mistake would be easy to make again.
   console.log(
     `  extrapolated to a 180-day season: ${((elapsed / Math.max(1, DAYS)) * 180 / 1000).toFixed(2)}s`,
+  );
+  console.log(
+    `  incremental cost of one newly completed game: ${(elapsed / Math.max(1, gamesWithLogs)).toFixed(2)}ms`,
   );
 
   // -- CORRECTNESS ----------------------------------------------------------------
