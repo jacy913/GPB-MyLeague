@@ -57,6 +57,7 @@ import {
   reconstructPlayerGameLines,
   shrunkPerGame,
   type PropBattingLine,
+  type PropPitchingLine,
   type PropStatKey,
 } from '../src/lib/playerProps';
 import type { Game, LeaguePlayerState, Team } from '../src/types';
@@ -129,7 +130,37 @@ const boxScoreValue = (stat: PropStatKey, line: PropBattingLine): number =>
   : stat === 'doubles' ? line.doubles
   : stat === 'triples' ? line.triples
   : stat === 'homeRuns' ? line.homeRuns
+  // The two derived lines. A silent `: 0` here -- which is what an earlier edit to
+  // this file left behind -- scores every one of them as a permanent loss, and the
+  // result reads as "0.0 per cent on every line", which is indistinguishable from a
+  // dead market. That is the exact failure the comment on this function describes for
+  // batting strikeouts, arriving again through a derived stat.
+  : stat === 'extraBaseHits' ? line.doubles + line.triples + line.homeRuns
+  : stat === 'totalBases' ? line.hits + line.doubles + 2 * line.triples + 3 * line.homeRuns
   : 0;
+
+/** Ground truth off a reconstructed pitching line, or null when it does not apply. */
+const pitchingBoxScoreValue = (
+  stat: PropStatKey,
+  line: PropPitchingLine,
+): number | null => {
+  if (stat === 'hitsAllowed') return line.hitsAllowed;
+  if (stat === 'pitcherStrikeouts') return line.strikeouts;
+  if (stat === 'walksAllowed') return line.walks;
+  if (stat === 'earnedRunsAllowed') return line.earnedRuns;
+  return null;
+};
+
+/**
+ * How many outings a pitcher's rate is spread over.
+ *
+ * Mirrors `pitchingDenominator` in playerProps, which is module-private. Same
+ * duplicate-or-export trade as the playoff constants in marketDates: a checked copy
+ * beats reaching into another module's internals, and `verifyResolutionDates.ts`
+ * asserts the two agree.
+ */
+const pitchingDenominator = (row: { games: number; gamesStarted: number }): number =>
+  Math.max(0.001, row.games * 0.3 + row.gamesStarted * 0.7);
 
 const main = async (): Promise<void> => {
   const perStat = new Map<PropStatKey, {
@@ -237,6 +268,49 @@ const main = async (): Promise<void> => {
             const lineRow = tally.byLine.get(offered) ?? { n: 0, hit: 0 };
             lineRow.n += 1; lineRow.hit += hit;
             tally.byLine.set(offered, lineRow);
+            }
+          }
+        });
+
+        /*
+         * THE PITCHING BLOCK, which the first version of this gate did not have.
+         *
+         * With only a batting loop, every pitching stat measured 0.0 per cent on every
+         * line -- not because those markets never pay but because they were never
+         * scored. Combined with `walksAllowed` and `earnedRunsAllowed` briefly sitting
+         * in the batting list as well, the output was a stat printed twice, at 0.0
+         * per cent, which reads exactly like a market that cannot be bet and was
+         * nothing of the kind.
+         *
+         * So the loop is written over both sides explicitly, and a pitching stat can
+         * only be measured by a pitcher appearing in this game.
+         */
+        pitching.forEach((line, playerId) => {
+          const row = maps.pitching.get(playerId);
+          if (!row || pitchingDenominator(row) <= 0) return;
+          for (const stat of PITCHING_PROP_STATS) {
+            const rate = playerPropRate(stat, playerId, maps.batting, maps.pitching);
+            const mean = shrunkPerGame(
+              rate.seasonTotal, rate.gamesPlayed,
+              baselines[stat], propModelFor(stat).priorGames,
+            );
+            for (const offered of propLadderFor(stat, mean)) {
+              if (!Number.isFinite(offered)) continue;
+              const predicted = propOverProbability(mean, offered, propModelFor(stat).dispersion);
+              const actual = pitchingBoxScoreValue(stat, line);
+              if (actual === null) continue;
+              const hit = actual > offered ? 1 : 0;
+              const tally = perStat.get(stat);
+              if (!tally) continue;
+              tally.squared += (predicted - hit) ** 2;
+              tally.n += 1;
+              const bucket = Math.min(9, Math.floor(predicted * 10));
+              const row2 = tally.buckets.get(bucket) ?? { n: 0, hit: 0 };
+              row2.n += 1; row2.hit += hit;
+              tally.buckets.set(bucket, row2);
+              const lineRow = tally.byLine.get(offered) ?? { n: 0, hit: 0 };
+              lineRow.n += 1; lineRow.hit += hit;
+              tally.byLine.set(offered, lineRow);
             }
           }
         });

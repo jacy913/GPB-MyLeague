@@ -5,6 +5,7 @@ import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
 import type { FieldMarket, LineMarket } from '../../lib/markets';
 import { formatAmerican, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
 import { futuresRiskRead } from '../../lib/futuresRisk';
+import { formatResolutionDate, resolveDateFor, type SeasonCalendar } from '../../lib/marketDates';
 import type { GameLine } from '../../lib/mediaOdds';
 import { propMarketTitle, propSelectionLabel } from '../../lib/mediaProps';
 import { MAX_PROPS_PER_OUTLET } from '../../lib/mediaProps';
@@ -28,6 +29,14 @@ interface BettingSlateProps {
   focusedProp: PropFocus | null;
   futures: FieldMarket[];
   awards: FieldMarket[];
+  /**
+   * The season's projected calendar, so every market can say when it resolves.
+   *
+   * Passed in rather than recomputed per row, because the calendar is derived from
+   * the whole schedule and a component recomputing it would be a second derivation
+   * that could disagree with the first. One calendar, one answer.
+   */
+  calendar: SeasonCalendar;
   slateDate: string | null;
   bets: PlacedBet[];
   onPlace: (input: {
@@ -60,7 +69,7 @@ interface BettingSlateProps {
  * version of this that is a decision rather than a coin toss.
  */
 export const BettingHub: React.FC<BettingSlateProps> = ({
-  view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, slateDate, bets, onPlace, balance,
+  view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, calendar, slateDate, bets, onPlace, balance,
 }) => {
   const propCount = MEDIA_PROFILES.reduce((sum, profile) => sum + (propBoards.get(profile.id)?.length ?? 0), 0);
 
@@ -119,8 +128,8 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
           slateDate={slateDate}
         />
       )}
-      {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} />}
-      {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} />}
+      {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} calendar={calendar} />}
+      {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} calendar={calendar} />}
     </section>
   );
 };
@@ -241,6 +250,14 @@ const GameBetCard: React.FC<{
             <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
               House {formatAmerican(game.houseOdds)} · the three span {Math.round(game.disagreement * 100)} points
               {game.disagreement >= 0.12 && ' — they are split on this one.'}
+              {/*
+                A game market resolves when the game is played, which is the only basis
+                on this board whose date is already known exactly rather than projected.
+                Shown because "resolves tonight" and "resolves in November" are different
+                products and a bettor holding both should not have to guess which is which.
+              */}
+              {' · '}
+              {game.status === 'completed' ? 'SETTLED' : `RESOLVES ON ${formatResolutionDate(game.date)}`}
             </p>
           </div>
 
@@ -648,8 +665,9 @@ const PropBetRow: React.FC<{
 const FieldMarketCard: React.FC<{
   market: FieldMarket;
   balance: number;
+  calendar: SeasonCalendar;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ market, balance, onPlace }) => {
+}> = ({ market, balance, calendar, onPlace }) => {
   const kind: BetKind = market.kind === 'award' ? 'award' : market.kind;
   /*
    * The key that travels with the bet.
@@ -673,6 +691,32 @@ const FieldMarketCard: React.FC<{
           <h2 className="t-h3">{market.title}</h2>
         </div>
         <span className="t-caption text-[var(--color-ink-faint)]">
+          {/*
+            THE RESOLUTION DATE, on every market.
+            
+            Item 1 of the betting expansion, and the smallest-looking change in the
+            document. It is also the one that answers a question a bettor cannot
+            currently ask: a futures bet settles off `seasonComplete && seasonWinners`
+            -- one boolean, no date -- so the only honest answer today is "not yet",
+            which is not an answer.
+            
+            The basis differs per market because the DAY differs. A championship bet
+            resolves on the last possible game of the World Series, roughly five
+            weeks after a division bet, and that difference is exactly what nobody can
+            see. Showing one date for all of them would be a lie in the cases that
+            matter most.
+            
+            It is rendered on the header rather than each row because it is a property
+            of the MARKET, not of an outcome, and repeating it fifteen times down a
+            board would be noise.
+          */}
+          RESOLVES ON {formatResolutionDate(
+            resolveDateFor(
+              market.kind === 'award' ? 'season_awards' : 'championship_series',
+              calendar,
+            ),
+          )}
+          {' · '}
           {market.subtitle} · {market.outcomes.length} clubs
           {/*
             THE SEASON ADVANCING, IN THREE WORDS.
@@ -841,8 +885,9 @@ const FieldMarketCard: React.FC<{
 const FuturesView: React.FC<{
   markets: FieldMarket[];
   balance: number;
+  calendar: SeasonCalendar;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance }) => (
+}> = ({ markets, onPlace, balance, calendar }) => (
   <div className="grid gap-4">
     <p className="t-caption px-1 text-[var(--color-ink-faint)]">
       Season-long markets settle when a season is archived, not before. Each price is the mean of
@@ -852,7 +897,7 @@ const FuturesView: React.FC<{
     {markets.length === 0
       ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">No division or league races could be built.</p></Panel>
       : markets.map((market) => (
-        <FieldMarketCard key={market.key} market={market} balance={balance} onPlace={onPlace} />
+        <FieldMarketCard key={market.key} market={market} balance={balance} calendar={calendar} onPlace={onPlace} />
       ))}
   </div>
 );
@@ -860,8 +905,9 @@ const FuturesView: React.FC<{
 const AwardsView: React.FC<{
   markets: FieldMarket[];
   balance: number;
+  calendar: SeasonCalendar;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance }) => (
+}> = ({ markets, onPlace, balance, calendar }) => (
   <div className="grid gap-4">
     <p className="t-caption px-1 text-[var(--color-ink-faint)]">
       The three outlets differ on awards by how hard they regress a hot start toward the field. The
@@ -871,7 +917,7 @@ const AwardsView: React.FC<{
     {markets.length === 0
       ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">No award race is available yet.</p></Panel>
       : markets.map((market) => (
-        <FieldMarketCard key={market.key} market={market} balance={balance} onPlace={onPlace} />
+        <FieldMarketCard key={market.key} market={market} balance={balance} calendar={calendar} onPlace={onPlace} />
       ))}
   </div>
 );

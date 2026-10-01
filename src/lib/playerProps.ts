@@ -203,6 +203,8 @@ export const propActualStat = (
   const { batting, pitching } = reconstructPlayerGameLines(game);
   if (stat === 'hitsAllowed') return pitching.get(playerId)?.hitsAllowed ?? null;
   if (stat === 'pitcherStrikeouts') return pitching.get(playerId)?.strikeouts ?? null;
+  if (stat === 'walksAllowed') return pitching.get(playerId)?.walks ?? null;
+  if (stat === 'earnedRunsAllowed') return pitching.get(playerId)?.earnedRuns ?? null;
   const line = batting.get(playerId);
   if (!line) return null;
   switch (stat) {
@@ -214,6 +216,27 @@ export const propActualStat = (
     case 'battingStrikeouts': return line.strikeouts;
     case 'doubles': return line.doubles;
     case 'triples': return line.triples;
+    /*
+     * The two DERIVED lines, computed from the per-game reconstruction rather than
+     * read off the season aggregate.
+     *
+     * That distinction is the whole safety argument for offering them. A season
+     * aggregate is a running total that a trade or a mid-season correction can move;
+     * the per-game line is reconstructed from the play log, which
+     * verifyPlayLogProps.ts proves is EXACT. Deriving from the exact source means the
+     * definition of "extra base hit" cannot drift from the box score, and a bet that
+     * settles is a bet the bettor can check.
+     *
+     *   extra base hits = doubles + triples + home runs
+     *   total bases    = hits + doubles + 2*triples + 3*home runs
+     *
+     * The second is the standard identity: singles count once and each extra base
+     * adds one, which is what `hits + doubles + 2*triples + 3*HR` reduces to once
+     * singles are substituted out.
+     */
+    case 'extraBaseHits': return line.doubles + line.triples + line.homeRuns;
+    case 'totalBases':
+      return line.hits + line.doubles + 2 * line.triples + 3 * line.homeRuns;
     default: return null;
   }
 };
@@ -231,7 +254,14 @@ export type PropStatKey =
   // whose definition could disagree with the box score. A derived line (extra base
   // hits, total bases) is a second definition of a number the box score already
   // implies, and that is a settlement bug waiting to happen.
-  | 'doubles' | 'triples';
+  | 'doubles' | 'triples'
+  // Second batch. `walksAllowed` and `earnedRunsAllowed` are the pitching mirrors of
+  // batting walks and runs, and both are counted per game by the play log.
+  | 'walksAllowed' | 'earnedRunsAllowed'
+  // The two DERIVED lines. Both are computed from the per-game reconstruction in
+  // `propActualStat`, never read off the season aggregate, so their definition cannot
+  // drift from the box score. See the comment there.
+  | 'extraBaseHits' | 'totalBases';
 
 export type PropRole = 'batting' | 'pitching';
 
@@ -276,6 +306,27 @@ export const PROP_STATS: Record<PropStatKey, PropStatConfig> = {
   triples: {
     key: 'triples', role: 'batting', singular: 'Triple', plural: 'Triples',
     settlementNote: 'counted from the play log',
+  },
+  walksAllowed: {
+    key: 'walksAllowed', role: 'pitching', singular: 'Walk Allowed', plural: 'Walks Allowed',
+    settlementNote: 'counted from the play log against the pitcher of record',
+  },
+  earnedRunsAllowed: {
+    key: 'earnedRunsAllowed', role: 'pitching', singular: 'Earned Run Allowed', plural: 'Earned Runs Allowed',
+    settlementNote: 'counted from the play log against the pitcher of record',
+  },
+  extraBaseHits: {
+    key: 'extraBaseHits', role: 'batting', singular: 'Extra Base Hit', plural: 'Extra Base Hits',
+    // Stated rather than left implicit, because a derived line is exactly where a
+    // settlement dispute starts. Doubles plus triples plus home runs, from the
+    // reconstructed per-game line.
+    settlementNote: 'doubles + triples + home runs, from the reconstructed play log',
+  },
+  totalBases: {
+    key: 'totalBases', role: 'batting', singular: 'Total Base', plural: 'Total Bases',
+    // hits + doubles + 2*triples + 3*home runs, i.e. singles once and each extra
+    // base once more.
+    settlementNote: 'hits + doubles + 2x triples + 3x home runs, from the reconstructed play log',
   },
 };
 
@@ -329,9 +380,42 @@ export const BATTING_PROP_STATS: PropStatKey[] = [
    *
    * The stats remain in PROP_STATS, PROP_MODEL_CONSTANTS and PROP_LINE_RANGE so the
    * fitter and the gate can still reach them. Only this list publishes.
+   *
+   * SECOND BATCH, MEASURED AND SHIPPING.
+   *
+   *   stat             Brier    ladder over two seasons
+   *   totalBases       0.2122   0.5 -> 66%   1.5 -> 40%   2.5 -> 24%   3.5 -> 18%
+   *   extraBaseHits    0.1266   0.5 -> 30%   1.5 ->  5%
+   *
+   * `totalBases` has the best-shaped ladder on the board -- four rungs, a smooth
+   * decay, and a top rung at 18 per cent rather than the 2 per cent that made
+   * `doubles` unusable. A derived stat can be a good market as long as its rate is
+   * high enough, which is the whole lesson of comparing the two batches.
+   *
+   * The two pitching mirrors ship too, on the second batch's numbers:
+   * `walksAllowed` 0.1375 at a 38.2 per cent best line, and `earnedRunsAllowed`
+   * 0.1484 at 31.2.
+   *
+   * The BATTING list holds batting stats only. An earlier version had all four
+   * second-batch stats here, which put the two pitching mirrors in both lists at once
+   * and made the gate score them against a BATTER's line -- so every one resolved to
+   * zero and read as 0.0 per cent on every line, a result indistinguishable from a
+   * dead market. It was caught only because the same stat printed twice.
    */
+  'extraBaseHits', 'totalBases',
 ];
-export const PITCHING_PROP_STATS: PropStatKey[] = ['pitcherStrikeouts', 'hitsAllowed'];
+export const PITCHING_PROP_STATS: PropStatKey[] = [
+  'pitcherStrikeouts', 'hitsAllowed',
+  /*
+   * Second batch, measured and shipping: `walksAllowed` at Brier 0.1375 with a
+   * 38.2 per cent best line, and `earnedRunsAllowed` at 0.1484 with 31.2.
+   *
+   * Both are the pitching mirrors of batting walks and runs, and both are counted per
+   * game by the play log, so they settle from the same exact reconstruction the
+   * existing pitching lines do.
+   */
+  'walksAllowed', 'earnedRunsAllowed',
+];
 
 /* ------------------------------------------------------------------ *
  * Pricing
@@ -403,6 +487,20 @@ export const PROP_MODEL_CONSTANTS: Record<PropStatKey, { priorGames: number; dis
    */
   doubles: { priorGames: 96, dispersion: 0.9 },
   triples: { priorGames: 96, dispersion: 0.9 },
+  /*
+   * PLACEHOLDERS for the second batch, as above -- not fits, and not shipped until
+   * tools/verifyPropStatFit.ts says they can be.
+   *
+   * The guesses are informed by the batch-one result rather than invented: every stat
+   * here clears roughly one event per game, where `doubles` and `triples` sat near
+   * 0.19 and 0.02 and were rejected. A stat that happens once a game has a line
+   * bettors can actually act on; one that happens twice a season has a price and no
+   * market. These priors are long because all four are low-count.
+   */
+  walksAllowed: { priorGames: 8, dispersion: 1.0 },
+  earnedRunsAllowed: { priorGames: 8, dispersion: 1.0 },
+  extraBaseHits: { priorGames: 96, dispersion: 1.0 },
+  totalBases: { priorGames: 96, dispersion: 1.0 },
 };
 
 /**
@@ -526,6 +624,7 @@ export const leaguePropBaselines = (
   let doubles = 0; let triples = 0;
   let pitcherAppearances = 0;
   let pitcherK = 0; let hitsAllowed = 0;
+  let walksAllowed = 0; let earnedRunsAllowed = 0;
 
   batting.forEach((row) => {
     if (row.gamesPlayed <= 0) return;
@@ -544,6 +643,8 @@ export const leaguePropBaselines = (
     pitcherAppearances += pitchingDenominator(row);
     pitcherK += row.strikeouts;
     hitsAllowed += row.hitsAllowed;
+    walksAllowed += row.walks;
+    earnedRunsAllowed += row.earnedRuns;
   });
 
   const perGame = (total: number, games: number, fallback: number) =>
@@ -567,6 +668,15 @@ export const leaguePropBaselines = (
     battingStrikeouts: perGame(battingK, battingGames, 0.66),
     pitcherStrikeouts: perGame(pitcherK, pitcherAppearances, 1.35),
     hitsAllowed: perGame(hitsAllowed, pitcherAppearances, 1.45),
+    // The second batch. The two derived rates are built from the batting components
+    // already accumulated above rather than summed separately, so they cannot
+    // disagree with the lines they are made of.
+    extraBaseHits: perGame(doubles + triples + homeRuns, battingGames, 0.28),
+    totalBases: perGame(
+      hits + doubles + 2 * triples + 3 * homeRuns, battingGames, 1.4,
+    ),
+    walksAllowed: perGame(walksAllowed, pitcherAppearances, 0.85),
+    earnedRunsAllowed: perGame(earnedRunsAllowed, pitcherAppearances, 1.5),
   };
 };
 
@@ -604,13 +714,14 @@ export const playerPropRate = (
   battingById: Map<string, PlayerSeasonBatting>,
   pitchingById: Map<string, PlayerSeasonPitching>,
 ): PropPlayerRate => {
-  if (stat === 'pitcherStrikeouts' || stat === 'hitsAllowed') {
+  if (stat === 'pitcherStrikeouts' || stat === 'hitsAllowed' || stat === 'walksAllowed' || stat === 'earnedRunsAllowed') {
     const row = pitchingById.get(playerId);
     if (!row) return { seasonTotal: 0, gamesPlayed: 0 };
-    return {
-      seasonTotal: stat === 'pitcherStrikeouts' ? row.strikeouts : row.hitsAllowed,
-      gamesPlayed: pitchingDenominator(row),
-    };
+    const total = stat === 'pitcherStrikeouts' ? row.strikeouts
+      : stat === 'hitsAllowed' ? row.hitsAllowed
+      : stat === 'walksAllowed' ? row.walks
+      : row.earnedRuns;
+    return { seasonTotal: total, gamesPlayed: pitchingDenominator(row) };
   }
   const row = battingById.get(playerId);
   if (!row) return { seasonTotal: 0, gamesPlayed: 0 };
@@ -623,6 +734,13 @@ export const playerPropRate = (
     : stat === 'battingStrikeouts' ? row.strikeouts
     : stat === 'doubles' ? row.doubles
     : stat === 'triples' ? row.triples
+    // The two derived lines, from the season aggregate's own components. The RATE may
+    // come from here; the SETTLEMENT never does, and always comes from the
+    // reconstructed per-game line in `propActualStat`. Using the aggregate to price
+    // and the log to settle is deliberate, not an oversight -- it is the only way to
+    // price from the best available estimate while still settling exactly.
+    : stat === 'extraBaseHits' ? row.doubles + row.triples + row.homeRuns
+    : stat === 'totalBases' ? row.hits + row.doubles + 2 * row.triples + 3 * row.homeRuns
     : 0;
   return { seasonTotal: total, gamesPlayed: row.gamesPlayed };
 };
@@ -778,6 +896,18 @@ export const PROP_LINE_RANGE: Record<
    */
   doubles: { offset: -0.2, step: 0.5, span: 0.5, min: 0.5, max: 2.5 },
   triples: { offset: -0.2, step: 0.5, span: 0.5, min: 0.5, max: 1.5 },
+  /*
+   * Second batch. `earnedRunsAllowed` and `totalBases` are shaped like their
+   * near-neighbours (`hitsAllowed`, `hits`) because they clear about one a game.
+   * `walksAllowed` is a low-count pitching stat like `hitsAllowed`, so it takes that
+   * shape rather than a batting one. `extraBaseHits` is the rarest of the four and
+   * gets a narrow ladder -- batch one showed what happens when a stat's mean is far
+   * below its line.
+   */
+  walksAllowed: { offset: -1.5, step: 0.5, span: 2.0, min: 0.5, max: 6.5 },
+  earnedRunsAllowed: { offset: -1.5, step: 0.5, span: 2.0, min: 0.5, max: 6.5 },
+  extraBaseHits: { offset: -0.35, step: 0.5, span: 1.0, min: 0.5, max: 3.5 },
+  totalBases: { offset: -0.35, step: 0.5, span: 1.5, min: 0.5, max: 5.5 },
 };
 
 /* ------------------------------------------------------------------ *

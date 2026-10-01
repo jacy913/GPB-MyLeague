@@ -11,6 +11,7 @@ import {
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
 import { leagueSeriesLosers, remainingRegularSeasonGames } from '../../lib/futuresRisk';
+import { projectSeasonCalendar } from '../../lib/marketDates';
 import { isPlayoffGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
 import {
@@ -225,6 +226,24 @@ const BettingPage: React.FC<BettingPageProps> = ({
   );
 
   /*
+   * THE SEASON CALENDAR, derived once and passed down.
+   *
+   * Every market on the board says when it resolves, and every one of those dates comes
+   * from here. Derived rather than hardcoded because the plan is right that computing
+   * dates from `SEASON_CALENDAR_DAYS` "produces plausible numbers that drift the moment
+   * the schedule changes" -- and this is the only place in the app that knows the
+   * whole schedule, so it is the only correct place to derive it.
+   *
+   * Memoised on the games, so it recomputes when the schedule changes and not on every
+   * render. Measured slack between the last possible championship game and the awards
+   * ceremony is 81 days, so the dates are comfortable rather than marginal.
+   */
+  const calendar = useMemo(
+    () => projectSeasonCalendar(games, resolveSeasonYear(currentDate)),
+    [currentDate, games],
+  );
+
+  /*
    * The second, tighter half of the elimination: a club that has lost its league
    * championship series cannot be a league champion, and the title is decided
    * between the two league champions.
@@ -273,6 +292,7 @@ const BettingPage: React.FC<BettingPageProps> = ({
         propBoards={propBoards}
         focusedProp={focusedProp}
         futures={futures}
+    calendar={calendar}
         awards={awards}
         slateDate={slateDate}
         bets={wallet.bets}

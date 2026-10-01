@@ -125,6 +125,10 @@ const LADDER: Record<PropStatKey, { offset: number; min: number; max: number }> 
    */
   doubles: { offset: -0.2, min: 0.5, max: 2.5 },
   triples: { offset: -0.2, min: 0.5, max: 1.5 },
+  walksAllowed: { offset: -1.5, min: 0.5, max: 6.5 },
+  earnedRunsAllowed: { offset: -1.5, min: 0.5, max: 6.5 },
+  extraBaseHits: { offset: -0.35, min: 0.5, max: 3.5 },
+  totalBases: { offset: -0.35, min: 0.5, max: 5.5 },
 };
 
 interface Observation {
@@ -172,6 +176,8 @@ const boxScoreValue = (stat: PropStatKey, line: PropBattingLine): number =>
   : stat === 'walks' ? line.walks
   : stat === 'doubles' ? line.doubles
   : stat === 'triples' ? line.triples
+  : stat === 'extraBaseHits' ? line.doubles + line.triples + line.homeRuns
+  : stat === 'totalBases' ? line.hits + line.doubles + 2 * line.triples + 3 * line.homeRuns
   : 0;
 
 const statValue = (
@@ -180,11 +186,15 @@ const statValue = (
     hits: number; runsScored: number; rbi: number; homeRuns: number;
     walks: number; strikeouts: number; doubles: number; triples: number;
   }>,
-  pitching: Map<string, { hitsAllowed: number; strikeouts: number }>,
+  pitching: Map<string, {
+    hitsAllowed: number; strikeouts: number; walks: number; earnedRuns: number;
+  }>,
   playerId: string,
 ): number | null => {
   if (stat === 'pitcherStrikeouts') return pitching.get(playerId)?.strikeouts ?? null;
   if (stat === 'hitsAllowed') return pitching.get(playerId)?.hitsAllowed ?? null;
+  if (stat === 'walksAllowed') return pitching.get(playerId)?.walks ?? null;
+  if (stat === 'earnedRunsAllowed') return pitching.get(playerId)?.earnedRuns ?? null;
   const row = batting.get(playerId);
   if (!row) return null;
   switch (stat) {
@@ -196,6 +206,9 @@ const statValue = (
     case 'battingStrikeouts': return row.strikeouts;
     case 'doubles': return row.doubles;
     case 'triples': return row.triples;
+    case 'extraBaseHits': return row.doubles + row.triples + row.homeRuns;
+    case 'totalBases':
+      return row.hits + row.doubles + 2 * row.triples + 3 * row.homeRuns;
     default: return null;
   }
 };
