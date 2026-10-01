@@ -657,7 +657,19 @@ const main = async (): Promise<void> => {
   );
 
   // -- report ------------------------------------------------------------------------
-  const failed = gated.filter((c) => !c.pass);
+  /*
+   * ONLY DECIDED CHECKS CAN FAIL THE TOOL.
+   *
+   * A skipped statistical check is left in the array with `pass` at whatever the measurement
+   * happened to be, so filtering on `!pass` counts a check that was never asked as a failure.
+   * The first version of this report did exactly that and the tool exited 1 on every run below
+   * twelve replicates -- which would have taught everyone to ignore the exit code within a day,
+   * and a green-light exit code is the only thing anyone reads in CI.
+   *
+   * So `decided` is computed once, here, and both the exit code and the tally use it.
+   */
+  const decided = gated.filter((c) => !c.statistical || REPLICATES >= GATE_MIN_REPLICATES);
+  const failed = decided.filter((c) => !c.pass);
 
   console.log(`\n  ${REPLICATES} replicate(s) used.`);
   if (REPLICATES < GATE_MIN_REPLICATES) {
@@ -676,8 +688,8 @@ const main = async (): Promise<void> => {
 
   console.log('\n  GATED CHECKS (deterministic, plus statistics only when the sample supports them)');
   gated.forEach((c, i) => {
-    const decided = !c.statistical || REPLICATES >= GATE_MIN_REPLICATES;
-    if (!decided) {
+    const isDecided = !c.statistical || REPLICATES >= GATE_MIN_REPLICATES;
+    if (!isDecided) {
       console.log(`    SKIP   ${String(i + 1).padStart(2)}. ${c.label}`);
       if (c.detail) console.log(`            (would read: ${c.detail.split(';')[0]})`);
       return;
@@ -689,7 +701,11 @@ const main = async (): Promise<void> => {
   console.log('\n  REPORTED (measured, not gated)');
   reported.forEach((r) => console.log(`    ${r}`));
 
-  console.log(`\n  ${gated.length - failed.length}/${gated.length} gated checks PASS\n`);
+  const skipped = gated.length - decided.length;
+  console.log(
+    `\n  ${decided.length - failed.length}/${decided.length} decided checks PASS`
+    + `${skipped > 0 ? `, ${skipped} statistical check(s) skipped for want of replicates` : ''}\n`,
+  );
   if (failed.length > 0) process.exitCode = 1;
 };
 

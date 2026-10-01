@@ -239,5 +239,72 @@ if (league) {
   check('a league market was built', false, 'none returned');
 }
 
+console.log('\nOUTCOME IDENTITY: does every outcome carry the club it belongs to?');
+console.log('An award race is keyed by PLAYER, so `key` and `teamId` are different');
+console.log('strings there. The mapper in markets.ts used to drop `teamId` entirely, which');
+console.log('is why every award row rendered an empty crest square. Nothing above could');
+console.log('see it, because a division outcome is keyed BY its team id and so the two');
+console.log('were the same string.\n');
+
+const identityTeams = makeTeams(4, 't');
+const identityMarket = buildDivisionMarkets({
+  teams: identityTeams,
+  scoreBy: {
+    hollis: new Map(identityTeams.map((t) => [t.id, 90])),
+    glorest: new Map(identityTeams.map((t) => [t.id, 90])),
+    sharply: new Map(identityTeams.map((t) => [t.id, 90])),
+  },
+})[0];
+
+if (identityMarket) {
+  const missing = identityMarket.outcomes.filter((o) => o.teamId !== o.key);
+  console.log(`  outcomes                    ${identityMarket.outcomes.length}`);
+  console.log(`  carrying teamId             ${identityMarket.outcomes.filter((o) => o.teamId !== undefined).length}`);
+  console.log(`  where teamId === key        ${identityMarket.outcomes.filter((o) => o.teamId === o.key).length}`);
+  check(
+    'every club outcome carries its teamId',
+    missing.length === 0,
+    missing.length === 0
+      ? 'all outcomes resolve to a club'
+      : `${missing.length} outcome(s) have no teamId: ${missing.slice(0, 3).map((o) => o.key).join(', ')}`,
+  );
+} else {
+  check('a division market was built for the identity check', false, 'none returned');
+}
+
+console.log('\nRISK TIER COLOUR CONTRACT');
+console.log('Green and orange may only ever mean that an OUTLET said something. On the');
+console.log('futures board the tiers are the HOUSE\'s read of an outcome, so the two hot');
+console.log('tiers take orange and the two cooler ones take the neutral teal -- never green.\n');
+
+const RISK_TIER_ACCENT: Record<string, string> = {
+  hail_mary: 'var(--color-warn)',
+  long_shot: 'var(--color-warn)',
+  contender: 'var(--color-neutral)',
+  favourite: 'var(--color-neutral)',
+};
+const POS = 'var(--color-pos)';
+
+check(
+  'no futures risk tier is coloured green',
+  Object.values(RISK_TIER_ACCENT).every((colour) => colour !== POS),
+  `tiers use ${[...new Set(Object.values(RISK_TIER_ACCENT))].join(' and ')}`,
+);
+check(
+  'the two variance tiers are the two hot ones',
+  RISK_TIER_ACCENT.hail_mary === RISK_TIER_ACCENT.long_shot,
+  'HAIL MARY and LONG SHOT share a colour',
+);
+check(
+  'the two non-variance tiers are the two neutral ones',
+  RISK_TIER_ACCENT.contender === RISK_TIER_ACCENT.favourite,
+  'CONTENDER and FAVOURITE share a colour',
+);
+check(
+  'the neutral colour is neither green nor orange',
+  RISK_TIER_ACCENT.contender !== POS && RISK_TIER_ACCENT.contender !== RISK_TIER_ACCENT.hail_mary,
+  'neutral is distinct from both semantic colours',
+);
+
 console.log(`\n  ${failures === 0 ? 'all checks passed' : `${failures} check(s) failed`}`);
 process.exit(failures === 0 ? 0 : 1);

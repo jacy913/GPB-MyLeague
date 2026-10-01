@@ -82,6 +82,31 @@
   --color-warn:        #e8a33d;
   --color-info:        #5b9bd5;
 
+  /*
+   * --color-neutral: THE "NO OUTLET SAID ANYTHING" COLOUR.
+   *
+   * The betting screen has a hard rule and this token exists to serve it: green and orange
+   * are only ever allowed to mean something a MEDIA OUTLET said. Green is safe because that
+   * outlet's own read says it lands more often than not; orange is hot for the same reason.
+   * Nothing else on the screen may use either colour to make a claim, because a reader who
+   * has learned "orange means someone is telling me this will lose" would reasonably read it
+   * that way anywhere.
+   *
+   * So everything that is not an outlet's read -- a game's card border, a futures card, a
+   * run-total block, and the CONTENDER and FAVOURITE risk tiers -- uses this instead. It has
+   * to be visible, because a risk label that disappears into the card is worse than a wrong
+   * one, so it is not `--color-ink-faint`.
+   *
+   * TEAL, per the user's choice. Deliberately distinct from the three outlet hues: Hollis is
+   * blue (#0876fc), Sharply is magenta (#c00dfc), Glorest is red (#ed2012). Teal sits between
+   * the blue and the green with enough of its own hue to read as a fourth thing rather than
+   * as one of them, and `--color-info` at #5b9bd5 was rejected precisely because it reads as
+   * a fifth Hollis.
+   */
+  --color-neutral:     #3fb8ab;
+  --color-neutral-hi:  #5fd6c8;
+  --color-neutral-dim: rgba(63, 184, 171, 0.18);
+
   /* ============================================================
    * RADIUS — §5.3 hard rule
    * ============================================================ */

@@ -115,7 +115,15 @@ export const NAV_FOLDERS: NavFolder[] = [
       { view: 'leaders', label: 'Leaders', icon: BarChart3 },
       { view: 'history', label: 'History', icon: ScrollText },
       { view: 'media', label: 'The Media', icon: Megaphone, mobileLabel: 'Media' },
-      { view: 'betting', label: 'Betting', icon: Receipt },
+      /*
+        MACROBET, not "Betting".
+
+        The page renamed itself, and the nav is how a manager gets there -- a leaf still
+        reading "Betting" beside a screen headed with the MacroBet wordmark is two names for
+        one destination. `mobileLabel` is left short because the leaf also renders in the
+        mobile rail where eight characters is what fits.
+      */
+      { view: 'betting', label: 'MacroBet', icon: Receipt, mobileLabel: 'MacroBet' },
       { view: 'map', label: 'Map', icon: MapIcon },
     ],
   },

@@ -4,7 +4,8 @@ import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
 import type { FieldMarket, LineMarket } from '../../lib/markets';
 import { formatAmerican, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
-import { futuresRiskRead } from '../../lib/futuresRisk';
+import { futuresRiskRead, type FuturesRiskTier } from '../../lib/futuresRisk';
+import macrobetLogo from '../../assets/macrobetlogo-trim.png';
 import { formatResolutionDate, resolveDateFor, type SeasonCalendar } from '../../lib/marketDates';
 import type { GameLine } from '../../lib/mediaOdds';
 import { propMarketTitle, propSelectionLabel } from '../../lib/mediaProps';
@@ -95,15 +96,32 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
 
   return (
     <section className="space-y-5">
+      {/*
+        THE HEADER IS THE LOGO.
+
+        The page is called MacroBet and now says so in its own wordmark rather than in an
+        `<h1>Betting</h1>` with a paragraph explaining the pricing underneath. The paragraph was
+        not wrong, but it was the wrong thing at the top of the page: it described the model to
+        somebody who had come to place a bet, and it pushed the tabs a third of a screen down.
+
+        The one thing that must not go is the ACCESSIBLE NAME. A logo is an image, and an image
+        whose alt text is empty leaves a screen reader announcing nothing at all for the page's
+        own name. So the alt is the name, the `<h1>` is the name, and the pixels are decoration
+        on top of a real heading -- which is the only arrangement where the logo can be removed
+        tomorrow without losing the page title.
+
+        Sized off the crop's own 2.18:1 aspect rather than by eye, and tall enough to hold the
+        swash flourishes without competing with the tab row beneath it.
+      */}
       <Panel variant="hero" className="p-4 md:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h1 className="t-h1">Betting</h1>
-            <p className="t-body mt-2 max-w-3xl text-[var(--color-ink-dim)]">
-              Every price here is the mean of the three published probabilities, with a margin on top.
-              Where an outlet sits well away from the other two, that is the number worth fading.
-            </p>
-          </div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h1 className="min-w-0">
+            <img
+              src={macrobetLogo}
+              alt="MacroBet"
+              className="h-12 w-auto select-none md:h-14"
+            />
+          </h1>
           <div className="border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-4 py-3 text-right">
             <p className="t-caption text-[var(--color-ink-faint)]">Balance</p>
             <p className="t-stat-lg text-[var(--color-gold-hi)]">${Math.round(balance)}</p>
@@ -281,11 +299,16 @@ const GameBetCard: React.FC<{
 
           The accessible name carries the matchup so the header is not three
           unlabelled images to a screen reader.
+
+          h-9 rather than h-7, at the user's request for bigger logos. It is also what makes
+          the crest the card's primary identifier rather than a decoration on one: the prices
+          below are set a step smaller than the marks, so the eye lands on WHO is playing before
+          WHAT it costs.
         */}
         <h2 className="flex min-w-0 items-center gap-2">
-          <TeamLogo team={game.awayTeam} sizeClass="h-7 w-7" />
+          <TeamLogo team={game.awayTeam} sizeClass="h-9 w-9" />
           <span className="text-[var(--color-ink-dim)]" aria-hidden="true">at</span>
-          <TeamLogo team={game.homeTeam} sizeClass="h-7 w-7" />
+          <TeamLogo team={game.homeTeam} sizeClass="h-9 w-9" />
           <span className="sr-only">
             {game.awayTeam.city} at {game.homeTeam.city}
           </span>
@@ -304,69 +327,88 @@ const GameBetCard: React.FC<{
       </div>
 
       {/*
-        ONE COLUMN, NOT A 1fr/300px SPLIT.
+        ONE COLUMN, MODELLED ON THE PROPS CARD.
 
-        The card is now roughly a third of the screen wide, and a 300px action rail
-        beside a 300px content column left both too narrow to hold a price and a
-        crest side by side. Stacking them makes the card taller and the board shorter,
-        which is the right trade at this density: a manager scanning fifteen games
-        wants six visible at once, not four.
+        The props tab was the user's model and its card shape is the right one: a bordered
+        block per concern, each with its own label, stacked. So the game card now has a
+        bordered block for the three outlet prices and a bordered block for the run total,
+        rather than a loose row of chips above a rule and a paragraph of caption beneath.
 
-        The moneyline section also lost its label. "Moneyline -- each outlet's price"
-        was a heading above three numbers, and the three outlet marks beside those
-        numbers already say whose prices they are.
+        What that fixes, concretely. Before, the outlet prices were three small chips and the
+        run total was unlabelled type under a hairline, so the two things a manager compares --
+        what the outlets think, and what the total is -- had no visual weight of their own. Now
+        each is a block that reads as a unit before you read any of the numbers in it.
+
+        The outlet cells keep their own accent on the left edge, because those marks DO carry an
+        outlet's opinion. The BLOCK around them is neutral, because the block is the house's
+        arrangement and not an outlet's claim.
       */}
       <div className="flex flex-col gap-2.5 p-3">
-        {/*
-          Flex with content-width cells, not a three-column grid. A grid divides the
-          available width three ways, so on a narrow card each outlet's price would sit
-          alone in the middle of a long empty bar. These are three short numbers about
-          to be compared, and they should sit next to each other.
-        */}
-        <div className="flex flex-wrap gap-1.5">
-          {MEDIA_PROFILES.map((profile) => (
-            <div
-              key={profile.id}
-              className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-sunken)] px-2 py-1"
-              style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
-            >
-              <img
-                src={MEDIA_MARKS_SQUARE[profile.id]}
-                alt=""
-                aria-hidden="true"
-                className="h-4 w-4 object-contain"
-              />
-              <span className="t-stat-sm tabular-nums">{formatAmerican(game.odds[profile.id])}</span>
-            </div>
-          ))}
-        </div>
-        <p className="t-caption text-[var(--color-ink-faint)]">
-          House {formatAmerican(game.houseOdds)} · the three span {Math.round(game.disagreement * 100)} points
-          {game.disagreement >= 0.12 && ' — they are split on this one.'}
+        <div
+          className="border border-l-[3px] bg-[var(--color-sunken)]"
+          style={{ borderLeftColor: NEUTRAL_BORDER }}
+        >
+          <p className="border-b border-[var(--color-chrome-lo)] px-2.5 py-1 t-caption text-[var(--color-ink-faint)]">
+            Outlet prices
+            <span className="ml-1.5 text-[var(--color-ink-dim)]">
+              House {formatAmerican(game.houseOdds)} · they span {Math.round(game.disagreement * 100)} points
+            </span>
+            {game.disagreement >= 0.12 && (
+              <span className="ml-1.5 text-[var(--color-neutral-hi)]">they are split on this one.</span>
+            )}
+          </p>
           {/*
-            A game market resolves when the game is played, which is the only basis
-            on this board whose date is already known exactly rather than projected.
-            Kept because "resolves tonight" and "resolves in November" are different
-            products and a bettor holding both should not have to guess which is which.
-            The DATE itself moved to the header; this is the resolution basis.
-          */}
-          {' · '}
-          {game.status === 'completed' ? 'SETTLED' : 'RESOLVES WHEN PLAYED'}
-        </p>
+            Flex with content-width cells, not a three-column grid. A grid divides the
+            available width three ways, so on a narrow card each outlet's price would sit
+            alone in the middle of a long empty bar. These are three short numbers about
+            to be compared, and they should sit next to each other.
 
-        {/* The two sides, first and largest: this is what most of the board is for. */}
+            The marks are h-5 rather than h-4. At h-4 the three marks on a card a third of the
+            screen wide were smaller than the price they sat beside, which inverts the
+            hierarchy -- the logo is how you know WHOSE number this is, so it has to be at
+            least as legible as the number.
+          */}
+          <div className="flex flex-wrap gap-1.5 p-2">
+            {MEDIA_PROFILES.map((profile) => (
+              <div
+                key={profile.id}
+                className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-panel)] px-2 py-1"
+                style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
+              >
+                <img
+                  src={MEDIA_MARKS_SQUARE[profile.id]}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-5 w-5 object-contain"
+                />
+                <span className="t-stat-sm tabular-nums">{formatAmerican(game.odds[profile.id])}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/*
+          THE TWO SIDES, FIRST AND LARGEST.
+
+          Above the total and above the prices, because "who wins" is what most of this board is
+          for. This used to sit below the outlet strip; at three columns a manager reads the
+          fixture and then has to hunt past a row of chips to find the number they came for.
+        */}
         <div className="flex flex-wrap gap-1.5">
           {side(game.awayTeam, 'away', game.houseOdds)}
           {side(game.homeTeam, 'home', game.homeOdds)}
         </div>
 
         {total && (
-          <div className="border-t border-[var(--color-chrome-lo)] pt-2.5">
-            <p className="t-caption text-[var(--color-ink-faint)]">
-              Run total — house line {total.houseLine.toFixed(1)} · outlets{' '}
-              {MEDIA_PROFILES.map((profile) => total.fair[profile.id].toFixed(1)).join(' / ')}
+          <div className="border border-l-[3px] bg-[var(--color-sunken)]" style={{ borderLeftColor: NEUTRAL_BORDER }}>
+            <p className="border-b border-[var(--color-chrome-lo)] px-2.5 py-1 t-caption text-[var(--color-ink-faint)]">
+              Run total
+              <span className="ml-1.5 text-[var(--color-ink-dim)]">
+                House line {total.houseLine.toFixed(1)} · outlets{' '}
+                {MEDIA_PROFILES.map((profile) => total.fair[profile.id].toFixed(1)).join(' / ')}
+              </span>
             </p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 p-2">
               <RetroButton
                 variant="primary"
                 size="sm"
@@ -534,11 +576,51 @@ const TotalMarketCard: React.FC<{
  *
  * So this is a claim about frequency, and frequency belongs on the outside of the
  * row where it is read before the price rather than after.
+ *
+ * THE RULE THESE COLOURS OBEY, because it is the rule the whole screen depends on: green and
+ * orange may only ever mean something a MEDIA OUTLET said. They are per-outlet judgements on a
+ * prop -- "this outlet's own read says it lands more often than not" -- and nothing else on
+ * this screen may use either colour to make a claim. A reader who has learned the association
+ * would reasonably carry it onto a card that carries no outlet's opinion at all.
+ *
+ * Which is what NEUTRAL is for. Every non-outlet border, and the two cooler risk tiers, are
+ * teal. Not grey: a risk label that disappears into its own card is worse than a misleading
+ * one, so it has to be visible.
  */
 const TEMPERAMENT: Record<PropTemperament, { border: string; label: string; Icon: React.FC<{ className?: string }> }> = {
   safe: { border: 'var(--color-pos)', label: 'Safe', Icon: ShieldCheck },
   hot: { border: 'var(--color-warn)', label: 'Hot', Icon: Flame },
 };
+
+/**
+ * The risk tier's colour, and the second place the outlet-only rule is enforced.
+ *
+ * HAIL MARY and LONG SHOT are orange, because they name the outcome a bettor is choosing to
+ * take a variance position on -- the same thing the props tab calls "hot". FAVOURITE and
+ * CONTENDER are NEUTRAL rather than gold and rather than green: gold is this app's accent for a
+ * highlighted row and would read as an endorsement of the pick, and green is reserved for an
+ * outlet saying something will land, and no outlet has said anything about a futures outcome.
+ *
+ * Worth being blunt that orange means something slightly different here than on the props tab.
+ * On props it is one outlet's read of one prop. On futures it is the HOUSE's read of an
+ * outcome, derived from all three. Both carry "this is the hot one", which is the colour's job,
+ * and each tab's caption says which of the two you are looking at.
+ */
+const RISK_TIER_ACCENT: Record<FuturesRiskTier, string> = {
+  hail_mary: 'var(--color-warn)',
+  long_shot: 'var(--color-warn)',
+  contender: 'var(--color-neutral)',
+  favourite: 'var(--color-neutral)',
+};
+
+/**
+ * The border for anything that is not an outlet's opinion.
+ *
+ * Teal, for the reason in `TEMPERAMENT`. A game's card, a futures card, a run-total block and
+ * the slate's price strip all carry this, so that every green and orange pixel on the screen
+ * can be traced to a named outlet saying something specific.
+ */
+const NEUTRAL_BORDER = 'var(--color-neutral)';
 
 const PropsView: React.FC<{
   boards: Map<MediaId, PropMarket[]>;
@@ -614,12 +696,21 @@ const PropsView: React.FC<{
               className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4"
               style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
             >
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                {/*
+                  h-8 rather than h-6, at the user's request for bigger logos.
+
+                  This is the OUTLET panel header, and the mark is the only thing on it that
+                  says which outlet the board below belongs to. At h-6 the mark and the `t-h3`
+                  name beside it were nearly the same size, so the header had no clear primary.
+                  At h-8 the mark leads and the name supports it, which matches how the cards
+                  underneath are read: logo first, then whose number it is.
+                */}
                 <img
                   src={MEDIA_MARKS_SQUARE[profile.id]}
                   alt=""
                   aria-hidden="true"
-                  className="h-6 w-6 object-contain"
+                  className="h-8 w-8 object-contain"
                 />
                 <h2 className="t-h3 truncate" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
                   {profile.outlet}
@@ -630,7 +721,27 @@ const PropsView: React.FC<{
               </span>
             </div>
 
-            <div className="grid items-stretch gap-2 p-3 md:grid-cols-2 2xl:grid-cols-3">
+            {/*
+          ONE COLUMN, AT THE USER'S REQUEST.
+
+          This was `md:grid-cols-2 2xl:grid-cols-3` -- each outlet's board was a three-across
+          grid of prop cards. The user asked for one column per outlet, and the reasoning
+          holds: a prop card carries a fixture strip, a player name, a temperament chip, an
+          O/U line, a per-outlet read and three buttons. Squeezed to a third of a panel those
+          wrap, and the button row -- the part a manager actually acts on -- ends up on three
+          lines with one button orphaned.
+
+          A single column also makes the outlets COMPARABLE, which is the point of showing all
+          three: with one column each, the same slot holds the same kind of thing in all three
+          panels, so a manager can see at a glance that Hollis publishes fifteen and Sharply
+          publishes nine. Three-across, they had to be compared across panels.
+
+          `xl` and not `md`, for the same reason the slate's grid is keyed the way it is: the
+          betting page is often the right pane of the shell rather than a full-width route, and
+          a multi-column grid keyed off the viewport would give three cramped columns in a
+          900px pane.
+        */}
+        <div className="flex flex-col gap-2 p-3">
               {markets.map((market) => {
                 const key = propRowKey({ propId: market.propId, mediaId: profile.id });
                 return (
@@ -759,9 +870,9 @@ const PropBetRow: React.FC<{
         <span className="flex min-w-0 items-center gap-1.5">
           {fixture ? (
             <>
-              <TeamLogo team={fixture.awayTeam} sizeClass="h-5 w-5" />
+              <TeamLogo team={fixture.awayTeam} sizeClass="h-6 w-6" />
               <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
-              <TeamLogo team={fixture.homeTeam} sizeClass="h-5 w-5" />
+              <TeamLogo team={fixture.homeTeam} sizeClass="h-6 w-6" />
               <span className="sr-only">
                 {fixture.awayTeam.city} at {fixture.homeTeam.city}
               </span>
@@ -1004,7 +1115,30 @@ const FieldMarketCard: React.FC<{
                       return <p className="t-caption text-[var(--color-ink-faint)]">ELIMINATED</p>;
                     }
                     const read = futuresRiskRead(market.outcomes, outcome.consensusProbability);
-                    return <p className="t-caption text-[var(--color-ink-faint)]">{read.label}</p>;
+                    /*
+                      THE RISK TIER, COLOUR CODED.
+
+                      HAIL MARY and LONG SHOT are orange, because they name the outcome a
+                      bettor is choosing to take a variance position on. FAVOURITE and
+                      CONTENDER are teal and not green, because green on this screen means an
+                      OUTLET said something lands and no outlet has said anything about a
+                      futures outcome -- the tier is the HOUSE's read, derived from all three.
+                      The caption on the tab says so, because orange meaning "one outlet's
+                      opinion" on props and "the house's read" on futures is a distinction a
+                      reader should not have to infer from colour alone.
+
+                      Rendered as a chip rather than bare text so it reads as a classification
+                      of the row rather than as another caption competing with the club's name
+                      for attention.
+                    */
+                    return (
+                      <span
+                        className="mt-0.5 inline-flex w-fit items-center border px-1.5 py-0.5 t-caption"
+                        style={{ borderColor: RISK_TIER_ACCENT[read.tier], color: RISK_TIER_ACCENT[read.tier] }}
+                      >
+                        {read.label}
+                      </span>
+                    );
                   })()}
                 </div>
 
@@ -1046,7 +1180,7 @@ const FieldMarketCard: React.FC<{
                         src={MEDIA_MARKS_SQUARE[profile.id]}
                         alt=""
                         aria-hidden="true"
-                        className="h-3.5 w-3.5 object-contain"
+                        className="h-5 w-5 object-contain"
                       />
                       <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
                         {formatAmerican(outcome.odds[profile.id])}
@@ -1146,25 +1280,105 @@ const FieldMarketsView: React.FC<{
   teams: Team[];
   caption: string;
   emptyMessage: string;
+  /**
+   * A single heading for a board that is one kind of market.
+   *
+   * Futures gets sections derived from `market.kind` instead, because it mixes three kinds in
+   * one list and the whole point of that tab's change is to stop them being indistinguishable.
+   * Awards passes this because every market on it is already one kind and a heading per race
+   * would be four headings in a row saying nothing.
+   */
+  groupLabel?: string;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance, calendar, teams, caption, emptyMessage }) => {
+}> = ({ markets, onPlace, balance, calendar, teams, caption, emptyMessage, groupLabel }) => {
   const teamById = useTeamLookup(teams);
+
+  /*
+    * THREE KINDS OF RACE, GROUPED AND LABELLED.
+
+    * The user reported that the divisions and leagues "just don't organize well", and the
+    * cause is visible in how this list was built: `BettingPage` concatenates the title, both
+    * league races and all four division races into ONE flat array, and this component rendered
+    * it in a two-column grid in that order.
+
+    * So a Platinum League card sat directly beside an East Division card, both rendered
+    * identically, with nothing on either to say they were different kinds of competition. A
+    * manager could not tell a league title from a division title by looking at it, and the
+    * two carry very different risk -- winning a division is arithmetic, winning a league
+    * requires surviving a series of playoffs.
+
+    * So the markets are bucketed by `kind` and each bucket gets a labelled section. The
+    * section order is Championship, League races, Division races: broadest first, because a
+    * manager reads this board top-down from "who could win it all" to "who is winning their
+    * own division".
+    *
+    * `groupLabel` is optional because AWARDS shares this component and its markets are all
+    * one kind -- there is nothing to group, and a heading per award race would be noise.
+    */
+  const SECTIONS: Array<{ kind: FieldMarket['kind']; label: string; note: string }> = [
+    {
+      kind: 'world_series',
+      label: 'Championship',
+      note: 'Every club in both leagues. The only market that spans the divisions.',
+    },
+    {
+      kind: 'league',
+      label: 'League races',
+      note: 'Won by finishing top of a league. Eight clubs each.',
+    },
+    {
+      kind: 'division',
+      label: 'Division races',
+      note: 'Won on the season record in your own division. Arithmetic, not a series.',
+    },
+  ];
+
+  const grouped = groupLabel
+    ? [{ label: groupLabel, note: null as string | null, markets }]
+    : SECTIONS
+      .map((section) => ({
+        ...section,
+        markets: markets.filter((market) => market.kind === section.kind),
+      }))
+      .filter((section) => section.markets.length > 0);
+
   return (
     <div className="grid gap-4">
       <p className="t-caption px-1 text-[var(--color-ink-faint)]">{caption}</p>
       {markets.length === 0
         ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">{emptyMessage}</p></Panel>
         : (
-          <div className="grid items-start gap-4 xl:grid-cols-2">
-            {markets.map((market) => (
-              <FieldMarketCard
-                key={market.key}
-                market={market}
-                balance={balance}
-                calendar={calendar}
-                teamById={teamById}
-                onPlace={onPlace}
-              />
+          <div className="grid gap-5">
+            {grouped.map((section) => (
+              <section key={section.label} className="grid gap-3">
+                {/*
+                  A section heading with a hairline under it, so the three groups read as three
+                  bands rather than as one long board that happens to pause. The note beside
+                  the label is the one sentence that tells a manager why the next panel is a
+                  different KIND of race and not just another race.
+                */}
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-[var(--color-chrome-lo)] pb-1.5">
+                  <h3 className="t-h3">{section.label}</h3>
+                  {section.note && (
+                    <span className="t-caption text-[var(--color-ink-faint)]">{section.note}</span>
+                  )}
+                  <span className="t-caption ml-auto tabular-nums text-[var(--color-ink-faint)]">
+                    {section.markets.length} {section.markets.length === 1 ? 'market' : 'markets'}
+                  </span>
+                </div>
+                <div className="grid items-start gap-4 xl:grid-cols-2">
+                  {section.markets.map((market) => (
+                    <FieldMarketCard
+                      key={market.key}
+                      market={market}
+                      balance={balance}
+                      calendar={calendar}
+                      teamById={teamById}
+                      onPlace={onPlace}
+                    />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}
@@ -1185,7 +1399,7 @@ const FuturesView: React.FC<{
     calendar={calendar}
     teams={teams}
     onPlace={onPlace}
-    caption="Season-long markets settle when a season is archived, not before. Each price is the mean of the three outlets' probabilities; the small marks beside it show each outlet's own price, and where one of them sits furthest from the other two it is named."
+    caption="Season-long markets settle when a season is archived, not before. Each price is the mean of the three outlets' probabilities; the marks beside it show each outlet's own price, and where one of them sits furthest from the other two it is named. The risk tier is the HOUSE's read of the outcome, not any one outlet's."
     emptyMessage="No division or league races could be built."
   />
 );
@@ -1205,6 +1419,7 @@ const AwardsView: React.FC<{
     onPlace={onPlace}
     caption="The three outlets differ on awards by how hard they regress a hot start toward the field. The metrics forecaster pulls hardest, which makes a narrow leader look narrow; the narrative one barely regresses at all, so it will pay 5-to-1 for a player nobody else has noticed. The crest is the player's club -- these races are keyed by player, so the name beside it is the player and not the team."
     emptyMessage="No award race is available yet."
+    groupLabel="Award races"
   />
 );
 

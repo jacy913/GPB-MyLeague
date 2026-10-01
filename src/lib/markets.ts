@@ -213,6 +213,15 @@ export const buildFieldMarket = (input: {
   subtitle?: string;
   entries: Array<{
     key: string;
+    /**
+     * The club this outcome belongs to, when it is not the same thing as `key`.
+     *
+     * Every caller supplies it. The mapper below used to drop it, which is why every award
+     * row rendered an empty crest square: an award race is keyed by PLAYER, so `key` and
+     * `teamId` genuinely differ there and the field has to survive the trip. On a division
+     * or league race they are the same string, so the omission was invisible there.
+     */
+    teamId?: string;
     label: string;
     sublabel?: string;
     probability: Record<MediaId, number>;
@@ -250,6 +259,23 @@ export const buildFieldMarket = (input: {
 
     return {
       key: entry.key,
+      // CARRIED THROUGH, AND IT WAS NOT.
+      //
+      // `buildAwardMarket` has been passing `teamId: entry.team?.id` on every award entry
+      // since the field family was built, and the `MarketOutcome` type declares the field --
+      // but this mapper never copied it onto the outcome it returns. Every other use of the
+      // field silently got `undefined`.
+      //
+      // The visible consequence was on the awards tab and nowhere else: an award race is
+      // keyed by PLAYER, so `teamById.get(outcome.key)` finds no club and the card rendered
+      // an empty square on every single row. Division and league futures were unaffected
+      // because their outcomes happen to be keyed by team id, so `outcome.teamId` being
+      // undefined never mattered -- the key and the id were the same string.
+      //
+      // So this is one missing property in one mapper, and it only ever showed up on the one
+      // market type where key and teamId are different things. It typechecked throughout,
+      // because the field was optional on the type and the consumer handled undefined.
+      teamId: entry.teamId,
       label: entry.label,
       sublabel: entry.sublabel,
       probability: entry.probability,
