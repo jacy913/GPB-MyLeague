@@ -10,7 +10,7 @@ import {
   buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildWorldSeriesMarkets, buildAwardMarket,
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
-import { remainingRegularSeasonGames } from '../../lib/futuresRisk';
+import { leagueSeriesLosers, remainingRegularSeasonGames } from '../../lib/futuresRisk';
 import { isPlayoffGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
 import {
@@ -224,13 +224,26 @@ const BettingPage: React.FC<BettingPageProps> = ({
     [games],
   );
 
+  /*
+   * The second, tighter half of the elimination: a club that has lost its league
+   * championship series cannot be a league champion, and the title is decided
+   * between the two league champions.
+   *
+   * Empty until the playoffs produce a completed league series, which is the correct
+   * behaviour -- `titleContenders` treats an absent set as "no league elimination
+   * yet" rather than as "nobody is eliminated".
+   */
+  const eliminatedFromLeague = useMemo(() => leagueSeriesLosers(games), [games]);
+
   const futures = useMemo<FieldMarket[]>(() => [
     // The title FIRST, because it is the one season-long bet a manager actually
     // wants and it was missing entirely. Everything below it is a narrower race.
-    ...buildWorldSeriesMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId }),
+    ...buildWorldSeriesMarkets({
+      teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague,
+    }),
     ...buildLeagueMarkets({ teams: input.teams, scoreBy }),
     ...buildDivisionMarkets({ teams: input.teams, scoreBy }),
-  ], [input.teams, scoreBy, gamesRemainingByTeamId]);
+  ], [input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague]);
 
   const awards = useMemo<FieldMarket[]>(() => {
     const awardInputs = {

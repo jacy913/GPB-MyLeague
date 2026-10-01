@@ -716,6 +716,24 @@ const FieldMarketCard: React.FC<{
                     </p>
                   )}
                   {/*
+                    THE GAP IS INFORMATION, NOT AN EDGE, and the label says so because
+                    it was measured rather than because it is modest.
+
+                    The expansion plan proposed surfacing a fade-the-outlier row as
+                    "the actual play in this layer". Measured over six seasons of
+                    championship futures it does not pay: fading returned -0.030 a bet
+                    and following returned -0.967, and both being negative is the
+                    signature of paying the house margin on every stake rather than
+                    of a strategy with an edge. So the disagreement is shown as the
+                    interesting fact it is -- these two forecasters really do differ by
+                    this much -- and nothing on this board invites a bettor to act on
+                    it.
+
+                    tools/checkOutlierFade.ts is the measurement. If the forecasters'
+                    slopes are ever refitted, that tool is what decides whether this
+                    line can change.
+                  */}
+                  {/*
                     THE RISK TIER, and deliberately not the word VALUE.
 
                     Every bet in this layer is priced from a calibrated model plus a

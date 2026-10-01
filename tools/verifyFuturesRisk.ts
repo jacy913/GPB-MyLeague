@@ -47,6 +47,7 @@ import {
   FUTURES_RISK_TIERS,
   assertNoValueTier,
   futuresRiskTier,
+  leagueSeriesLosers,
   remainingRegularSeasonGames,
   titleContenders,
 } from '../src/lib/futuresRisk';
@@ -362,6 +363,49 @@ const main = async (): Promise<void> => {
       `${handBuiltContenders.size} contenders`,
     `the hand-built contention case produced ${handBuiltContenders.size} contenders ` +
       `(${Array.from(handBuiltContenders).join(', ')}), expected 3 excluding b`,
+  );
+
+  // League-series elimination, pinned on a hand-built series so it is not only ever
+  // exercised through the simulator. A club that lost its league series cannot be a
+  // league champion, and the title is decided between the two league champions.
+  const seriesLosers = leagueSeriesLosers([
+    {
+      homeTeam: 'p1', awayTeam: 'p2', status: 'completed',
+      score: { home: 3, away: 1 },
+      playoff: { round: 'league_series', league: 'Prestige', seriesId: 's1' },
+    },
+    {
+      homeTeam: 'p1', awayTeam: 'p2', status: 'completed',
+      score: { home: 0, away: 0 },
+      playoff: { round: 'league_series', league: 'Prestige', seriesId: 's1' },
+    },
+  ]);
+  check(
+    'a club that lost its league series is out of the title',
+    seriesLosers.has('p2') && !seriesLosers.has('p1'),
+    `p1 winning 3-1 eliminates p2 and keeps p1 alive`,
+    `league-series elimination produced ${Array.from(seriesLosers).join(', ')}; expected p2 only`,
+  );
+
+  // A tied series must eliminate nobody.
+  const tiedSeries = leagueSeriesLosers([
+    {
+      homeTeam: 'a', awayTeam: 'b', status: 'completed',
+      score: { home: 2, away: 0 },
+      playoff: { round: 'league_series', league: 'Platinum', seriesId: 's2' },
+    },
+    {
+      homeTeam: 'a', awayTeam: 'b', status: 'completed',
+      score: { home: 0, away: 2 },
+      playoff: { round: 'league_series', league: 'Platinum', seriesId: 's2' },
+    },
+  ]);
+  check(
+    'a tied league series eliminates nobody',
+    tiedSeries.size === 0,
+    `a series level at 2-2 keeps both clubs alive rather than eliminating either`,
+    `a tied series eliminated ${Array.from(tiedSeries).join(', ')}. A series level on wins is ` +
+      `undecided, and guessing would be inventing a result the schedule has not produced`,
   );
 
   // A tie must NOT eliminate: a tiebreaker decides a tied division.

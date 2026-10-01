@@ -145,6 +145,49 @@ export const LIVE_OUTCOME_FLOOR = 0.001;
  * normal state of a division in April, and treating that as elimination would empty
  * the board in the first week.
  */
+/**
+ * Clubs knocked out by their own LEAGUE championship series.
+ *
+ * The second and tighter half of the elimination, and it only matters once the
+ * playoffs begin: a club that has lost its league series cannot be the league
+ * champion, and the title is decided between the two league champions.
+ *
+ * Identified by reading completed `league_series` games rather than by asking the
+ * simulation manager, whose seed maps are private. A club counts as eliminated once
+ * it has lost a series it is still playing in -- the same "cannot catch up" test the
+ * division arithmetic uses, applied to a best-of series rather than a season record.
+ */
+export const leagueSeriesLosers = (games: ReadonlyArray<{
+  homeTeam: string;
+  awayTeam: string;
+  status: string;
+  score: { home: number; away: number };
+  playoff?: { round?: string; league?: string; seriesId?: string } | null;
+}>): Set<string> => {
+  const series = new Map<string, { home: string; away: string; homeWins: number; awayWins: number }>();
+  for (const game of games) {
+    if (game.status !== 'completed') continue;
+    if (game.playoff?.round !== 'league_series') continue;
+    const id = game.playoff.seriesId ?? `${game.homeTeam}-${game.awayTeam}`;
+    const row = series.get(id) ?? {
+      home: game.homeTeam, away: game.awayTeam, homeWins: 0, awayWins: 0,
+    };
+    if (game.score.home > game.score.away) row.homeWins += 1;
+    else if (game.score.away > game.score.home) row.awayWins += 1;
+    series.set(id, row);
+  }
+
+  const eliminated = new Set<string>();
+  series.forEach((row) => {
+    // A tie on wins is undecided rather than eliminated -- a series that is level
+    // with games to come keeps both clubs alive, and guessing would be inventing a
+    // result the schedule has not produced.
+    if (row.homeWins > row.awayWins) eliminated.add(row.away);
+    else if (row.awayWins > row.homeWins) eliminated.add(row.home);
+  });
+  return eliminated;
+};
+
 export const titleContenders = (input: {
   teams: ReadonlyArray<{ id: string; league: string; division: string; wins: number }>;
   /**
