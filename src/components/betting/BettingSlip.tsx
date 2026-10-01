@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { ChevronRight, Receipt, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { MEDIA_BY_ID } from '../../data/media';
@@ -8,6 +8,9 @@ import type { WalletSummary } from './BettingHub';
 import type { SlipEntry } from '../../hooks/useBettingSlip';
 import { RetroButton, StatValue } from '../ui';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
+import { formatResolutionDate } from '../../lib/marketDates';
+import type { Game, Team } from '../../types';
+import { BetFixtureLine, buildFixtureLookupFromGames, fixtureForBet } from './BetFixtureLine';
 
 /**
  * The slip.
@@ -53,13 +56,31 @@ export const BettingSlip: React.FC<{
   balance: number;
   openBets: PlacedBet[];
   settledBets: PlacedBet[];
+  /**
+   * The schedule and the club list, so a bet can be resolved to its fixture.
+   *
+   * GAMES AND TEAMS, NOT A PRICED SLATE, and deliberately. The slip is rendered from
+   * the shell, which has neither `GameLine`s nor any market to build them from -- and
+   * pricing a moneyline in the shell purely to draw two crests would derive a market
+   * nobody there is going to bet. What the slip needs is identity: which two clubs, on
+   * which date. `BetFixtureLine` is typed to that narrow shape for exactly this reason.
+   *
+   * Both come from the same schedule the betting page reads, so the two surfaces
+   * cannot name different clubs for one fixture.
+   */
+  games: Game[];
+  teams: Team[];
   summary: WalletSummary;
 }> = ({
   isOpen, onClose, onOpenRecord,
   entry, stake, onStake, onConfirm, onClear, notice,
-  balance, openBets, settledBets, summary,
+  balance, openBets, settledBets, games, teams, summary,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  const fixtureById = useMemo(
+    () => buildFixtureLookupFromGames(games, new Map(teams.map((team) => [team.id, team]))),
+    [games, teams],
+  );
 
   /*
    * Escape closes, and focus moves into the panel.
@@ -227,6 +248,26 @@ export const BettingSlip: React.FC<{
                             {bet.selectionLabel} {formatAmerican(bet.price)}
                           </p>
                           <p className="t-caption text-[var(--color-ink-faint)]">{bet.marketTitle}</p>
+                          {/*
+                            THE GAME AND THE DATE, IN THE SLIP.
+
+                            This is the surface that exists to hold what the manager has
+                            at risk, and until now it showed less about each bet than the
+                            page behind it did -- a bet's name and its market title, and
+                            nothing about which game to watch or which night it settles.
+                            Opening the slip to check on your exposure gave you a worse
+                            answer than not opening it.
+
+                            Shared with the betting page's open-bets panel via
+                            `BetFixtureLine`, rather than reimplemented here, because the
+                            two lists disagreeing about a real wager is exactly the bug
+                            this started as.
+                          */}
+                          <BetFixtureLine
+                            bet={bet}
+                            fixture={fixtureForBet(bet, fixtureById)}
+                            className="mt-0.5"
+                          />
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {bet.backedMedia && (
@@ -254,11 +295,32 @@ export const BettingSlip: React.FC<{
                     {settledBets.slice(0, 5).map((bet) => (
                       <div
                         key={bet.id}
-                        className={`flex items-center justify-between gap-2 border-l-[3px] bg-[var(--color-sunken)] px-3 py-1.5 ${STATUS_CLASS[bet.status]}`}
+                        className={`flex items-center justify-between gap-x-2 gap-y-0.5 border-l-[3px] bg-[var(--color-sunken)] px-3 py-1.5 ${STATUS_CLASS[bet.status]}`}
                       >
-                        <p className="t-caption min-w-0 truncate text-[var(--color-ink-dim)]">
-                          {bet.selectionLabel}
-                        </p>
+                        <div className="min-w-0">
+                          <p className="t-caption truncate text-[var(--color-ink-dim)]">
+                            {bet.selectionLabel}
+                          </p>
+                          {/*
+                            THE DATE A SETTLED BET RESOLVED ON.
+
+                            A settled prop bet previously said only the selection and a
+                            word like "Won". "Quincy Hollis Over 1.5 Hits — Won" does not
+                            say which game it won in, which is the question a manager
+                            asking after the fact actually has: not what happened, but
+                            whether the thing I backed last week did what I said it would.
+
+                            The fixture crests are deliberately NOT repeated here. Five
+                            rows of two crests each is noise on a list whose job is to be
+                            scannable, and the date is the part that is missing -- the
+                            selection already names the player and the line.
+                          */}
+                          {bet.resolvesOn && (
+                            <p className="t-caption tabular-nums text-[var(--color-ink-faint)]">
+                              {formatResolutionDate(bet.resolvesOn)}
+                            </p>
+                          )}
+                        </div>
                         <span className="t-caption shrink-0">{STATUS_LABEL[bet.status]}</span>
                       </div>
                     ))}

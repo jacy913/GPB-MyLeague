@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Receipt, TrendingDown, TrendingUp } from 'lucide-react';
 import { formatAmerican } from '../../lib/markets';
+import { formatResolutionDate } from '../../lib/marketDates';
 import { MEDIA_BY_ID } from '../../data/media';
 import { STARTING_BALANCE, type PlacedBet } from '../../lib/wallet';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
@@ -85,7 +86,22 @@ export const BettingRecordScreen: React.FC<{
             <span className="min-w-0">
               <span className="block truncate t-stat-sm">{bet.marketTitle}</span>
               <span className="block truncate t-caption text-[var(--color-ink-faint)]">
-                {bet.placedOn}
+                {/*
+                  PLACED, AND SETTLED.
+
+                  `placedOn` alone was the whole of the date information here, and it is
+                  the wrong half to have on its own: a record spanning a season is read
+                  to answer "what did this resolve on", not "when did I click". Both are
+                  now labelled so neither reads as the other.
+
+                  No crests here, deliberately. This screen holds bets from every past
+                  season, and those games are long gone from any slate the app still has,
+                  so a fixture lookup would resolve to nothing for most rows and the
+                  column would be a row of empty squares. The crest belongs on the open
+                  lists, where the game is still ahead of you.
+                */}
+                placed {bet.placedOn}
+                {bet.resolvesOn && ` · settles ${formatResolutionDate(bet.resolvesOn)}`}
                 {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
               </span>
             </span>

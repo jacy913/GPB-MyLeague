@@ -15,6 +15,7 @@ import { MAX_STAKE, MIN_STAKE, STARTING_BALANCE, settleReturn } from '../../lib/
 import type { PropFocus } from '../../hooks/useBettingSlip';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
 import { Panel, RetroButton, SegmentedControl, TeamLogo } from '../ui';
+import { BetFixtureLine, buildFixtureLookup, fixtureForBet } from './BetFixtureLine';
 import type { Team } from '../../types';
 
 type BettingView = 'slate' | 'props' | 'futures' | 'awards';
@@ -1211,21 +1212,7 @@ export const OpenBets: React.FC<{
   moneyline: GameLine[];
 }> = ({ bets, moneyline }) => {
   const open = bets.filter((bet) => bet.status === 'open');
-  const fixtureById = useMemo(
-    () => new Map(moneyline.map((game) => [game.gameId, game])),
-    [moneyline],
-  );
-
-  /**
-   * Is this bet about a game that is on the slate?
-   *
-   * Moneyline, total, first five and prop all store the game id in `marketKey`. Futures
-   * and awards store a group or a season key, which resolves to nothing here and falls
-   * through to the date alone -- which is correct, because a futures bet is not about a
-   * fixture and should not be given a crest it does not belong to.
-   */
-  const isGameBet = (bet: PlacedBet): boolean =>
-    bet.kind === 'moneyline' || bet.kind === 'total' || bet.kind === 'first5' || bet.kind === 'prop';
+  const fixtureById = useMemo(() => buildFixtureLookup(moneyline), [moneyline]);
 
   if (open.length === 0) return null;
 
@@ -1239,80 +1226,46 @@ export const OpenBets: React.FC<{
         </span>
       </div>
       <div className="grid gap-1 p-3">
-        {open.map((bet) => {
-          const fixture = isGameBet(bet) ? fixtureById.get(bet.marketKey) : undefined;
-          return (
-            <div
-              key={bet.id}
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="t-stat-sm truncate">
-                  {bet.selectionLabel} {formatAmerican(bet.price)}
-                </p>
-                <p className="t-caption text-[var(--color-ink-faint)]">
-                  {bet.marketTitle}
-                  {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
-                </p>
-                {/*
-                  WHICH GAME, AND WHEN -- on the bet itself.
+        {open.map((bet) => (
+          <div
+            key={bet.id}
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="t-stat-sm truncate">
+                {bet.selectionLabel} {formatAmerican(bet.price)}
+              </p>
+              <p className="t-caption text-[var(--color-ink-faint)]">
+                {bet.marketTitle}
+                {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
+              </p>
+              {/*
+                WHICH GAME, AND WHEN.
 
-                  This is the second half of a gap the props board also had. The board
-                  now names the fixture a prop belongs to, but a bet OUTLIVES the screen
-                  it was taken on: the manager scrolls, switches tabs, comes back
-                  tomorrow, and the only record of the bet said "Baltimore +240 /
-                  Quincy Hollis Over 1.5 Hits". No game, no date. That was the actual
-                  reported problem, and fixing the board alone would have left it.
-
-                  `resolvesOn` is stored on the bet at placement rather than looked up
-                  here, so this is the date the board PROMISED when it sold the bet --
-                  not a date recomputed from a calendar that may have moved since. See
-                  the note on `PlacedBet.resolvesOn`.
-
-                  A bet with no stored date was placed before the field existed, and it
-                  says so. Printing today's date on a bet placed in April would be a
-                  confident wrong answer on a real wager, which is worse than admitting
-                  the record is incomplete.
-                */}
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 t-caption text-[var(--color-ink-dim)]">
-                  {fixture && (
-                    <span className="flex items-center gap-1">
-                      <TeamLogo team={fixture.awayTeam} sizeClass="h-4 w-4" />
-                      <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
-                      <TeamLogo team={fixture.homeTeam} sizeClass="h-4 w-4" />
-                      <span className="sr-only">{fixture.awayTeam.city} at {fixture.homeTeam.city}</span>
-                    </span>
-                  )}
-                  <span className="tabular-nums">
-                    {bet.resolvesOn
-                      ? formatResolutionDate(bet.resolvesOn)
-                      : 'No resolution date recorded'}
-                  </span>
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {bet.backedMedia && (
-                  <img
-                    src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
-                    alt={MEDIA_BY_ID[bet.backedMedia].outlet}
-                    title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
-                    className="h-5 w-5 object-contain"
-                  />
-                )}
-                <span className="t-stat tabular-nums">${bet.stake}</span>
-              </div>
+                The shared `BetFixtureLine`, so this list and the slip's own "Open" list
+                cannot say different things about the same wager. They did once: this
+                one got the fixture and the date, the slip did not, and the slip is the
+                surface a manager opens precisely to check on money at risk.
+              */}
+              <BetFixtureLine bet={bet} fixture={fixtureForBet(bet, fixtureById)} className="mt-0.5" />
             </div>
-          );
-        })}
+            <div className="flex items-center gap-2">
+              {bet.backedMedia && (
+                <img
+                  src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
+                  alt={MEDIA_BY_ID[bet.backedMedia].outlet}
+                  title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
+                  className="h-5 w-5 object-contain"
+                />
+              )}
+              <span className="t-stat tabular-nums">${bet.stake}</span>
+            </div>
+          </div>
+        ))}
       </div>
     </Panel>
   );
 };
-
-/* ------------------------------------------------------------------ *
- * Settled bets and the slip
- * ------------------------------------------------------------------ */
-
 const statusAccent: Record<BetStatus, string> = {
   open: 'var(--color-gold)',
   won: 'var(--color-pos)',
