@@ -46,12 +46,34 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
 /**
  * Forecaster marks.
  *
- * The supplied marks arrive as 1408x768 canvases with the artwork small and
- * centred in a large transparent margin, so used as-is the mark would fill only
- * a fraction of any box it sat in. Each is cropped to its own alpha bounding
- * box, which is what the -trim variants are. Hollis is a signature in a disc
- * and the other two are network crests, which is the intended difference
- * between a correspondent and an institution.
+ * The supplied marks arrive with the artwork small and centred in a large transparent
+ * margin, so used as-is a mark would fill only a fraction of any box it sat in. Each is
+ * cropped to its own alpha bounding box and given 8px of transparent padding on every side;
+ * those -trim variants are what this map uses. Hollis is a signature in a disc and the other
+ * two are network crests, which is the intended difference between a correspondent and an
+ * institution.
+ *
+ * THE PADDING AND THE RULE BEHIND IT ARE MEASURED, NOT ASSUMED, and the code that produces
+ * these files is `tools/buildMediaMarks.ts`. The details worth knowing before changing
+ * anything here:
+ *
+ *   - The supplied canvases are not all the same size. Hollis and Sharply arrived at
+ *     1408x768; the current Glorest mark arrived at 1024x1024. Nothing downstream may assume
+ *     a canvas dimension.
+ *
+ *   - The trim is the alpha bounding box PLUS 8px of padding, which is 16px larger in each
+ *     axis than the bare box. Confirmed against all three committed marks. Without the padding
+ *     the outermost pixel of a logo touches the edge of its own box, which reads as a seam
+ *     against any background and makes three marks in a row look like three sizes.
+ *
+ *   - Rebuilding the existing marks from their own sources reproduces the committed trim at
+ *     0.12/255 mean channel difference with zero silhouette mismatches, and the committed
+ *     square at 2.27/255 -- the residual being the original tool's downsampling filter rather
+ *     than any geometry difference. So the rule in `buildMediaMarks` is the rule that made
+ *     these files, and it self-checks against them before it will overwrite them.
+ *
+ * The alpha bounding box uses a floor of 8 rather than "any non-transparent pixel", because
+ * an alpha of 1 is invisible and anti-aliased edges routinely carry a few of them.
  */
 export const MEDIA_MARKS: Record<MediaId, string> = {
   hollis: hollisMark,
@@ -62,11 +84,20 @@ export const MEDIA_MARKS: Record<MediaId, string> = {
 /**
  * Square variants of the same marks, for table headers.
  *
- * The three marks have three different natural shapes -- Hollis is a disc, the
- * other two are wide wings -- so a shared header box sized to any one of them
- * makes the others look small. Each is centred on its own bounding box and cut
- * to the largest square that fits, which gives all three the same visual weight
- * in a column header.
+ * The three marks have three different natural shapes -- Hollis is a disc, the other two are
+ * wide wings -- so a shared header box sized to any one of them makes the others look small.
+ * Each is centred on a TRANSPARENT square canvas whose side is its longest edge and then
+ * resized to 96x96, which gives all three the same visual weight in a column header.
+ *
+ * It PADS rather than crops, and that distinction is not cosmetic: cutting the largest square
+ * that fits as a WINDOW through the artwork removes the outer wings entirely and produced a
+ * file sharing almost nothing with the committed square. The whole mark is scaled to sit
+ * inside the square, with transparent bands on the short axis.
+ *
+ * Minification uses an area-average filter rather than nearest-neighbour. Reducing a ~1000px
+ * mark to 96px with nearest samples roughly one pixel in eleven and throws away the other ten,
+ * which on a hard-edged crest stair-steps every diagonal -- and this logo is nothing but
+ * diagonals.
  */
 export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
   hollis: hollisSquare,
