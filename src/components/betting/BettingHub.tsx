@@ -1105,15 +1105,21 @@ const FieldMarketCard: React.FC<{
 /**
  * The club lookup every field row needs.
  *
- * Built once per view rather than per card, and memoised on the teams array itself --
- * thirty-odd `find` calls per card across a page of markets was the kind of thing that
- * makes a board feel slow to open, and it is free to avoid.
+ * `useMemo`, and this was originally `useState` + `useEffect`. That version was a
+ * render loop waiting for the day `teams` stopped being referentially stable: the
+ * effect sets a fresh Map on every change, setting state re-renders, the render
+ * produces another Map, and if the caller rebuilds the array each pass the page
+ * spins forever. Nothing caught it because nothing caught it -- the same silent-failure
+ * shape as every other bug this session, except this one freezes the UI instead of
+ * printing a wrong number, which is louder and just as avoidable.
+ *
+ * `useMemo` recomputes when `teams` changes and does nothing otherwise, so a fresh
+ * array reference costs a Map build and a re-render rather than an infinite one.
+ * `BettingPage.tsx` already builds the identical lookup this way 300 lines above, so
+ * this is now the same pattern rather than a second dialect of it.
  */
-const useTeamLookup = (teams: Team[]): Map<string, Team> => {
-  const [lookup, setLookup] = useState<Map<string, Team>>(() => new Map(teams.map((t) => [t.id, t])));
-  useEffect(() => { setLookup(new Map(teams.map((t) => [t.id, t]))); }, [teams]);
-  return lookup;
-};
+const useTeamLookup = (teams: Team[]): Map<string, Team> =>
+  useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
 
 /**
  * Season futures and awards.
