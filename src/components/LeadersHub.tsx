@@ -11,6 +11,12 @@ import {
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtAvg, fmtDiff, fmtEra, fmtIp, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
 import { battingMetrics, pitchingMetrics, toBattingCounts, toPitchingCounts } from '../lib/analytics/metrics';
+import {
+  formatPercentile,
+  percentileOf,
+  summarise,
+  type Distribution,
+} from '../lib/analytics/percentile';
 import { buildBattingAwards, buildPitchingAwards, type AwardEntry } from '../lib/awardRace';
 import { OddsBar, Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
@@ -105,6 +111,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     // The stored figure is what gets displayed, so a displayed average cannot
     // disagree with the player card; only the ordering is computed at full precision.
     format: (stat) => fmtAvg(stat.avg),
+    meanFormat: (v) => fmtAvg(v),
     detail: (stat) => `${stat.hits} H / ${stat.atBats} AB`,
   },
   {
@@ -114,6 +121,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     qualified: false,
     value: (stat) => stat.homeRuns,
     format: (stat) => String(stat.homeRuns),
+    meanFormat: (v) => v.toFixed(1),
     detail: (stat) => `${stat.rbi} RBI`,
   },
   {
@@ -123,6 +131,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     qualified: false,
     value: (stat) => stat.rbi,
     format: (stat) => String(stat.rbi),
+    meanFormat: (v) => v.toFixed(1),
     detail: (stat) => `${stat.homeRuns} HR`,
   },
   {
@@ -132,6 +141,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).ops ?? 0,
     format: (stat) => stat.ops.toFixed(3),
+    meanFormat: (v) => v.toFixed(3),
     detail: (stat) => `${slugging(stat).toFixed(3)} SLG`,
   },
   {
@@ -141,6 +151,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).slg ?? 0,
     format: (stat) => slugging(stat).toFixed(3),
+    meanFormat: (v) => v.toFixed(3),
     detail: (stat) => `${stat.ops.toFixed(3)} OPS`,
   },
   {
@@ -149,7 +160,8 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).obp ?? 0,
-    format: (stat) => battingMetrics(toBattingCounts(stat)).obp?.toFixed(3) ?? '—',
+    format: (stat) => battingMetrics(toBattingCounts(stat)).obp?.toFixed(3) ?? '-',
+    meanFormat: (v) => v.toFixed(3),
     detail: (stat) => `${slugging(stat).toFixed(3)} SLG`,
   },
   {
@@ -166,6 +178,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
       const babip = battingMetrics(toBattingCounts(stat)).babip;
       return babip ? fmtAvg(babip.value) : '—';
     },
+    meanFormat: (v) => fmtAvg(v),
     detail: (stat) => {
       const m = battingMetrics(toBattingCounts(stat));
       // Hits among balls in play, which is total hits less home runs. `hits` is a
@@ -186,8 +199,9 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     // and .368 beside it.
     format: (stat) => {
       const iso = battingMetrics(toBattingCounts(stat)).iso;
-      return iso === null ? '—' : fmtAvg(iso);
+      return iso === null ? '-' : fmtAvg(iso);
     },
+    meanFormat: (v) => fmtAvg(v),
     detail: (stat) => `${stat.doubles + stat.triples + stat.homeRuns} XBH`,
   },
   {
@@ -213,6 +227,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
       // sit near zero or below.
       return `${diff >= 0 ? '+' : '-'}${Math.abs(diff * 100).toFixed(1)}`;
     },
+    meanFormat: (v) => `${v >= 0 ? '+' : '-'}${Math.abs(v * 100).toFixed(1)}`,
     detail: (stat) => `${stat.strikeouts} K / ${stat.walks} BB`,
   },
   {
@@ -222,6 +237,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     qualified: false,
     value: (stat) => stat.doubles + stat.triples + stat.homeRuns,
     format: (stat) => String(stat.doubles + stat.triples + stat.homeRuns),
+    meanFormat: (v) => v.toFixed(1),
     detail: (stat) => `${stat.doubles} 2B / ${stat.triples} 3B / ${stat.homeRuns} HR`,
   },
 ];
@@ -235,6 +251,29 @@ interface CategoryBoard {
   columns: StatTableColumn[];
   rows: StatTableRow[];
   count: number;
+  /**
+   * The pool these percentiles were computed against, and its mean.
+   *
+   * ON THE BOARD RATHER THAN IN A ROW, because it is a property of the league and not
+   * of a player. Putting "MEAN .268" in the header means every row below it is legible
+   * against it without repeating the number ten times, and it means the figure cannot
+   * be misread as belonging to whoever happens to be in row one.
+   *
+   * Null when the pool was too small to summarise honestly.
+   */
+  distribution: Distribution | null;
+  /** The mean, formatted to the precision this stat is normally shown at. */
+  meanLabel: string;
+  /**
+   * Why this board is short, when it is.
+   *
+   * The qualifying floor is the honest version of "this league has not started yet".
+   * On day one nobody clears 82 at-bats, so a qualified board is empty, and an empty
+   * board with no explanation reads as a bug rather than as a league that has played
+   * four games. Stating the count and the floor says both, and it is the reason the
+   * screen does not silently top the board up with unqualified players.
+   */
+  shortNote: string | null;
 }
 
 /**
@@ -264,6 +303,17 @@ interface BattingCategory {
   detail: (stat: PlayerSeasonBatting) => string;
   /** The primary figure, as displayed. */
   format: (stat: PlayerSeasonBatting) => string;
+  /**
+   * How the pool's MEAN is displayed.
+   *
+   * A separate accessor, for the same reason `format` is one: the header mean is a
+   * different quantity from a row's value, so it needs its own formatting rather than a
+   * chain keyed on `category.key` with a fallthrough. Three decimals on a mean batting
+   * average, one on a mean home-run count, and a signed figure on K-BB% -- reusing the
+   * row's format for the mean would print a mean rate to the wrong precision on half the
+   * boards, and a reader would have no way to tell a rounded mean from a precise one.
+   */
+  meanFormat: (value: number) => string;
 }
 
 interface StatEntry {
@@ -272,6 +322,73 @@ interface StatEntry {
   team: Team | null;
   stat: PlayerSeasonBatting | PlayerSeasonPitching;
 }
+
+/**
+ * The percentile cell, and why it is a separate column.
+ *
+ * This board used to be PLAYER / VALUE / detail. Rank was implied by the row order and
+ * nothing else was said about where the number sat in the league. Adding the percentile
+ * as a FOURTH column rather than folding it into the detail cell is deliberate: the
+ * detail cell holds a supporting count ("22 HR", "48 K") that varies by stat, so a
+ * percentile sharing it would change column meaning from one board to the next, and a
+ * column whose contents mean different things per row is not a column.
+ *
+ * The percentile is computed against the board's own pool, so a rate board is compared
+ * with the players who actually qualified and a counting board with everyone. Mixing
+ * the two would let a 12-game rookie's three home runs land in a percentile derived from
+ * 600-game hitters, which is a real number and a meaningless one.
+ *
+ * Blank rather than 0 when there is no pool to measure against. Zero is a claim.
+ */
+const percentileCell = (value: number, distribution: Distribution | null): React.ReactNode => {
+  if (!distribution || distribution.size === 0) {
+    return <span className="t-stat-sm text-[var(--color-ink-faint)]">-</span>;
+  }
+  const percentile = percentileOf(value, distribution);
+  return (
+    <span
+      className="t-stat-sm tabular-nums text-[var(--color-ink-dim)]"
+      title={`${percentile.toFixed(1)}th percentile of ${distribution.size} players in this pool`}
+    >
+      {formatPercentile(percentile)}
+    </span>
+  );
+};
+
+/** The narrow percentile column, identical on all three board types. */
+const PERCENTILE_COLUMN: StatTableColumn = {
+  key: 'pct',
+  header: 'PCT',
+  align: 'right',
+  isNumeric: true,
+  width: '4ch',
+};
+
+/**
+ * Why a board is short, when it is.
+ *
+ * The qualifying floors are what stop a four-game league producing a confident-looking
+ * leaderboard of noise. When the pool is smaller than a full board that is not a bug and
+ * not something to hide by topping the list up with unqualified players -- it is the
+ * honest state, and saying so is the whole point. A board that quietly filled itself
+ * from the unqualified pool would be publishing rankings on eight at-bats while looking
+ * identical to a board built on a full season.
+ */
+const shortBoardNote = (
+  poolSize: number,
+  qualified: boolean,
+  floor: number,
+  floorLabel: string,
+): string | null => {
+  if (!qualified) return null;
+  if (poolSize === 0) {
+    return `Nobody clears the ${floor} ${floorLabel} floor yet.`;
+  }
+  if (poolSize < TOP_ROWS) {
+    return `Only ${poolSize} ${poolSize === 1 ? 'player' : 'players'} clear the ${floor} ${floorLabel} floor so far.`;
+  }
+  return null;
+};
 
 const nameCell = (entry: StatEntry, index: number): React.ReactNode => (
   <button
@@ -288,9 +405,13 @@ const nameCell = (entry: StatEntry, index: number): React.ReactNode => (
 /**
  * Category panel -- the unit of the dense board.
  *
- * A rank column, a name with logo, the primary figure in gold, and one or two
- * secondary figures in ink-dim. Top three ranks carry a 3px gold left edge, the
+ * A rank column, a name with logo, the primary figure in gold, its percentile, and one
+ * or two secondary figures in ink-dim. Top three ranks carry a 3px gold left edge, the
  * period convention, restrained to three.
+ *
+ * The header now carries the pool's mean and, where the board is short, why. Both are
+ * header furniture rather than rows: they describe the league, and repeating them
+ * per-row would both crowd the table and imply they were properties of the player.
  */
 const CategoryPanel: React.FC<{
   board: CategoryBoard;
@@ -305,8 +426,21 @@ const CategoryPanel: React.FC<{
       className={`chrome-bar flex w-full items-center justify-between gap-2 px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-gold)] ${selected ? 'bg-[var(--color-panel-3)]' : ''}`}
     >
       <span className={`t-label truncate ${selected ? 'text-[var(--color-gold)]' : ''}`}>{board.title}</span>
+      {board.distribution && (
+        <span
+          className="t-caption shrink-0 tabular-nums text-[var(--color-ink-faint)]"
+          title={`Mean of the ${board.distribution.size} player-level ${board.title.toLowerCase()} figures in this pool. Not a league aggregate -- the two differ because a part-season player counts the same here. Percentiles are against this same pool.`}
+        >
+          MEAN {board.meanLabel}
+        </span>
+      )}
       <span className="t-caption shrink-0 text-[var(--color-ink-faint)]">{board.count}</span>
     </button>
+    {board.shortNote && (
+      <p className="border-b border-[var(--color-chrome-lo)] px-3 py-1 t-caption text-[var(--color-ink-faint)]">
+        {board.shortNote}
+      </p>
+    )}
     <StatTable
       columns={board.columns}
       rows={board.rows}
@@ -450,7 +584,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   // previously an unexplained 120. PITCHING_QUALIFYING_OUTS is the equivalent
   // thought in outs: 20 outs is five innings, a conventional minimum, and is
   // labelled as a convention rather than a fitted figure.
-  const battingBoards = useMemo<CategoryBoard[]>(() => BATTING_CATEGORIES.map((category) => {
+  const battingBoards = useMemo<CategoryBoard[]>(() => BATTING_CATEGORIES.map((category): CategoryBoard => {
     const pool = category.qualified
       ? battingEntries.filter((entry) => (entry.stat as PlayerSeasonBatting).atBats >= BATTING_QUALIFYING_AT_BATS)
       : battingEntries;
@@ -472,8 +606,24 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     const columns: StatTableColumn[] = [
       { key: 'name', header: 'PLAYER' },
       { key: 'value', header: category.title.split(' ').pop()?.toUpperCase() ?? 'VAL', align: 'right', isNumeric: true, width: '5ch' },
+      PERCENTILE_COLUMN,
       { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
     ];
+
+    /*
+     * The percentile pool.
+     *
+     * Computed from the SAME array the board ranks, not from all players in the league.
+     * A rate board is therefore compared only with the players who cleared the floor
+     * alongside it, which is the population the reader is implicitly comparing against;
+     * a counting board is compared with everybody, because a part-season rookie's three
+     * home runs is a real fact about a counting board and a meaningless one about a rate
+     * board.
+     */
+    const distribution = summarise(
+      pool.map((entry) => category.value(entry.stat as PlayerSeasonBatting)),
+      category.direction === 'asc' ? 'asc' : 'desc',
+    );
 
     return {
       key: category.key,
@@ -482,15 +632,22 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       qualified: category.qualified,
       count: pool.length,
       columns,
-      rows: sorted.slice(0, TOP_ROWS).map((entry, index) => ({
-        id: entry.playerId,
-        className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
-        cells: {
-          name: nameCell(entry, index),
-          value: <StatValue size="sm" variant="accent">{category.format(entry.stat as PlayerSeasonBatting)}</StatValue>,
-          detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{category.detail(entry.stat as PlayerSeasonBatting)}</span>,
-        },
-      })),
+      distribution: distribution.size > 0 ? distribution : null,
+      meanLabel: distribution.size > 0 ? category.meanFormat(distribution.mean) : '-',
+      shortNote: shortBoardNote(pool.length, category.qualified, BATTING_QUALIFYING_AT_BATS, 'AB'),
+      rows: sorted.slice(0, TOP_ROWS).map((entry, index) => {
+        const stat = entry.stat as PlayerSeasonBatting;
+        return {
+          id: entry.playerId,
+          className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
+          cells: {
+            name: nameCell(entry, index),
+            value: <StatValue size="sm" variant="accent">{category.format(stat)}</StatValue>,
+            pct: percentileCell(category.value(stat), distribution.size > 0 ? distribution : null),
+            detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{category.detail(stat)}</span>,
+          },
+        };
+      }),
     };
   }), [battingEntries]);
 
@@ -509,7 +666,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     ];
   }, [pitchingEntries]);
 
-  const pitchingBoards = useMemo<CategoryBoard[]>(() => pitchingCategories.map((category) => {
+  const pitchingBoards = useMemo<CategoryBoard[]>(() => pitchingCategories.map((category): CategoryBoard => {
     const pool = category.qualified
       ? pitchingEntries.filter((entry) => (entry.stat as PlayerSeasonPitching).inningsPitched * 3 >= PITCHING_QUALIFYING_OUTS)
       : pitchingEntries;
@@ -557,18 +714,49 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     const columns: StatTableColumn[] = [
       { key: 'name', header: 'PLAYER' },
       { key: 'value', header: category.key === 'k9' ? 'K/9' : category.title.toUpperCase(), align: 'right', isNumeric: true, width: '5ch' },
+      PERCENTILE_COLUMN,
       { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
     ];
+
+    /*
+     * The percentile pool, from the same array the board ranks.
+     *
+     * `valueOf` is reused rather than the stored stat, for the reason ERA and WHIP need
+     * it above: the stored row is pre-rounded, so two pitchers genuinely a hundredth
+     * apart would tie, tie on percentile too, and a percentile that ties when the
+     * underlying numbers do not is a worse lie than a rounded figure.
+     */
+    const distribution = summarise(
+      pool.map(valueOf),
+      category.direction === 'asc' ? 'asc' : 'desc',
+    );
+    /** The mean, at the precision this stat is normally shown at. */
+    const meanFormat = (v: number): string => {
+      if (category.key === 'era') return fmtEra(v);
+      if (category.key === 'whip') return fmtWhip(v);
+      if (category.key === 'k9') return v.toFixed(2);
+      if (category.key === 'ip') return fmtIp(v);
+      return v.toFixed(1);
+    };
 
     return {
       ...category,
       columns,
+      distribution: distribution.size > 0 ? distribution : null,
+      meanLabel: distribution.size > 0 ? meanFormat(distribution.mean) : '-',
+      shortNote: shortBoardNote(
+        pool.length,
+        category.qualified,
+        PITCHING_QUALIFYING_OUTS,
+        'outs',
+      ),
       rows: sorted.slice(0, TOP_ROWS).map((entry, index) => ({
         id: entry.playerId,
         className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
         cells: {
           name: nameCell(entry, index),
           value: <StatValue size="sm" variant="accent">{formatValue(entry)}</StatValue>,
+          pct: percentileCell(valueOf(entry), distribution.size > 0 ? distribution : null),
           detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{detailOf(entry)}</span>,
         },
       })),
@@ -584,7 +772,9 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     { key: 'ra', title: 'Runs Allowed', direction: 'asc', qualified: false, count: teams.length },
   ], [teams]);
 
-  const teamBoards = useMemo<CategoryBoard[]>(() => teamCategories.map((category) => {
+  const teamBoards = useMemo<CategoryBoard[]>(() => teamCategories.map((category): CategoryBoard => {
+    // Distribution and mean are computed from all clubs, since every club is in every
+    // pool and there is no qualifying floor on a team board.
     const valueOf = (team: Team): number => {
       if (category.key === 'wins') return team.wins;
       if (category.key === 'pct') return getWinPct(team);
@@ -608,13 +798,28 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       return (category.direction === 'desc' ? -delta : delta) || left.city.localeCompare(right.city);
     });
 
+    const teamDistribution = summarise(teams.map(valueOf), category.direction === 'asc' ? 'asc' : 'desc');
+    const teamMeanLabel = (() => {
+      if (teamDistribution.size === 0) return '-';
+      const v = teamDistribution.mean;
+      if (category.key === 'pct') return fmtPct(v);
+      if (category.key === 'diff') return fmtDiff(v);
+      return v.toFixed(1);
+    })();
+
     return {
       ...category,
       columns: [
         { key: 'name', header: 'TEAM' },
         { key: 'value', header: category.key === 'pct' ? 'PCT' : category.key === 'diff' ? 'DIFF' : category.title.toUpperCase().slice(0, 4), align: 'right', isNumeric: true, width: '5ch' },
+        PERCENTILE_COLUMN,
         { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
       ],
+      // A team board is thirty-two entries, so there is no sample-size story to tell and
+      // no floor to fall under. Every club is in every pool.
+      distribution: teamDistribution,
+      meanLabel: teamMeanLabel,
+      shortNote: null,
       rows: sorted.slice(0, TOP_ROWS).map((team, index) => ({
         id: team.id,
         className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
@@ -627,6 +832,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
             </span>
           ),
           value: <StatValue size="sm" variant="accent">{formatValue(team)}</StatValue>,
+          pct: percentileCell(valueOf(team), teamDistribution),
           detail: <span className="t-stat-sm text-[var(--color-ink-faint)]">{detailOf(team)}</span>,
         },
       })),
