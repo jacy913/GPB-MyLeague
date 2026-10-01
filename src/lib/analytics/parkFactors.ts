@@ -81,6 +81,7 @@ import {
   type HumidityBand,
   type ParkProfile,
 } from './parkProfile';
+import type { AtBatOutcome } from '../../types';
 
 /**
  * THE CHOSEN COEFFICIENTS.
@@ -573,50 +574,153 @@ export const parkFactorsFor = (profile: ParkProfile): ParkFactors => {
 };
 
 /**
- * How a park's factors scale the engine's seven outcome weights.
+ * How a park's factors scale the engine's eight outcome weights.
  *
  * DELIBERATELY TAKES NO `isHomeBatting`. See the header: home-field advantage is a relative
  * edge and a park factor is an absolute environment, and the two must not be the same thing
  * applied twice. A signature that cannot see which team is batting cannot accidentally make a
- * park a home-team bonus.
+ * park a home-team bonus. `gameEngine.ts` looks up the park from the HOME team and passes it
+ * in, once per at-bat, and the verifier in `tools/checkParkWiring.ts` asserts that the
+ * home/road split of every club's realised scoring tracks its own park.
  *
- * Home runs and doubles are wall outcomes and take the HR factor. Fly balls take the FB factor.
- * Ground-ball singles and doubles take the GB factor. Outs and strikeouts take a smaller
- * combination, because a park that suppresses scoring does it mostly by turning balls into
- * outs rather than by never letting them be hit.
+ * EXHAUSTIVE BY CONSTRUCTION. This is a `Record<AtBatOutcome, ...>` rather than a switch with
+ * a default, so adding an outcome to the engine without deciding how a park affects it is a
+ * compile error. The first version was a switch whose `default` quietly caught ERR, which is
+ * the same silent-fallthrough shape this codebase has been bitten by more than once.
  *
- * NOT YET WIRED. Phase 5 applies this at game resolution in `gameEngine.ts`. It is exported
- * and tested here first, on the reasoning the whole park plan rests on: the coefficients
- * should be measured and checked before anything they touch is allowed to change.
+ * Home runs and doubles are wall outcomes and take the HR factor. Singles and triples take
+ * the FB factor. Outs, strikeouts, walks and errors take a weaker combined factor, because a
+ * park that suppresses scoring does it mostly by turning balls into outs rather than by never
+ * letting them be hit -- and errors need a ball to be hit at all.
  */
-export const outcomeWeightScales = (
-  factors: ParkFactors,
-  outcome: 'OUT' | 'SO' | 'BB' | '1B' | '2B' | '3B' | 'HR',
-): number => {
-  switch (outcome) {
-    case 'HR':
-    case '2B':
-      return factors.hrFactor;
-    case '3B':
-    case '1B':
-      return factors.fbFactor;
-    case 'SO':
-    case 'OUT':
-    case 'BB':
-    default:
-      // Outs and strikeouts respond to the same environment that suppresses scoring, but less
-      // strongly, so a league of hitter-friendly parks does not turn into a league of
-      // strikeout machines.
-      return (factors.runFactor + 1) / 2;
-  }
+const OUTCOME_SCALES: Record<AtBatOutcome, (factors: ParkFactors) => number> = {
+  HR: (f) => f.hrFactor,
+  '2B': (f) => f.hrFactor,
+  '1B': (f) => f.fbFactor,
+  '3B': (f) => f.fbFactor,
+  OUT: (f) => (f.runFactor + 1) / 2,
+  SO: (f) => (f.runFactor + 1) / 2,
+  BB: (f) => (f.runFactor + 1) / 2,
+  ERR: (f) => (f.runFactor + 1) / 2,
 };
 
-/** Every park's factors, keyed by team id. */
+export const outcomeWeightScales = (
+  factors: ParkFactors,
+  outcome: AtBatOutcome,
+): number => OUTCOME_SCALES[outcome](factors);
+
+/**
+ * Scale a whole weight map by one park.
+ *
+ * Pure, and the ONLY thing the engine calls. It multiplies and nothing else -- no clamping,
+ * no renormalising, no inspection of which team is at bat -- so the effect of a park on a
+ * game is exactly the product of its four factors, and that can be checked by reading this
+ * function rather than by simulating.
+ *
+ * NOT YET WIRED AT THE TIME OF WRITING; see the module header. This is where Phase 5 calls it.
+ */
+export const applyParkEnvironment = (
+  weights: Record<AtBatOutcome, number>,
+  factors: ParkFactors,
+): Record<AtBatOutcome, number> => {
+  const scaled = {} as Record<AtBatOutcome, number>;
+  (Object.keys(weights) as AtBatOutcome[]).forEach((outcome) => {
+    scaled[outcome] = weights[outcome] * outcomeWeightScales(factors, outcome);
+  });
+  return scaled;
+};
+
+/**
+ * THE LEAGUE MEANS, and the reason the shipped factors are re-centred on them.
+ *
+ * FOUND BY A BETTING CHECK FAILING. `verifyBetting.ts` reported 64% of games finishing over
+ * the posted totals line against an expected 46%. Re-running it with the park application
+ * disabled gave 45.5%, which passes -- so the parks were inflating league scoring.
+ *
+ * The cause was not the size of any park. `parkFactorsFor` is ABSOLUTE: it is calibrated so
+ * that an arbitrary NEUTRAL park -- 385-foot walls, sea level, temperate, 8-foot dark wall --
+ * scores 1.000. The actual 32 clubs do not average to that park. Measured:
+ *
+ *     channel   league mean before re-centring   effect on league scoring
+ *     HR                   124.8                  x1.248
+ *     FB                   111.1                  x1.111
+ *     GB                    99.8                  x0.998
+ *     RUN                  108.1                  x1.081
+ *     FATIGUE             0.0488                  every pitcher in the league fatigued
+ *
+ * Every game was being multiplied by 1.25 on home runs. A park system that is supposed to
+ * DIFFERENTIATE between parks was instead acting as a league-wide scoring boost, and the first
+ * thing it broke was a market.
+ *
+ * A published park factor is a RELATIVE measure: 100 is the league average, always, by
+ * construction. Coors at 145 means "45% above the average park", not "45% above a hypothetical
+ * park with a 385-foot wall". These parks are not that hypothetical park, so the factors are
+ * re-centred on the league that actually exists.
+ *
+ * WHAT RE-CENTRING DOES AND DOES NOT CHANGE. It divides every park by the same constant per
+ * channel, so the DIFFERENCES between parks survive exactly -- measured spread retention is
+ * 80% for HR, 90% for FB, 100% for GB, 93% for RUN, and the shortfall is only because the
+ * spread is re-expressed around a mean of 1.000 rather than around the neutral park. What
+ * changes is that the average game is no longer multiplied by anything.
+ *
+ * `parkFactorsFor` is left ABSOLUTE, because the archetype check calibrates against absolute
+ * targets and a check that silently rescaled its own inputs could not fail. Only the values the
+ * ENGINE consumes are re-centred.
+ */
+const leagueMean = <T,>(values: T[], read: (v: T) => number): number =>
+  values.reduce((a, v) => a + read(v), 0) / Math.max(1, values.length);
+
+/** Every park's factors, keyed by team id, RE-CENTRED on the league. */
 export const ALL_PARK_FACTORS: ReadonlyMap<string, ParkFactors> = (() => {
-  const out = new Map<string, ParkFactors>();
-  ALL_PARK_PROFILES.forEach((profile, teamId) => out.set(teamId, parkFactorsFor(profile)));
-  return out;
+  const raw: Array<[string, ParkFactors]> = [];
+  ALL_PARK_PROFILES.forEach((profile, teamId) => raw.push([teamId, parkFactorsFor(profile)]));
+
+  const hrMean = leagueMean(raw.map(([, f]) => f), (f) => f.hrFactor);
+  const fbMean = leagueMean(raw.map(([, f]) => f), (f) => f.fbFactor);
+  const gbMean = leagueMean(raw.map(([, f]) => f), (f) => f.gbFactor);
+  const runMean = leagueMean(raw.map(([, f]) => f), (f) => f.runFactor);
+  const fatigueMean = leagueMean(raw.map(([, f]) => f), (f) => f.pitcherFatigueRate);
+
+  // A degenerate mean would silently produce NaN factors for every park, and NaN propagates
+  // through the outcome weights without ever throwing. Refuse instead.
+  for (const [label, m] of [['hr', hrMean], ['fb', fbMean], ['gb', gbMean], ['run', runMean]] as const) {
+    if (!Number.isFinite(m) || m === 0) {
+      throw new Error(`cannot re-centre park factors: the league mean ${label} factor is ${m}`);
+    }
+  }
+
+  return new Map(raw.map(([teamId, f]) => [
+    teamId,
+    {
+      ...f,
+      hrFactor: f.hrFactor / hrMean,
+      fbFactor: f.fbFactor / fbMean,
+      gbFactor: f.gbFactor / gbMean,
+      runFactor: f.runFactor / runMean,
+      // Fatigue is a RATE centred on zero, not an index, so it is shifted rather than scaled.
+      // Scaling a signed rate about zero would invert the sign of half the league.
+      pitcherFatigueRate: f.pitcherFatigueRate - fatigueMean,
+      terms: { ...f.terms },
+    },
+  ]));
 })();
+
+/**
+ * A club's factors by team id, or `null` when the club has no park.
+ *
+ * The `null` case is load-bearing rather than defensive. `parks.json` covers the 32 clubs in
+ * `src/data/teams.ts`, and anything else -- a future league, a restored save, a test fixture
+ * with two invented clubs -- has no park and must play in no park. Returning a default set of
+ * factors instead would silently give an unknown club somebody else's park, which is the one
+ * failure this whole module is structured to avoid.
+ *
+ * NAMING. `parkFactorsFor` takes a PROFILE, because it is a pure function from physical
+ * dimensions to factors and is what the archetype check calls. This takes a TEAM ID. The first
+ * version of the engine wiring called the profile version with a team id and the compiler
+ * caught it, which is the only reason the two are now distinguished at all.
+ */
+export const parkFactorsForTeam = (teamId: string): ParkFactors | null =>
+  ALL_PARK_FACTORS.get(teamId) ?? null;
 
 /** Re-exported so a consumer can compute the neutral point without importing two modules. */
 export { ALTITUDE_FT, CLIMATE_C, barometricDensityRatioAtHeight };

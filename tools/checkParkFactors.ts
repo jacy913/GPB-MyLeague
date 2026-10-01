@@ -501,12 +501,42 @@ const main = (): void => {
   console.log(`    most HR        ${worst[0][0]} at ${indexOf(worst[0][1].hrFactor).toFixed(1)}`);
   console.log(`    least HR       ${worst[worst.length - 1][0]} at ${indexOf(worst[worst.length - 1][1].hrFactor).toFixed(1)}`);
 
+  /*
+   * THE BAND IS ON THE RE-CENTRED, SHIPPED RANGE -- not on the absolute one.
+   *
+   * `ALL_PARK_FACTORS` is re-centred on this league so that league-average scoring is not
+   * multiplied by anything (see `parkFactors`'s header for how that was found: the totals
+   * market broke with a 64% over rate). Re-centring moves the range from 94-155 down to
+   * 75-124, and the first version of this band was written for the absolute figures, so it
+   * failed the moment the correction landed.
+   *
+   * That failure was informative rather than annoying: the band was asserting something about
+   * ABSOLUTE values while the check reads RELATIVE ones. A park 25% below its own league's
+   * average is a normal thing for a league containing twenty-one sea-level parks, and the band
+   * now says so.
+   *
+   * The archetype calibration above is unaffected and still runs against ABSOLUTE values,
+   * because that is what the blueprint's targets are.
+   */
   check(
     'no park in the real league is an outlier beyond what the archetypes span',
-    Math.max(...hrValues) <= 160 && Math.min(...hrValues) >= 80,
-    `hr range ${Math.min(...hrValues).toFixed(1)}-${Math.max(...hrValues).toFixed(1)}; `
-    + 'a park outside 80-160 would mean the coefficients are extrapolating past the calibrated range',
+    Math.max(...hrValues) <= 130 && Math.min(...hrValues) >= 70,
+    `hr range ${Math.min(...hrValues).toFixed(1)}-${Math.max(...hrValues).toFixed(1)} on the`
+    + ' league-relative scale; a park outside 70-130 would mean the coefficients are'
+    + ' extrapolating past the calibrated range',
   );
+
+  /*
+   * A SECOND check was written here asserting the range should skew ABOVE the mean, on the
+   * theory that twenty-one sea-level parks make the league hitter-friendly. It measured 24.6
+   * points below and 23.8 above -- essentially symmetric -- and it was removed rather than
+   * retuned.
+   *
+   * The reason is that it was a guess dressed as an assertion. Nothing in the model predicts
+   * the skew, and a check invented to pass is worse than no check. The 70-130 band above is
+   * the real claim: these parks are not extrapolating past where the coefficients were
+   * calibrated.
+   */
 
   check(
     'every factor is finite',

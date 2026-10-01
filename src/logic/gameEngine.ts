@@ -17,6 +17,11 @@ import {
   Team,
 } from '../types';
 import { TEAM_EDGE_WEIGHT } from './teamStrength';
+import {
+  applyParkEnvironment,
+  parkFactorsForTeam,
+  type ParkFactors,
+} from '../lib/analytics/parkFactors';
 
 const OUTCOME_POOL: AtBatOutcome[] = ['OUT', 'SO', 'BB', '1B', '2B', '3B', 'HR', 'ERR'];
 const INNING_OUT_VALUE = Number((1 / 3).toFixed(3));
@@ -467,6 +472,38 @@ const getPitcherFormBonus = (pitcher: GameParticipantPitcher): number => {
   return eraBonus + whipBonus + strikeoutBonus;
 };
 
+/**
+ * The outcome weights, and the park they are played in.
+ *
+ * `parkFactors` is the HOME team's park, passed in by the caller. It is deliberately not
+ * derived from `isHomeBatting` or from `battingTeam`/`fieldingTeam` here, because those two
+ * swap over between halves of an inning and a park is a property of a place, not of a half:
+ * `simulateNextAtBat` resolves the home team once and hands the same park down for every
+ * at-bat of the game, top and bottom alike.
+ *
+ * WHY A PARK IS NOT A HOME-FIELD BONUS
+ *
+ * `settings.homeFieldAdvantage` is a RELATIVE edge: it says the home team does somewhat better
+ * than the visitor, and it flows into the scalar `edge` below. A park factor is an ABSOLUTE
+ * environment: this building suppresses or amplifies scoring, and it applies to BOTH teams in
+ * every game played there. Those are two different quantities, and treating a park as a home
+ * bonus would count one effect twice. `tools/checkParkWiring.ts` measures the consequence --
+ * it asserts that the home/road split of realised scoring tracks each club's OWN park.
+ *
+ * WHY PARK FATIGUE MULTIPLIES THE ENGINE'S OWN FATIGUE RATHER THAN REPLACING IT
+ *
+ * `getFatiguePenalty` already models a tired pitcher, and it already flows into the outcome
+ * weights through coefficients that have been tuned. A hot humid park makes that same fatigue
+ * bite harder, so it multiplies it: `penalty * (1 + rate)`. Re-deriving a second fatigue model
+ * would mean a second set of coefficients for the same phenomenon.
+ *
+ * The two PITCHING-CHANGE gates above deliberately keep the UNMODIFIED penalty. They model a
+ * manager reading pitch count, batters faced and runs allowed, and park heat does not change
+ * what a manager can see. So park fatigue changes how much a tired pitcher is punished, not
+ * who gets pulled. That is a real scope boundary rather than an oversight, and it is the
+ * reason "applied exactly once" is checkable at all: the park enters through one weight map
+ * and nowhere else.
+ */
 const getOutcomeWeights = (
   session: GameSessionState,
   batter: GameParticipantBatter,
@@ -475,8 +512,10 @@ const getOutcomeWeights = (
   fieldingTeam: Team,
   isHomeBatting: boolean,
   settings: SimulationSettings,
+  parkFactors: ParkFactors | null,
 ): Record<AtBatOutcome, number> => {
-  const fatiguePenalty = getFatiguePenalty(session, pitcher);
+  const parkFatigue = parkFactors ? 1 + parkFactors.pitcherFatigueRate : 1;
+  const fatiguePenalty = getFatiguePenalty(session, pitcher) * parkFatigue;
   const defenseQuality = getDefenseQuality(session);
   const homeBonus = isHomeBatting ? settings.homeFieldAdvantage * 80 : -settings.homeFieldAdvantage * 80;
   const environmentBias = (0.5 - settings.leagueEnvironmentBalance) * 2;
@@ -509,7 +548,7 @@ const getOutcomeWeights = (
   // homers, extra-base hits and walks, which showed up as 2.96 runs per
   // team-game against a real 4.28: the right number of outs turning into the
   // wrong outcomes.
-  return {
+  const base: Record<AtBatOutcome, number> = {
     OUT: clamp(414 - contactEdge * 0.82 - powerEdge * 0.1 + defenseQuality * 0.35 - edge * 0.31 - environmentBias * 33, 295, 570),
     SO: clamp(160 - strikeoutEdge * 1.07 + (pitcher.pitchingRatings.command - batter.battingRatings.contact) * 0.45 - fatiguePenalty * 0.36 - batterForm * 0.09 + pitcherForm * 0.21 - environmentBias * 8.5, 88, 262),
     BB: clamp(79 + disciplineEdge * 0.58 + (pitcher.pitchingRatings.command - pitcher.pitchingRatings.control) * -0.18 + fatiguePenalty * 0.3 + edge * 0.055 + environmentBias * 6, 28, 118),
@@ -519,6 +558,22 @@ const getOutcomeWeights = (
     HR: clamp(24.6 + powerEdge * 0.34 + batterForm * 0.11 - pitcherForm * 0.1 + edge * 0.06 - defenseQuality * 0.02 + environmentBias * 3.5, 3.5, 38),
     ERR: clamp(8.6 + (90 - defenseQuality) * 0.09 + environmentBias * 0.35, 0.5, 16),
   };
+
+  /*
+   * THE PARK IS APPLIED HERE, AFTER THE CLAMPS, AND THAT PLACEMENT IS DELIBERATE.
+   *
+   * `clamp` exists to stop a pathological combination of ratings producing a weight of zero or
+   * a runaway. If the park scaled the terms BEFORE the clamp, a hitter-friendly park could
+   * push a home-run weight past the clamp ceiling and the clamp would then silently undo part
+   * of the park's effect -- so a 155 park would behave like a 140 park and the archetype
+   * calibration would stop meaning what it says.
+   *
+   * Scaling the clamped result keeps the clamp as a genuine safety bound on the BASE weights,
+   * which is what it was written for, and makes the park a clean multiplier on top. Because
+   * `pickOutcome` normalises by the sum, the total need not stay at 862; only the proportions
+   * matter, which is the property the base weights were already relying on.
+   */
+  return parkFactors ? applyParkEnvironment(base, parkFactors) : base;
 };
 
 const pickOutcome = (session: GameSessionState, weights: Record<AtBatOutcome, number>): AtBatOutcome => {
@@ -1303,7 +1358,21 @@ export const simulateNextAtBat = (
 
   const battingTeam = session.half === 'top' ? awayTeam : homeTeam;
   const fieldingTeam = session.half === 'top' ? homeTeam : awayTeam;
-  const weights = getOutcomeWeights(session, batter, pitcher, battingTeam, fieldingTeam, session.half === 'bottom', settings);
+  /*
+   * THE PARK, RESOLVED FROM THE HOME TEAM.
+   *
+   * Not from `isHomeBatting`, and not from whichever of `battingTeam`/`fieldingTeam` happens
+   * to be at the plate -- those two swap every half-inning, and a park does not. `homeTeam` is
+   * the same object for every at-bat of the game, top and bottom alike, so the park is too.
+   *
+   * `null` when the club has no entry, which is what makes this safe for a league whose teams
+   * are not the 32 in `parks.json`: the game plays with no park at all rather than with a
+   * wrong one.
+   */
+  const park = parkFactorsForTeam(homeTeam.id);
+  const weights = getOutcomeWeights(
+    session, batter, pitcher, battingTeam, fieldingTeam, session.half === 'bottom', settings, park,
+  );
   const outcome = pickOutcome(session, weights);
   const defender = outcome === 'ERR' || outcome === 'OUT' ? pickDefender(session) : null;
 
