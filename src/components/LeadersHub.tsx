@@ -119,6 +119,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'avg',
     title: 'Batting Average',
+    columnHeader: 'AVG',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).avg ?? 0,
@@ -131,6 +132,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'hr',
     title: 'Home Runs',
+    columnHeader: 'HR',
     direction: 'desc',
     qualified: false,
     value: (stat) => stat.homeRuns,
@@ -141,6 +143,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'rbi',
     title: 'RBI',
+    columnHeader: 'RBI',
     direction: 'desc',
     qualified: false,
     value: (stat) => stat.rbi,
@@ -151,6 +154,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'ops',
     title: 'OPS',
+    columnHeader: 'OPS',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).ops ?? 0,
@@ -161,6 +165,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'slg',
     title: 'Slugging',
+    columnHeader: 'SLG',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).slg ?? 0,
@@ -171,6 +176,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'obp',
     title: 'On-Base',
+    columnHeader: 'OBP',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).obp ?? 0,
@@ -185,6 +191,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     // `metrics.babip` so that definition cannot be re-litigated in a screen.
     key: 'babip',
     title: 'BABIP',
+    columnHeader: 'BABIP',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).babip?.value ?? 0,
@@ -204,6 +211,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'iso',
     title: 'Isolated Power',
+    columnHeader: 'ISO',
     direction: 'desc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).iso ?? 0,
@@ -230,6 +238,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     // with 42 K against 7 BB at rank 1.
     key: 'kbb',
     title: 'K − BB%',
+    columnHeader: 'K−BB%',
     direction: 'asc',
     qualified: true,
     value: (stat) => battingMetrics(toBattingCounts(stat)).kMinusBbPct ?? 0,
@@ -247,6 +256,7 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
   {
     key: 'xbh',
     title: 'Extra-Base Hits',
+    columnHeader: 'XBH',
     direction: 'desc',
     qualified: false,
     value: (stat) => stat.doubles + stat.triples + stat.homeRuns,
@@ -288,6 +298,15 @@ interface CategoryBoard {
    * screen does not silently top the board up with unqualified players.
    */
   shortNote: string | null;
+  /**
+   * Who the count is counting.
+   *
+   * The expanded board labelled its count 'PLAYERS' unconditionally, which was true on
+   * both player halves and false on the Teams half -- a screen that said it had 32 players
+   * and listed 32 clubs. Declared rather than inferred from `mode`, because the board
+   * objects are built in three separate memos and `mode` is not in scope at two of them.
+   */
+  scope: 'player' | 'team';
 }
 
 /**
@@ -328,6 +347,23 @@ interface BattingCategory {
    * boards, and a reader would have no way to tell a rounded mean from a precise one.
    */
   meanFormat: (value: number) => string;
+  /**
+   * The header printed over the value column.
+   *
+   * This was `category.title.split(' ').pop()?.toUpperCase()`, which is where the
+   * inconsistency on this screen came from. It produced 'AVERAGE' for Batting Average,
+   * 'POWER' for Isolated Power, 'ON-BASE' for On-Base and 'HITS' for Extra-Base Hits --
+   * four boards whose headers describe the stat in four different ways, none of them the
+   * abbreviation a reader would guess. On the team boards the same expression collided:
+   * 'Runs Scored' and 'Runs Allowed' both slice to 'RUNS', so two different tables had
+   * byte-identical column headers.
+   *
+   * Declared per category rather than derived, for the same reason `format` and `detail`
+   * are: a derived header is a claim that every title ends in its own name, and two of
+   * them did not. Abbreviations are a naming decision, and they do not follow from the
+   * title.
+   */
+  columnHeader: string;
 }
 
 interface StatEntry {
@@ -427,6 +463,25 @@ const nameCell = (entry: StatEntry, index: number): React.ReactNode => (
  * header furniture rather than rows: they describe the league, and repeating them
  * per-row would both crowd the table and imply they were properties of the player.
  */
+/**
+ * The explanation behind a board's MEAN, in one place.
+ *
+ * Was an inline template literal inside `CategoryPanel`. It is here now because the
+ * expanded board prints the same figure and had no access to it, which is the wrong way
+ * round: the widest, most-read table on the screen is the one a reader is least able to
+ * interpret unaided.
+ */
+const meanTooltip = (board: CategoryBoard): string =>
+  `Mean of the ${board.distribution?.size ?? 0} player-level ${board.title.toLowerCase()} figures in this pool. Not a league aggregate -- the two differ because a part-season player counts the same here. Percentiles are against this same pool.`;
+
+/** The MEAN readout, at either size. */
+const MeanReadout: React.FC<{ board: CategoryBoard }> = ({ board }) =>
+  board.distribution ? (
+    <span className="t-caption shrink-0 tabular-nums text-[var(--color-ink-faint)]" title={meanTooltip(board)}>
+      MEAN {board.meanLabel}
+    </span>
+  ) : null;
+
 const CategoryPanel: React.FC<{
   board: CategoryBoard;
   selected: boolean;
@@ -440,14 +495,7 @@ const CategoryPanel: React.FC<{
       className={`chrome-bar flex w-full items-center justify-between gap-2 px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-gold)] ${selected ? 'bg-[var(--color-panel-3)]' : ''}`}
     >
       <span className={`t-label truncate ${selected ? 'text-[var(--color-gold)]' : ''}`}>{board.title}</span>
-      {board.distribution && (
-        <span
-          className="t-caption shrink-0 tabular-nums text-[var(--color-ink-faint)]"
-          title={`Mean of the ${board.distribution.size} player-level ${board.title.toLowerCase()} figures in this pool. Not a league aggregate -- the two differ because a part-season player counts the same here. Percentiles are against this same pool.`}
-        >
-          MEAN {board.meanLabel}
-        </span>
-      )}
+      <MeanReadout board={board} />
       <span className="t-caption shrink-0 text-[var(--color-ink-faint)]">{board.count}</span>
     </button>
     {board.shortNote && (
@@ -620,7 +668,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
     const columns: StatTableColumn[] = [
       { key: 'name', header: 'PLAYER' },
-      { key: 'value', header: category.title.split(' ').pop()?.toUpperCase() ?? 'VAL', align: 'right', isNumeric: true, width: '5ch' },
+      { key: 'value', header: category.columnHeader, align: 'right', isNumeric: true, width: '5ch' },
       PERCENTILE_COLUMN,
       { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
     ];
@@ -650,6 +698,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       distribution: distribution.size > 0 ? distribution : null,
       meanLabel: distribution.size > 0 ? category.meanFormat(distribution.mean) : '-',
       shortNote: shortBoardNote(pool.length, category.qualified, BATTING_QUALIFYING_AT_BATS, 'AB'),
+      scope: 'player',
       rows: sorted.slice(0, TOP_ROWS).map((entry, index) => {
         const stat = entry.stat as PlayerSeasonBatting;
         return {
@@ -672,12 +721,15 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       (entry) => (entry.stat as PlayerSeasonPitching).inningsPitched * 3 >= PITCHING_QUALIFYING_OUTS,
     );
     return [
-      { key: 'wins', title: 'Wins', direction: 'desc', qualified: false, count: pitchingEntries.length },
-      { key: 'k', title: 'Strikeouts', direction: 'desc', qualified: false, count: pitchingEntries.length },
-      { key: 'era', title: 'ERA', direction: 'asc', qualified: true, count: qualified.length },
-      { key: 'whip', title: 'WHIP', direction: 'asc', qualified: true, count: qualified.length },
-      { key: 'ip', title: 'Innings', direction: 'desc', qualified: false, count: pitchingEntries.length },
-      { key: 'k9', title: 'K/9', direction: 'desc', qualified: true, count: qualified.length },
+      // `columnHeader` is declared beside the title rather than derived from it, for the
+      // reason given on `BattingCategory`. 'Strikeouts' used to print as 'STRIKEOUTS' --
+      // ten characters, wider than the numbers under it.
+      { key: 'wins', title: 'Wins', columnHeader: 'W', direction: 'desc', qualified: false, count: pitchingEntries.length },
+      { key: 'k', title: 'Strikeouts', columnHeader: 'K', direction: 'desc', qualified: false, count: pitchingEntries.length },
+      { key: 'era', title: 'ERA', columnHeader: 'ERA', direction: 'asc', qualified: true, count: qualified.length },
+      { key: 'whip', title: 'WHIP', columnHeader: 'WHIP', direction: 'asc', qualified: true, count: qualified.length },
+      { key: 'ip', title: 'Innings', columnHeader: 'IP', direction: 'desc', qualified: false, count: pitchingEntries.length },
+      { key: 'k9', title: 'K/9', columnHeader: 'K/9', direction: 'desc', qualified: true, count: qualified.length },
     ];
   }, [pitchingEntries]);
 
@@ -728,7 +780,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
     const columns: StatTableColumn[] = [
       { key: 'name', header: 'PLAYER' },
-      { key: 'value', header: category.key === 'k9' ? 'K/9' : category.title.toUpperCase(), align: 'right', isNumeric: true, width: '5ch' },
+      { key: 'value', header: category.columnHeader, align: 'right', isNumeric: true, width: '5ch' },
       PERCENTILE_COLUMN,
       { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
     ];
@@ -765,6 +817,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
         PITCHING_QUALIFYING_OUTS,
         'outs',
       ),
+      scope: 'player',
       rows: sorted.slice(0, TOP_ROWS).map((entry, index) => ({
         id: entry.playerId,
         className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
@@ -780,11 +833,14 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
   // -- team categories ----------------------------------------------------
   const teamCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => [
-    { key: 'wins', title: 'Wins', direction: 'desc', qualified: false, count: teams.length },
-    { key: 'pct', title: 'Win Pct', direction: 'desc', qualified: false, count: teams.length },
-    { key: 'diff', title: 'Run Diff', direction: 'desc', qualified: false, count: teams.length },
-    { key: 'rs', title: 'Runs Scored', direction: 'desc', qualified: false, count: teams.length },
-    { key: 'ra', title: 'Runs Allowed', direction: 'asc', qualified: false, count: teams.length },
+    // 'Runs Scored' and 'Runs Allowed' both sliced to 'RUNS' when this header was derived
+    // from the title, so two adjacent tables were headed identically. RS and RA are what
+    // the two figures are called everywhere else in the app.
+    { key: 'wins', title: 'Wins', columnHeader: 'W', direction: 'desc', qualified: false, count: teams.length },
+    { key: 'pct', title: 'Win Pct', columnHeader: 'PCT', direction: 'desc', qualified: false, count: teams.length },
+    { key: 'diff', title: 'Run Diff', columnHeader: 'DIFF', direction: 'desc', qualified: false, count: teams.length },
+    { key: 'rs', title: 'Runs Scored', columnHeader: 'RS', direction: 'desc', qualified: false, count: teams.length },
+    { key: 'ra', title: 'Runs Allowed', columnHeader: 'RA', direction: 'asc', qualified: false, count: teams.length },
   ], [teams]);
 
   const teamBoards = useMemo<CategoryBoard[]>(() => teamCategories.map((category): CategoryBoard => {
@@ -826,7 +882,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       ...category,
       columns: [
         { key: 'name', header: 'TEAM' },
-        { key: 'value', header: category.key === 'pct' ? 'PCT' : category.key === 'diff' ? 'DIFF' : category.title.toUpperCase().slice(0, 4), align: 'right', isNumeric: true, width: '5ch' },
+        { key: 'value', header: category.columnHeader, align: 'right', isNumeric: true, width: '5ch' },
         PERCENTILE_COLUMN,
         { key: 'detail', header: '', align: 'right', isNumeric: false, width: '8ch' },
       ],
@@ -835,6 +891,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       distribution: teamDistribution,
       meanLabel: teamMeanLabel,
       shortNote: null,
+      scope: 'team',
       rows: sorted.slice(0, TOP_ROWS).map((team, index) => ({
         id: team.id,
         className: index < 3 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
@@ -876,18 +933,38 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
   return (
     <section className="space-y-5">
-      <Panel className="overflow-hidden">
-        <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-          <h1 className="t-h2">Leaders</h1>
-          {/*
-            THE HALF-SCREEN SWITCH.
+      <Panel variant="hero" className="p-4 md:p-5">
+        {/*
+          THE HEADER.
 
-            Present on both halves at the same height, so "which am I on" is never
-            something a reader has to infer from layout. The control beside it is the
-            SCOPE control and is deliberately a separate one rather than another segment
-            in this: scope and screen are different questions, and nesting them would
-            mean a reader reaching for Teams lands on a different screen instead.
-          */}
+          This was a single chrome-bar with `t-h2` at one end and three segmented controls
+          crammed against the other, on one line, wrapping unpredictably once the viewport
+          narrowed. A page title sharing a line with its own controls gives the title no
+          room and the controls no grouping, and it left 'Leaders' reading as a column
+          heading rather than the name of a screen.
+
+          It is now the same hero shape `LeadersDashboard` already uses -- `variant="hero"`,
+          `t-h1`, a gold icon, one line of prose -- so the two routes read as one screen
+          rather than as two that happen to share a word. The switch between them is in the
+          same position on both.
+
+          The three controls stay three. Scope (Players/Teams) and screen
+          (Tables/Dashboards) are deliberately separate rather than one four-stop control:
+          they answer different questions, and merging them would mean a reader reaching
+          for Teams lands on a different screen instead of the one they asked for.
+        */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="t-h1">
+              <Trophy className="mr-2 inline h-6 w-6 text-[var(--color-gold)]" aria-hidden="true" />
+              Leaders
+            </h1>
+            <p className="t-body mt-2 max-w-3xl text-[var(--color-ink-dim)]">
+              Every figure is shown against the pool it was ranked in -- the header mean is
+              that pool's mean, and each percentile is measured against the same players.
+              Pick a board below to open it full width.
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <SegmentedControl
               aria-label="Leader scope"
@@ -895,6 +972,18 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
               onChange={(value) => setMode(value as LeadersMode)}
               options={[{ value: 'players', label: 'Players' }, { value: 'teams', label: 'Teams' }]}
             />
+            {mode === 'players' && (
+              <SegmentedControl
+                aria-label="Leader board"
+                value={playerBoard}
+                onChange={(value) => setPlayerBoard(value as PlayerBoard)}
+                options={[
+                  { value: 'batting', label: 'Batting' },
+                  { value: 'pitching', label: 'Pitching' },
+                  { value: 'awards', label: 'Awards' },
+                ]}
+              />
+            )}
             <SegmentedControl
               aria-label="Leaders view"
               mode="fill"
@@ -907,20 +996,6 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
             />
           </div>
         </div>
-        {mode === 'players' && (
-          <div className="border-t border-[var(--color-chrome-lo)] px-4 py-3">
-            <SegmentedControl
-              aria-label="Leader board"
-              value={playerBoard}
-              onChange={(value) => setPlayerBoard(value as PlayerBoard)}
-              options={[
-                { value: 'batting', label: 'Batting' },
-                { value: 'pitching', label: 'Pitching' },
-                { value: 'awards', label: 'Awards' },
-              ]}
-            />
-          </div>
-        )}
       </Panel>
 
       {mode === 'players' && playerBoard === 'awards' ? (
@@ -934,12 +1009,27 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
               rest as a dense grid that wraps to three or four across. */}
           {expanded && (
             <Panel className="overflow-hidden">
-              <div className="chrome-bar flex items-center justify-between gap-3 px-4">
+              <div className="chrome-bar flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-2.5">
                 <h2 className="t-h3">{expanded.title}</h2>
-                <span className="t-caption text-[var(--color-ink-faint)]">
-                    {expanded.count} {expanded.qualified ? 'QUALIFIED' : 'PLAYERS'}
+                {/*
+                  The expanded board used to print only a count, while every small card
+                  beneath it printed MEAN and the percentile pool. That is backwards: this
+                  is the table a reader came for, and it was the one giving them the least
+                  context for the numbers. It now carries exactly what the cards carry, so
+                  the two renderings of the same board cannot disagree.
+                */}
+                <div className="flex items-baseline gap-3">
+                  <MeanReadout board={expanded} />
+                  <span className="t-caption text-[var(--color-ink-faint)]">
+                    {expanded.count} {expanded.qualified ? 'QUALIFIED' : expanded.scope === 'team' ? 'TEAMS' : 'PLAYERS'}
                   </span>
+                </div>
               </div>
+              {expanded.shortNote && (
+                <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 t-caption text-[var(--color-ink-faint)]">
+                  {expanded.shortNote}
+                </p>
+              )}
               <StatTable
                 columns={expanded.columns}
                 rows={expanded.rows}
