@@ -119,6 +119,25 @@ export interface HeadlinerContext {
   isPlayoffGame: boolean;
 }
 
+/**
+ * A story a specific reporter will file about a specific event.
+ *
+ * The output of the pipeline and the input to the panel. Distinct from `GameEvent`,
+ * which is the fact; this is the fact plus an opinion and an author.
+ */
+export interface HeadlineCandidate {
+  event: GameEvent;
+  byline: HeadlinerId;
+  /** ALL-CAPS tag line, carries the self-insert. */
+  title: string;
+  /** The supporting two lines. */
+  deck: string;
+  /** Final ranking score. See `priorityOf` in the pipeline. */
+  priority: number;
+  accentToken: AccentToken;
+  game: Game | null;
+}
+
 export interface HeadlinerProfile {
   id: HeadlinerId;
   displayName: string;
@@ -161,6 +180,10 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     covers: [
       'walk_off', 'no_hitter', 'extra_innings', 'blowout',
       'underdog_win', 'scrap_heap', 'pitching_dome',
+      // Added after the coverage diagnostic found six emittable kinds no persona
+      // listed. A one-run game and a streak are on-the-ground material -- the game
+      // as it was lived rather than as it was won -- which is his register.
+      'one_run_game', 'winning_streak',
     ],
     eligible: (_event, ctx) => marqueeGate(ctx),
     priorityWeight: 1.0,
@@ -191,9 +214,15 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     accentToken: 'fire',
     // The most permissive persona. He comments from inside the experience, so almost
     // anything with a result in it is fair game.
+    //
+    // The last four were added after the coverage diagnostic found six emittable
+    // kinds that no persona listed -- detected every time, written about never. A
+    // cycle and a perfect game are exactly the achievements a former player would
+    // have an opinion about, so they belong here rather than nowhere.
     covers: [
       'blowout', 'multi_homer', 'pitching_dome', 'complete_game',
       'staff_wins', 'walk_off', 'meltdown', 'shutout',
+      'cycle', 'perfect_game', 'rbi_barrage', 'hit_fury',
     ],
     priorityWeight: 1.0,
   },
