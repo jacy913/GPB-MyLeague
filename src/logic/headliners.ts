@@ -159,6 +159,25 @@ export interface HeadlinerProfile {
   accentToken: AccentToken;
   /** Event kinds this persona will consider. */
   covers: readonly GameEventKind[];
+  /**
+   * The opinion this writer walks in with, before the story.
+   *
+   * NOT FLAVOUR TEXT. This is the "lore" surface, and it is separate from the voice
+   * banks on purpose: a deck is about tonight's game and is different every night,
+   * whereas a beat is what the writer believes and says regardless. A reader who sees
+   * three Perez cards in a week and reads the same line under all three learns that
+   * Perez thinks this -- which is the difference between a name on a byline and a
+   * person with a position.
+   *
+   * Deliberately containing NO slots. A beat is the writer's standing view, so it must
+   * render on every card they file, and a template naming `{PLAYER}` would fall through
+   * to the generic bank on any event that lacks one -- printing a different opinion, or
+   * nothing, for the sake of a name that the headline above already carries.
+   *
+   * Seeded, not indexed: see `pickBeat`. Nothing here reads a clock or `Math.random()`,
+   * so the same save shows the same newsroom.
+   */
+  beat: readonly string[];
   /** Extra gate, applied after `covers`. */
   eligible?: (event: GameEvent, ctx: HeadlinerContext) => boolean;
   /** Multiplier on final priority. */
@@ -195,6 +214,19 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       // as it was lived rather than as it was won -- which is his register.
       'one_run_game', 'winning_streak',
     ],
+    /*
+     * Perez files from the seats, on the ground, in the room. He is not interested in
+     * what a number means; he is interested in what it looked like. So his standing
+     * position is that the game happened to people before it happened to a box score,
+     * and that the box score is the part nobody should be reading.
+     */
+    beat: [
+      'I was there. That is my whole credential.',
+      'The score is the last thing that happens in a ballpark.',
+      'Ask the guy in section 114 what he saw. He will tell you more than the box score.',
+      'I do not do numbers. I do people who watched a game.',
+      'Somebody was standing near the dugout rail and they saw all of it.',
+    ],
     eligible: (_event, ctx) => marqueeGate(ctx),
     priorityWeight: 1.0,
   },
@@ -212,6 +244,19 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     // A HARD gate, not a preference. Given a story without a qualifying young player
     // she does not write it. A persona that breaks its own rule stops being a persona,
     // and the acceptance criterion is that she never writes about anyone over 25.
+    /*
+     * Soo's standing position is that the young are systematically under-rated by
+     * everyone who covers the sport, and she files about the ones nobody is watching
+     * yet. The impatience is the character -- she is not angry at the player, she is
+     * angry at the coverage, and she says so before the story every time.
+     */
+    beat: [
+      'WAIT. Everyone is still sleeping on this one.',
+      'Nobody was watching. I want that on the record.',
+      'This kid is twenty-one and the box score people have not noticed yet.',
+      'WAIT. Read the name again. Read it one more time.',
+      'Every season somebody breaks out and it takes the adults a year to notice.',
+    ],
     eligible: (event) => typeof event.playerAge === 'number' && event.playerAge <= SOO_MAX_AGE,
     priorityWeight: 1.05,
   },
@@ -234,6 +279,19 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       'staff_wins', 'walk_off', 'meltdown', 'shutout',
       'cycle', 'perfect_game', 'rbi_barrage', 'hit_fury',
     ],
+    /*
+     * Gatz played. His standing position is that the parts of the game nobody
+     * appreciates are the parts that decide it, and he says it from inside rather than
+     * from a press box -- which is why his register is instructive without being
+     * superior about it.
+     */
+    beat: [
+      'I played this game. Let me tell you what nobody in here noticed.',
+      'The thing that won it was decided in the fourth inning and nobody looked up.',
+      'Trust me on this one. I have been on both ends of it.',
+      'You do not win a game in the ninth. You win it in the fourth and wait.',
+      'ALSO: the dugout decides more of this than the box score does.',
+    ],
     priorityWeight: 1.0,
   },
   {
@@ -246,6 +304,19 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     covers: ['anomaly', 'sustained_rate', 'expected_divergence', 'meltdown', 'pitching_dome'],
     // He does not editorialise about a game that was merely uneventful. Severity is
     // the threshold that keeps him on the maths rather than the narrative.
+    /*
+     * Scintilla's standing position is that the box score is a summary of a process and
+     * almost every argument about a player is really an argument about a sample size.
+     * He states it flatly and without heat, which is what makes it land on a page full
+     * of people shouting at each other.
+     */
+    beat: [
+      'One night is a sample. Read it as one.',
+      'The line is not the player. It never was.',
+      'This is a rate, not an opinion. The difference matters.',
+      'A number this far from the mean is worth a look. It is not worth a conclusion.',
+      'Ask how many games are behind that before you ask what it means.',
+    ],
     eligible: (event) => event.severity >= SCINTILLA_MIN_SEVERITY,
     priorityWeight: 1.1,
   },
@@ -260,6 +331,19 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     // Negative only. Praise is routed through a separate rarity budget in
     // `headlinerPipeline`, not through this predicate, because the whole character is
     // the scarcity. He is meant to be silent during a good week.
+    /*
+     * Buccelli's standing position is that everyone in the building is being paid to be
+     * excited and he is the only one who came. Praise from him is the scarce thing --
+     * which is why these lines are all complaints, and why an actual compliment from
+     * him still spends from the two-a-season impression budget.
+     */
+    beat: [
+      'I have been coming here for decades and I am not going anywhere.',
+      'Everybody else is having a wonderful time. I have questions.',
+      'This is a business now. I suppose it always was.',
+      'Do not wave at me. I am working.',
+      'I would like one season where nothing interesting happens. Just one.',
+    ],
     eligible: (event) => event.valence === 'negative',
     priorityWeight: 0.85,
   },

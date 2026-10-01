@@ -145,6 +145,31 @@ export const pickDeck = (
 ): string => render(bank.decks[kind], bank.decks.generic, seed + 1, slots, recentTemplates);
 
 /**
+ * Pick this writer's standing opinion, seeded from the event.
+ *
+ * Deterministic, like every other pick in this file: no clock, no counter, no
+ * `Math.random()`. The same save shows the same newsroom, which is the property the
+ * whole pipeline is built around -- see the determinism note in the header.
+ *
+ * WHY IT IS SEEDED FROM THE EVENT AND NOT ROTATED BY CARD. The beat is the writer's
+ * standing position, so seeing the same one three nights running is not a repetition
+ * problem in the way a repeated headline is. It is the character working: a reader who
+ * sees "WAIT. Everyone is still sleeping on this one." under two Soo cards in a week has
+ * learned something about her that the story itself did not say. Seeding from the event
+ * still varies it -- the same writer files different beats on different games -- without
+ * pretending the beat is per-story content.
+ *
+ * No interpolation, by design. A beat contains no slots, so it cannot fail to render
+ * and there is no generic fallback to hide behind. See the note on `HeadlinerProfile.beat`.
+ */
+export const pickBeat = (profile: { beat: readonly string[] }, seed: number): string => {
+  const bank = profile.beat;
+  if (bank.length === 0) return '';
+  const start = Math.abs(Math.floor(seed)) % bank.length;
+  return bank[start];
+};
+
+/**
  * Pick a title and report which template produced it.
  *
  * The template is returned alongside rather than looked up afterwards, because

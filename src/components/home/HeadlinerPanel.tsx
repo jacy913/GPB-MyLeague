@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PenLine } from 'lucide-react';
-import { ACCENT_VAR, HEADLINER_BY_ID, type HeadlineCandidate } from '../../logic/headliners';
+import { ACCENT_VAR, HEADLINER_BY_ID, eventSeed, type HeadlineCandidate } from '../../logic/headliners';
+import { pickBeat } from '../../logic/headlinerVoices';
 import { Panel } from '../ui';
 import { HeadlinerPortrait } from '../ui/HeadlinerPortrait';
 import { formatHeadlineDate } from './shared';
@@ -122,6 +123,23 @@ export const HeadlinerPanel: React.FC<{
               </p>
               <p className="t-caption text-[var(--color-ink-faint)]">
                 {HEADLINER_BY_ID[active.byline].role}
+              </p>
+              {/*
+                THE BEAT: what this writer walks in with, before the story.
+
+                This is the lore surface, and it is deliberately ABOVE the headline rather
+                than below the deck. A deck is about tonight's game and is different every
+                night; a beat is what the writer believes and says regardless, so putting
+                it first means the reader knows whose position they are reading before
+                they read the claim, which is the whole point of a byline.
+
+                Italic and one step down from the role, because it is an aside the writer
+                is muttering rather than the lede. It is the writer's words, not the
+                paper's, so it does not take the accent colour -- that belongs to the
+                headline's own voice.
+              */}
+              <p className="mt-1.5 border-l-2 border-[var(--color-chrome-lo)] pl-2 t-caption italic text-[var(--color-ink-dim)]">
+                {pickBeat(HEADLINER_BY_ID[active.byline], eventSeed(active.event))}
               </p>
             </div>
           </div>
