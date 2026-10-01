@@ -289,7 +289,20 @@ const GameBetCard: React.FC<{
   );
 
   return (
-    <Panel className="overflow-hidden">
+    /*
+      THE CARD IS THE TEAL BOX.
+
+      `Panel` gives the outer border and the surface; the header strip inside it is the same
+      chrome every other panel uses. That is the whole of the card's structure, and it is one
+      rectangle rather than the three concentric ones this had a moment ago.
+
+      The border is on the PANEL via a style rather than a nested div, so there is nothing
+      inside the card that could be mistaken for another card.
+    */
+    <Panel
+      className="overflow-hidden"
+      style={{ borderLeft: `3px solid ${NEUTRAL_BORDER}` }}
+    >
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
         {/*
           TWO CRESTS AND AN "AT", with no city names between them. The header used to
@@ -327,28 +340,51 @@ const GameBetCard: React.FC<{
       </div>
 
       {/*
-        ONE COLUMN, MODELLED ON THE PROPS CARD.
+        ONE TEAL BOX FOR THE WHOLE CARD. NOT SEVERAL.
 
-        The props tab was the user's model and its card shape is the right one: a bordered
-        block per concern, each with its own label, stacked. So the game card now has a
-        bordered block for the three outlet prices and a bordered block for the run total,
-        rather than a loose row of chips above a rule and a paragraph of caption beneath.
+        This is the second pass, and the user was right about the first: "one teal box for
+        everything, it looks messy." The previous version wrapped the outlet prices and the run
+        total in two nested bordered blocks inside the card's own border, so a single game
+        rendered as three concentric teal rectangles with a header strip on top. That is the
+        definition of messy, and it came from treating "modelled on the props card" as "every
+        subsection gets a border" when the props card gets exactly one.
 
-        What that fixes, concretely. Before, the outlet prices were three small chips and the
-        run total was unlabelled type under a hairline, so the two things a manager compares --
-        what the outlets think, and what the total is -- had no visual weight of their own. Now
-        each is a block that reads as a unit before you read any of the numbers in it.
+        A prop card is ONE bordered box with the content inside it. So a game card is now one
+        bordered box: a header strip for the fixture and the date, then the two sides, then the
+        outlet prices as a single labelled row, then the run total as a labelled row. No nested
+        rectangles, no second border inside the first.
 
-        The outlet cells keep their own accent on the left edge, because those marks DO carry an
-        outlet's opinion. The BLOCK around them is neutral, because the block is the house's
-        arrangement and not an outlet's claim.
+        What still carries the outlet identity is the marks themselves and their own thin accent
+        edges -- those are the only thing on the card that belongs to a named forecaster, and
+        they should be the only coloured detail. Everything structural is teal.
       */}
-      <div className="flex flex-col gap-2.5 p-3">
-        <div
-          className="border border-l-[3px] bg-[var(--color-sunken)]"
-          style={{ borderLeftColor: NEUTRAL_BORDER }}
-        >
-          <p className="border-b border-[var(--color-chrome-lo)] px-2.5 py-1 t-caption text-[var(--color-ink-faint)]">
+      <div className="border-t border-[var(--color-chrome-lo)] p-3">
+        {/*
+          THE TWO SIDES FIRST AND LARGEST.
+
+          At the top of the card body because "who wins" is what most of this board is for. This
+          used to sit below the outlet strip, so a manager read the fixture and then had to hunt
+          past a row of chips to find the number they came for.
+        */}
+        <div className="flex flex-wrap gap-1.5">
+          {side(game.awayTeam, 'away', game.houseOdds)}
+          {side(game.homeTeam, 'home', game.homeOdds)}
+        </div>
+
+        {/*
+          THE OUTLET PRICES, as one row under one label.
+
+          `justify-between` rather than a flex of content-width chips: at a third of the screen
+          the three prices should use the full width they have rather than huddle at the left
+          with a gap behind them. Flex of chips was right when the card was half the screen and
+          wrong at a third.
+
+          The marks are h-5 rather than h-4. At h-4 the three marks on this card were smaller
+          than the price they sat beside, which inverts the hierarchy -- the mark is how you
+          know WHOSE number this is, so it has to be at least as legible as the number.
+        */}
+        <div className="mt-2.5 border-t border-[var(--color-chrome-lo)] pt-2.5">
+          <p className="t-caption text-[var(--color-ink-faint)]">
             Outlet prices
             <span className="ml-1.5 text-[var(--color-ink-dim)]">
               House {formatAmerican(game.houseOdds)} · they span {Math.round(game.disagreement * 100)} points
@@ -357,24 +393,14 @@ const GameBetCard: React.FC<{
               <span className="ml-1.5 text-[var(--color-neutral-hi)]">they are split on this one.</span>
             )}
           </p>
-          {/*
-            Flex with content-width cells, not a three-column grid. A grid divides the
-            available width three ways, so on a narrow card each outlet's price would sit
-            alone in the middle of a long empty bar. These are three short numbers about
-            to be compared, and they should sit next to each other.
-
-            The marks are h-5 rather than h-4. At h-4 the three marks on a card a third of the
-            screen wide were smaller than the price they sat beside, which inverts the
-            hierarchy -- the logo is how you know WHOSE number this is, so it has to be at
-            least as legible as the number.
-          */}
-          <div className="flex flex-wrap gap-1.5 p-2">
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
             {MEDIA_PROFILES.map((profile) => (
-              <div
-                key={profile.id}
-                className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-panel)] px-2 py-1"
-                style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
-              >
+              <div key={profile.id} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className="h-5 w-[3px] shrink-0"
+                  style={{ background: `var(--color-media-${profile.accent})` }}
+                />
                 <img
                   src={MEDIA_MARKS_SQUARE[profile.id]}
                   alt=""
@@ -387,28 +413,16 @@ const GameBetCard: React.FC<{
           </div>
         </div>
 
-        {/*
-          THE TWO SIDES, FIRST AND LARGEST.
-
-          Above the total and above the prices, because "who wins" is what most of this board is
-          for. This used to sit below the outlet strip; at three columns a manager reads the
-          fixture and then has to hunt past a row of chips to find the number they came for.
-        */}
-        <div className="flex flex-wrap gap-1.5">
-          {side(game.awayTeam, 'away', game.houseOdds)}
-          {side(game.homeTeam, 'home', game.homeOdds)}
-        </div>
-
         {total && (
-          <div className="border border-l-[3px] bg-[var(--color-sunken)]" style={{ borderLeftColor: NEUTRAL_BORDER }}>
-            <p className="border-b border-[var(--color-chrome-lo)] px-2.5 py-1 t-caption text-[var(--color-ink-faint)]">
+          <div className="mt-2.5 border-t border-[var(--color-chrome-lo)] pt-2.5">
+            <p className="t-caption text-[var(--color-ink-faint)]">
               Run total
               <span className="ml-1.5 text-[var(--color-ink-dim)]">
                 House line {total.houseLine.toFixed(1)} · outlets{' '}
                 {MEDIA_PROFILES.map((profile) => total.fair[profile.id].toFixed(1)).join(' / ')}
               </span>
             </p>
-            <div className="flex flex-wrap gap-1.5 p-2">
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
               <RetroButton
                 variant="primary"
                 size="sm"
@@ -679,19 +693,46 @@ const PropsView: React.FC<{
     );
   }
 
+  /*
+    * THE OUTLET PANELS ARE THE COLUMNS. Not a grid of cards inside three stacked panels.
+    *
+    * I got this wrong once. The user's first request was "one column per media outlet" and I
+    * read it as "one card per row inside each outlet's panel" -- so each panel became a single
+    * column of full-width cards and the three panels stacked down the page. That is a column
+    * per outlet in the only sense that was already true, and it is not what was asked for.
+    *
+    * What was asked for is three panels SIDE BY SIDE, one per outlet, each holding that
+    * outlet's props in a single column of its own. So the three columns are siblings in one
+    * grid, and a reader comparing outlets compares them by looking left and right rather than
+    * by scrolling. That is the whole reason to show three outlets: they disagree, and a
+    * disagreement you have to scroll to see is a disagreement you will not see.
+    *
+    * `items-start` so a short outlet's column does not stretch to match a full one -- a
+    * fifteen-prop panel next to a nine-prop panel is information, and padding the shorter one
+    * out to match would throw that away. The panels are then unequal in height, which is
+    * honest and is the price of comparing them.
+    *
+    * `2xl` rather than `xl` because each column holds a full prop card -- a fixture strip, a
+    * name, a chip, a line, a read and three buttons -- and three of those need more room than
+    * two columns of market cards do.
+    */
+  const visibleOutlets = MEDIA_PROFILES.filter((profile) => (boards.get(profile.id)?.length ?? 0) > 0);
+
   return (
     <div className="grid gap-4">
       <p className="t-caption px-1 text-[var(--color-ink-faint)]">
-        Each outlet publishes up to {MAX_PROPS_PER_OUTLET} props a day. The border says how the
-        outlet rates it: green for a prop its own read says lands more often than not, orange for one
-        it expects to lose. Prices are the mean of the three published probabilities plus the margin.
+        Each outlet publishes up to {MAX_PROPS_PER_OUTLET} props a day, in its own column. The border
+        says how that outlet rates it: green for a prop its own read says lands more often than not,
+        orange for one it expects to lose. Prices are the mean of the three published probabilities plus
+        the margin.
       </p>
 
-      {MEDIA_PROFILES.map((profile) => {
-        const markets = boards.get(profile.id) ?? [];
-        if (markets.length === 0) return null;
-        return (
-          <Panel key={profile.id} className="overflow-hidden">
+      <div className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+        {visibleOutlets.map((profile) => {
+          const markets = boards.get(profile.id) ?? [];
+          if (markets.length === 0) return null;
+          return (
+            <Panel key={profile.id} className="overflow-hidden">
             <div
               className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4"
               style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
@@ -722,24 +763,17 @@ const PropsView: React.FC<{
             </div>
 
             {/*
-          ONE COLUMN, AT THE USER'S REQUEST.
+          ONE CARD PER ROW INSIDE ITS OUTLET'S COLUMN.
 
-          This was `md:grid-cols-2 2xl:grid-cols-3` -- each outlet's board was a three-across
-          grid of prop cards. The user asked for one column per outlet, and the reasoning
-          holds: a prop card carries a fixture strip, a player name, a temperament chip, an
-          O/U line, a per-outlet read and three buttons. Squeezed to a third of a panel those
-          wrap, and the button row -- the part a manager actually acts on -- ends up on three
-          lines with one button orphaned.
+          This was `md:grid-cols-2 2xl:grid-cols-3` -- cards across INSIDE each panel, so three
+          cards wide in a panel that is itself a third of the page. The user asked for one column
+          per outlet, and the two things that means are now both true: the three outlet panels
+          are the three columns, and each holds its cards in a single column of its own.
 
-          A single column also makes the outlets COMPARABLE, which is the point of showing all
-          three: with one column each, the same slot holds the same kind of thing in all three
-          panels, so a manager can see at a glance that Hollis publishes fifteen and Sharply
-          publishes nine. Three-across, they had to be compared across panels.
-
-          `xl` and not `md`, for the same reason the slate's grid is keyed the way it is: the
-          betting page is often the right pane of the shell rather than a full-width route, and
-          a multi-column grid keyed off the viewport would give three cramped columns in a
-          900px pane.
+          The inner grid had to go as well as the outer one. A prop card carries a fixture
+          strip, a player name, a temperament chip, an O/U line, a per-outlet read and three
+          buttons; squeezed into a third of a column those wrap, and the button row -- the part
+          a manager actually acts on -- ends up across three lines with one button orphaned.
         */}
         <div className="flex flex-col gap-2 p-3">
               {markets.map((market) => {
@@ -763,8 +797,9 @@ const PropsView: React.FC<{
               })}
             </div>
           </Panel>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -1048,7 +1083,30 @@ const FieldMarketCard: React.FC<{
         type to win density would have made the only thing on the page -- the price --
         the hardest thing to read.
       */}
-      <div className="grid gap-2 p-3 sm:grid-cols-2">
+      {/*
+        HOW MANY COLUMNS AN OUTCOME GRID GETS.
+
+        The championship is a 32-club race and everything else on this tab is an eight-club
+        race. At two columns the title board ran sixteen rows down the page for a field where
+        the entire point is comparing the whole field, and it wasted the other half of a
+        1600px screen -- the user reported it as "too long and doesn't utilise the half screen,
+        it can fit four columns".
+
+        So the column count follows the field size. A 32-way race goes four across, an 8-way
+        race stays at two, and the AWARDS tab is untouched: it has eight candidates per race
+        and the user called that screen picture perfect, so changing its density on the strength
+        of a complaint about a different tab would be fixing something that is not broken.
+
+        The thresholds are on `outcomes.length` rather than on `kind`, because they are the same
+        question: how many things are being compared.
+      */}
+      <div
+        className={`grid gap-2 p-3 ${
+          market.outcomes.length > 20
+            ? 'sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'
+            : 'sm:grid-cols-2'
+        }`}
+      >
         {market.outcomes.map((outcome) => {
           const isFavourite = outcome.key === market.outcomes[0]?.key;
           // A row where the three barely differ is not worth a second price. The
@@ -1366,7 +1424,22 @@ const FieldMarketsView: React.FC<{
                     {section.markets.length} {section.markets.length === 1 ? 'market' : 'markets'}
                   </span>
                 </div>
-                <div className="grid items-start gap-4 xl:grid-cols-2">
+                {/*
+                    A SECTION WITH ONE MARKET IN IT GETS THE FULL WIDTH.
+
+                    The Championship section is one market. At `xl:grid-cols-2` it sat in the
+                    left half of the screen with the right half empty, which is what the user
+                    meant by "doesn't utilise the half screen" -- and it is also why widening
+                    its outcome grid alone would not have been enough.
+
+                    Sections with two or more markets keep two columns, because they are
+                    genuinely side-by-side comparisons of the same kind of race.
+                  */}
+                <div
+                  className={`grid items-start gap-4 ${
+                    section.markets.length === 1 ? 'grid-cols-1' : 'xl:grid-cols-2'
+                  }`}
+                >
                   {section.markets.map((market) => (
                     <FieldMarketCard
                       key={market.key}
