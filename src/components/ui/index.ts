@@ -15,6 +15,12 @@ export { SegmentedControl, type SegmentedControlMode } from './SegmentedControl'
 export { StatTable, type StatTableDensity, type StatTableColumn, type StatTableRow } from './StatTable';
 export { StatValue, type StatValueVariant, type StatValueSize } from './StatValue';
 export { DistributionStrip, type DistributionStripProps } from './DistributionStrip';
+export {
+  QuadrantPlot,
+  type QuadrantPlotProps,
+  type QuadrantPoint,
+  type QuadrantDefinition,
+} from './QuadrantPlot';
 export { Meter, type MeterProps } from './Meter';
 export { LeagueBadge, type LeagueBadgeVariant } from './LeagueBadge';
 export { MediaMark, type MediaMarkProps } from './MediaMark';

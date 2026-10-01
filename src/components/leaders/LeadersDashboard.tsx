@@ -10,7 +10,13 @@ import {
 import { leagueBaseline, wrcPlus } from '../../lib/analytics/wrcPlus';
 import { summarise } from '../../lib/analytics/percentile';
 import { fmtAvg, fmtEra, fmtWhip } from '../../logic/statFormatting';
-import { DistributionStrip, Panel, SegmentedControl, StatValue } from '../ui';
+import {
+  DistributionStrip,
+  Panel,
+  QuadrantPlot,
+  SegmentedControl,
+  type QuadrantPoint,
+} from '../ui';
 
 /**
  * Leaders, second half: the league as a shape.
@@ -112,6 +118,52 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
     if (played === 0) return null;
     return teams.reduce((sum, t) => sum + t.runsScored, 0) / played;
   }, [teams]);
+
+  /*
+   * Per-player rows for the quadrant plots.
+   *
+   * Built by joining the stat row to the player for a NAME and a logo, because a stat row
+   * carries only a playerId and a dot with no label is a dot nobody can read.
+   *
+   * The map is keyed on playerId and every lookup here returns UNDEFINED for a player
+   * with no current-season row, which is why the joins filter rather than cast. A default
+   * of zero would place a pitcher with no innings pitched at the origin of the K-BB plot
+   * -- the most extreme position on the chart -- which is a claim about the league that
+   * is not true of anybody.
+   */
+  const playerById = useMemo(() => new Map(players.map((p) => [p.playerId, p])), [players]);
+
+  const battingRows: BattingMetricsRow[] = useMemo(() => qualifiedBatting
+    .map((stat) => {
+      const m = battingMetrics(toBattingCounts(stat));
+      if (m.obp === null || m.slg === null) return null;
+      return {
+        id: stat.playerId,
+        label: playerById.get(stat.playerId)?.fullName ?? stat.playerId,
+        obp: m.obp,
+        slg: m.slg,
+        weight: stat.plateAppearances,
+        hits: stat.hits,
+        ab: stat.atBats,
+      };
+    })
+    .filter((row): row is BattingMetricsRow => row !== null), [qualifiedBatting, playerById]);
+
+  const pitchingRows: PitchingMetricsRow[] = useMemo(() => qualifiedPitching
+    .map((stat) => {
+      const m = pitchingMetrics(toPitchingCounts(stat));
+      if (m.kPer9 === null || m.bbPer9 === null) return null;
+      return {
+        id: stat.playerId,
+        label: playerById.get(stat.playerId)?.fullName ?? stat.playerId,
+        k9: m.kPer9,
+        bb9: m.bbPer9,
+        weight: stat.inningsPitched,
+        k: stat.strikeouts,
+        bb: stat.walks,
+      };
+    })
+    .filter((row): row is PitchingMetricsRow => row !== null), [qualifiedPitching, playerById]);
 
   const avgDist = useMemo(
     () => summarise(batting.map((m) => m.avg ?? 0).filter((v) => v > 0), 'desc'),
@@ -230,6 +282,16 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
       </div>
 
       {/*
+        REGION 3 -- THE TWO QUADRANT PLOTS.
+
+        Every board above answers one question about one variable. These answer the
+        comparative question no table can express: who gets on base AND who hits for power.
+      */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Quadrants batting={battingRows} pitching={pitchingRows} />
+      </div>
+
+      {/*
         The honest note, and the same one the Tables screen carries in its short-board
         rows. On day one both pools are empty and every strip renders its empty state; a
         dashboard that showed plausible shapes from four games of baseball would be the
@@ -258,9 +320,139 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
   );
 };
 
+/**
+ * The two quadrant plots.
+ *
+ * SEPARATE FROM THE DASHBOARD BODY on purpose. Both need the same five derived numbers
+ * per player -- OBP, SLG, ISO, BABIP, K/9, BB/9 -- and the first of them needs a
+ * qualification decision the body does not make. `on_base_machine` and the power hitters
+ * are the extremes of the OPS quadrant and they are exactly the players a reader wants to
+ * find there, so the plot plots everybody who clears the floor and lets the crosshairs do
+ * the separating. That is the whole idea of the view: a reader looking for "where is the
+ * slugging going to hurt them" wants the bottom-left, not the leaderboard.
+ */
+const Quadrants: React.FC<{
+  batting: BattingMetricsRow[];
+  pitching: PitchingMetricsRow[];
+}> = ({ batting, pitching }) => {
+  const opsPoints: QuadrantPoint[] = batting.map((m) => ({
+    id: m.id,
+    label: m.label,
+    x: m.obp,
+    y: m.slg,
+    weight: m.weight,
+    detail: `${m.hits} H / ${m.ab} AB`,
+  }));
+  const kbbPoints: QuadrantPoint[] = pitching.map((m) => ({
+    id: m.id,
+    label: m.label,
+    x: m.k9,
+    y: m.bb9,
+    weight: m.weight,
+    detail: `${m.k} K / ${m.bb} BB`,
+  }));
+
+  const opsMeanX = meanOf(batting.map((m) => m.obp));
+  const opsMeanY = meanOf(batting.map((m) => m.slg));
+  const kbbMeanX = meanOf(pitching.map((m) => m.k9));
+  const kbbMeanY = meanOf(pitching.map((m) => m.bb9));
+
+  return (
+    <>
+      {/*
+        THE OPS QUADRANT.
+
+        The single most useful plot in baseball, and the one this screen was commissioned
+        for. A dot at (.340, .190) means nothing alone; against the league's mean OBP and
+        SLG it is immediately a power hitter who does not get on base -- a sentence no
+        table on this screen can produce.
+
+        The quadrant names are the conventional ones, with the low-low corner called
+        "Imprisoned" because that is what the quadrant is conventionally called and
+        renaming it would just mean the reader has to learn this app's word for it.
+      */}
+      <Panel className="p-4">
+        <QuadrantPlot
+          title="On-Base vs Slugging"
+          xLabel="OBP"
+          yLabel="SLG"
+          points={opsPoints}
+          meanX={opsMeanX}
+          meanY={opsMeanY}
+          formatX={(v) => v.toFixed(3)}
+          formatY={(v) => v.toFixed(3)}
+          quadrants={[
+            { xAbove: true, yAbove: true, name: 'Belt', note: 'on base and hits for power' },
+            { xAbove: false, yAbove: true, name: 'Slugger', note: 'power, no plate discipline' },
+            { xAbove: true, yAbove: false, name: 'On-Base', note: 'walks and contact, little power' },
+            { xAbove: false, yAbove: false, name: 'Imprisoned', note: 'neither' },
+          ]}
+        />
+      </Panel>
+
+      {/*
+        THE K-BB QUADRANT.
+
+        For pitchers the axes invert: high strikeouts and low walks is the top-LEFT
+        corner, which is why the quadrant names below are assigned to the left side rather
+        than derived from "above". A reader who has internalised "up and right is good"
+        from the batting plot would misread this one, so the names are stated rather than
+        assumed, and the axis labels are printed under the plot.
+      */}
+      <Panel className="p-4">
+        <QuadrantPlot
+          title="Strikeouts vs Walks"
+          xLabel="K/9"
+          yLabel="BB/9"
+          points={kbbPoints}
+          meanX={kbbMeanX}
+          meanY={kbbMeanY}
+          formatX={(v) => v.toFixed(2)}
+          formatY={(v) => v.toFixed(2)}
+          quadrants={[
+            { xAbove: true, yAbove: true, name: 'Wild', note: 'misses and walks' },
+            { xAbove: false, yAbove: true, name: 'Workhorse', note: 'walks, does not miss' },
+            { xAbove: true, yAbove: false, name: 'Dominant', note: 'misses, does not walk' },
+            { xAbove: false, yAbove: false, name: 'Effective', note: 'neither, which for a pitcher is fine' },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+};
+
 /** The unweighted mean of a set, or 0 for an empty one. */
 const meanOf = (values: number[]): number =>
   values.length > 0 ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+
+/**
+ * One hitter's position on the OPS quadrant.
+ *
+ * `weight` is plate appearances, which is what the dot area encodes, so a September call-up
+ * is visibly smaller than a starter who has been there since April. `hits` and `ab` are
+ * carried for the readout rather than recomputed, because they are already on the stat row
+ * and a second source for "how many at-bats" is a second thing to disagree.
+ */
+interface BattingMetricsRow {
+  id: string;
+  label: string;
+  obp: number;
+  slg: number;
+  weight: number;
+  hits: number;
+  ab: number;
+}
+
+/** One pitcher's position on the K-BB quadrant. `weight` is innings pitched. */
+interface PitchingMetricsRow {
+  id: string;
+  label: string;
+  k9: number;
+  bb9: number;
+  weight: number;
+  k: number;
+  bb: number;
+}
 
 /**
  * One cell of the frame of reference.
