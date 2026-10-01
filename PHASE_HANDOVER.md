@@ -1138,6 +1138,121 @@ clipping**. All tables 0 drift; only console error is the pre-existing
 `verifyMetrics` PASS, `verifyWrc` 22/22, `tsc` at its 10 pre-existing diagnostics,
 build 6.14s.
 
+## The performance feedback loop — shipped, with a caveat that outranks its checks
+
+Wiring wRC+ into player development. This is the **second** relaxation of the
+presentation-only rule, after the batted-ball model, and it is categorically
+different from the first.
+
+Stage A and Stage B were **read-only**: every metric so far is a sufficient statistic
+of the existing play log, which is exactly why the metric layer deliberately needed
+no relaxation. This is the first thing that **writes back** into the simulation and
+changes future seasons. There is no presentation-only path to it — the signal has to
+reach `projectAttributeDelta` (`playerDevelopment.ts:261`), which turns age, potential,
+wear and playing time into a rating delta.
+
+**The loop it feeds already existed and is not what this work created.** A higher
+rating makes the top nine, the top nine earns plate appearances, and
+`getUsageMultiplier` scales development by playing time. `gameEngine.ts:287` draws each
+batter *uniformly* from the nine-man lineup, so batting-order slot barely affects PA —
+PA is driven by selection, and `generateBattingOrder` (`shared.tsx:146`) sorts on
+ratings. So today: **rating → top nine → PA → larger usage multiplier → bigger
+development.** This work adds a second loop in series, which is why the multi-season
+proof was not optional.
+
+### What the signal is, and what it deliberately is not
+
+Shrunk **wRC+**, batter-side only. The shrinkage is the reason this is safe to wire
+in at all: wOBA's standard error is dominated by home run count rather than plate
+appearances (**+0.807 against −0.048**), so an unshrunk figure would reward whoever
+got lucky with a handful of long balls. `wrcPlus` already pulls each player toward
+league average in proportion to how badly that noise is measured.
+
+Pitchers are excluded because there is no pitching wRC+ — the engine records nothing at
+the pitch level to fit run-prevention weights from, and a run-allowed rate is a
+different metric wearing the name. Inventing one would put an unvalidated signal into
+the simulation's central loop. So the asymmetry is real, and the verifier measures
+batter/pitcher balance rather than assuming it holds.
+
+### Three wrong designs, each caught by measurement
+
+This is the substance of the work. Every one of these would have shipped plausible
+numbers.
+
+**1. A gain of 0.15 was inert, not conservative.** The reasoning was that annual
+development is only 1.0–1.7 rating points, so the effect should be a few tenths.
+Measured: it moved the league by a mean absolute **0.0163** rating points and shifted
+**16 of 704** players by a single point. The cause is `clampRating`, which rounds to
+whole numbers — a 1.03 multiplier on a 1.2-point delta moves the result ~0.04 points,
+and 0.04 almost never survives rounding to an integer.
+
+**The trap:** an inert feedback loop reads *exactly* like a safe one in every
+league-level statistic. Compression stable, talent level stable, balance stable — all
+of it true, none of it evidence. That is why `verifyDevelopmentFeedback` attributes
+the effect exactly, by calling `applyPlayerDevelopment` **twice on identical input**,
+once at the run's gain and once at zero. Everything the two disagree on is caused by
+the signal, with no schedule term in it. Without that control the whole file is
+decorative.
+
+**2. The multiplicative form was a ratchet.** At gain 4 it inflated ratings by a mean
+**+0.157 points per season**. The cause is a covariance a multiplier cannot avoid:
+most players are pre-peak and rising, so their deltas are positive, and a player who
+outperformed is disproportionately one of them. Multiplying each delta by a
+performance-correlated factor gives `E[multiplier × delta] > E[delta]` — more when the
+two correlate, which they do. Structural, so no threshold on a multiplier removes it.
+
+The fix is **additive**, applied after the usage multiplier and before the headroom
+check. Both placements are deliberate: additive because it has no covariance term, and
+before the headroom check so a player already at his ceiling cannot bank performance
+he has nowhere to put — which would be the quietest possible form of stratification.
+
+**3. Centring on 100 was wrong, and the sign flipped.** The additive form cut the bias
+to a bias *ratio* of **0.395** — but negative, not positive. The cause: the league
+baseline is pooled **plate-appearance**-weighted and is exactly 100 by construction,
+while ratings are **per-player**, and PA correlates positively with ability. So the
+unweighted mean of wRC+ sits below 100. Centring on the observed *player mean* dropped
+the ratio to **0.037** — essentially centred.
+
+### What shipped, and the caveat that outranks the checks
+
+`PERFORMANCE_GAIN = 2.5` rating points per year per unit of relative wRC+ edge. At the
+shipped gain, measured over 12 seasons: **0.052 rating points** mean absolute movement,
+**44 of ~800 batters** moved by a single point in a year. Against annual development
+of 1.0–1.7 points, performance is a minor term rather than the dominant one.
+
+**And the honest limit: the rich-get-richer proof could not be completed.**
+
+The schedule is unseeded, so two runs at one seed are two different leagues. The
+baseline is therefore replicated three times to get a noise floor — and across
+invocations that floor came out at sd **0.00071, 0.00066, 0.00070, 0.00110 and
+0.00004** per season. Three replicates cannot pin down a standard deviation that
+unstable.
+
+Consequently the excess spread drift attributable to the feedback is
+indistinguishable from the baseline's own variation: measured excesses across runs
+ranged **−0.00085 to +0.00193** per season, mixed in sign. The stratification check
+therefore **cannot fail** at any gain small enough to be defensible.
+
+So the verdict is **no detectable harm, not demonstrated safety.** Those are
+materially different claims and the difference is recorded here rather than smoothed
+over. `verifyDevelopmentFeedback` prints this as a standing caveat on every run.
+
+It is reported rather than asserted on purpose: a power check built on a 3-replicate
+standard deviation flips from run to run, and *a check that fails at random is worse
+than no check*, because it teaches a reader to ignore it.
+
+### What would actually settle it
+
+- **More replicates.** The effect is a ~0.001/season signal against a ~0.001 noise
+  floor; separating them needs enough runs that the floor is known to a factor of
+  several. That is compute, not cleverness.
+- **A longer horizon.** Twelve seasons cannot show a century-long stratification, and
+  the drift this guards against is precisely the kind that only appears over decades.
+- **A stronger signal.** The deeper problem is upstream: shrunk wRC+ in this league
+  has a standard deviation near 8 points and its top ten span 4.0. There is little
+  performance information to feed back. A metric that separated players better would
+  make the loop both more meaningful and more dangerous, in that order.
+
 ## Deviations from the proposal — all deliberate, all recorded in commit messages
 
 1. **Leaders: no `SB` category.** There is no stolen-bases field anywhere in the
@@ -1205,14 +1320,19 @@ stored; and **wOBA precision tracks home run count, not plate appearances** (+0.
    spans 4.0 points and produces 5 distinct whole numbers from 10 rows. It is on
    the **player card** instead (`ae3d07d`), where the shrinkage is shown beside the
    figure rather than implied by a ranked list. See the presentability section.
-3. The **development feedback loop** (~1.5h, and it is the one item that could
-   destabilise a season) and the **batted-ball model**, which is the only work that
-   needs the standing presentation-only scope relaxed.
-4. Optionally, upgrading wOBA to **per-outcome-and-base-state weights**. The probe
+3. **The development feedback loop is done and shipped**, with the standing caveat
+   above: no detectable harm at the shipped gain, and no demonstrated safety either.
+4. The **batted-ball model** is the remaining item needing the standing
+   presentation-only scope relaxed — the last of the three original Tier-2 pieces.
+5. Optionally, upgrading wOBA to **per-outcome-and-base-state weights**. The probe
    already holds the joint table so it is nearly free, and the single-weight
    approximation is coarsest exactly where interesting hitters live. Note this
-   attacks the occupancy problem, **not** the wRC+ compression — the two are
-   independent, and doing it will not make a top-ten wRC+ board worth building.
+   attacks the occupancy problem, **not** the wRC+ compression and **not** the
+   feedback loop's weak signal — three separate things that are easy to conflate.
+
+**If the feedback loop is to be trusted rather than merely shipped**, the next step is
+not more tuning: it is enough replicated runs to establish the noise floor to a factor
+of several, and a horizon long enough to see a century of drift. Both are compute.
 
 **A shared `Modal` primitive exists** at `src/components/ui/Modal.tsx`. The app
 had four hand-rolled dialogs with divergent scrim, z-index and Escape behaviour;
@@ -1317,12 +1437,20 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
   touch `src/logic/` or `src/workers/`. `AppViewRouter.tsx` is the sole exception
   and is presentation routing. Leave all Supabase lines, imports, hooks and calls
   alone. New components go in `src/components/ui/`.
-  **Exactly one deliberate relaxation is on record:** the batted-ball model (the
-  "Tier 2" work) must reach into the per-at-bat resolution in `gameEngine.ts` to
-  classify contact, because a batted-ball profile cannot be recovered from the play
-  log afterwards — it is gone. Take that relaxation once, in its own commit, and do
-  not let it become a precedent. The metric layer deliberately did *not* need it:
-  every metric so far is a sufficient statistic of the existing play log.
+  **Exactly TWO deliberate relaxations are on record, and they are not the same kind
+  of thing.** Keeping them distinct is the point; collapsing them into "sometimes we
+  touch logic" is how a rule stops meaning anything.
+  1. **The batted-ball model** (Tier 2) must reach into the per-at-bat resolution in
+     `gameEngine.ts` to classify contact, because a batted-ball profile cannot be
+     recovered from the play log afterwards — it is gone. **Additive instrumentation
+     that stays inert**: a probe table that only fills when something asks for it.
+  2. **The performance feedback loop** reaches `playerDevelopment.ts` so a measured
+     season can influence the next one. This is the first work that **writes back** into
+     the simulation; everything before it was read-only derivation from the play log.
+     Different in kind, not just in degree.
+  Neither may become a precedent for a third. The metric layer itself needed no
+  relaxation, which is worth knowing: every metric it produces is a sufficient
+  statistic of the existing play log.
 - **Derive every rate from integer counts, never from a stored rate.** `avg` and
   `ops` are persisted at 3dp and `era`/`whip` at 2dp, so composing one from another
   inherits two roundings and can tie players who are not tied. Round once, at
@@ -1518,11 +1646,19 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
   CommissionerSettings does not do what its label implies. Correcting it means
   editing weight coefficients in `gameEngine.ts`, which is outside the standing
   scope — so it is reported, deliberately unfixed.
-- **Metrics do not feed back into player development.**
-  `playerDevelopment.ts:194 getUsageMultiplier` reads plate appearances and
-  nothing else, so a player's rating cannot yet improve from what they actually
-  did. Wiring the metric layer in needs a gain well below 1.0 and a proof over
-  multiple seasons that it does not turn into rich-get-richer; both are outstanding.
+- **The performance feedback loop ships, but its safety is NOT demonstrated.** Measured
+  at the shipped gain: 0.052 rating points of mean movement, 44 of ~800 batters moving
+  by one point a year, and **no league-level compression effect resolvable above the
+  noise floor**. Excess spread drift ranged −0.00085 to +0.00193 per season across runs,
+  mixed in sign, which is indistinguishable from the baseline's own run-to-run
+  variation. Read the verdict as *no detectable harm*, never as *proven safe*. The
+  deeper limit is upstream: shrunk wRC+ here has a standard deviation near 8 points, so
+  there is very little performance information to act on.
+- **Ratings are integers, which puts a floor under any feedback.** `clampRating` rounds
+  to whole numbers, so a sub-half-point signal usually changes nothing. A gain that looks
+  conservative can therefore be completely inert — and an inert loop passes every
+  league-level health check while doing nothing at all. This is why the verifier
+  attributes the effect by running development twice on identical input.
 - **Pitch-level simulation is deferred.** Storing a distribution of pitch types
   per at-bat would roughly **10x the largest persisted object**, which is what
   broke localStorage in the first place. It would need the mirror rebuilt first.
