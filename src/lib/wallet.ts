@@ -41,6 +41,26 @@ export interface PlacedBet {
   /** American price taken, including whatever margin the house was posting. */
   price: number;
   placedOn: string;
+  /**
+   * The date this bet settles, as it stood when the bet was placed.
+   *
+   * STORED, NOT DERIVED, for the same reason `propStat` and `propPlayerName` are: a
+   * bet has to keep meaning what it meant when it was taken. A season's calendar is
+   * derived from the whole schedule, so recomputing the date at render time would
+   * move it if anything upstream shifted -- and a bet placed in April would quietly
+   * start resolving on a different night than the one it was sold against.
+   *
+   * `placedOn` is NOT this. That is when the manager clicked; the gap between the two
+   * is the whole point of the field. Before this existed there was nothing on a placed
+   * bet saying which game it belonged to or when, and a manager who took a prop had no
+   * way to find out from the bet itself.
+   *
+   * OPTIONAL because the field postdates every save in the wild. A bet without one is
+   * a bet placed before this existed, and the UI says so rather than substituting
+   * today's date -- printing a wrong resolution date on a real bet is worse than
+   * printing none.
+   */
+  resolvesOn?: string;
   status: BetStatus;
   payout: number;
   /** Which forecaster's number the bettor used, when they acted on one. */

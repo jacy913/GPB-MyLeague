@@ -34,6 +34,15 @@ export interface SlipEntry {
   line?: number;
   backedMedia: MediaId | null;
   /**
+   * When this bet settles, carried from the board that offered it.
+   *
+   * Travels through the slip for the same reason the prop terms below do: the slip is
+   * a staging post, and anything that has to survive onto the bet must be attached
+   * before the confirm. A slip that held the game but not its date would let a
+   * manager confirm a bet and lose the one fact that says which night to watch.
+   */
+  resolvesOn?: string;
+  /**
    * Prop terms, present only on kind 'prop'.
    *
    * These have to travel through the slip rather than being looked up at
@@ -198,6 +207,9 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
         stake,
         price: slip.price,
         placedOn: currentDate,
+        // The date the board promised, stored on the bet rather than recomputed.
+        // See `PlacedBet.resolvesOn`.
+        resolvesOn: slip.resolvesOn,
         backedMedia: slip.backedMedia,
         // A total needs the line that was actually posted, carried on the bet.
         // Recomputing it later would settle against a number the bettor never

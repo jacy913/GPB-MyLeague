@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
@@ -56,6 +56,16 @@ interface BettingSlateProps {
     selectionLabel: string;
     price: number;
     line?: number;
+    /**
+     * When this market settles, from the board that is offering it.
+     *
+     * Required in spirit and optional in type only so that a caller who genuinely has
+     * no date cannot be blocked from placing a bet. Every board that offers a real
+     * market knows one: a game knows its own date, a prop carries its game's, and a
+     * future resolves through `resolveDateFor`. A bet placed without one is recorded
+     * without one and the open-bets list says so.
+     */
+    resolvesOn?: string;
     backedMedia: MediaId | null;
     propStat?: PropStatKey;
     propPlayerId?: string;
@@ -125,7 +135,7 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
         )}
       </div>
 
-      <OpenBets bets={bets} />
+      <OpenBets bets={bets} moneyline={moneyline} />
 
       {view === 'slate' && <SlateView lines={lines} moneyline={moneyline} onPlace={onPlace} balance={balance} />}
       {view === 'props' && (
@@ -167,6 +177,20 @@ const SlateView: React.FC<{
   // a decision about the same fixture, not two screens.
   const totalsByGame = new Map(lines.map((line) => [line.key.replace(/^(total|first5):/, ''), line]));
 
+  /*
+   * Game id to date, off the slate's OWN moneyline list.
+   *
+   * The fallback branch below renders a total market as a standalone card, and a total
+   * market carries no date of its own -- only `<kind>:<gameId>`. This supplies it from
+   * the same array every other market on this screen reads, so a total bet is stored
+   * with the date of the game it is about rather than a second derivation from the
+   * schedule.
+   */
+  const dateOf = useCallback(
+    (gameId: string) => moneyline.find((game) => game.gameId === gameId)?.date,
+    [moneyline],
+  );
+
   return (
     /*
      * THREE COLUMNS OF GAMES, from two up.
@@ -194,7 +218,7 @@ const SlateView: React.FC<{
           />
         ))
         : lines.map((line) => (
-          <TotalMarketCard key={line.key} market={line} balance={balance} onPlace={onPlace} />
+          <TotalMarketCard key={line.key} market={line} balance={balance} dateOf={dateOf} onPlace={onPlace} />
         ))}
     </div>
   );
@@ -237,6 +261,7 @@ const GameBetCard: React.FC<{
         selectionLabel: team.city,
         price,
         backedMedia: null,
+        resolvesOn: game.date,
       })}
     >
       <TeamLogo team={team} sizeClass="h-6 w-6" />
@@ -354,6 +379,7 @@ const GameBetCard: React.FC<{
                   price: total.overPrice,
                   line: total.houseLine,
                   backedMedia: null,
+                  resolvesOn: game.date,
                 })}
               >
                 Over {total.houseLine.toFixed(1)} {formatAmerican(total.overPrice)}
@@ -371,6 +397,7 @@ const GameBetCard: React.FC<{
                   price: total.underPrice,
                   line: total.houseLine,
                   backedMedia: null,
+                  resolvesOn: game.date,
                 })}
               >
                 Under {total.houseLine.toFixed(1)} {formatAmerican(total.underPrice)}
@@ -385,9 +412,25 @@ const GameBetCard: React.FC<{
 const TotalMarketCard: React.FC<{
   market: LineMarket;
   balance: number;
+  /**
+   * Game id to the date that game is played, from the slate's own moneyline list.
+   *
+   * `LineMarket` carries no date of its own -- its key is `<kind>:<gameId>` and that
+   * is all. Rather than add a field to every line market to serve one card, this
+   * resolves the date through the same `moneyline` array the rest of this screen reads,
+   * so the date on a total bet is the date of the game the card is about and cannot
+   * disagree with the slate.
+   *
+   * Undefined when the game is not on the current slate. The bet is then placed
+   * without a stored date and the open-bets list says so, rather than being given a
+   * guessed one.
+   */
+  dateOf: (gameId: string) => string | undefined;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ market, onPlace, balance }) => {
+}> = ({ market, onPlace, balance, dateOf }) => {
   const firstHalf = market.kind === 'first5';
+  const gameId = market.key.replace(/^(total|first5):/, '');
+  const resolvesOn = dateOf(gameId);
 
   return (
     <Panel className="overflow-hidden">
@@ -439,12 +482,13 @@ const TotalMarketCard: React.FC<{
             disabled={balance < MIN_STAKE}
             onClick={() => onPlace({
               kind: firstHalf ? 'first5' : 'total',
-              marketKey: market.key.replace(/^(total|first5):/, ''),
+              marketKey: gameId,
               marketTitle: `${market.title} ${firstHalf ? 'first five' : 'total'}`,
               selection: 'over',
               selectionLabel: `Over ${market.houseLine.toFixed(1)}`,
               price: market.overPrice,
               line: market.houseLine,
+              resolvesOn,
               backedMedia: null,
             })}
           >
@@ -455,12 +499,13 @@ const TotalMarketCard: React.FC<{
             disabled={balance < MIN_STAKE}
             onClick={() => onPlace({
               kind: firstHalf ? 'first5' : 'total',
-              marketKey: market.key.replace(/^(total|first5):/, ''),
+              marketKey: gameId,
               marketTitle: `${market.title} ${firstHalf ? 'first five' : 'total'}`,
               selection: 'under',
               selectionLabel: `Under ${market.houseLine.toFixed(1)}`,
               price: market.underPrice,
               line: market.houseLine,
+              resolvesOn,
               backedMedia: null,
             })}
           >
@@ -661,6 +706,7 @@ const PropBetRow: React.FC<{
     price,
     line: market.line,
     backedMedia: backed,
+    resolvesOn: market.date,
     propStat: market.stat,
     propPlayerId: market.playerId,
     propPlayerName: market.playerName,
@@ -804,6 +850,20 @@ const FieldMarketCard: React.FC<{
     ? WORLD_SERIES_MARKET_KEY
     : market.key.slice(market.key.indexOf(':') + 1);
 
+  /*
+   * The date this market resolves, derived ONCE.
+   *
+   * The header shows it and every bet placed from this card stores it, so it is
+   * computed here rather than in both places. Two calls to `resolveDateFor` on the
+   * same inputs would be the same answer today and would be two things to keep in
+   * step tomorrow -- and the failure mode is a bet that says it settles on a different
+   * day from the one the card advertised when it sold it.
+   */
+  const resolvesOn = resolveDateFor(
+    market.kind === 'award' ? 'season_awards' : 'championship_series',
+    calendar,
+  );
+
   return (
     <Panel className="overflow-hidden">
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5">
@@ -831,12 +891,7 @@ const FieldMarketCard: React.FC<{
             of the MARKET, not of an outcome, and repeating it fifteen times down a
             board would be noise.
           */}
-          RESOLVES ON {formatResolutionDate(
-            resolveDateFor(
-              market.kind === 'award' ? 'season_awards' : 'championship_series',
-              calendar,
-            ),
-          )}
+          RESOLVES ON {formatResolutionDate(resolvesOn)}
           {' · '}
           {market.subtitle} · {market.outcomes.length} clubs
           {/*
@@ -1013,6 +1068,7 @@ const FieldMarketCard: React.FC<{
                         selection: outcome.key,
                         selectionLabel: `${outcome.label} (${MEDIA_BY_ID[outcome.outlier].outlet})`,
                         price: outcome.odds[outcome.outlier],
+                        resolvesOn,
                         backedMedia: outcome.outlier,
                       })}
                     >
@@ -1030,6 +1086,7 @@ const FieldMarketCard: React.FC<{
                       selection: outcome.key,
                       selectionLabel: outcome.label,
                       price: outcome.houseOdds,
+                      resolvesOn,
                       backedMedia: null,
                     })}
                   >
@@ -1148,8 +1205,28 @@ const AwardsView: React.FC<{
  * Open bets
  * ------------------------------------------------------------------ */
 
-export const OpenBets: React.FC<{ bets: PlacedBet[] }> = ({ bets }) => {
+export const OpenBets: React.FC<{
+  bets: PlacedBet[];
+  /** The current slate's games, so a game bet can name its fixture. */
+  moneyline: GameLine[];
+}> = ({ bets, moneyline }) => {
   const open = bets.filter((bet) => bet.status === 'open');
+  const fixtureById = useMemo(
+    () => new Map(moneyline.map((game) => [game.gameId, game])),
+    [moneyline],
+  );
+
+  /**
+   * Is this bet about a game that is on the slate?
+   *
+   * Moneyline, total, first five and prop all store the game id in `marketKey`. Futures
+   * and awards store a group or a season key, which resolves to nothing here and falls
+   * through to the date alone -- which is correct, because a futures bet is not about a
+   * fixture and should not be given a crest it does not belong to.
+   */
+  const isGameBet = (bet: PlacedBet): boolean =>
+    bet.kind === 'moneyline' || bet.kind === 'total' || bet.kind === 'first5' || bet.kind === 'prop';
+
   if (open.length === 0) return null;
 
   return (
@@ -1158,34 +1235,75 @@ export const OpenBets: React.FC<{ bets: PlacedBet[] }> = ({ bets }) => {
         <Users className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
         <h2 className="t-h3">Open Bets</h2>
         <span className="t-caption text-[var(--color-ink-faint)]">
-          {open.length} · ${open.reduce((sum, bet) => sum + bet.stake, 0)} at risk
+          {open.length} open · ${open.reduce((sum, bet) => sum + bet.stake, 0)} at risk
         </span>
       </div>
       <div className="grid gap-1 p-3">
-        {open.map((bet) => (
-          <div key={bet.id} className="flex flex-wrap items-center justify-between gap-2 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-2">
-            <div className="min-w-0">
-              <p className="t-stat-sm truncate">
-                {bet.selectionLabel} {formatAmerican(bet.price)}
-              </p>
-              <p className="t-caption text-[var(--color-ink-faint)]">
-                {bet.marketTitle}
-                {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
-              </p>
+        {open.map((bet) => {
+          const fixture = isGameBet(bet) ? fixtureById.get(bet.marketKey) : undefined;
+          return (
+            <div
+              key={bet.id}
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="t-stat-sm truncate">
+                  {bet.selectionLabel} {formatAmerican(bet.price)}
+                </p>
+                <p className="t-caption text-[var(--color-ink-faint)]">
+                  {bet.marketTitle}
+                  {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
+                </p>
+                {/*
+                  WHICH GAME, AND WHEN -- on the bet itself.
+
+                  This is the second half of a gap the props board also had. The board
+                  now names the fixture a prop belongs to, but a bet OUTLIVES the screen
+                  it was taken on: the manager scrolls, switches tabs, comes back
+                  tomorrow, and the only record of the bet said "Baltimore +240 /
+                  Quincy Hollis Over 1.5 Hits". No game, no date. That was the actual
+                  reported problem, and fixing the board alone would have left it.
+
+                  `resolvesOn` is stored on the bet at placement rather than looked up
+                  here, so this is the date the board PROMISED when it sold the bet --
+                  not a date recomputed from a calendar that may have moved since. See
+                  the note on `PlacedBet.resolvesOn`.
+
+                  A bet with no stored date was placed before the field existed, and it
+                  says so. Printing today's date on a bet placed in April would be a
+                  confident wrong answer on a real wager, which is worse than admitting
+                  the record is incomplete.
+                */}
+                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 t-caption text-[var(--color-ink-dim)]">
+                  {fixture && (
+                    <span className="flex items-center gap-1">
+                      <TeamLogo team={fixture.awayTeam} sizeClass="h-4 w-4" />
+                      <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
+                      <TeamLogo team={fixture.homeTeam} sizeClass="h-4 w-4" />
+                      <span className="sr-only">{fixture.awayTeam.city} at {fixture.homeTeam.city}</span>
+                    </span>
+                  )}
+                  <span className="tabular-nums">
+                    {bet.resolvesOn
+                      ? formatResolutionDate(bet.resolvesOn)
+                      : 'No resolution date recorded'}
+                  </span>
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {bet.backedMedia && (
+                  <img
+                    src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
+                    alt={MEDIA_BY_ID[bet.backedMedia].outlet}
+                    title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
+                    className="h-5 w-5 object-contain"
+                  />
+                )}
+                <span className="t-stat tabular-nums">${bet.stake}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {bet.backedMedia && (
-                <img
-                  src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
-                  alt={MEDIA_BY_ID[bet.backedMedia].outlet}
-                  title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
-                  className="h-5 w-5 object-contain"
-                />
-              )}
-              <span className="t-stat tabular-nums">${bet.stake}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Panel>
   );
