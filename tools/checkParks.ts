@@ -53,6 +53,28 @@ const INTS: Record<string, { min: number; max: number }> = {
   wallHeightFt: { min: 3, max: 40 },
 };
 
+/**
+ * The one optional field, and why it is not in `ENUMS`.
+ *
+ * Tier C is dropped as a set of enums -- wind, batter's-box sun, sightlines, drainage --
+ * because the blueprint's own descriptions of them are "no defensible number exists for it"
+ * and "better modelled as an occasional per-game modifier". Modelling them as fixed park
+ * constants would mean inventing coefficients for quantities the specification says have no
+ * coefficients.
+ *
+ * What they get instead is `flavour`: one free-text string per park, which is prose and is
+ * never read by any derivation. It is validated for presence-legality (wrong type, or over
+ * the length cap, are errors) but its ABSENCE is not, because an empty string is a valid
+ * thing for a park to have and 32 of them being empty is a fact about the file rather than a
+ * defect in it.
+ *
+ * Which is why the fill count is printed. An optional field nothing uses, present in the
+ * schema and absent from all 32 parks, is stranded content -- the same failure shape as the
+ * voice-bank decks that were unreachable because their persona never covered the kind. It
+ * gets reported rather than left to be discovered.
+ */
+const FLAVOUR_MAX = 140;
+
 const main = (): void => {
   const problems: string[] = [];
 
@@ -112,6 +134,15 @@ const main = (): void => {
         problems.push(`${id} (${team.city}): ${field} = ${value}, outside ${range.min}-${range.max}`);
       }
     });
+    // Optional, but if it IS there it has to be a legal string. A non-string here would be
+    // silently coerced by any consumer that used `String(record.flavour)`.
+    if (record.flavour !== undefined) {
+      if (typeof record.flavour !== 'string') {
+        problems.push(`${id} (${team.city}): flavour = "${String(record.flavour)}", expected a string`);
+      } else if (record.flavour.length > FLAVOUR_MAX) {
+        problems.push(`${id} (${team.city}): flavour is ${record.flavour.length} chars, over the ${FLAVOUR_MAX} cap`);
+      }
+    }
     rows.push({ id, city: team.city, record });
   });
 
@@ -138,6 +169,7 @@ const main = (): void => {
   console.log(`    rfFt spread   ${Math.min(...rfValues)}-${Math.max(...rfValues)}  (range ${spread(rfValues)} ft)`);
   console.log(`    altitude      ${[...altitudeCounts.entries()].sort().map(([k, v]) => `${k} ${v}`).join(', ')}`);
   console.log(`    roofs         ${[...new Set(rows.map((r) => r.record.roof))].join(', ')}`);
+  console.log(`    flavour       ${rows.filter((r) => typeof r.record.flavour === 'string' && r.record.flavour.length > 0).length}/${rows.length} parks carry one (optional; Tier C as enums is dropped -- see _tierCDropped)`);
 
   // A file where every park is nearly identical is valid and useless.
   if (spread(cfValues) < 10 && spread(lfValues) < 10) {

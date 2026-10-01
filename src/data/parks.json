@@ -70,11 +70,21 @@
       "type": "enum",
       "values": ["small", "standard", "generous"],
       "note": "Generous foul ground means fewer balls are caught foul, which raises home run AND strikeout rates together. This is the dimension that produces the classic large-park archetype: neutral HR factor, elevated run factor."
+    },
+    "_tierCDropped": {
+      "type": "decision",
+      "note": "The blueprint's four Tier C dimensions -- wind, batter's-box sun, sightlines/background, and drainage -- are NOT fields in this file, and their absence is a decision rather than an oversight. Each one is flavour in the blueprint's own words: sightlines has 'no defensible number exists for it', and the other three are explicitly better modelled as a per-game roll than as a fixed park constant. Adding four enums here would mean inventing coefficients for quantities the specification says have no coefficients, which is the exact risk this file exists to avoid."
+    },
+    "flavour": {
+      "type": "string",
+      "required": false,
+      "maxLength": 140,
+      "note": "OPTIONAL, free text, and the single home Tier C gets. It is prose for the park's character and is NEVER read by the derivation -- there is no code path from this string to an outcome weight, and there must not be one. Empty on every park right now, which `checkParks` reports rather than leaving to be noticed later. See the blueprint's Tier C: 'Only worth building if it makes the park feel like somewhere.'"
     }
   },
 
   "alc": {
-    "altitude": "extreme",
+    "altitude": "sea",
     "roof": "open_air",
     "lfFt": 348, "cfFt": 415, "rfFt": 344,
     "wallHeightFt": 8,
@@ -82,12 +92,12 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "hot_dry",
+    "climate": "temperate",
     "humidity": "arid",
     "foulGround": "standard"
   },
   "val": {
-    "altitude": "sea",
+    "altitude": "high",
     "roof": "open_air",
     "lfFt": 337, "cfFt": 402, "rfFt": 334,
     "wallHeightFt": 7,
@@ -113,7 +123,7 @@
     "foulGround": "small"
   },
   "hui": {
-    "altitude": "sea",
+    "altitude": "moderate",
     "roof": "fixed_roof",
     "lfFt": 329, "cfFt": 401, "rfFt": 329,
     "wallHeightFt": 7,
@@ -147,8 +157,8 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "temperate",
-    "humidity": "moderate",
+    "climate": "hot_dry",
+    "humidity": "arid",
     "foulGround": "small"
   },
   "suk": {
@@ -160,12 +170,12 @@
     "surface": "grass",
     "grassLength": "long",
     "soilType": "damp_heavy",
-    "climate": "temperate",
+    "climate": "hot_humid",
     "humidity": "humid",
     "foulGround": "generous"
   },
   "gar": {
-    "altitude": "moderate",
+    "altitude": "sea",
     "roof": "open_air",
     "lfFt": 341, "cfFt": 400, "rfFt": 338,
     "wallHeightFt": 8,
@@ -173,7 +183,7 @@
     "surface": "grass",
     "grassLength": "short",
     "soilType": "dry_hard",
-    "climate": "temperate",
+    "climate": "hot_humid",
     "humidity": "moderate",
     "foulGround": "standard"
   },
@@ -186,7 +196,7 @@
     "surface": "hybrid",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "hot_humid",
+    "climate": "cold",
     "humidity": "humid",
     "foulGround": "standard"
   },
@@ -212,7 +222,7 @@
     "surface": "turf",
     "grassLength": "short",
     "soilType": "sandy_loose",
-    "climate": "temperate",
+    "climate": "cold",
     "humidity": "moderate",
     "foulGround": "standard"
   },
@@ -225,7 +235,7 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "dry_hard",
-    "climate": "hot_dry",
+    "climate": "cold",
     "humidity": "arid",
     "foulGround": "standard"
   },
@@ -264,20 +274,20 @@
     "surface": "hybrid",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "temperate",
+    "climate": "cold",
     "humidity": "moderate",
     "foulGround": "generous"
   },
   "hou": {
-    "altitude": "sea",
+    "altitude": "extreme",
     "roof": "open_air",
-    "lfFt": 327, "cfFt": 395, "rfFt": 332,
+    "lfFt": 337, "cfFt": 412, "rfFt": 342,
     "wallHeightFt": 6,
     "wallColor": "light",
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "damp_heavy",
-    "climate": "temperate",
+    "climate": "cold",
     "humidity": "humid",
     "foulGround": "small"
   },
@@ -309,15 +319,15 @@
     "foulGround": "standard"
   },
   "fes": {
-    "altitude": "sea",
+    "altitude": "extreme",
     "roof": "open_air",
-    "lfFt": 336, "cfFt": 399, "rfFt": 340,
+    "lfFt": 336, "cfFt": 415, "rfFt": 340,
     "wallHeightFt": 9,
     "wallColor": "light",
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "hot_humid",
+    "climate": "cold",
     "humidity": "humid",
     "foulGround": "small"
   },
@@ -330,7 +340,7 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "dry_hard",
-    "climate": "cool_coastal",
+    "climate": "temperate",
     "humidity": "moderate",
     "foulGround": "generous"
   },
@@ -343,12 +353,12 @@
     "surface": "grass",
     "grassLength": "short",
     "soilType": "sandy_loose",
-    "climate": "cool_coastal",
+    "climate": "hot_humid",
     "humidity": "moderate",
     "foulGround": "standard"
   },
   "loy": {
-    "altitude": "sea",
+    "altitude": "moderate",
     "roof": "open_air",
     "lfFt": 326, "cfFt": 395, "rfFt": 330,
     "wallHeightFt": 8,
@@ -356,7 +366,7 @@
     "surface": "grass",
     "grassLength": "long",
     "soilType": "damp_heavy",
-    "climate": "cold",
+    "climate": "cool_coastal",
     "humidity": "humid",
     "foulGround": "small"
   },
@@ -374,7 +384,7 @@
     "foulGround": "standard"
   },
   "ars": {
-    "altitude": "sea",
+    "altitude": "high",
     "roof": "open_air",
     "lfFt": 368, "cfFt": 418, "rfFt": 370,
     "wallHeightFt": 5,
@@ -387,7 +397,7 @@
     "foulGround": "generous"
   },
   "der": {
-    "altitude": "high",
+    "altitude": "moderate",
     "roof": "retractable_open",
     "lfFt": 337, "cfFt": 408, "rfFt": 334,
     "wallHeightFt": 7,
@@ -395,7 +405,7 @@
     "surface": "hybrid",
     "grassLength": "standard",
     "soilType": "dry_hard",
-    "climate": "hot_dry",
+    "climate": "cold",
     "humidity": "arid",
     "foulGround": "standard"
   },
@@ -408,7 +418,7 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "temperate",
+    "climate": "cold",
     "humidity": "moderate",
     "foulGround": "standard"
   },
@@ -421,7 +431,7 @@
     "surface": "turf",
     "grassLength": "short",
     "soilType": "sandy_loose",
-    "climate": "temperate",
+    "climate": "cool_coastal",
     "humidity": "moderate",
     "foulGround": "small"
   },
@@ -434,7 +444,7 @@
     "surface": "turf",
     "grassLength": "short",
     "soilType": "sandy_loose",
-    "climate": "temperate",
+    "climate": "cool_coastal",
     "humidity": "moderate",
     "foulGround": "standard"
   },
@@ -447,12 +457,12 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "temperate",
+    "climate": "cool_coastal",
     "humidity": "moderate",
     "foulGround": "standard"
   },
   "bra": {
-    "altitude": "sea",
+    "altitude": "moderate",
     "roof": "open_air",
     "lfFt": 329, "cfFt": 396, "rfFt": 333,
     "wallHeightFt": 7,
@@ -460,7 +470,7 @@
     "surface": "grass",
     "grassLength": "long",
     "soilType": "damp_heavy",
-    "climate": "temperate",
+    "climate": "hot_humid",
     "humidity": "moderate",
     "foulGround": "small"
   },
@@ -473,12 +483,12 @@
     "surface": "hybrid",
     "grassLength": "standard",
     "soilType": "standard_clay",
-    "climate": "temperate",
+    "climate": "cool_coastal",
     "humidity": "moderate",
     "foulGround": "standard"
   },
   "and": {
-    "altitude": "sea",
+    "altitude": "high",
     "roof": "open_air",
     "lfFt": 398, "cfFt": 410, "rfFt": 394,
     "wallHeightFt": 32,
