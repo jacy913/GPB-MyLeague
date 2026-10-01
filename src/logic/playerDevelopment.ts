@@ -27,6 +27,8 @@ import {
   PlayerSeasonPitching,
   PitcherPosition,
 } from '../types';
+import { toBattingCounts } from '../lib/analytics/metrics';
+import { leagueBaseline, wrcPlus, type WrcPlusResult } from '../lib/analytics/wrcPlus';
 
 // ---------------------------------------------------------------------------
 // Deterministic randomness
@@ -206,6 +208,121 @@ const getUsageMultiplier = (player: Player, batting: PlayerSeasonBatting | null,
 };
 
 // ---------------------------------------------------------------------------
+// Performance feedback
+// ---------------------------------------------------------------------------
+
+/**
+ * How strongly a season's measured performance moves a rating, in rating points per
+ * year per unit of relative wRC+ edge. Additive, not a multiplier -- see
+ * `getPerformanceShift` for why that distinction is load-bearing rather than stylistic.
+ *
+ * FITTED, NOT CHOSEN, and the first two attempts at choosing one were wrong in ways
+ * worth recording.
+ *
+ * A gain of 0.15 was used first, on the reasoning that annual development is only
+ * 1.0-1.7 rating points so the effect should be a few tenths. Measured, that gain
+ * moved the league by a mean absolute 0.0163 rating points and shifted only 16 of 704
+ * players by a single point. The cause is `clampRating`, which rounds to whole
+ * numbers: a 0.15 multiplier on a 1.2-point delta moves the result by about 0.04
+ * points, and a 0.04-point shift almost never survives rounding. Any gain below
+ * roughly 1 is therefore not a conservative setting -- it is an inert one, and an
+ * inert feedback loop reads exactly like a safe one in every league-level statistic.
+ *
+ * The response was then rescaled to a live 4 and made multiplicative, which turned out
+ * to be a ratchet: ratings rose by a mean 0.157 points per season. The additive form
+ * removed that, and centring on the player mean rather than on 100 removed the
+ * residual. Measured bias ratio went 0.395 to 0.037.
+ *
+ * This value is in rating points per year. The shrunk wRC+ signal has a standard
+ * deviation near 8 points, so a typical edge is about 0.08 and this gain is worth
+ * roughly a fifth of a rating point in a year for a player one standard deviation from
+ * average -- against annual development of 1.0-1.7 points, so performance is a minor
+ * term rather than the dominant one.
+ *
+ * `tools/verifyDevelopmentFeedback.ts` sweeps the gain and reports the league's
+ * competitive compression at each value. Its verdict at this gain is NO DETECTABLE
+ * HARM, not demonstrated safety: the effect is a ~0.001/season signal sitting on a
+ * noise floor the same size, so the stratification check cannot fail. Read that
+ * tool's standing caveat before trusting the number.
+ */
+export const PERFORMANCE_GAIN = 2.5;
+
+/**
+ * Bounds on the performance shift, in rating points.
+ *
+ * The primary guard is wRC+'s own shrinkage, which pulls a short sample toward 100
+ * before this ever sees it. This is the backstop for the case where it does not: a
+ * wRC+ of 130 at the shipped gain is about half a point, and the cap keeps a
+ * pathological value from moving anyone further.
+ */
+const PERFORMANCE_SHIFT_CAP = 0.8;
+
+/**
+ * What a season's measured performance is worth, in rating points per year.
+ *
+ * ADDITIVE, AND THAT IS A CORRECTION RATHER THAN A PREFERENCE. The first version
+ * scaled the annual delta instead, and measurement rejected it: the feedback came
+ * out biased by a mean +0.157 rating points per season, so it was inflating ratings
+ * rather than rewarding them.
+ *
+ * The cause is a covariance the multiplicative form cannot avoid. Most players in a
+ * league are pre-peak and rising, so their deltas are positive; a player who
+ * outperformed is disproportionately one of them, because playing time and
+ * development headroom both track ability. Multiplying each player's delta by a
+ * performance-correlated factor therefore produces E[multiplier * delta] greater
+ * than E[delta] -- more when the two are positively correlated, which they are. The
+ * bias is structural, so no threshold on a multiplier removes it.
+ *
+ * An additive shift has no such term. Its expectation is gain * (mean wRC+ - centre),
+ * and centring on the population mean of wRC+ makes that zero over exactly the rows
+ * being scored. Centred by construction instead of by tuning.
+ *
+ * NOTE the centre is NOT 100. An earlier version of this comment claimed the baseline
+ * pooling made the mean sit at 100, and measurement refuted it at a bias ratio of
+ * 0.395: the baseline is plate-appearance weighted while ratings are per-player, and
+ * PA tracks ability, so the unweighted player mean sits below 100. See `centre` below.
+ *
+ * THE SIGNAL IS SHRUNK wRC+, and the shrinkage is the whole reason this is safe to
+ * wire in. wOBA's standard error in this engine is dominated by home run count
+ * rather than plate appearances (+0.807 against -0.048, measured), so an unshrunk
+ * figure would hand a rating boost to whoever got lucky with a handful of long
+ * balls. `wrcPlus` already pulls each player toward league average in proportion to
+ * how badly that noise is measured, so a 40-pa call-up cannot move.
+ *
+ * PITCHERS ARE DELIBERATELY EXCLUDED. There is no pitching wRC+ -- the engine
+ * records nothing at the pitch level to fit run-prevention weights from, and a
+ * run-allowed rate is a different metric wearing the name. Inventing one here would
+ * put an unvalidated signal into the simulation's central loop. So the feedback is
+ * batter-side only, exactly as the metric itself is, and the verifier checks that
+ * batter and pitcher talent stay balanced rather than assuming it.
+ */
+const getPerformanceShift = (
+  player: Player,
+  wrc: WrcPlusResult | null,
+  centre: number,
+  gain: number,
+): number => {
+  if (player.playerType !== 'batter') return 0;
+  if (!wrc || wrc.value === null) return 0;
+
+  // Centred on the POPULATION MEAN of wRC+, not on 100.
+  //
+  // wRC+ is centred on 100 plate-appearance-weighted, because that is how the league
+  // baseline is pooled. Ratings are per-PLAYER though, and plate appearances are
+  // positively correlated with ability -- a starter bats, a call-up does not -- so the
+  // unweighted mean of wRC+ over players sits BELOW 100. Dividing by 100 anyway leaves
+  // a residual negative bias: measured at a bias ratio of 0.395, in the opposite
+  // direction to the inflation the multiplicative form produced.
+  //
+  // Centring on the observed player mean makes the shift average zero over exactly
+  // the population it is applied to, which is the property that stops the whole league
+  // drifting up or down over decades. The mean is computed once per offseason and
+  // passed in, so this stays a pure per-player function.
+  const edge = (wrc.value - centre) / 100;
+  return clamp(gain * edge, -PERFORMANCE_SHIFT_CAP, PERFORMANCE_SHIFT_CAP);
+};
+
+// ---------------------------------------------------------------------------
 // Injury
 // ---------------------------------------------------------------------------
 
@@ -267,6 +384,13 @@ export const projectAttributeDelta = (
   wear: number,
   usageMultiplier: number,
   seasonKey: string,
+  /**
+   * Rating points this season's measured performance is worth. Additive and
+   * centred on zero, so a neutral season contributes nothing. Defaults to 0 for the
+   * historical seven-argument calls, which is how the module was originally
+   * specified and how its curves are documented.
+   */
+  performanceShift = 0,
 ): number => {
   const curve = (BATTING_CURVES as Record<string, AttributeCurve>)[attribute]
     ?? (PITCHING_CURVES as Record<string, AttributeCurve>)[attribute];
@@ -284,6 +408,19 @@ export const projectAttributeDelta = (
 
   // Playing time amplifies development and cushions decline.
   delta *= delta >= 0 ? usageMultiplier : clamp(1.5 - usageMultiplier, 0.7, 1.15);
+
+  // Performance is applied AFTER the usage multiplier and BEFORE the headroom check,
+  // and that placement is deliberate on both sides.
+  //
+  // After the multiplier, so it is a flat number of points rather than a share of an
+  // age-curve delta. Scaling by delta is what made the first version biased: see
+  // getPerformanceShift.
+  //
+  // Before the headroom check, so a player already at his ceiling cannot bank
+  // performance he has nowhere to put. Applying it afterwards would let a capped
+  // 30-year-old accumulate a large advantage he can never express, which is the
+  // quietest possible form of stratification.
+  delta += performanceShift;
 
   // Headroom. A 23-year-old at 70 with an 88 ceiling has room; a 23-year-old
   // already at his ceiling does not.
@@ -313,6 +450,7 @@ const projectBattingRatings = (
   usageMultiplier: number,
   injuryPenalty: number,
   nextSeasonYear: number,
+  performanceShift: number,
 ): PlayerBattingRatings => {
   const wear = BATTING_POSITION_WEAR[player.primaryPosition] ?? {};
   const potential = current.potentialOverall;
@@ -336,6 +474,7 @@ const projectBattingRatings = (
       positionWear,
       usageMultiplier,
       `${player.playerId}:${nextSeasonYear}:bat:${attribute}`,
+      performanceShift,
     );
 
     const injured = injuryPenalty * identityWeight;
@@ -361,6 +500,7 @@ const projectPitchingRatings = (
   usageMultiplier: number,
   injuryPenalty: number,
   nextSeasonYear: number,
+  performanceShift: number,
 ): PlayerPitchingRatings => {
   const wear = PITCHER_POSITION_WEAR[player.primaryPosition as PitcherPosition] ?? {};
   const potential = current.potentialOverall;
@@ -383,6 +523,7 @@ const projectPitchingRatings = (
       positionWear,
       usageMultiplier,
       `${player.playerId}:${nextSeasonYear}:pit:${attribute}`,
+      performanceShift,
     );
 
     const injured = injuryPenalty * identityWeight;
@@ -495,6 +636,16 @@ export interface ApplyPlayerDevelopmentArgs {
    * hundred-year run adds ~130k rows; trimming keeps long runs cheap.
    */
   retainRatingYears?: number | null;
+  /**
+   * Strength of the performance feedback, overriding `PERFORMANCE_GAIN`.
+   *
+   * `0` disables it entirely, which is how `tools/verifyDevelopmentFeedback.ts`
+   * produces its no-feedback baseline. The parameter exists so the verifier can
+   * sweep the gain as an ordinary argument rather than by editing this file between
+   * runs -- a monkey-patched constant would make each measurement depend on which
+   * value happened to be compiled in.
+   */
+  performanceGain?: number;
 }
 
 /**
@@ -509,6 +660,7 @@ export const applyPlayerDevelopment = ({
   seasonYear,
   effectiveDate,
   retainRatingYears = null,
+  performanceGain = PERFORMANCE_GAIN,
 }: ApplyPlayerDevelopmentArgs): PlayerDevelopmentResult => {
   void effectiveDate;
 
@@ -516,6 +668,44 @@ export const applyPlayerDevelopment = ({
   const pitchingByPlayer = getLatestPitchingRatings(playerState.pitchingRatings);
   const battingStatsByPlayer = getLatestBattingStats(playerState.battingStats, seasonYear - 1);
   const pitchingStatsByPlayer = getLatestPitchingStats(playerState.pitchingStats, seasonYear - 1);
+
+  /*
+   * The league every player's wRC+ is measured against.
+   *
+   * Built from the SAME rows the multipliers read (`battingStatsByPlayer`), for the
+   * same reason the player card does it that way: a baseline derived any other way
+   * would score a player against a league they are not shown in. Note it is built
+   * whether or not the gain is zero -- the gain only decides whether the result is
+   * used, and computing it unconditionally keeps the no-feedback baseline in the
+   * verifier running identical code to the shipped path.
+   */
+  const baseline = leagueBaseline(
+    Array.from(battingStatsByPlayer.values())
+      .filter((stat) => stat.plateAppearances > 0)
+      .map(toBattingCounts),
+  );
+
+  /*
+   * The player-mean wRC+, which is what the performance shift is centred on.
+   *
+   * NOT the same as 100, even though the baseline is built to average exactly 100:
+   * the baseline is plate-appearance weighted and this is per-player, and those
+   * differ because playing time tracks ability. Using 100 here leaves a residual
+   * bias of the whole league in one direction, which over a century of seasons is
+   * not a rounding error.
+   */
+  let performanceCentre = 100;
+  if (baseline) {
+    const values: number[] = [];
+    battingStatsByPlayer.forEach((stat) => {
+      if (!(stat.plateAppearances > 0)) return;
+      const value = wrcPlus(toBattingCounts(stat), baseline).value;
+      if (value !== null) values.push(value);
+    });
+    if (values.length > 0) {
+      performanceCentre = values.reduce((sum, value) => sum + value, 0) / values.length;
+    }
+  }
 
   const newBattingRatings: PlayerBattingRatings[] = [];
   const newPitchingRatings: PlayerPitchingRatings[] = [];
@@ -536,11 +726,23 @@ export const applyPlayerDevelopment = ({
     const injuryPenalty = getInjuryPenalty(player, seasonYear);
     if (injuryPenalty > 0) injuredPlayers += 1;
 
+    // With the gain at zero this is exactly 0 for every player, so the no-feedback
+    // baseline is bit-identical to the pre-feedback behaviour rather than merely
+    // close to it.
+    const performanceShift = performanceGain === 0 || !baseline || !battingStats
+      ? 0
+      : getPerformanceShift(
+        player,
+        wrcPlus(toBattingCounts(battingStats), baseline),
+        performanceCentre,
+        performanceGain,
+      );
+
     const currentBatting = battingByPlayer.get(player.playerId) ?? null;
     const currentPitching = pitchingByPlayer.get(player.playerId) ?? null;
 
     if (currentBatting) {
-      const projected = projectBattingRatings(player, currentBatting, traits, usageMultiplier, injuryPenalty, seasonYear);
+      const projected = projectBattingRatings(player, currentBatting, traits, usageMultiplier, injuryPenalty, seasonYear, performanceShift);
       newBattingRatings.push(projected);
       overallTotal += projected.overall;
       const change = projected.overall - currentBatting.overall;
@@ -550,7 +752,7 @@ export const applyPlayerDevelopment = ({
     }
 
     if (currentPitching) {
-      const projected = projectPitchingRatings(player, currentPitching, traits, usageMultiplier, injuryPenalty, seasonYear);
+      const projected = projectPitchingRatings(player, currentPitching, traits, usageMultiplier, injuryPenalty, seasonYear, performanceShift);
       newPitchingRatings.push(projected);
       overallTotal += projected.overall;
       const change = projected.overall - currentPitching.overall;

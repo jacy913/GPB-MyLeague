@@ -22,8 +22,17 @@
  *                              pure distributional measurement.
  *   --no-market        skip auto free agency and auto trades
  *   --quiet            suppress per-season progress output
+ *   --performance-gain=X
+ *                      strength of the performance feedback in player development.
+ *                      0 is the no-feedback baseline that
+ *                      tools/verifyDevelopmentFeedback.ts compares against.
+ *   --snapshot-json=PATH
+ *                      write per-season talent compression and the measured
+ *                      feedback effect to PATH, so two runs can be compared by
+ *                      machine instead of by eye.
  */
 
+import { writeFileSync } from 'node:fs';
 import { INITIAL_TEAMS } from '../src/data/teams';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
 import { SimulationManager } from '../src/logic/simulationManager';
@@ -38,7 +47,10 @@ import {
   DRAFT_ROUNDS,
   generateDraftClassBundle,
 } from '../src/logic/draftLogic';
-import { applyPlayerDevelopment } from '../src/logic/playerDevelopment';
+import {
+  applyPlayerDevelopment,
+  PERFORMANCE_GAIN as DEFAULT_PERFORMANCE_GAIN,
+} from '../src/logic/playerDevelopment';
 import { repairRosterSlotsForTeams } from '../src/logic/rosterManagement';
 import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../src/logic/automaticMarket';
@@ -90,8 +102,27 @@ const GRANULARITY = args.get('granularity') === 'season' ? 'season' : 'day';
 const RUN_MARKET = args.get('no-market') !== 'true';
 const QUIET = args.get('quiet') === 'true';
 
+/**
+ * Strength of the performance feedback, forwarded to applyPlayerDevelopment.
+ *
+ * `--performance-gain=0` is the no-feedback baseline, which is what
+ * tools/verifyDevelopmentFeedback.ts compares against. It reaches development as an
+ * ordinary argument rather than by editing the constant between runs.
+ */
+const PERFORMANCE_GAIN = Number(args.get('performance-gain') ?? String(DEFAULT_PERFORMANCE_GAIN));
+
+/**
+ * Where to write the per-season compression numbers as JSON.
+ *
+ * The verifier needs to compare runs, and the only stable interface between two
+ * processes is a file. Without this the compression claim rests on somebody reading
+ * two console tables side by side and eyeballing them.
+ */
+const SNAPSHOT_JSON = args.get('snapshot-json') ?? '';
+
 if (!Number.isFinite(SEASONS) || SEASONS < 1) throw new Error('--seasons must be a positive number');
 if (!Number.isFinite(SEED)) throw new Error('--seed must be a number');
+if (!Number.isFinite(PERFORMANCE_GAIN)) throw new Error('--performance-gain must be a number');
 
 // ---------------------------------------------------------------------------
 // Stats helpers
@@ -429,6 +460,36 @@ interface SeasonSnapshot {
   runDiffWinCorrelation: number;
   ratingsByAge: Map<number, number[]>;
   topPlayerAges: number[];
+
+  /**
+   * Talent-distribution compression -- the measurement the performance feedback is
+   * judged on.
+   *
+   * The question is not whether the feedback makes players better. It is whether it
+   * makes the league STRATIFY: whether the gap between the best players and the pack
+   * widens season over season, so that a dynasty is decided in year one and never
+   * contested again. `spreadRatio` (p90 / p50) is the statistic that shows it --
+   * a league stratifying is one where this climbs, while a healthy league's curve,
+   * injuries and draft churn hold it flat.
+   *
+   * `batterPitcherGap` exists because the feedback is batter-side only. There is no
+   * pitching wRC+ to feed it, so a batter-only signal could quietly tilt the balance
+   * between the two halves of the league without anything else showing it.
+   */
+  talent: {
+    batterCount: number;
+    batterMean: number;
+    batterSd: number;
+    batterP50: number;
+    batterP90: number;
+    batterP99: number;
+    /** p90 / p50. A rising trend across seasons is the stratification signature. */
+    batterSpreadRatio: number;
+    pitcherCount: number;
+    pitcherMean: number;
+    /** Batter mean minus pitcher mean. Should hover around zero, not drift. */
+    batterPitcherGap: number;
+  };
   retirements: number;
   /** Players with status 'active'. League membership, not roster occupancy. */
   activeCount: number;
@@ -508,6 +569,26 @@ const snapshots: SeasonSnapshot[] = [];
  * touches ratings.
  */
 const ratingsRows: { year: number; batting: number; pitching: number }[] = [];
+
+/**
+ * Per-season effect of the performance feedback, measured by running development a
+ * second time on identical input with the gain at zero.
+ *
+ * This is the liveness control for the whole exercise. Compression and spread
+ * statistics describe a league, so an inert wiring would pass every one of them
+ * while doing nothing; these numbers are what distinguish "the feedback is present
+ * and safe" from "the feedback is absent".
+ */
+const feedbackEffects: Array<{
+  year: number;
+  gain: number;
+  playersCompared: number;
+  /** Mean signed shift. Should sit near zero: the signal is centred on 100. */
+  meanShift: number;
+  meanAbsoluteShift: number;
+  maxAbsoluteShift: number;
+  playersMoved: number;
+}> = [];
 
 // ---------------------------------------------------------------------------
 // Universe construction
@@ -701,7 +782,56 @@ const runSeason = async (
     // tables grow forever. --app-retention=false reproduces the app's actual
     // behaviour so the growth can be measured instead of assumed.
     retainRatingYears: APP_RETENTION ? 10 : null,
+    performanceGain: PERFORMANCE_GAIN,
   });
+
+  /*
+   * THE EFFECT OF THE FEEDBACK, MEASURED EXACTLY.
+   *
+   * The second call takes the SAME input state and differs only in the gain, so
+   * this is a controlled comparison: no schedule noise, no universe difference, no
+   * second universe to average. Everything the two disagree on is attributable to
+   * the performance signal alone.
+   *
+   * This matters more than it looks. Every other statistic here -- compression
+   * ratios, means, spreads -- is a property of a whole league, so if the feedback
+   * were inert every one of them would read "healthy" and prove nothing at all. A
+   * pass on those is only meaningful alongside a number showing the wiring moves
+   * ratings, and this is that number.
+   */
+  if (PERFORMANCE_GAIN !== 0) {
+    const control = applyPlayerDevelopment({
+      playerState: rollover.nextPlayerState,
+      seasonYear: nextYear,
+      effectiveDate: `${nextYear}-12-10`,
+      retainRatingYears: APP_RETENTION ? 10 : null,
+      performanceGain: 0,
+    });
+    const overallById = new Map<string, number>();
+    for (const row of control.nextPlayerState.battingRatings) {
+      if (row.seasonYear === nextYear) overallById.set(row.playerId, row.overall);
+    }
+    const feedbackById = new Map<string, number>();
+    for (const row of development.nextPlayerState.battingRatings) {
+      if (row.seasonYear === nextYear) feedbackById.set(row.playerId, row.overall);
+    }
+    const diffs: number[] = [];
+    for (const [playerId, withFeedback] of feedbackById) {
+      const without = overallById.get(playerId);
+      if (without === undefined) continue;
+      diffs.push(withFeedback - without);
+    }
+    feedbackEffects.push({
+      year: nextYear,
+      gain: PERFORMANCE_GAIN,
+      playersCompared: diffs.length,
+      meanShift: mean(diffs),
+      meanAbsoluteShift: mean(diffs.map(Math.abs)),
+      maxAbsoluteShift: diffs.length > 0 ? Math.max(...diffs.map(Math.abs)) : 0,
+      playersMoved: diffs.filter((d) => d !== 0).length,
+    });
+  }
+
   ratingsRows.push({
     year: nextYear,
     batting: development.nextPlayerState.battingRatings.length,
@@ -879,6 +1009,49 @@ const runDraft = (
 // ---------------------------------------------------------------------------
 // Snapshot collection
 // ---------------------------------------------------------------------------
+
+/**
+ * Talent-distribution compression for one season.
+ *
+ * Split by player type because the performance feedback is batter-side only, so a
+ * divergence between the halves of the league would otherwise hide inside a
+ * combined average.
+ *
+ * `playerType` rather than "has a batting rating" is the classifier on purpose: a
+ * two-way player carries both, and counting them on both sides would let one player
+ * appear twice and quietly reweight the comparison.
+ */
+const collectTalentCompression = (
+  playerState: LeaguePlayerState,
+  seasonYear: number,
+  ratingOverallById: Map<string, { overall: number; seasonYear: number }>,
+): SeasonSnapshot['talent'] => {
+  const batterOveralls: number[] = [];
+  const pitcherOveralls: number[] = [];
+
+  playerState.players.forEach((player) => {
+    if (player.status === 'retired') return;
+    const row = ratingOverallById.get(player.playerId);
+    if (!row || row.seasonYear !== seasonYear || !(row.overall > 0)) return;
+    if (player.playerType === 'batter') batterOveralls.push(row.overall);
+    else pitcherOveralls.push(row.overall);
+  });
+
+  const p50 = percentile(batterOveralls, 0.5);
+  const p90 = percentile(batterOveralls, 0.9);
+  return {
+    batterCount: batterOveralls.length,
+    batterMean: mean(batterOveralls),
+    batterSd: stdev(batterOveralls),
+    batterP50: p50,
+    batterP90: p90,
+    batterP99: percentile(batterOveralls, 0.99),
+    batterSpreadRatio: p50 > 0 ? p90 / p50 : 0,
+    pitcherCount: pitcherOveralls.length,
+    pitcherMean: mean(pitcherOveralls),
+    batterPitcherGap: mean(batterOveralls) - mean(pitcherOveralls),
+  };
+};
 
 const collectSnapshot = (
   seasonYear: number,
@@ -1143,6 +1316,7 @@ const collectSnapshot = (
     runDiffWinCorrelation: pearson(runDiffs, winTotals),
     ratingsByAge,
     topPlayerAges,
+    talent: collectTalentCompression(playerState, seasonYear, ratingOverallById),
     retirements: 0,
     activeCount: playerState.players.filter((player) => player.status === 'active').length,
     freeAgentCount: playerState.players.filter((player) => player.status === 'free_agent').length,
@@ -1912,6 +2086,59 @@ const reportCareerFlow = () => {
   }
 };
 
+/**
+ * Talent compression per season, and the feedback's measured effect on ratings.
+ *
+ * The compression columns are the health check; the effect block is the liveness
+ * control. Read the effect block first: if the feedback moved nothing, the
+ * compression columns below are describing an unmodified league and say nothing
+ * about whether the feedback is safe.
+ */
+const reportTalentCompression = () => {
+  if (snapshots.length === 0) return;
+
+  console.log('\nTALENT COMPRESSION');
+  console.log(`  gain ${PERFORMANCE_GAIN}   seed ${SEED}   ${snapshots.length} seasons`);
+  console.log('  year   batters  mean     sd    p50    p90    p99   p90/p50   pit mean   gap');
+  snapshots.forEach((snapshot) => {
+    const t = snapshot.talent;
+    console.log(
+      `  ${snapshot.year}   ${String(t.batterCount).padStart(7)}` +
+        `${fixed(t.batterMean, 2).padStart(7)}${fixed(t.batterSd, 2).padStart(7)}` +
+        `${fixed(t.batterP50, 1).padStart(7)}${fixed(t.batterP90, 1).padStart(7)}${fixed(t.batterP99, 1).padStart(7)}` +
+        `${fixed(t.batterSpreadRatio, 4).padStart(10)}${fixed(t.pitcherMean, 2).padStart(11)}` +
+        `${fixed(t.batterPitcherGap, 3).padStart(8)}`,
+    );
+  });
+  const first = snapshots[0].talent;
+  const last = snapshots[snapshots.length - 1].talent;
+  console.log(
+    `\n  spread ratio (p90/p50) ${fixed(first.batterSpreadRatio, 4)} -> ${fixed(last.batterSpreadRatio, 4)}` +
+      `   drift ${fixed(last.batterSpreadRatio - first.batterSpreadRatio, 4)}`,
+  );
+  console.log(
+    `  batter-pitcher gap    ${fixed(first.batterPitcherGap, 3)} -> ${fixed(last.batterPitcherGap, 3)}` +
+      `   drift ${fixed(last.batterPitcherGap - first.batterPitcherGap, 3)}`,
+  );
+
+  if (feedbackEffects.length === 0) {
+    console.log('\n  performance gain is 0 -- no-feedback baseline, nothing to attribute.');
+    return;
+  }
+  console.log('\nFEEDBACK EFFECT (measured against the same input at gain 0)');
+  console.log('  year   gain   players  moved   mean shift  mean |shift|  max |shift|');
+  feedbackEffects.forEach((effect) => {
+    console.log(
+      `  ${effect.year}  ${fixed(effect.gain, 3)}` +
+        `${String(effect.playersCompared).padStart(9)}${String(effect.playersMoved).padStart(8)}` +
+        `${fixed(effect.meanShift, 4).padStart(12)}${fixed(effect.meanAbsoluteShift, 4).padStart(14)}` +
+        `${fixed(effect.maxAbsoluteShift, 2).padStart(14)}`,
+    );
+  });
+  const meanEffect = mean(feedbackEffects.map((effect) => effect.meanAbsoluteShift));
+  console.log(`\n  mean absolute rating shift across seasons: ${fixed(meanEffect, 4)} points`);
+};
+
 const reportRosterHealth = () => {
   const last = snapshots[snapshots.length - 1];
   if (!last) return;
@@ -2086,6 +2313,31 @@ const main = async () => {
   reportCareers();
   reportCareerFlow();
   reportRosterHealth();
+  reportTalentCompression();
+
+  /*
+   * The machine-readable half of this run.
+   *
+   * Written whenever --snapshot-json is given, whatever the gain, so a baseline run
+   * and a feedback run are comparable by file rather than by eye. Only the fields
+   * the verifier compares are included; a snapshot carries Map-valued members that
+   * do not serialise, which is why this is an explicit projection instead of
+   * JSON.stringify(snapshots).
+   */
+  if (SNAPSHOT_JSON) {
+    const payload = {
+      seasons: SEASONS,
+      seed: SEED,
+      performanceGain: PERFORMANCE_GAIN,
+      talent: snapshots.map((snapshot) => ({
+        year: snapshot.year,
+        ...snapshot.talent,
+      })),
+      feedbackEffects,
+    };
+    writeFileSync(SNAPSHOT_JSON, JSON.stringify(payload, null, 2), 'utf8');
+    console.log(`\n  snapshot json: ${SNAPSHOT_JSON}`);
+  }
 
   const totalSeconds = (Date.now() - startedAt) / 1000;
   console.log('\n=======================================================================');
