@@ -1,0 +1,493 @@
+{
+  "_comment": "Park profiles, one entry per team id from src/data/teams.ts. This file is the deliverable interface for park identity: it holds only the decisions a human should make by hand. Derived numbers (HR / FB / GB / run factors, pitcher fatigue rate, home-field advantage) are deliberately ABSENT -- they are computed from these fields, and a hand-set one would silently disagree with the dimensions above it. Mode is FIXED: one profile per park, computed once, applied to every home game. See C:\\Users\\ADMIN\\.opencode\\plan\\gpb-park-factors.md.",
+
+  "_schema": {
+    "altitude": {
+      "type": "enum",
+      "values": ["sea", "moderate", "high", "extreme"],
+      "note": "Air density. The dominant single factor. 'high' is 3,000-4,500 ft, 'extreme' is 5,000-6,500 ft. At 5,280 ft the air is about 85% as dense, so the ball carries roughly 17% farther. Breaking balls also lose bite in thin air, so altitude hurts pitching through a second channel."
+    },
+    "roof": {
+      "type": "enum",
+      "values": ["open_air", "fixed_roof", "retractable_open", "dome"],
+      "note": "FIXED MODE. 'retractable_closed' is deliberately NOT an option: a roof that is sometimes shut cannot be averaged into a season-long value without producing a park that does not exist. Retractable parks are entered at their open state, and a per-game override is left for the optional weather layer."
+    },
+    "lfFt": {
+      "type": "int",
+      "range": [320, 400],
+      "note": "Left field, wall to centre of the wall. 320-330 is a short porch; 390-400 is deep."
+    },
+    "cfFt": {
+      "type": "int",
+      "range": [380, 430],
+      "note": "Dead centre. The single most consequential distance in the park for home runs."
+    },
+    "rfFt": {
+      "type": "int",
+      "range": [320, 400],
+      "note": "Right field, wall to centre of the wall. The mirror of lfFt."
+    },
+    "_lcfRcf": {
+      "type": "derived",
+      "note": "Left-centre and right-centre are NOT entered. They are interpolated at 12.5% of CF from each adjacent corner, because real parks are usually roughly symmetric that way. Consequence: no park can have a true short porch opposite a true monument corner. If that starts to feel wrong, widen this file to five distances."
+    },
+    "wallHeightFt": {
+      "type": "int",
+      "range": [3, 40],
+      "note": "3-5 low, 6-8 standard, 10-14 tall, 20-40 monument. Converts doubles into home runs, and it is handedness-asymmetric: a short wall with a tall wall opposite gives the park two entirely different seasons."
+    },
+    "wallColor": {
+      "type": "enum",
+      "values": ["light", "dark", "glass"],
+      "note": "'light' means padded white or pale brick, which absorbs more energy, so balls that would clear a dark wall become doubles and outs. A small multiplier and one of the more satisfying details to get right."
+    },
+    "surface": {
+      "type": "enum",
+      "values": ["grass", "turf", "hybrid"],
+      "note": "Turf skips harder and plays up the ground-ball game and the double play, raises infield error rates, and wears on everyone who slides. Note that this engine records no batted-ball type, so a surface factor is currently a physical model and not a measurement."
+    },
+    "grassLength": {
+      "type": "enum",
+      "values": ["short", "standard", "long"],
+      "note": "Deliberately separate from surface. Long grass kills bloopers and turns grounders into singles; short grass lets grounders through. Interacts with surface: they are the same outcome arriving through two doors and must not simply be added."
+    },
+    "soilType": {
+      "type": "enum",
+      "values": ["dry_hard", "standard_clay", "damp_heavy", "sandy_loose"],
+      "note": "Damp clay kills hops, so grounders become singles and the double-play rate drops. Dry hard clay does the opposite. Small alone, but it compounds with surface."
+    },
+    "climate": {
+      "type": "enum",
+      "values": ["cold", "temperate", "hot_dry", "hot_humid", "cool_coastal"],
+      "note": "Drives ball carry and pitcher endurance through separate channels. Hot air is about 5% less dense between 15C and 30C so balls carry further, but the larger effect is fatigue: heat and humidity drain a pitching staff."
+    },
+    "humidity": {
+      "type": "enum",
+      "values": ["arid", "moderate", "humid"],
+      "note": "Kept separate from climate because the two often disagree -- one hot arid city and one hot humid city at the same temperature play very differently. Small on carry, real on fatigue."
+    },
+    "foulGround": {
+      "type": "enum",
+      "values": ["small", "standard", "generous"],
+      "note": "Generous foul ground means fewer balls are caught foul, which raises home run AND strikeout rates together. This is the dimension that produces the classic large-park archetype: neutral HR factor, elevated run factor."
+    }
+  },
+
+  "alc": {
+    "altitude": "extreme",
+    "roof": "open_air",
+    "lfFt": 348, "cfFt": 415, "rfFt": 344,
+    "wallHeightFt": 8,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "hot_dry",
+    "humidity": "arid",
+    "foulGround": "standard"
+  },
+  "val": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 337, "cfFt": 402, "rfFt": 334,
+    "wallHeightFt": 7,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "luf": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 331, "cfFt": 398, "rfFt": 355,
+    "wallHeightFt": 6,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "small"
+  },
+  "hui": {
+    "altitude": "sea",
+    "roof": "fixed_roof",
+    "lfFt": 329, "cfFt": 401, "rfFt": 329,
+    "wallHeightFt": 7,
+    "wallColor": "light",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "ara": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 390, "cfFt": 402, "rfFt": 392,
+    "wallHeightFt": 6,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "dry_hard",
+    "climate": "cool_coastal",
+    "humidity": "humid",
+    "foulGround": "standard"
+  },
+  "des": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 336, "cfFt": 409, "rfFt": 333,
+    "wallHeightFt": 24,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "small"
+  },
+  "suk": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 322, "cfFt": 396, "rfFt": 326,
+    "wallHeightFt": 5,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "temperate",
+    "humidity": "humid",
+    "foulGround": "generous"
+  },
+  "gar": {
+    "altitude": "moderate",
+    "roof": "open_air",
+    "lfFt": 341, "cfFt": 400, "rfFt": 338,
+    "wallHeightFt": 8,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "short",
+    "soilType": "dry_hard",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "gra": {
+    "altitude": "sea",
+    "roof": "retractable_open",
+    "lfFt": 335, "cfFt": 405, "rfFt": 332,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "hybrid",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "hot_humid",
+    "humidity": "humid",
+    "foulGround": "standard"
+  },
+  "tru": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 328, "cfFt": 394, "rfFt": 331,
+    "wallHeightFt": 9,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "cold",
+    "humidity": "moderate",
+    "foulGround": "small"
+  },
+  "caf": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 342, "cfFt": 401, "rfFt": 345,
+    "wallHeightFt": 6,
+    "wallColor": "light",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "rag": {
+    "altitude": "high",
+    "roof": "open_air",
+    "lfFt": 355, "cfFt": 408, "rfFt": 352,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "dry_hard",
+    "climate": "hot_dry",
+    "humidity": "arid",
+    "foulGround": "standard"
+  },
+  "win": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 330, "cfFt": 397, "rfFt": 333,
+    "wallHeightFt": 8,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "humid",
+    "foulGround": "standard"
+  },
+  "aub": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 322, "cfFt": 403, "rfFt": 396,
+    "wallHeightFt": 4,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "dwi": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 339, "cfFt": 404, "rfFt": 336,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "hybrid",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "generous"
+  },
+  "hou": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 327, "cfFt": 395, "rfFt": 332,
+    "wallHeightFt": 6,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "damp_heavy",
+    "climate": "temperate",
+    "humidity": "humid",
+    "foulGround": "small"
+  },
+
+  "ock": {
+    "altitude": "sea",
+    "roof": "fixed_roof",
+    "lfFt": 334, "cfFt": 406, "rfFt": 331,
+    "wallHeightFt": 8,
+    "wallColor": "dark",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "bal": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 328, "cfFt": 410, "rfFt": 335,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "dry_hard",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "fes": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 336, "cfFt": 399, "rfFt": 340,
+    "wallHeightFt": 9,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "hot_humid",
+    "humidity": "humid",
+    "foulGround": "small"
+  },
+  "urb": {
+    "altitude": "moderate",
+    "roof": "open_air",
+    "lfFt": 352, "cfFt": 412, "rfFt": 350,
+    "wallHeightFt": 6,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "dry_hard",
+    "climate": "cool_coastal",
+    "humidity": "moderate",
+    "foulGround": "generous"
+  },
+  "sin": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 333, "cfFt": 401, "rfFt": 329,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "cool_coastal",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "loy": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 326, "cfFt": 395, "rfFt": 330,
+    "wallHeightFt": 8,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "cold",
+    "humidity": "humid",
+    "foulGround": "small"
+  },
+  "niy": {
+    "altitude": "sea",
+    "roof": "retractable_open",
+    "lfFt": 330, "cfFt": 397, "rfFt": 334,
+    "wallHeightFt": 6,
+    "wallColor": "light",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "hot_humid",
+    "humidity": "humid",
+    "foulGround": "standard"
+  },
+  "ars": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 368, "cfFt": 418, "rfFt": 370,
+    "wallHeightFt": 5,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "short",
+    "soilType": "dry_hard",
+    "climate": "hot_dry",
+    "humidity": "arid",
+    "foulGround": "generous"
+  },
+  "der": {
+    "altitude": "high",
+    "roof": "retractable_open",
+    "lfFt": 337, "cfFt": 408, "rfFt": 334,
+    "wallHeightFt": 7,
+    "wallColor": "dark",
+    "surface": "hybrid",
+    "grassLength": "standard",
+    "soilType": "dry_hard",
+    "climate": "hot_dry",
+    "humidity": "arid",
+    "foulGround": "standard"
+  },
+  "rei": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 331, "cfFt": 400, "rfFt": 335,
+    "wallHeightFt": 8,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "fey": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 324, "cfFt": 393, "rfFt": 344,
+    "wallHeightFt": 26,
+    "wallColor": "light",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "small"
+  },
+  "cal": {
+    "altitude": "sea",
+    "roof": "dome",
+    "lfFt": 336, "cfFt": 404, "rfFt": 336,
+    "wallHeightFt": 7,
+    "wallColor": "light",
+    "surface": "turf",
+    "grassLength": "short",
+    "soilType": "sandy_loose",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "sta": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 335, "cfFt": 411, "rfFt": 397,
+    "wallHeightFt": 12,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "bra": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 329, "cfFt": 396, "rfFt": 333,
+    "wallHeightFt": 7,
+    "wallColor": "light",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "small"
+  },
+  "geb": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 340, "cfFt": 403, "rfFt": 337,
+    "wallHeightFt": 6,
+    "wallColor": "dark",
+    "surface": "hybrid",
+    "grassLength": "standard",
+    "soilType": "standard_clay",
+    "climate": "temperate",
+    "humidity": "moderate",
+    "foulGround": "standard"
+  },
+  "and": {
+    "altitude": "sea",
+    "roof": "open_air",
+    "lfFt": 398, "cfFt": 410, "rfFt": 394,
+    "wallHeightFt": 32,
+    "wallColor": "dark",
+    "surface": "grass",
+    "grassLength": "long",
+    "soilType": "damp_heavy",
+    "climate": "cold",
+    "humidity": "humid",
+    "foulGround": "standard"
+  }
+}
