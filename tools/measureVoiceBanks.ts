@@ -30,6 +30,7 @@
 
 import { HEADLINERS, type GameEventKind } from '../src/logic/headliners';
 import { VOICE_BANKS } from '../src/logic/headlinerVoices';
+import { IMPRESSABLE_KINDS } from '../src/logic/headlinerPipeline';
 
 const ALL_KINDS: readonly GameEventKind[] = [
   'no_hitter', 'perfect_game', 'cycle', 'multi_homer', 'rbi_barrage',
@@ -110,12 +111,69 @@ const main = (): void => {
       });
   }
 
+  /*
+   * DECLARED BUT NOT COVERED, which is the check that would have caught a misplacement.
+   *
+   * `VoiceBank.titles` and `.decks` are `Partial<Record<GameEventKind, ...>>`, so a
+   * bank may legally hold an entry for a kind its persona does not cover, and the
+   * compiler will not complain. That entry can never be picked -- the persona is not
+   * eligible for the kind -- so it is content that ships and never renders.
+   *
+   * This is not hypothetical. Filling BUCCELLI's empty `losing_streak` and `underdog_win`
+   * decks anchored the edit on `decks: { meltdown: [`, which matched SCINTILLA's block
+   * instead. Two personas have a `meltdown` deck, the text typechecked, the bank count
+   * went UP, and the decks were silently unreachable in a persona that does not cover
+   * those kinds at all.
+   *
+   * A count going up is therefore not evidence that content landed. This is.
+   */
+  const stranded: string[] = [];
+  HEADLINERS.forEach((persona) => {
+    const bank = VOICE_BANKS[persona.id];
+    // REACHABLE IS NOT COVERS.
+    //
+    // The columnist's positive-valence path in headlinerPipeline.ts routes through
+    // `mayImpress` BEFORE `isEligible`, so IMPRESSABLE_KINDS are reachable for him even
+    // though he does not list them. Checking against `covers` alone flagged five of his
+    // best titles as stranded, which is precisely the false positive that teaches a
+    // person to ignore a check.
+    const reachable = new Set<GameEventKind>([
+      ...persona.covers,
+      ...(persona.id === 'tombuccelli' ? IMPRESSABLE_KINDS : []),
+    ]);
+    (Object.keys(bank.titles) as string[]).forEach((key) => {
+      if (key === 'generic') return;
+      if (!reachable.has(key as GameEventKind)) {
+        stranded.push(`${persona.displayName}: title for unreachable kind "${key}"`);
+      }
+    });
+    (Object.keys(bank.decks) as string[]).forEach((key) => {
+      if (key === 'generic') return;
+      if (!reachable.has(key as GameEventKind)) {
+        stranded.push(`${persona.displayName}: deck for unreachable kind "${key}"`);
+      }
+    });
+  });
+
+  console.log(`\n  STRANDED CONTENT`);
+  if (stranded.length === 0) {
+    console.log('    none -- every declared title and deck belongs to a kind its persona covers');
+  } else {
+    stranded.forEach((s) => console.log(`    - ${s}`));
+    console.log(
+      '\n    These can never render. The persona is not eligible for the kind, so the entry' +
+        '\n    is unreachable however good it is. `VoiceBank` permits any kind, which is why' +
+        '\n    this has to be checked rather than compiled.',
+    );
+  }
+
   console.log(
     '\n  A birthday collision is unavoidable at a given bank size. This is the one\n' +
     '  measured lever on repetition; the anti-repetition memory was tried three ways\n' +
     '  and made the figure worse every time.',
   );
   console.log();
+  if (stranded.length > 0) process.exitCode = 1;
 };
 
 main();

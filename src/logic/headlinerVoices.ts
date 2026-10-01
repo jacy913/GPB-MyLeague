@@ -211,19 +211,19 @@ export const pickTitleWithTemplate = (
 const PEREZ: VoiceBank = {
   titles: {
     walk_off: [
-      '{CITY} Turns It Up in the Ninth',
+      '{TEAM} Turns It Up in the Ninth',
       'Ninety Minutes in {ARENA}',
       'The Last Swing at {ARENA}',
-      'A Quiet Walk Off in {CITY}',
+      'A Quiet Walk Off at {ARENA}',
     ],
     no_hitter: [
       'Nobody Saw It Coming',
       'Ninety Bats, Nothing to Show',
-      'A Quiet House in {CITY}',
+      'A Quiet House, {OPPONENT} Kept Waiting',
       'The Ball Was Never Fairly Hit',
     ],
     extra_innings: [
-      'It Kept Going in {CITY}',
+      'It Kept Going in {TEAM} Territory',
       'Past the Regulation Frames',
       'They Stayed in {ARENA}',
       'A Game That Refused To End',
@@ -261,21 +261,56 @@ const PEREZ: VoiceBank = {
     winning_streak: [
       '{TEAM} Have Won {FIGURE} Straight',
       'It Kept Turning Up',
-      'Another Night in {CITY}',
+      'Another Night in {TEAM} Country',
       'The Streak Is Not a Coincidence Yet',
     ],
     generic: [
-      'A Night in {CITY}',
+      'A Night in {TEAM} Country',
       'From the First Pitch',
       'The Log Book Tells It Plainly',
       'An Ordinary Game, Loudly',
     ],
   },
   decks: {
+    no_hitter: [
+      '{PLAYER} retired {OPPONENT} in order and by the time it was over nobody had made much of it, which is the way it always goes. The next person to hit will make much of it.',
+      'Nine innings without a hit is not a thing you watch, it is a thing you find out afterwards and then wish you had been paying attention. {PLAYER} did it to {OPPONENT} in front of a crowd that had nothing to do at the end.',
+      'People ask whether {OPPONENT} could have done anything. The honest answer is that {PLAYER} made the answer irrelevant, which is the whole point.',
+    ],
+    walk_off: [
+      'One swing at the end of a long one. {PLAYER} hit it, {TEAM} ran, and about a thousand people who had been sitting since the first inning went home happy.',
+      'It was over before it started, which is the thing about walk-offs. Ninety minutes of it and then a tenth of a second.',
+      'The rail was full. Somebody behind me said the same thing everyone said, which is that {OPPONENT} had already lost it two innings before {PLAYER} came up.',
+    ],
+    pitching_dome: [
+      '{PLAYER} struck out {FIGURE} and by the sixth the people behind the plate had stopped talking. There is a pitch count where a hitter stops being part of the night and starts waiting for it to end.',
+      'You could see it from the third-base side. {PLAYER} had something he was not telling anybody about and {FIGURE} of them went down to it.',
+      'That is what {FIGURE} strikeouts looks like from four rows back: a man who has stopped being surprised by his own stuff.',
+    ],
+    extra_innings: [
+      '{FIGURE} innings. Everybody was still there. Nobody can tell you what happened in the fourteenth, only that it kept not happening until it finally did.',
+      'It is the eleventh inning that separates the people who came from the people who stayed, and the people who stayed saw {TEAM} and {OPPONENT} go at it for another two hours with nobody in a hurry to go home.',
+      'The kind of night where you lose track of the score and keep track of the pitcher, and there is not a scoreboard worth watching at that point.',
+    ],
+    blowout: [
+      'You can tell from the third-base seats when it is over and you can tell by the fourth when the other dugout stops watching the plate. {TEAM} were there by the fifth.',
+      '{FIGURE} to nothing. The part that surprises people is how early it settled -- this was decided before anyone had to care.',
+      'The whole thing had a smell to it by the middle innings. {OPPONENT} were still playing and {TEAM} were somewhere else entirely.',
+    ],
+    scrap_heap: [
+      'The park filled up and stayed filled. {TEAM} scored {FIGURE} and by the end everybody in it had watched somebody in this game do something worth the price of the drive.',
+      'A hundred hits in a game does not happen because of pitching or because of hitting. It happens because a night will occasionally let both go at once.',
+      'You do not see {FIGURE} of these often. When it happens the building does a thing with the noise that a scoreboard cannot explain.',
+    ],
+    underdog_win: [
+      '{OPPONENT} were not supposed to win. Half the park knew it. {TEAM} winning in {FIGURE} is not a surprise, it is a correction.',
+      'Nobody applauded the maths. Everybody applauded the out.',
+      'The good teams win the games they are supposed to win. {OPPONENT} just did not, and {TEAM} were good enough today to punish it.',
+    ],
     one_run_game: [
       'One run, decided by one swing, in front of a crowd that had been on its feet since the seventh. {TEAM} will take it and describe it as a close game, which it was not.',
       'It finished {FIGURE}, and the whole thing came down to one at-bat neither staff could get a second look at. {TEAM} were the better club for about four innings out of nine.',
-      'Ninety minutes for {FIGURE}. Nobody in {CITY} can tell you what happened, only that it kept not happening until it finally did.',
+      'Ninety minutes for {FIGURE}. Nobody in {OPPONENT} can tell you what happened, only that it kept not happening until it finally did.',
     ],
     winning_streak: [
       '{TEAM} have won {FIGURE} in a row now. The wins have not all looked the same, which at this level is the point: the same club keeps finding a different way to be adequate.',
@@ -344,9 +379,30 @@ const SOO: VoiceBank = {
     ],
   },
   decks: {
+    big_debut: [
+      '{PLAYER} is {AGE} and this was the first one. Whatever happens from here, tonight already happened, and nobody who watched it is going to forget it.',
+      'Debuts are supposed to be about the future. {PLAYER} made it about the present tense instead, and at {AGE} that is a much more useful thing to be.',
+      'Every year the league produces one of these and every year the adults take a year to notice. {PLAYER} is {AGE}. Note the date.',
+    ],
+    momentum_swing: [
+      '{TEAM} were behind and then they were not, and the switch happened somewhere around the middle of the game in the way it always does: not one swing, just a run, then another run.',
+      'There is a point in a game where the outs stop being hard. {TEAM} found it, and the scoreboard did the rest, and nobody in the building could point at the moment it turned.',
+      'Two runs is the largest thing you can take in one swing and {TEAM} took it twice. That is not a rally so much as a hinge.',
+    ],
+    on_base_machine: [
+      '{PLAYER} did not hit {FIGURE} hard. That is the interesting part. Hard contact is available to anyone with a bat; getting on base {FIGURE} times while not swinging away from anything is not.',
+      'A {FIGURE} at-bat night for {PLAYER}, and the tape would be worth watching for a different reason than usual -- the outs were not hard outs.',
+      '{PLAYER} reached {FIGURE} times. That is a skill and it is a rarer one than it looks, because most of it is knowing when not to swing.',
+    ],
+    walk_off: [
+      'One swing. {PLAYER} turned {TEAM} around, {OPPONENT} went home, and {FIGURE} people in {ARENA} got to stand there for a while.',
+      'It is over in a tenth of a second and it took the whole night. {PLAYER} at the plate, {TEAM} down, and then it was not.',
+      '{OPPONENT} had one out and the right idea. {PLAYER} had a different one and it worked, and that is the entire story of a walk-off.',
+    ],
     young_player: [
       '{PLAYER} is {AGE}. {TEAM} put him out there and he went around the bases like he had been doing it for years, which at this point he probably has.',
       'Every season somebody comes up and everybody says the same thing, and every season somebody actually does it. {PLAYER} is {AGE} and this is not a coincidence.',
+      '{PLAYER} is {AGE} and has already done the thing that takes some veterans a whole career. {TEAM} either know what they have or they are about to find out the expensive way.',
     ],
     multi_homer: [
       'Three home runs for a {AGE}-year-old. The pitcher threw the same pitch three times and got paid three times, which tells you everything about the rest of that lineup.',
@@ -372,7 +428,7 @@ const GATZ: VoiceBank = {
   titles: {
     blowout: [
       'THAT IS HOW YOU WIN IT',
-      "{CITY} Believed. {OPPONENT} Didn't.",
+      "{TEAM} Believed. {OPPONENT} Didn't.",
       'You Do Not Let It Get Close',
       'That Is a Full Nine',
     ],
@@ -450,6 +506,31 @@ const GATZ: VoiceBank = {
     ],
   },
   decks: {
+    multi_homer: [
+      '{PLAYER} hit {FIGURE} of them and the second one is the one people will remember, because it is the one that was still in the air when the dugout had already given up on the inning.',
+      'Three home runs. Not three hard ones -- {PLAYER} was not overpowered, {TEAM} was simply waiting for the pitch he wanted and he only needed to see it three times.',
+      'People ask whether {PLAYER} can hit {FIGURE} home runs a season. The answer is that tonight was not a fluke and that nobody should say so out loud yet.',
+    ],
+    walk_off: [
+      'You play nine innings for that. {OPPONENT} had the outs and the count and the whole thing in their favour, and {PLAYER} had one swing and used it.',
+      '{FIGURE} people stood in {ARENA} for a while and did not sit down. That is the part of a walk-off nobody puts in the box score.',
+      'The whole night came down to {PLAYER} with a runner on. {TEAM} got there somehow. Then it was over.',
+    ],
+    staff_wins: [
+      'Everyone in {TEAM} contributed and that is the rarest thing in pitching. {PLAYER} went {FIGURE}, somebody else went {FIGURE}, and the innings stacked up.',
+      'A staff day. Not one arm carrying the place -- {FIGURE} outs from a pitching staff is a relay, and relays go wrong.',
+      'Depth wins games like this one. {TEAM} did not get a great performance, they got a complete one.',
+    ],
+    shutout: [
+      'Zero runs is not a bad night, it is an absence. {OPPONENT} went down in order more than once and {TEAM} simply refused to give them the one baserunner that would have changed it.',
+      'A shutout is the hardest thing to score against and {OPPONENT} did not manage it once. Whatever they wanted to do, {TEAM} took it away.',
+      'No runs, no explanation required. {TEAM} did the one thing a shutout is made of, which is not letting it happen more than once.',
+    ],
+    pitching_dome: [
+      '{PLAYER} struck out {FIGURE} and there was not much to argue with on any of them. That is the whole night, really.',
+      'Some nights a pitcher gets the zone and some nights the zone gets him. {PLAYER} had the first kind and took {FIGURE} of them.',
+      'You do not plan to strike out {FIGURE}. You get lucky with location and location was on your side.',
+    ],
     blowout: [
       '{TEAM} did not so much win as settle in. From the third inning the outs came easy and {OPPONENT} looked like a club that had already put its coat on.',
       'You can measure when a game is over by when the other dugout stops watching the plate. That was the fourth inning.',
@@ -540,6 +621,16 @@ const SCINTILLA: VoiceBank = {
     ],
   },
   decks: {
+    meltdown: [
+      '{TEAM} did not lose the game so much as stop playing it somewhere in the middle. {FIGURE} runs is not the interesting number; the inning they went quiet in is.',
+      'A collapse is usually arithmetic rather than emotional. {TEAM} ran out of outs they could manufacture and the scoreboard caught up.',
+      'There is a rate at which a club stops being able to score, and {TEAM} found it. {FIGURE} runs is what that looks like on a board.',
+    ],
+    pitching_dome: [
+      '{FIGURE} strikeouts in one outing. The interesting column is not the strikeouts, it is what happened to the balls in the zone that did not miss.',
+      'A pitcher who gets {FIGURE} of them has done something a manager will remember and a scouting report will eventually contradict. Treat the first sample as a sample.',
+      '{PLAYER} struck out {FIGURE} and it is worth asking how much of that was the pitch and how much was the hitters simply not seeing the ball.',
+    ],
     anomaly: [
       '{PLAYER} posted a BABIP of {FIGURE}, which is two standard deviations out on a single-game sample. Small enough that I would not act on it, large enough that I would write it down.',
       'A {FIGURE} BABIP on one night. The interesting question is not whether it repeats -- it almost certainly will not -- but what the contact quality looked like underneath it.',
@@ -619,7 +710,7 @@ const TOMBUCCELLI: VoiceBank = {
     cycle: [
       'A Cycle. Fine. I Am Impressed and I Hate It.',
       'I Was There. I Will Not Be Doing This Again.',
-      'A Cycle in {CITY} and I am going to go sit somewhere quiet.',
+      'A Cycle for {TEAM} and I am going to go sit somewhere quiet.',
       'Every hit type, one night. I do not have a joke and I am not going to invent one.',
     ],
     multi_homer: [
@@ -648,9 +739,26 @@ const TOMBUCCELLI: VoiceBank = {
     ],
   },
   decks: {
+    losing_streak: [
+      '{FIGURE} in a row is not a run of bad luck at that point, it is a run of something. {TEAM} have stopped being the team that wins the close one and started being the team it happens to.',
+      'The wins will come back. That is what a streak is. What does not come back on its own is why it started.',
+      '{FIGURE} straight and the gap between the team that is losing it and the team that is winning it is not getting smaller. That is the part worth watching.',
+    ],
+    underdog_win: [
+      '{OPPONENT} were not supposed to win that and everybody in the building knew it, which is exactly why {TEAM} did. An upset nobody saw coming is not an upset, it is just a result.',
+      'Nobody gave {OPPONENT} a chance and the scoreboard does not accept those arguments.',
+      '{TEAM} winning a game they were not in is the normal thing. {OPPONENT} losing one the same way is what will define the season.',
+    ],
+    anomaly: [
+      '{PLAYER} will be cited for this for the rest of his career. The number is real. The career, on current evidence, is not.',
+      'They will put this on a card and sell it back to you in September. It was one night. Enjoy it while it is still being sold.',
+      'A {FIGURE} night. The difference between a good week and a career is roughly six hundred more of them.',
+    ],
     generic: [
       '{TEAM} lost in front of a decent crowd and produced nothing worth writing down. I say that with affection, which is not something I extend often.',
       'I watched {OPPONENT} give away another one, and I say that as a man who has watched roughly four thousand of these from the other side of the fence.',
+      'Filed it. Did not feel like it. Filed it anyway.',
+      'Nothing to report from {TEAM} tonight, which is itself a report and I intend to make that point repeatedly.',
     ],
     meltdown: [
       'Every one of them looked at each other after the third inning, which is the part nobody photographs. By then it was over and the scoreboard was just making it official.',

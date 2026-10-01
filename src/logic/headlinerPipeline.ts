@@ -142,7 +142,22 @@ const IMPRESSION_WINDOWS: readonly ImpressionWindow[] = [
 ];
 
 /** Kinds the columnist is allowed to be impressed BY. Never a meltdown. */
-const IMPRESSABLE_KINDS: readonly GameEventKind[] = [
+/**
+ * Kinds the columnist may spend an impression on.
+ *
+ * EXPORTED, and deliberately not part of his `covers` list in headliners.ts.
+ *
+ * The two are different sets and both are real. `covers` is the ordinary gate. This list
+ * is checked instead, by `mayImpress`, because his positive-valence path is evaluated
+ * BEFORE `isEligible` -- otherwise the rarity budget would be unreachable code.
+ *
+ * Exported for the same reason `EMITTABLE_KINDS` is: a verifier has to be able to assert
+ * that a voice bank holding titles for these kinds is reachable rather than stranded, and
+ * a check that cannot read the constant cannot do that. Without this, `measureVoiceBanks`
+ * reported five of his best titles as dead content, because `covers` does not contain
+ * them.
+ */
+export const IMPRESSABLE_KINDS: readonly GameEventKind[] = [
   'no_hitter', 'perfect_game', 'cycle', 'multi_homer', 'hit_fury', 'pitching_dome',
 ];
 
