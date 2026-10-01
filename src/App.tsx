@@ -3561,6 +3561,8 @@ function App() {
         openBets={openBetList}
         settledBets={bettingWallet.bets.filter((bet) => bet.status !== 'open')}
         summary={bettingSlip.summary}
+        games={games}
+        teams={teams}
       />
 
       <SeasonAwardsModal
