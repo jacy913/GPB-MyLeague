@@ -124,12 +124,31 @@ export const MediaHub: React.FC<MediaHubProps> = ({
    * divergence would be invisible: the same prop, priced two ways, on two
    * screens, with no way for a manager to tell which one they had staked against.
    */
+  /*
+   * Win percentage per club, for `selectionAffinity`.
+   *
+   * Returns null until a club has actually played, which the prop board treats as
+   * "no signal" rather than as 0.500. That distinction matters in April: a term that
+   * read an unplayed club as average would quietly reward the worst teams on the
+   * board, and a term that read it as zero would reward none of them.
+   */
+  const teamWinPct = useCallback(
+    (teamId: string): number | null => {
+      const team = input.teams.find((entry) => entry.id === teamId);
+      if (!team) return null;
+      const played = team.wins + team.losses;
+      return played > 0 ? team.wins / played : null;
+    },
+    [input.teams],
+  );
+
   const { byOutlet: outletProps } = usePropBoard({
     games,
     playerState: readInput.playerState,
     slateDate,
     teamScores: scores,
     scoreSpread: spread,
+    teamWinPct,
   });
 
   const teamCity = useCallback(

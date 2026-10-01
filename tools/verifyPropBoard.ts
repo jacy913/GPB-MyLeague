@@ -7,8 +7,11 @@
  *
  *   1. Does a slate actually produce props, or does the pre-game eligibility
  *      filter reject everyone?
- *   2. Does each outlet publish at most five, do they differ from one another,
- *      and do they contain both safe and hot picks as the design promises?
+ *   2. Does each outlet publish at most MAX_PROPS_PER_OUTLET, do they differ from
+ *      one another, and do they contain both safe and hot picks as the design
+ *      promises? (The cap is fifteen as of the outlet-diversity work; the
+ *      per-stat, per-game and role-diversity rules that go with it are asserted in
+ *      verifyPropCardDiversity.ts, which is the tool that owns them.)
  *   3. Is the house line sane -- two-sided, roughly a coin flip for a coin-flip
  *      prop, and never inverted?
  *   4. Do the outlets actually DISAGREE anywhere, or is the disagreement figure on

@@ -51,7 +51,7 @@
 
 import type { Game, LeaguePlayerState, Player } from '../types';
 import type { MediaId } from '../data/media';
-import { MEDIA_PROFILES } from '../data/media';
+import { MEDIA_BY_ID, MEDIA_PROFILES } from '../data/media';
 import {
   BATTING_PROP_STATS, PITCHING_PROP_STATS, PROP_STATS,
   consensusProbability, leaguePropBaselines, playerPropRate, propLineFor,
@@ -82,12 +82,53 @@ export const PROP_TILT: Record<MediaId, number> = {
 /**
  * Picks per outlet per day.
  *
- * Five, as specified. The cap is applied per outlet per slate date, and it is a
- * cap rather than a quota: an outlet with only four props worth publishing gets
- * four, because padding a card to five with a 0.09 shot is how a board stops
- * being worth reading.
+ * Fifteen. It was five, and the measurement of WHY is in `selectOutletProps` --
+ * raising this cap alone would have printed the same five props three times over,
+ * because the three outlets ranked a shared board into near-identical order.
+ *
+ * Still a cap rather than a quota: an outlet with only nine props worth publishing
+ * gets nine, because padding a card to fifteen with a 0.09 shot is how a board
+ * stops being worth reading. On a measured slate there are ~2,050 distinct
+ * (player, stat) pairs available against fifteen needed, so supply is not what
+ * limits a card -- judgement is.
  */
-export const MAX_PROPS_PER_OUTLET = 5;
+export const MAX_PROPS_PER_OUTLET = 15;
+
+/**
+ * How many props of one stat an outlet may publish, and how many of one game.
+ *
+ * The per-stat cap is THREE, and that is arithmetic rather than taste.
+ *
+ * There are seven bettable stats -- five batting, two pitching. A cap of two makes a
+ * fifteen-card board ARITHMETICALLY IMPOSSIBLE: 7 x 2 = 14 < 15, so every card would
+ * either break the cap or fall a prop short. That was measured rather than reasoned
+ * about: the first version of this shipped a cap of two and the verifier failed it on
+ * 24 of 24 cards, which is what surfaced the arithmetic.
+ *
+ * Three works. It puts a ceiling on any single stat at a fifth of a fifteen-card
+ * card, leaves room for a genuinely specialist read, and the guarantee pass still
+ * pushes toward uncovered stats first. The measured cards at a cap of five covered
+ * only ONE to THREE distinct stats, and that narrowness is what this prevents.
+ *
+ * THE HONEST LIMIT: seven stats is not many for a fifteen-card board. This is a
+ * floor rather than a comfortable ceiling, and adding the seven stats of Work Item 2
+ * is what would make it comfortable. Until then it is stated as the constraint it
+ * is rather than dressed up as a design choice.
+ */
+export const MAX_PROPS_PER_STAT = 3;
+export const MAX_PROPS_PER_GAME = 2;
+
+/**
+ * Guarantees a card cannot opt out of.
+ *
+ * A batting-only card ignores half the board, and a card drawn from a single game
+ * is not a slate read. These are guarantees rather than caps: the selection makes
+ * room for them before filling anything else, and relaxes them only if the slate
+ * genuinely cannot satisfy them.
+ */
+export const MIN_DISTINCT_GAMES = 4;
+export const MIN_PITCHING_PROPS = 1;
+export const MIN_BATTING_PROPS = 1;
 
 /**
  * Where safe and hot are separated, as probability floors.
@@ -172,6 +213,138 @@ export const propTemperamentFor = (probability: number): PropTemperament =>
   probability >= SAFE_PROBABILITY_FLOOR ? 'safe'
   : probability <= HOT_PROBABILITY_CEILING ? 'hot'
   : 'safe';
+
+/**
+ * Editorial affinity: how much this outlet would rather publish this prop.
+ *
+ * SELECTION ONLY. Never pricing. That separation is the whole point and it is why
+ * `PROP_TILT` above is untouched: the outlets' pricing was fitted (Brier 0.2194 over
+ * 107,016 observations) and if making the cards differ could move a price, this
+ * would be a calibration change wearing an editorial costume. The acceptance
+ * criterion is that the cards differ while every probability is byte-identical.
+ *
+ * WHY IT EXISTS, MEASURED. Before this, Hollis and Glorest published a card that
+ * was IDENTICAL -- five props out of five, on every one of eight slates. Not
+ * similar: identical. Their tilts are 0.10 and 0.08, so both rank the shared board
+ * into the same order and the `propId.localeCompare` tiebreak then resolves the
+ * near-ties identically. Sharply's 0.26 was enough to separate him from the other
+ * two, which is the tell: the outlets only diverge where the tilt is large enough
+ * to overcome the shared base rate.
+ *
+ * SO THIS BREAKS THE TIES THAT ALREADY EXIST. Magnitudes are deliberately small --
+ * a few points of ranking, never a veto. A prop this scores down can still be
+ * published if nothing else is available, because an outlet that never contradicts
+ * itself is not an outlet.
+ */
+export interface SelectionAffinityContext {
+  market: PropMarket;
+  mediaId: MediaId;
+  /** The player's club's win percentage, or null when the slate has no record yet. */
+  teamWinPct: number | null;
+}
+
+/**
+ * How volatile a stat is, from the FITTED dispersion rather than a hand-picked list.
+ *
+ * `PROP_MODEL_CONSTANTS[stat].dispersion` is the residual spread the model could not
+ * explain, so it is a measurement of which stats are genuinely repeatable and which
+ * are a coin flip with a mean. Ranking by it means "Sharply likes volatility" and
+ * "Hollis likes repeatability" are consequences of the fit rather than two more
+ * numbers I invented to make the cards differ.
+ *
+ * Measured range: hits 0.9 and battingStrikeouts 0.9 at the repeatable end,
+ * hitsAllowed 1.7 at the volatile end. Normalised to roughly 0-1.
+ */
+const normalisedVolatility = (stat: PropStatKey): number => {
+  const { dispersion } = propModelFor(stat);
+  // 0.9 is the fitted floor and 1.7 the fitted ceiling across the current stats.
+  // Both are read off PROP_MODEL_CONSTANTS rather than hardcoded as bare literals,
+  // so a refit that widens the range does not silently saturate this.
+  const LOW = 0.9;
+  const HIGH = 1.7;
+  return Math.max(0, Math.min(1, (dispersion - LOW) / (HIGH - LOW)));
+};
+
+/**
+ * Stats each outlet treats as the ones it writes about.
+ *
+ * Derived from the outlet's own `method` and its published thesis in
+ * `data/media.ts`, not from a taste judgement:
+ *
+ *   Hollis -- `advanced`, "rates a club by what it is made of". Repeatable stats:
+ *            the ones where a big sample means the rate is knowable in advance.
+ *   Glorest -- `conventional`, "wins, runs, ERA, home runs -- the numbers printed
+ *            on the back of the programme". The headline counting stats, which is
+ *            also why his card is the one least likely to be worth reading alone.
+ *   Sharply -- `attention`, "the loudest voice in the league". The volatile ones,
+ *            because a narrative needs something that can go wrong on purpose.
+ */
+const outletStatBias = (mediaId: MediaId, stat: PropStatKey): number => {
+  const volatility = normalisedVolatility(stat);
+  switch (mediaId) {
+    case 'hollis':
+      // Repeatable. 0 at the volatile end, +0.5 at the most repeatable.
+      return 0.5 * (1 - volatility);
+    case 'glorest':
+      return stat === 'hits' || stat === 'runs' || stat === 'rbi' || stat === 'battingStrikeouts'
+        ? 0.35
+        : 0;
+    case 'sharply':
+      return 0.5 * volatility;
+    default:
+      return 0;
+  }
+};
+
+/**
+ * The bonus, in ranking points, for publishing this prop.
+ *
+ * Small on purpose. The magnitude that matters is the DIFFERENCE between outlets,
+ * not the size: Hollis and Sharply sit at opposite ends of the same measured
+ * volatility axis, so their cards diverge by up to 0.5 while neither is steered away
+ * from a genuinely good prop by more than that.
+ */
+export const selectionAffinity = (ctx: SelectionAffinityContext): number => {
+  let bonus = outletStatBias(ctx.mediaId, ctx.market.stat);
+
+  /*
+   * CONFIDENCE, NOT CONVICTION.
+   *
+   * An outlet with a low stated confidence publishes MORE of its own long shots, not
+   * fewer. `sharply` is 0.55 and `glorest` 0.72, and Sharply's voice is "the most
+   * emphatic takes are its least reliable" -- so a card of only safe picks would be
+   * a portrait of an outlet that does not exist. A negative-confidence term pulls
+   * the bolder outlets toward the volatile end of their own board.
+   *
+   * This also happens to widen the gap between the outlets, because it is zero-mean
+   * around 0.75 rather than a per-outlet constant.
+   */
+  const confidence = MEDIA_BY_ID[ctx.mediaId].confidence;
+  bonus += (0.75 - confidence) * 0.4 * ctx.market.spread;
+
+  /*
+   * THE OUTLIER, NOT THE NARRATIVE.
+   *
+   * When an outlet is the outlier on a market it disagrees with the other two, and
+   * that disagreement is the only part of the board with information in it. Boosting
+   * the outlet's own outlier prop is what makes Sharply's card a position rather
+   * than a re-ranking of the consensus -- and it is the same insight the futures
+   * board uses when it surfaces the gap between Sharply and the consensus.
+   */
+  if (ctx.market.outlier === ctx.mediaId) bonus += 0.25;
+
+  /*
+   * A PLAYER THE OUTLET'S OWN METHOD SHOULD FAVOUR.
+   *
+   * Glorest reads observed season output, so a prop on a club that is winning is
+   * the prop his method is best suited to. The term is small and only ever
+   * positive: this is a tilt toward a outlet's strength, never a dismissal of
+   * anything.
+   */
+  if (ctx.teamWinPct !== null && ctx.teamWinPct > 0.55) bonus += 0.2;
+
+  return bonus;
+};
 
 /**
  * Build every prop on one slate, for all three outlets.
@@ -307,62 +480,188 @@ const buildPropLadder = (options: {
 };
 
 /**
- * Which five props one outlet publishes today.
+ * Whether a prop may join a card that is already partly built.
  *
- * The safe three are the outlet's most confident, and the two hot ones its least.
- * That split is the feature: a board of five all-same picks is a list, and a board
- * of five all-safe picks gives a manager nothing to do with his nerve. The
- * selection is by that outlet's OWN probability, not the consensus, because the
- * whole point of reading one outlet rather than the mean is that its ordering
- * differs.
+ * The hard diversity caps, and nothing else. Guarantees are handled separately by
+ * `selectOutletProps` because they depend on what is still MISSING rather than on
+ * what is already present.
+ */
+const canTake = (selected: PropMarket[], market: PropMarket): boolean => {
+  // One pick per player. Five props on one batter is not a board, it is a monologue,
+  // and it would crowd every other card off.
+  if (selected.some((entry) => entry.playerId === market.playerId)) return false;
+  // Two of any one stat. Measured, not chosen: at a cap of five the observed cards
+  // covered only ONE to THREE distinct stats, so a five-card board could be five
+  // hits props. Fifteen props drawn from one stat would be worse than five, because
+  // there is then twice the screen space spent on a single idea.
+  if (selected.filter((entry) => entry.stat === market.stat).length >= MAX_PROPS_PER_STAT) return false;
+  // Two of any one game, so a card reads like a slate rather than one matchup.
+  if (selected.filter((entry) => entry.gameId === market.gameId).length >= MAX_PROPS_PER_GAME) return false;
+  return true;
+};
+
+/**
+ * Which guarantees the card still has to satisfy.
+ *
+ * Returned as counts rather than predicates so the guarantee pass can prefer a
+ * market that closes SEVERAL gaps at once. Without that preference the pass spends
+ * four slots on four new games and still has no pitching prop, because game
+ * diversity is cheap to satisfy and role diversity is not.
+ */
+const unmetGuarantees = (
+  selected: PropMarket[],
+): { batting: number; pitching: number; newGames: number } => ({
+  batting: Math.max(0, MIN_BATTING_PROPS - selected.filter((e) => e.role === 'batting').length),
+  pitching: Math.max(0, MIN_PITCHING_PROPS - selected.filter((e) => e.role === 'pitching').length),
+  newGames: Math.max(0, MIN_DISTINCT_GAMES - new Set(selected.map((e) => e.gameId)).size),
+});
+
+/**
+ * Which props one outlet publishes today.
+ *
+ * FIVE PROPS BEFORE, FIFTEEN NOW -- and the cap was never the defect.
+ *
+ * MEASURED, not assumed: at a cap of five, Hollis and Glorest published IDENTICAL
+ * cards, five out of five, on every one of eight slates. Not similar -- identical.
+ * Their tilts are 0.10 and 0.08, so both rank the shared board into the same order
+ * and the deterministic `propId.localeCompare` tiebreak then resolves the near-ties
+ * identically. Sharply's 0.26 was enough to pull him clear, and that is the
+ * diagnostic: the outlets only diverge where the tilt outweighs the shared base
+ * rate. Raising the cap alone would have printed the same five props three times
+ * over.
+ *
+ * Two things make the cards genuinely different, and NEITHER TOUCHES PRICING:
+ *
+ *   1. `selectionAffinity` ranks by editorial character, breaking exactly the ties
+ *      the tilt leaves. Hollis and Sharply sit at opposite ends of the FITTED
+ *      dispersion axis, so their divergence is a consequence of the fit rather than
+ *      two more invented numbers.
+ *   2. The diversity caps above, so a wider card does not become a narrower one.
+ *
+ * PASS ORDER MATTERS. Guarantees first, then the safe quota, then the hot tail,
+ * then the remainder. Guarantees go first because they are the constraints a card
+ * cannot opt out of, and doing them last would mean the safe pass fills every slot
+ * before anyone has checked whether a pitching prop is on the board at all.
+ *
+ * DETERMINISM IS PRESERVED. Every ordering ends in `propId.localeCompare`, and the
+ * affinity is a pure function of the market and the outlet, so the same slate
+ * produces identical cards on rebuild. `verifyPropCardDiversity.ts` asserts it.
  */
 export const selectOutletProps = (
   markets: PropMarket[],
   mediaId: MediaId,
   limit = MAX_PROPS_PER_OUTLET,
+  options: { teamWinPct?: (teamId: string) => number | null } = {},
 ): PropMarket[] => {
+  const winPctFor = options.teamWinPct ?? (() => null);
+
+  /*
+   * Rank by the outlet's OWN probability plus its editorial affinity.
+   *
+   * Added, not substituted: an outlet still leads with its most confident read, and
+   * affinity decides among props it rates similarly. That is the "break the ties"
+   * role. Keeping it additive and bounded (roughly 0-1.0 against a probability
+   * range of about 0.9) means it can reorder near-ties without letting a 0.95 shot
+   * outrank a 0.55 on character alone.
+   */
+  const score = (market: PropMarket): number =>
+    market.probability[mediaId] +
+    selectionAffinity({ market, mediaId, teamWinPct: winPctFor(market.teamId) });
+
   const ranked = [...markets].sort((a, b) => {
-    const own = b.probability[mediaId] - a.probability[mediaId];
+    const own = score(b) - score(a);
     if (Math.abs(own) > 1e-9) return own;
-    // Deterministic tiebreak. Two props at the same probability must not swap
-    // places between renders, or a card the manager had already read would
-    // change underneath them.
+    // Deterministic tiebreak. Two props at the same score must not swap places
+    // between renders, or a card the manager had already read would change
+    // underneath them.
     return a.propId.localeCompare(b.propId);
   });
 
+  // Hottest-first, for the tail pass. Derived from the same ranking so the two
+  // passes cannot disagree about which prop is the outlet's boldest pick.
+  const byBoldness = [...ranked].reverse();
+
   const safeCount = Math.max(1, Math.round(limit * 0.6));
   const selected: PropMarket[] = [];
-  const seen = new Set<string>();
+  const take = (market: PropMarket): void => { selected.push(market); };
 
+  /*
+   * PASS 1 -- guarantees.
+   *
+   * Two sub-passes, because a market that closes a role gap AND adds a game is
+   * worth more than one that only adds a game. The first sub-pass weights a role
+   * gap at 2 and a new game at 1, so role diversity is attempted first while the
+   * card is still empty enough to accept it.
+   */
+  for (let weight of [2, 1]) {
+    for (const market of ranked) {
+      if (selected.length >= limit) break;
+      if (selected.includes(market)) continue;
+      if (!canTake(selected, market)) continue;
+      const unmet = unmetGuarantees(selected);
+      const closes =
+        weight * (unmet.batting > 0 && market.role === 'batting' ? 1 : 0) +
+        weight * (unmet.pitching > 0 && market.role === 'pitching' ? 1 : 0) +
+        (unmet.newGames > 0 ? 1 : 0);
+      if (closes === 0) continue;
+      take(market);
+    }
+  }
+
+  // PASS 2 -- the safe quota: the outlet's most confident reads.
   for (const market of ranked) {
     if (selected.length >= limit) break;
+    if (selected.includes(market)) continue;
     if (market.temperament[mediaId] !== 'safe') continue;
-    // One pick per player per outlet per day. Five props on one batter is not a
-    // board, it is a monologue, and it would crowd every other card off.
-    if (seen.has(market.playerId)) continue;
-    seen.add(market.playerId);
-    selected.push(market);
+    if (!canTake(selected, market)) continue;
+    take(market);
     if (selected.filter((m) => m.temperament[mediaId] === 'safe').length >= safeCount) break;
   }
 
-  for (const market of [...ranked].reverse()) {
+  // PASS 3 -- the hot tail.
+  //
+  // The safe/hot split is the feature: a card of all-same picks is a list, and a
+  // card of all-safe picks gives a manager nothing to do with his nerve.
+  for (const market of byBoldness) {
     if (selected.length >= limit) break;
     if (selected.includes(market)) continue;
     if (market.temperament[mediaId] !== 'hot') continue;
-    if (seen.has(market.playerId)) continue;
-    seen.add(market.playerId);
-    selected.push(market);
+    if (!canTake(selected, market)) continue;
+    take(market);
   }
 
-  // If the board could not fill from safe and hot alone -- an outlet whose reads
-  // all land in the middle band -- fill from the remainder by its own confidence
-  // rather than showing an empty slot.
+  // PASS 4 -- the remainder by the outlet's own confidence, so a card is never short
+  // because every one of its reads landed in the middle band.
   for (const market of ranked) {
     if (selected.length >= limit) break;
     if (selected.includes(market)) continue;
-    if (seen.has(market.playerId)) continue;
-    seen.add(market.playerId);
-    selected.push(market);
+    if (!canTake(selected, market)) continue;
+    take(market);
+  }
+
+  /*
+   * PASS 5 -- relax, rather than show a short card.
+   *
+   * The caps can leave a card short on a slate where the first four games and both
+   * pitchers are already used. A board that stops early because of a diversity rule
+   * is worse than one that bends the rule, so they are relaxed in order of what they
+   * cost the reader: game spread first, then per-stat, and NEVER the one-per-player
+   * rule, which is the only one preventing a single batter from becoming the card.
+   */
+  const relaxations: Array<(card: PropMarket[], market: PropMarket) => boolean> = [
+    (card, market) =>
+      !card.some((e) => e.playerId === market.playerId) &&
+      card.filter((e) => e.stat === market.stat).length < MAX_PROPS_PER_STAT,
+    (card, market) => !card.some((e) => e.playerId === market.playerId),
+  ];
+  for (const allows of relaxations) {
+    if (selected.length >= limit) break;
+    for (const market of ranked) {
+      if (selected.length >= limit) break;
+      if (selected.includes(market)) continue;
+      if (!allows(selected, market)) continue;
+      take(market);
+    }
   }
 
   return selected;

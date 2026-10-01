@@ -99,12 +99,33 @@ const BettingPage: React.FC<BettingPageProps> = ({
    * would agree until the inputs drifted, and the drift would be invisible: the
    * manager would have a receipt for a line that no longer appears anywhere.
    */
+  /*
+   * Win percentage per club, shared with the media page.
+   *
+   * THE SAME FUNCTION, because the guarantee this page is built on is that a bettor
+   * is never shown a number The Media does not also show. `teamWinPct` feeds the
+   * prop board's editorial selection, so a betting page that computed it any
+   * differently from the media page would show a different SET of props for the
+   * same slate -- and that is precisely the drift the shared `usePropBoard` hook
+   * exists to prevent.
+   */
+  const teamWinPct = useCallback(
+    (teamId: string): number | null => {
+      const team = input.teams.find((entry) => entry.id === teamId);
+      if (!team) return null;
+      const played = team.wins + team.losses;
+      return played > 0 ? team.wins / played : null;
+    },
+    [input.teams],
+  );
+
   const { byOutlet: propBoards } = usePropBoard({
     games,
     playerState: input.playerState,
     slateDate,
     teamScores: scores,
     scoreSpread: spread,
+    teamWinPct,
   });
 
   /**

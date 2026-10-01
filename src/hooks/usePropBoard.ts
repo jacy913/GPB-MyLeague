@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Game, LeaguePlayerState } from '../types';
 import type { MediaId } from '../data/media';
 import { MEDIA_PROFILES } from '../data/media';
-import { buildPropMarkets, selectOutletProps } from '../lib/mediaProps';
+import { MAX_PROPS_PER_OUTLET, buildPropMarkets, selectOutletProps } from '../lib/mediaProps';
 import type { PropMarket } from '../lib/playerProps';
 
 export interface PropBoard {
@@ -41,8 +41,18 @@ export const usePropBoard = (input: {
   slateDate: string | null;
   teamScores: Record<MediaId, Map<string, number>>;
   scoreSpread: Record<MediaId, number>;
+  /**
+   * Team id to win percentage, or null where there is no record yet.
+   *
+   * Needed by `selectionAffinity`, which favours props on clubs an outlet's method
+   * suits. It is passed in rather than derived here because the hook does not hold
+   * the teams -- the callers do, and both already have them for the read tables. It
+   * is also the one input to the affinity that is NOT a function of the market, so
+   * leaving it out would have shipped a term that silently never fired.
+   */
+  teamWinPct?: (teamId: string) => number | null;
 }): PropBoard => {
-  const { games, playerState, slateDate, teamScores, scoreSpread } = input;
+  const { games, playerState, slateDate, teamScores, scoreSpread, teamWinPct } = input;
 
   const all = useMemo(() => {
     if (!slateDate) return [];
@@ -52,10 +62,15 @@ export const usePropBoard = (input: {
   const byOutlet = useMemo(() => {
     const board = new Map<MediaId, PropMarket[]>();
     for (const profile of MEDIA_PROFILES) {
-      board.set(profile.id, selectOutletProps(all, profile.id));
+      board.set(
+        profile.id,
+        selectOutletProps(all, profile.id, MAX_PROPS_PER_OUTLET, {
+          teamWinPct: teamWinPct ?? (() => null),
+        }),
+      );
     }
     return board;
-  }, [all]);
+  }, [all, teamWinPct]);
 
   const everyOutlets = useMemo(
     () => MEDIA_PROFILES.flatMap((profile) => (byOutlet.get(profile.id) ?? []).map((market) => ({ market, mediaId: profile.id }))),
