@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import {
   Game,
@@ -16,11 +16,20 @@ import {
   buildGameStoryCandidates,
   buildTransactionIndexes,
   buildTransactionStoryCandidates,
+  deriveGameLines,
+  deriveGameShape,
   generateHeadlineDeck,
   getFeaturedGame,
+  type DerivedGameLines,
+  type GameShape,
   type GameStoryCacheEntry,
   type StoryCandidate,
 } from '../logic/headlineEngine';
+import { buildLeagueRateBaselines, extractGameEvents } from '../logic/headlinerEvents';
+import { buildPersonaDeck, diagnosePersonaDeck, TOMBUCCELLI_IMPRESSION_SEASON_CAP } from '../logic/headlinerPipeline';
+import type { GameEvent, HeadlinerContext, HeadlinerId } from '../logic/headliners';
+import { addDaysToISODate } from '../logic/simulation';
+import { EMPTY_HEADLINER_LEDGER, type HeadlinerLedger } from '../logic/localUniverseState';
 import { isPlayoffGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
@@ -28,10 +37,18 @@ import { buildMediaReads } from '../lib/mediaReads';
 import { buildGameLine, type GameLine } from '../lib/mediaOdds';
 import { resolveSeasonYear } from '../lib/seasonYear';
 import { HomePanel, getMilestones, sortStandings, type DivisionSnapshot, type Milestone } from './home/shared';
+import { HeadlinerPanel } from './home/HeadlinerPanel';
 import { FeaturedGamePanel, HeadlinePanel } from './home/HeadlinePanel';
 import { MvpRacePanel } from './home/MvpRacePanel';
 import { ActionCenter, DivisionSnapshotPanel, MilestoneTimeline, TradeDeskModal } from './home/Panels';
 import { RetroButton, StatValue } from './ui';
+
+/** Days of prior columns the panel remembers when picking today's lines. */
+const RECENT_TITLE_DAYS = 4;
+/** How many of a reporter's recent titles are held. More than one bank size, on purpose. */
+const RECENT_TITLE_MEMORY = 6;
+/** Ceiling on games considered for one day. A day holds about a dozen. */
+const MAX_GAMES_PER_DECK = 60;
 
 interface TradeProposal {
   fromTeamId: string;
@@ -127,6 +144,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onResetSeason,
   onSimulateToDate,
   onProposeTrade,
+  /*
+   * The newsroom's running tally.
+   *
+   * OPTIONAL, and defaulted to zero rather than required. The dashboard renders fine
+   * without it and the pipeline reads a missing ledger as an untouched season, which
+   * is the same tolerant path an old save takes. Required would mean every existing
+   * caller and every test fixture had to learn about a field that only affects one
+   * counter in the corner of one panel.
+   *
+   * NOT YET PERSISTED. Nothing writes back to the bundle yet, so an impression spent
+   * today is forgotten on reload. That is a real gap rather than a hidden one, and it
+   * is the reason the panel shows the tally as read-only for now. Wiring it needs the
+   * save path, which reaches outside the front page, so it is a separate decision
+   * rather than something to slip in here.
+   */
+  headlinerLedger = EMPTY_HEADLINER_LEDGER,
 }) => {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [activeDivisionIndex, setActiveDivisionIndex] = useState(0);
@@ -277,6 +310,181 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   const headline = headlineDeck.primary;
   const featuredGame = useMemo(() => getFeaturedGame(todaysGames, teamsById), [todaysGames, teamsById]);
+
+  /*
+   * The bylined newsroom, for the same date as the headline above it.
+   *
+   * Deliberately a SEPARATE derivation rather than a second reading of the headline
+   * deck. The two panels can disagree about which game is the story -- they are
+   * different publications, and a columnist's take on a one-run game is not the game
+   * of the day -- but they must not disagree about the DAY, so both resolve
+   * `sourceDate` from the same place.
+   *
+   * The play-log walk is shared with the headline deck through `deriveGameLines`, and
+   * each game's result is memoised by gameId for the same reason the headline story
+   * cache exists: the derivation parses a stored log, and re-parsing it per panel per
+   * render is exactly the kind of cost this repo has been bitten by before.
+   */
+  const derivedLinesByGameId = useMemo(() => {
+    const map = new Map<string, DerivedGameLines>();
+    gameIndexes.completedGamesDesc.forEach((game) => {
+      map.set(game.gameId, deriveGameLines(game));
+    });
+    return map;
+  }, [gameIndexes]);
+
+  const gameShapesByGameId = useMemo(() => {
+    const map = new Map<string, GameShape>();
+    gameIndexes.completedGamesDesc.forEach((game) => {
+      const derived = derivedLinesByGameId.get(game.gameId);
+      if (derived) map.set(game.gameId, deriveGameShape(game, teamsById, derived));
+    });
+    return map;
+  }, [derivedLinesByGameId, gameIndexes, teamsById]);
+
+  // The analyst's league rates, built from the most recent games rather than the
+  // whole season: the comparison is "is this night strange for this league right
+  // now", and a baseline that drifts with the season stops flagging anything by
+  // September.
+  const personaBaselines = useMemo(
+    () => buildLeagueRateBaselines(gameIndexes.completedGamesDesc.slice(0, 120), derivedLinesByGameId),
+    [derivedLinesByGameId, gameIndexes],
+  );
+
+  /**
+   * The day's events, and the context for one of them.
+   *
+   * Hoisted out of the deck memo because the recent-title memory needs to replay
+   * previous days through the SAME functions. If the two used separate event
+   * extraction, the memory would be built from different cards than the deck is, and
+   * it would suppress titles the reader never actually saw.
+   */
+  const eventsForDate = useCallback(
+    (date: string): GameEvent[] => {
+      const window: Game[] = gameIndexes.completedGamesDesc
+        .filter((game: Game) => game.date === date)
+        .slice(0, MAX_GAMES_PER_DECK);
+      return window.flatMap((game: Game) => {
+        const derived = derivedLinesByGameId.get(game.gameId);
+        const shape = gameShapesByGameId.get(game.gameId);
+        if (!derived || !shape) return [];
+        return extractGameEvents({
+          game,
+          derived,
+          shape,
+          teamsById,
+          playersById,
+          completedGamesDesc: gameIndexes.completedGamesDesc,
+          baselines: personaBaselines,
+        });
+      });
+    },
+    [derivedLinesByGameId, gameIndexes, gameShapesByGameId, personaBaselines, playersById, teamsById],
+  );
+
+  const contextFor = useCallback(
+    (game: Game | null): HeadlinerContext => {
+      const shape = game ? gameShapesByGameId.get(game.gameId) : undefined;
+      return {
+        awayWinPct: shape?.awayWinPct ?? 0,
+        homeWinPct: shape?.homeWinPct ?? 0,
+        sameDivision: shape?.sameDivision ?? false,
+        isPlayoffGame: shape?.isPlayoffGame ?? (game ? isPlayoffGame(game) : false),
+      };
+    },
+    [gameShapesByGameId],
+  );
+
+  /*
+   * What each reporter has already written, most recent first.
+   *
+   * Derived by replaying the previous days through the same pipeline, not stored. A
+   * playtest over three seasons measured the same title on ~90 of 179 consecutive day
+   * pairs, and the two obvious causes were both wrong -- the seeds are uniform and
+   * every template bank is fully used. The real cause is arithmetic: `staff_wins`
+   * alone publishes about 2,446 cards a season from eight templates, so some adjacent
+   * pair must collide. Extra prose cannot fix a birthday problem; a memory can.
+   *
+   * Replaying rather than remembering is what keeps this deterministic. A ref that
+   * grew as the season ran would make a reloaded save show different columns than the
+   * one that was saved, and the pipeline's other promise -- same games, same
+   * newsroom -- would quietly stop holding. Derived from the games, it cannot drift.
+   */
+  const recentTemplatesByByline = useMemo(() => {
+    const sourceDate = headlineDeck.sourceDate ?? timelineDate;
+    const dates: string[] = Array.from(
+      new Set<string>(gameIndexes.completedGamesDesc.map((game: Game) => game.date as string)),
+    )
+      .sort()
+      .filter((date) => date < sourceDate)
+      .slice(-RECENT_TITLE_DAYS);
+
+    const memory = new Map<HeadlinerId, string[]>();
+    dates.forEach((date: string) => {
+      buildPersonaDeck({
+        events: eventsForDate(date),
+        contextFor,
+        impressionsSpent: 0,
+        month: Number(date.slice(5, 7)) || 4,
+      }).forEach((card) => {
+        const list = memory.get(card.byline) ?? [];
+        if (list.length < RECENT_TITLE_MEMORY) list.unshift(card.titleTemplate);
+        memory.set(card.byline, list);
+      });
+    });
+    return memory;
+  }, [contextFor, eventsForDate, gameIndexes, headlineDeck.sourceDate, timelineDate]);
+
+  const personaDeck = useMemo(() => {
+    const date = headlineDeck.sourceDate ?? timelineDate;
+    /*
+     * THE SOURCE DATE ONLY, NOT A WINDOW AROUND IT.
+     *
+     * A two-day window was measured and it is wrong. `eventSeed` is derived from the
+     * event's identity, so re-publishing yesterday's walk-off today renders the
+     * identical title by construction -- a playtest over three seasons found the same
+     * title on consecutive days 175 times out of 179, and the "consecutive days must
+     * read differently" criterion failed outright.
+     *
+     * A day is about a dozen games, which is comfortably more than enough to fill a
+     * six-card deck on a loud day and comfortably too few on a quiet one. That is the
+     * stalemate rule doing its job, and widening the window to avoid empty days would
+     * only be padding with yesterday's news.
+     */
+    const events = eventsForDate(date);
+
+    const cards = buildPersonaDeck({
+      events,
+      contextFor,
+      impressionsSpent: headlinerLedger.tombuccelliImpressions,
+      // The memory is what stops the same reporter running the same line tomorrow.
+      // Without it the deck is still correct -- it is just repetitive, which is what
+      // three seasons of playtesting measured before this existed.
+      recentTemplatesByByline,
+      month: Number(date.slice(5, 7)) || 4,
+    });
+
+    return {
+      cards,
+      /*
+       * Diagnostics are computed and then not shown.
+       *
+       * A placeholder with a stated purpose rather than a stub: `unemittableKinds` is
+       * the number that catches a persona listing a kind no detector emits, which is a
+       * failure where every visible aggregate stays healthy. A played season has now
+       * confirmed it is 0, so this either earns a place in the panel's chrome bar or
+       * it gets deleted. It does not get to sit here pretending to be observability.
+       */
+      diagnostics: diagnosePersonaDeck({ events, contextFor, deck: cards }),
+    };
+  }, [
+    contextFor,
+    eventsForDate,
+    headlineDeck.sourceDate,
+    headlinerLedger,
+    recentTemplatesByByline,
+    timelineDate,
+  ]);
 
   /*
    * The price for the featured matchup.
@@ -482,6 +690,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           timelineDate={timelineDate}
           teamLookup={teamsById}
           onOpenGame={onOpenGame}
+        />
+
+        {/*
+          The bylined newsroom, directly below the headline and inside the same
+          column. Adjacency rather than a new region on purpose: the two panels
+          describe the same day, so putting them apart would invite the reader to
+          think they describe different days, and the whole point is that one
+          publication's game of the day and another publication's column about it
+          sit next to each other.
+        */}
+        <HeadlinerPanel
+          cards={personaDeck.cards}
+          sourceDate={headlineDeck.sourceDate ?? null}
+          timelineDate={timelineDate}
+          impressionsSpent={headlinerLedger.tombuccelliImpressions}
+          impressionCap={TOMBUCCELLI_IMPRESSION_SEASON_CAP}
         />
 
         <div className="flex flex-col gap-5">

@@ -21,12 +21,11 @@
  */
 
 import {
+  coversEvent,
   eventSeed,
   isEligible,
-  pickSeeded,
   severityBand,
   HEADLINERS,
-  type AccentToken,
   type GameEvent,
   type GameEventKind,
   type HeadlineCandidate,
@@ -35,7 +34,8 @@ import {
   type HeadlinerId,
   type HeadlinerProfile,
 } from './headliners';
-import { interpolate, pickTitle, pickDeck, VOICE_BANKS } from './headlinerVoices';
+import { interpolate, pickDeck, pickTitleWithTemplate, VOICE_BANKS } from './headlinerVoices';
+import type { Game } from '../types';
 
 /**
  * How many personas may write about one event.
@@ -67,12 +67,21 @@ const PRIMARY_VALENCE_PENALTY = 15;
 
 export interface HeadlinerPipelineInput {
   events: readonly GameEvent[];
-  ctx: HeadlinerContext;
+  /**
+   * The context for an event's own game.
+   *
+   * A FUNCTION, not a single value, and that distinction is load-bearing. Every
+   * persona gate reads game-shaped facts -- the reporter's marquee test needs both
+   * clubs' records at the time of THIS game -- and a deck spans many games. Handing
+   * the whole deck one context would make the marquee gate either always true or
+   * always false, which is the same as not having it.
+   */
+  contextFor: (game: Game | null) => HeadlinerContext;
   /**
    * Impressions the columnist has already spent this season.
    *
    * Read as a parameter rather than from storage so the pipeline stays pure and the
-   * caller owns persistence. `null` means the ledger has not been created yet, which
+   * caller owns persistence. Absent means the ledger has not been created yet, which
    * is every existing save, and reads as zero.
    */
   impressionsSpent?: number;
@@ -85,6 +94,26 @@ export interface HeadlinerPipelineInput {
    * August would be indefensible.
    */
   month?: number;
+  /**
+   * Titles already shown, most recent first, per byline.
+   *
+   * THE MEMORY THAT MAKES CONSECUTIVE DAYS READ DIFFERENTLY. It exists because a
+   * three-season playtest measured the same title on ~90 of 179 consecutive day pairs,
+   * and the two obvious explanations were both wrong: the seeds are uniform and every
+   * bank is fully used. The cause is arithmetic -- `staff_wins` alone publishes about
+   * 2,446 cards a season from eight templates, so adjacent days MUST collide
+   * sometimes, and no quantity of extra prose changes that.
+   *
+   * The caller owns it because only the caller knows what "recently" means: the panel
+   * has the last few days of the dashboard in hand, while the playtest has a whole
+   * season. An empty map is legal and degrades to the old seeded-only behaviour.
+   *
+   * Truncation is the caller's business too, but it should be generous: the value is
+   * in remembering more than just yesterday, because after a bank has cycled once the
+   * previous title comes back round and avoiding only the last one still repeats every
+   * eighth day.
+   */
+  recentTemplatesByByline?: ReadonlyMap<HeadlinerId, readonly string[]>;
 }
 
 /**
@@ -161,7 +190,20 @@ export const priorityOf = (event: GameEvent, profile: HeadlinerProfile, ctx: Hea
 export const candidatesForEvent = (
   event: GameEvent,
   ctx: HeadlinerContext,
-  options: { impressionsSpent?: number; month?: number } = {},
+  options: {
+    impressionsSpent?: number;
+    month?: number;
+    /**
+     * Templates each reporter has already used recently, keyed by byline.
+     *
+     * Keyed rather than shared because the memory is per VOICE: the columnist avoiding
+     * his own last headline is a different fact from the analyst avoiding it, and one
+     * reporter exhausting his bank must not start suppressing another reporter's best
+     * available line. `pickTitle` treats an exhausted bank as a legal repeat, so the
+     * worst case is a repeat rather than a missing card.
+     */
+    recentTemplatesByByline?: ReadonlyMap<HeadlinerId, readonly string[]>;
+  } = {},
 ): HeadlineCandidate[] => {
   const eligible = HEADLINERS.filter((profile) => {
     // The columnist's positive path is checked BEFORE `covers`, not after.
@@ -192,12 +234,15 @@ export const candidatesForEvent = (
     const seed = eventSeed(event) ^ seedForPersona(profile.id);
     const slots = slotsFor(event, profile);
     const bank = VOICE_BANKS[profile.id];
-    const title = pickTitle(bank, event.kind, seed, slots);
-    const deck = pickDeck(bank, event.kind, seed, slots);
+    const recent = options.recentTemplatesByByline?.get(profile.id) ?? [];
+    const picked = pickTitleWithTemplate(bank, event.kind, seed, slots, recent);
+    const title = picked.text;
+    const deck = pickDeck(bank, event.kind, seed, slots, recent);
     return {
       event,
       byline: profile.id,
       title,
+      titleTemplate: picked.template,
       deck,
       priority,
       accentToken: profile.accentToken,
@@ -245,10 +290,12 @@ const slotsFor = (event: GameEvent, profile: HeadlinerProfile): HeadlineSlots =>
 /**
  * The day's persona cards.
  *
- * Selection, in order: rank every candidate by priority, walk the list, and accept
- * while no single event has already used up its allowance. Then apply the primary-slot
- * preference by demoting a heavily penalised negative-valence story out of first
- * place rather than dropping it, because the columnist's take is still worth printing.
+ * One column per reporter first, then a second pass for the loudest remaining story.
+ * See the note on the fill loop below for why it is a rotation rather than a ranking.
+ *
+ * The primary-slot preference is applied last, demoting a heavily penalised
+ * negative-valence story out of first place rather than dropping it -- the columnist's
+ * take is still worth printing, just not as the lead.
  *
  * Returns fewer than `MAX_PERSONA_CARDS` on a thin day and that is correct: the
  * stalemate rule is the point. A quiet news day with two opinions is more convincing
@@ -256,21 +303,61 @@ const slotsFor = (event: GameEvent, profile: HeadlinerProfile): HeadlineSlots =>
  * state rather than padding the list.
  */
 export const buildPersonaDeck = (input: HeadlinerPipelineInput): HeadlineCandidate[] => {
-  const options = { impressionsSpent: input.impressionsSpent ?? 0, month: input.month };
+  const options = {
+    impressionsSpent: input.impressionsSpent ?? 0,
+    month: input.month,
+    recentTemplatesByByline: input.recentTemplatesByByline,
+  };
 
   const candidates = input.events
-    .flatMap((event) => candidatesForEvent(event, input.ctx, options))
+    .flatMap((event) => candidatesForEvent(event, input.contextFor(event.game), options))
     .sort((left, right) => right.priority - left.priority || left.byline.localeCompare(right.byline));
 
   const perEvent = new Map<string, number>();
+  const bylineCount = new Map<HeadlinerId, number>();
   const accepted: HeadlineCandidate[] = [];
-  for (const candidate of candidates) {
+  /*
+   * FILL BY ROTATION, NOT BY RANK.
+   *
+   * Pass 1 takes each reporter's single best story, in priority order, skipping
+   * anyone already in the deck. That guarantees the five voices appear whenever the
+   * day affords five opinions, instead of whichever one voice happened to cover the
+   * day's loudest event.
+   *
+   * MEASURED, NOT ASSUMED. A pure priority sort over three real seasons gave one
+   * reporter 1,865 cards, another 3, and the youth writer 0 across 540 days. The
+   * cause is arithmetic rather than chance: a walk-off scores 89 and a one-run game
+   * 55, so on any day with a walk-off the four reporters who cover it fill all six
+   * slots before a 55 is ever reached, and a reporter covering only low-severity
+   * kinds never appears at all. The youth writer was not gated out -- 2,612 events
+   * qualified for her -- she simply never won a slot.
+   *
+   * Pass 2 then fills any remaining slots by priority, second column from whoever is
+   * left, so a day with more news than voices still uses the whole carousel.
+   *
+   * Variety is therefore a STRUCTURAL property of the deck rather than a thing that
+   * happens to occur when the schedule is kind.
+   */
+  const take = (candidate: HeadlineCandidate): void => {
     const eventKey = eventKeyFor(candidate);
-    const used = perEvent.get(eventKey) ?? 0;
-    if (used >= MAX_PERSONAS_PER_EVENT) continue;
-    perEvent.set(eventKey, used + 1);
+    const perEventUsed = perEvent.get(eventKey) ?? 0;
+    if (perEventUsed >= MAX_PERSONAS_PER_EVENT) return;
+    perEvent.set(eventKey, perEventUsed + 1);
+    bylineCount.set(candidate.byline, (bylineCount.get(candidate.byline) ?? 0) + 1);
     accepted.push(candidate);
+  };
+
+  for (const candidate of candidates) {
     if (accepted.length >= MAX_PERSONA_CARDS) break;
+    if ((bylineCount.get(candidate.byline) ?? 0) > 0) continue;
+    take(candidate);
+  }
+  if (accepted.length < MAX_PERSONA_CARDS) {
+    for (const candidate of candidates) {
+      if (accepted.length >= MAX_PERSONA_CARDS) break;
+      if (accepted.includes(candidate)) continue;
+      take(candidate);
+    }
   }
 
   if (accepted.length < 2) return accepted;
@@ -305,8 +392,26 @@ export interface PersonaDeckDiagnostics {
   eventsEligibleForSomebody: number;
   candidatesBeforeCap: number;
   cardsPublished: number;
-  /** Events nobody could cover -- a `covers` entry with no emitter, made visible. */
-  orphanEvents: number;
+  /**
+   * Events no persona can EVER cover: a kind listed in nobody's `covers`.
+   *
+   * THE FIGURE THAT MATTERS. It is zero by construction once every emitted kind has
+   * a covering persona, and it is the one number that catches the failure mode this
+   * whole architecture is built to avoid -- a detector running on every game whose
+   * results are never written about, while every visible aggregate stays healthy.
+   */
+  unemittableKinds: readonly GameEventKind[];
+  /**
+   * Events a persona could cover in principle but whose GATES refused today.
+   *
+   * Deliberately separated from `unemittableKinds` because the two mean opposite
+   * things. A high count here is the gates working: the reporter only writes marquee
+   * games, the youth writer only writes about the young, and a 435-count pile of
+   * one-run games nobody took is the quiet midseason, not a defect. Reporting both as
+   * one "orphan" number would have made a working gate look like a broken registry,
+   * and would have hidden a genuine dead coverage entry inside the noise.
+   */
+  gateRefusals: number;
   byline: Record<HeadlinerId, number>;
   /** Highest severity band seen, which says whether a quiet day is the engine's fault. */
   loudestBand: string;
@@ -328,12 +433,25 @@ export const diagnosePersonaDeck = (
 
   let eligibleForSomebody = 0;
   let candidatesBeforeCap = 0;
-  let orphanEvents = 0;
+  let gateRefusals = 0;
+  // Keyed by kind rather than counted, because the KIND is the finding: 435 one-run
+  // games is a quiet stretch of the season, whereas a single `hit_fury` here would be
+  // a dead coverage entry that no amount of reading would reveal.
+  const unemittable = new Set<GameEventKind>();
 
   for (const event of input.events) {
-    const eligible = HEADLINERS.filter((profile) => isEligible(profile, event, input.ctx));
+    const covered = HEADLINERS.filter((profile) => coversEvent(profile, event.kind));
+    if (covered.length === 0) {
+      // Nobody even lists this kind. A bug, and a permanent one.
+      unemittable.add(event.kind);
+      continue;
+    }
+    const eligible = covered.filter((profile) =>
+      isEligible(profile, event, input.contextFor(event.game)),
+    );
     if (eligible.length === 0) {
-      orphanEvents += 1;
+      // Listed but refused: the gates did their job today.
+      gateRefusals += 1;
       continue;
     }
     eligibleForSomebody += 1;
@@ -347,7 +465,8 @@ export const diagnosePersonaDeck = (
     eventsEligibleForSomebody: eligibleForSomebody,
     candidatesBeforeCap,
     cardsPublished: input.deck.length,
-    orphanEvents,
+    unemittableKinds: Array.from(unemittable).sort(),
+    gateRefusals,
     byline,
     loudestBand: input.events.length > 0 ? severityBand(input.events[0].severity) : 'none',
   };

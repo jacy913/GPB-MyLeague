@@ -306,7 +306,7 @@ check(
 
 // --- 5. deck shape and the stalemate rule ------------------------------------
 
-const deckInput: HeadlinerPipelineInput = { events: [], ctx };
+const deckInput: HeadlinerPipelineInput = { events: [], contextFor: () => ctx };
 const emptyDeck = buildPersonaDeck(deckInput);
 check(
   'an empty news day ships zero cards rather than filler',
@@ -338,7 +338,7 @@ const manyEvents = EMITTABLE_KINDS.map((kind, index) =>
     },
   }),
 );
-const fullDeck = buildPersonaDeck({ events: manyEvents, ctx, impressionsSpent: 0, month: 8 });
+const fullDeck = buildPersonaDeck({ events: manyEvents, contextFor: () => ctx, impressionsSpent: 0, month: 8 });
 check(
   'a loud day publishes at most the card cap',
   fullDeck.length <= MAX_PERSONA_CARDS,
@@ -371,7 +371,27 @@ check(
 
 // --- 6. diagnostics are non-vacuous ------------------------------------------
 
-const diagnostics = diagnosePersonaDeck({ events: manyEvents, ctx, deck: fullDeck });
+/*
+ * The rotation itself. Built on the loud-day fixture, a pure priority sort gave one
+ * reporter most of the deck and the youth writer none, because a walk-off at severity
+ * 89 outranks a young player's game at 46. Asserting the shape here rather than
+ * trusting the playtest is what stops that regressing.
+ */
+const distinctBylines = new Set(fullDeck.map((card) => card.byline)).size;
+const topBylinesShare =
+  fullDeck.length === 0
+    ? 0
+    : Math.max(...HEADLINERS.map((p) => fullDeck.filter((c) => c.byline === p.id).length)) /
+      fullDeck.length;
+check(
+  'the deck is a rotation, not one reporter filling it',
+  distinctBylines >= 4 && topBylinesShare <= 0.5,
+  `${distinctBylines} distinct bylines across ${fullDeck.length} cards, largest share ${(topBylinesShare * 100).toFixed(0)}%`,
+  `the deck used only ${distinctBylines} distinct bylines and one reporter took ` +
+    `${(topBylinesShare * 100).toFixed(0)}% of it. A newsroom that publishes one voice is not five reporters`,
+);
+
+const diagnostics = diagnosePersonaDeck({ events: manyEvents, contextFor: () => ctx, deck: fullDeck });
 const publishedTotal = Object.values(diagnostics.byline).reduce((s, n) => s + n, 0);
 check(
   'diagnostics account for every published card',
@@ -379,12 +399,17 @@ check(
   `byline counts total ${publishedTotal} against ${fullDeck.length} cards`,
   `diagnostics total ${publishedTotal} but ${fullDeck.length} cards were published`,
 );
+// Only genuinely UNCOVERABLE events are a defect. The separate gateRefusals figure
+// is expected to be non-zero -- the marquee gate and the age gate refusing a quiet
+// day's one-run games is them working, and asserting it is zero would have forced the
+// gates open to satisfy a test.
 check(
-  'the loud-day fixture leaves no orphan events',
-  diagnostics.orphanEvents === 0,
-  `${diagnostics.orphanEvents} orphan events out of ${manyEvents.length}`,
-  `${diagnostics.orphanEvents} events were eligible for nobody, which means a persona lists a ` +
-    `kind the detector never emits`,
+  'no emitted event is uncoverable',
+  diagnostics.unemittableKinds.length === 0,
+  `${diagnostics.unemittableKinds.length} uncoverable kinds, ${diagnostics.gateRefusals} gate refusals ` +
+    `out of ${diagnostics.eventsIn} events`,
+  `these kinds are emitted but no persona lists them, so they are detected and never ` +
+    `written about: ${diagnostics.unemittableKinds.join(', ')}`,
 );
 
 // --- 7. the shipped constants -----------------------------------------------

@@ -130,6 +130,16 @@ export interface HeadlineCandidate {
   byline: HeadlinerId;
   /** ALL-CAPS tag line, carries the self-insert. */
   title: string;
+  /**
+   * The raw template `title` came from, unfilled.
+   *
+   * Present because the anti-repetition memory has to compare templates, not
+   * rendered text. A first version stored rendered titles and compared them to
+   * templates, so the comparison never matched and the deferral was inert -- while
+   * still reordering the pick and making repetition measurably worse. Exposing the
+   * template makes that failure mode impossible to reintroduce silently.
+   */
+  titleTemplate: string;
   /** The supporting two lines. */
   deck: string;
   /** Final ranking score. See `priorityOf` in the pipeline. */

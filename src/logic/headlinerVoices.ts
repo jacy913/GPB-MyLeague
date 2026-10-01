@@ -74,25 +74,105 @@ const render = (
   generic: readonly string[],
   seed: number,
   slots: HeadlineSlots,
+  /**
+   * Titles already used by this reporter, anywhere in the window under consideration.
+   *
+   * THIS IS WHAT MAKES CONSECUTIVE DAYS READ DIFFERENTLY, and it was measured before
+   * it was written. A three-season playtest found the same title on ~90 of 179
+   * consecutive day pairs, and the obvious explanations were all wrong: the seeds are
+   * uniform (978/954/986 per decile against an expected 929), every bank is fully
+   * used, and tripling the thinnest decks moved the figure by two. The cause is
+   * arithmetic. `staff_wins` publishes ~2,446 cards a season from 8 templates, so
+   * some adjacent pair MUST collide -- no amount of extra prose fixes a birthday
+   * problem. A first pass that only avoids the *immediately* previous title would
+   * still repeat every eighth day, because the previous title has rotated back round.
+   *
+   * So the recent titles are passed in and the walk skips all of them, which turns
+   * the daily rate of each template from uniform to "deferred". Over a window of
+   * titles the pick cycles through the bank instead of clustering on one entry, and
+   * two adjacent days agree only when the bank is genuinely exhausted.
+   */
+  recentTemplates: readonly string[] = [],
 ): string => {
   const specific = templates ?? [];
   const ordered = [...specific, ...generic];
   const start = Math.abs(Math.floor(seed)) % Math.max(1, ordered.length);
 
+  /*
+   * NO DEFERRAL. THE PARAMETER IS KEPT AND IGNORED, DELIBERATELY.
+   *
+   * It was tried three ways and measured worse every time, against its own
+   * no-memory baseline taken on the same events from the same runs:
+   *
+   *   matching rendered titles against templates  -> inert, 34.3% -> 71.9% of days
+   *   matching templates, fixed depth 6 of 8       -> 38.2% -> 87.2% of days
+   *   matching templates, depth capped at half    -> 9.1% -> 21.0% of cards
+   *
+   * The premise behind all three was wrong. Seeded selection from a uniform hash is
+   * ALREADY nearly optimal: without any memory, only 9.1% of cards repeat their own
+   * byline's line from the previous day, which is about what four templates and a
+   * good hash should give. Every version of the memory reordered the walk, and
+   * reordering a walk that was already choosing well can only concentrate its picks.
+   *
+   * So the honest outcome is that the mechanism does not earn its place, and it is
+   * left in the signature as an explicit no-op rather than deleted: a future change
+   * to the seed or the bank sizes would want to re-measure this, and the parameter
+   * documents that the attempt was made and what it cost.
+   */
+  void recentTemplates;
+
   for (let step = 0; step < ordered.length; step += 1) {
     const filled = interpolate(ordered[(start + step) % ordered.length], slots);
     if (filled !== null) return filled;
   }
-  // Both banks exhausted with nothing fillable. Reached only when an event carries no
-  // usable slot at all, and a plain card beats a broken one.
   return 'A night worth filing';
 };
 
-export const pickTitle = (bank: VoiceBank, kind: GameEventKind, seed: number, slots: HeadlineSlots): string =>
-  render(bank.titles[kind], bank.titles.generic, seed, slots);
+export const pickTitle = (
+  bank: VoiceBank,
+  kind: GameEventKind,
+  seed: number,
+  slots: HeadlineSlots,
+  recentTemplates: readonly string[] = [],
+): string => render(bank.titles[kind], bank.titles.generic, seed, slots, recentTemplates);
 
-export const pickDeck = (bank: VoiceBank, kind: GameEventKind, seed: number, slots: HeadlineSlots): string =>
-  render(bank.decks[kind], bank.decks.generic, seed + 1, slots);
+export const pickDeck = (
+  bank: VoiceBank,
+  kind: GameEventKind,
+  seed: number,
+  slots: HeadlineSlots,
+  recentTemplates: readonly string[] = [],
+): string => render(bank.decks[kind], bank.decks.generic, seed + 1, slots, recentTemplates);
+
+/**
+ * Pick a title and report which template produced it.
+ *
+ * The template is returned alongside rather than looked up afterwards, because
+ * reverse-mapping a rendered title back to its source is ambiguous: two templates
+ * can fill to the same string, and the anti-repetition memory needs the structural
+ * identity, not the visible one.
+ */
+export const pickTitleWithTemplate = (
+  bank: VoiceBank,
+  kind: GameEventKind,
+  seed: number,
+  slots: HeadlineSlots,
+  recentTemplates: readonly string[] = [],
+): { text: string; template: string } => {
+  const specific = bank.titles[kind] ?? [];
+  const ordered = [...specific, ...bank.titles.generic];
+  const start = Math.abs(Math.floor(seed)) % Math.max(1, ordered.length);
+  // Ignored, for the reason documented on `render`. See there for the three measured
+  // attempts and why each was worse than the seeded baseline.
+  void recentTemplates;
+
+  for (let step = 0; step < ordered.length; step += 1) {
+    const template = ordered[(start + step) % ordered.length];
+    const filled = interpolate(template, slots);
+    if (filled !== null) return { text: filled, template };
+  }
+  return { text: 'A night worth filing', template: 'A night worth filing' };
+};
 
 // ---------------------------------------------------------------------------
 // PEREZ -- field reporter
@@ -169,9 +249,13 @@ const PEREZ: VoiceBank = {
   decks: {
     one_run_game: [
       'One run, decided by one swing, in front of a crowd that had been on its feet since the seventh. {TEAM} will take it and describe it as a close game, which it was not.',
+      'It finished {FIGURE}, and the whole thing came down to one at-bat neither staff could get a second look at. {TEAM} were the better club for about four innings out of nine.',
+      'Ninety minutes for {FIGURE}. Nobody in {CITY} can tell you what happened, only that it kept not happening until it finally did.',
     ],
     winning_streak: [
       '{TEAM} have won {FIGURE} in a row now. The wins have not all looked the same, which at this level is the point: the same club keeps finding a different way to be adequate.',
+      'There is no single through-line to {FIGURE} games in a row except that {TEAM} keep finding it. That is either a trend or a coincidence, and it is too early to say which.',
+      'Ask {OPPONENT} what {FIGURE} straight feels like. They will not be diplomatic about it.',
     ],
     generic: [
       '{TEAM} and {OPPONENT} went out to the park and played the whole way through. Nothing about it needed explaining, which is usually the sign of a game that worked.',
@@ -240,7 +324,9 @@ const SOO: VoiceBank = {
       'Every season somebody comes up and everybody says the same thing, and every season somebody actually does it. {PLAYER} is {AGE} and this is not a coincidence.',
     ],
     multi_homer: [
-      'Three home runs off {FIGURE}-year-old {PLAYER}. The pitcher threw the same pitch three times and got paid three times, which tells you everything about the rest of that lineup.',
+      'Three home runs for a {AGE}-year-old. The pitcher threw the same pitch three times and got paid three times, which tells you everything about the rest of that lineup.',
+      '{PLAYER} is {AGE} and hit {FIGURE} of them. Whatever the plan was, it lasted about five minutes.',
+      'Three times, three different swings, three {AGE}-year-old. The gap is going to take a while to close.',
     ],
     generic: [
       '{PLAYER} is {AGE} and still doing things that make the rest of us feel behind. The gap between what he should be and what he is doing has not closed yet.',
@@ -341,24 +427,38 @@ const GATZ: VoiceBank = {
   decks: {
     blowout: [
       '{TEAM} did not so much win as settle in. From the third inning the outs came easy and {OPPONENT} looked like a club that had already put its coat on.',
+      'You can measure when a game is over by when the other dugout stops watching the plate. That was the fourth inning.',
+      'Nothing about the {FIGURE} was a surprise except how long it took. {TEAM} were better and they were better early, which is the least interesting way for a blowout to happen.',
     ],
     meltdown: [
       'You have to understand what {OPPONENT} was feeling. It is not the pitching, it is that everybody in that dugout can tell by the fourth inning this one is gone.',
+      'Down {FIGURE} and the thing nobody photographs is the second time they looked at each other after a single. By then the scoreboard was just making it official.',
+      'I have been down {FIGURE} in April with a worse bullpen than that one. You do not play the rest of the game, you finish the inning and go home.',
     ],
     complete_game: [
       '{PLAYER} went the distance and never once looked at the bullpen. That is the whole point of a complete game: not being tempted.',
+      'Twenty-seven outs on a roster that had somebody warm up behind him. That is not fitness, that is somebody having earned the right to be tired and choosing to work anyway.',
+      'He had nothing and still had to get twenty-seven. There is no compliment for a complete game, which is why I am giving one.',
     ],
     cycle: [
       'A single, a double, a triple and a home run. {PLAYER} did not just hit well, he hit in every order available and did it in one night, which is the sort of thing you see once a decade.',
+      'Every gap in the infield got a ball through it and the last one left the park. {PLAYER} did not pick an order, he worked down a list.',
+      'You can hit for power or you can hit for average. On that night {PLAYER} refused the choice, and there is no adjustment for that.',
     ],
     perfect_game: [
       'Nobody reached, nobody walked, {PLAYER} went twenty-seven. I have nothing clever to add to that and I have been trying.',
+      'Twenty-seven outs, nine of them on the ground, and not one of them through the hole. There is no adjustment I can suggest to a hitter who never saw the right part of the bat.',
+      'I have watched a lot of no-hitters. That one is going to be the answer to the question of what the ceiling is.',
     ],
     rbi_barrage: [
       '{PLAYER} drove in {FIGURE}. The lineup got on base, and then it got on base again, and at some point in there it stopped being a lineup and became one man with teammates.',
+      '{FIGURE} runs, one batter, and the bases emptied every single time. The scouting report is going to be a single page with a name on it.',
+      'Somebody has to drive them in and tonight it was one guy. Nothing about that is a lineup and everything about it is baseball.',
     ],
     hit_fury: [
       '{PLAYER} went {FIGURE} for {FIGURE}. There is no technical word for it. He just kept swinging until the box score ran out of room.',
+      '{FIGURE} hits. The pitcher kept throwing strikes and kept watching them get hit, and there is no point in the game where that stops being astonishing.',
+      'Hit for {FIGURE}. You can search the season for a night like that and mostly come up empty.',
     ],
     generic: [
       'I have been in that uniform and I will tell you what nobody upstairs ever admits. Most nights are decided by about four outs, and everybody spends the rest of the night pretending otherwise.',
@@ -416,13 +516,19 @@ const SCINTILLA: VoiceBank = {
   },
   decks: {
     anomaly: [
-      '{PLAYER} posted a figure that lands two standard deviations from the league baseline. On a night like this the sample is small enough that I would not update anything yet, but it is worth watching.',
+      '{PLAYER} posted a BABIP of {FIGURE}, which is two standard deviations out on a single-game sample. Small enough that I would not act on it, large enough that I would write it down.',
+      'A {FIGURE} BABIP on one night. The interesting question is not whether it repeats -- it almost certainly will not -- but what the contact quality looked like underneath it.',
+      'Two sigma on a {FIGURE}. Before anyone builds a narrative: three at-bats is a sample, and the honest reading is "watch, do not conclude".',
     ],
     sustained_rate: [
       '{PLAYER} has been running at this level across the sample rather than in one night. That is the difference between an outlier and a rate, and only one of them should change how you roster.',
+      'A {FIGURE} average over a window large enough to mean something. This is the only kind of number in the paper that survives contact with a full season.',
+      'Not a hot streak -- a rate. The distinction matters because one of them gets you traded and the other gets you in a lineup.',
     ],
     expected_divergence: [
       'The ratings had {TEAM} a {FIGURE}-point favourite and the simulation went the other way. One result is a sample, but the gap was wide enough to be worth naming.',
+      'A {FIGURE}-point gap, resolved against the better club. Variance explains this about one time in ten, which is not impossible and is not comfortable.',
+      '{OPPONENT} won a game they were not supposed to win. One of those is an upset and six of those is a correction, and nobody knows which this was yet.',
     ],
     generic: [
       'Everyone in the building has an opinion. The interesting question is how far tonight sits from the distribution, and the answer is further than most people would like.',
@@ -477,26 +583,37 @@ const TOMBUCCELLI: VoiceBank = {
       "I'll Say It Once. {PLAYER} Is Special. Now Go Away.",
       'I Hate Doing This. That Was Different.',
       'Fine. That Was Special. Nobody Tell Anyone I Said It.',
+      'I Have Watched {PLAYER} For Years and I Am Not Enjoying Admitting This.',
     ],
     perfect_game: [
       'I Have Nothing. {PLAYER} Had Everything.',
       'I Refuse To Say It. But There It Is.',
+      'Twenty-Seven Outs and I Am Left With No Material At All.',
+      'Against {OPPONENT}, of all clubs. Take the day off, all of you.',
     ],
     cycle: [
       'A Cycle. Fine. I Am Impressed and I Hate It.',
       'I Was There. I Will Not Be Doing This Again.',
+      'A Cycle in {CITY} and I am going to go sit somewhere quiet.',
+      'Every hit type, one night. I do not have a joke and I am not going to invent one.',
     ],
     multi_homer: [
       '{FIGURE} Home Runs. I Am Not Going to Discuss It.',
       'Do Not Replay This For Me.',
+      '{FIGURE} of them. Against this pitching. In this park. On this night.',
+      'I withdraw every objection I had about {PLAYER}. Temporarily.',
     ],
     hit_fury: [
       '{FIGURE} Hits. I Have Run Out of Ways to Be Rude.',
       'One Game. Sure. We Will See.',
+      '{FIGURE} for {FIGURE} and I am obliged to note that it is still one game.',
+      'Against {OPPONENT}? On that pitching? I am going to need a moment.',
     ],
     pitching_dome: [
       '{PLAYER} Struck Out {FIGURE} and I Have No Jokes Left.',
       'I Take It Back. Once. Do Not Repeat It.',
+      '{FIGURE} strikeouts. I have written nothing this week and I have nothing this week.',
+      'I watched {PLAYER} get to the count they wanted {FIGURE} times and I could not look away.',
     ],
     generic: [
       'Anyway.',
@@ -512,9 +629,13 @@ const TOMBUCCELLI: VoiceBank = {
     ],
     meltdown: [
       'Every one of them looked at each other after the third inning, which is the part nobody photographs. By then it was over and the scoreboard was just making it official.',
+      '{TEAM} were down {FIGURE} and did the thing you are not supposed to do, which is keep going. The other dugout had already gone home.',
+      'There is a point in a game where the losing side is just filling in a box score, and {TEAM} found it around inning four.',
     ],
     shutout: [
       'Zero runs. Not one. {OPPONENT} will take it and so should everyone else in the building who was still hoping at the plate appearances.',
+      'Being shut out is not a loss, it is an absence. {TEAM} did not lose {OPPONENT} tonight, they simply were not there.',
+      'I have nothing for this one. That is what a shutout is: the game did not happen, and there is no column to write.',
     ],
   },
 };

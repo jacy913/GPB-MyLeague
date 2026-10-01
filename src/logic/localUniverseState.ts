@@ -31,6 +31,60 @@ export interface LocalDraftCenterState {
   history: DraftHistoryEntry[];
 }
 
+/**
+ * Running tally of what the headliner newsroom has filed.
+ *
+ * PRESENTATION STATE, NOT SIMULATION STATE. It must never feed back into the engine:
+ * if a saved headline count changed a simulated outcome, then reloading a save would
+ * produce a different season from the same games, which breaks the one property this
+ * whole project has been careful about.
+ *
+ * It lives on the bundle rather than inside `Game` or `Player` because those
+ * serialize per row to Supabase, and inflating a per-row schema for a statistic that
+ * only ever renders a number in a corner is the wrong trade.
+ */
+export interface HeadlinerLedger {
+  /** Impressions the columnist has spent. Capped in a season by the pipeline. */
+  tombuccelliImpressions: number;
+  /** Anything the columnist has filed at all, praise or otherwise. */
+  tombuccelliArticles: number;
+  sooDebutsCovered: number;
+  gatzArticles: number;
+}
+
+export const EMPTY_HEADLINER_LEDGER: HeadlinerLedger = {
+  tombuccelliImpressions: 0,
+  tombuccelliArticles: 0,
+  sooDebutsCovered: 0,
+  gatzArticles: 0,
+};
+
+/**
+ * Read a ledger defensively.
+ *
+ * The field is optional because it did not exist when these saves were written, and
+ * every save in the wild lacks it. Reading it as "absent means zero" rather than
+ * failing is what makes the addition need no migration: an old bundle loads, and the
+ * newsroom starts its season from nothing.
+ *
+ * Non-finite or negative numbers are also treated as zero rather than propagated. The
+ * field is a cap input, and a corrupted cap that permits unlimited impressions would
+ * quietly remove the columnist's entire character.
+ */
+export const readHeadlinerLedger = (value: unknown): HeadlinerLedger => {
+  if (!isRecord(value)) return { ...EMPTY_HEADLINER_LEDGER };
+  const count = (key: keyof HeadlinerLedger): number => {
+    const raw = value[key];
+    return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : 0;
+  };
+  return {
+    tombuccelliImpressions: count('tombuccelliImpressions'),
+    tombuccelliArticles: count('tombuccelliArticles'),
+    sooDebutsCovered: count('sooDebutsCovered'),
+    gatzArticles: count('gatzArticles'),
+  };
+};
+
 export interface LocalUniverseBundle {
   format: typeof LOCAL_UNIVERSE_FORMAT;
   version: typeof LOCAL_UNIVERSE_VERSION;
@@ -48,6 +102,11 @@ export interface LocalUniverseBundle {
   offseasonWorkflow: LocalOffseasonWorkflow;
   draftCenter: LocalDraftCenterState;
   pendingTrades: PendingTradeProposal[];
+  /**
+   * Optional and additive, so no migration script is needed and every existing save
+   * loads cleanly. Absence means an untouched season, not a broken one.
+   */
+  headlinerLedger?: HeadlinerLedger;
 }
 
 export interface LocalUniverseValidationResult {
@@ -188,6 +247,15 @@ export const validateLocalUniverseBundle = (value: unknown): LocalUniverseValida
   if (!isRecord(value.offseasonWorkflow)) errors.push('Offseason workflow must be an object.');
   if (!isRecord(value.draftCenter)) errors.push('Draft center state must be an object.');
 
+  // Optional and additive: absence is not an error, because every save written before
+  // the newsroom existed lacks it and refusing to load those would be a worse outcome
+  // than starting their season from zero. Only a PRESENT but malformed ledger is
+  // worth a warning, and it is a warning rather than an error because the reader
+  // already substitutes zeros.
+  if (value.headlinerLedger !== undefined && !isRecord(value.headlinerLedger)) {
+    warnings.push('Headliner ledger is not an object; the newsroom will start from zero.');
+  }
+
   return { valid: errors.length === 0, errors, warnings };
 };
 
@@ -196,4 +264,8 @@ export const createLocalUniverseBundle = (input: Omit<LocalUniverseBundle, 'form
   version: LOCAL_UNIVERSE_VERSION,
   exportedAt: new Date().toISOString(),
   ...input,
+  // AFTER the input spread, deliberately. A caller that passes an explicit
+  // `headlinerLedger: undefined` would otherwise overwrite the seeded default with
+  // undefined, and the save would carry a missing field it was supposed to have.
+  headlinerLedger: { ...EMPTY_HEADLINER_LEDGER, ...(input.headlinerLedger ?? {}) },
 });
