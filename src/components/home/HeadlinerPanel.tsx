@@ -33,10 +33,7 @@ export const HeadlinerPanel: React.FC<{
   /** The date the cards describe, so both panels describe the same day. */
   sourceDate: string | null;
   timelineDate: string;
-  /** Impressions spent, surfaced because the scarcity is the joke. */
-  impressionsSpent: number;
-  impressionCap: number;
-}> = ({ cards, sourceDate, timelineDate, impressionsSpent, impressionCap }) => {
+}> = ({ cards, sourceDate, timelineDate }) => {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
 
@@ -169,36 +166,38 @@ export const HeadlinerPanel: React.FC<{
         </div>
       )}
 
-      {/* The columnist's tally. Visible because the scarcity is the character -- a
-          counter nobody sees is just a number in a save file. */}
-      <div className="flex items-center justify-between gap-3 border-t border-[var(--color-chrome-lo)] px-4 py-2">
-        <span className="t-caption text-[var(--color-ink-faint)]">
-          {cards.length === 0
-            ? 'No stories today'
-            : `${cards.length} stor${cards.length === 1 ? 'y' : 'ies'} in today's edition`}
-        </span>
-        {/*
-          THE IMPRESSION BUDGET, which currently always reads 0/2.
+      {/*
+        NO FOOTER, AND THAT IS THE RIGHT CALL.
 
-          Worth saying plainly rather than quietly restyling: this counter cannot move.
-          `headlinerLedger.tombuccelliImpressions` is read from the save bundle and
-          defaulted defensively to zero, but nothing anywhere increments it -- the
-          dashboard builds today's deck from it and never writes back, and
-          `readHeadlinerLedger` only ever turns a missing or corrupt value into a
-          zero. So the pipeline's cap is always compared against zero, the columnist's
-          rare praise is never actually rationed, and this line reports a budget that
-          has never been spent.
+        This used to carry two counters along the bottom: how many stories are in
+        today's edition, and how many of the columnist's rare praises he has spent
+        against a cap of two. Both are gone.
 
-          It was labelled "columns filed" beside it before, which is what made the pair
-          read as one broken sentence: two counters, one of which counts carousel
-          slides and one of which counts nothing. The left side now says what it
-          measures. This side is still wrong, and it needs the save path to write the
-          ledger rather than a change to this panel.
-        */}
-        <span className="t-caption text-[var(--color-ink-faint)]">
-          Buccelli impressions {impressionsSpent}/{impressionCap}
-        </span>
-      </div>
+        The story count went because it is not news. It is the length of the carousel
+        above it -- the same fact as the number of dots in the header -- printed a
+        second time in words, and it made the footer look like it was reporting
+        something when it was counting the widget.
+
+        The impression budget went because it is permanently 0/2. Nothing anywhere
+        increments `tombuccelliImpressions`: the dashboard reads it from the save
+        bundle and never writes back, and `readHeadlinerLedger` only ever turns a
+        missing or corrupt value into a zero. So the pipeline's cap was always
+        compared against zero, the columnist's rare praise was never actually
+        rationed, and this line reported a budget that had never been spent.
+
+        The argument for showing it anyway was that the scarcity is the character, and
+        a counter nobody sees is just a number in a save file. That argument is right
+        about the MECHANIC and wrong about this readout: the mechanic is currently
+        inert, so the visible half of it advertises a feature that is not running.
+        Displaying it does not make the scarcity legible -- it makes a broken thing
+        look deliberate.
+
+        What should bring it back is the write path, which is the thing that was
+        actually missing. `headlinerLedger` is still threaded into this panel's
+        caller and still feeds `buildPersonaDeck`, where the cap is enforced -- it is
+        just no longer painted. Wiring the ledger so the number means something is a
+        save-path change and it is not a presentation one.
+      */}
     </Panel>
   );
 };

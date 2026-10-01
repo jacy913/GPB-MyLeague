@@ -4,6 +4,7 @@ import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
 import { formatAmerican } from '../../lib/mediaOdds';
 import { propSidePrices, type PropMarket, type PropTemperament } from '../../lib/playerProps';
+import { formatResolutionDate } from '../../lib/marketDates';
 import { TeamLogo } from '../ui';
 import type { Team } from '../../types';
 
@@ -173,10 +174,29 @@ export const MediaPropBoard: React.FC<{
     <div className="flex flex-col gap-4">
       {[...byGame.entries()].map(([gameId, group]) => (
         <div key={gameId}>
+          {/*
+            THE DATE, ON THE GROUP HEADER.
+
+            The board is already grouped by game, so "which fixture" was answered by
+            this header. "When" was not answered anywhere: a card said a player, a stat
+            and a line, and a reader had no way to tell which night any of it resolved
+            on. `PropMarket.date` has been on the market since the family was built and
+            was simply never painted.
+
+            It goes here rather than on all fifteen cards because it is a fact about the
+            game, so one date per group says it fifteen times over at a fifteenth of the
+            cost. A prop resolves the moment its game is played, which makes this the
+            other half of what a prop bet IS.
+          */}
           <div className="chrome-bar mb-2 flex items-center justify-between gap-3 px-3">
             <span className="t-label truncate">{matchupLabel(gameId)}</span>
-            <span className="t-caption text-[var(--color-ink-faint)]">
-              {group.length} {group.length === 1 ? 'prop' : 'props'}
+            <span className="flex shrink-0 items-center gap-3">
+              <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
+                {group[0] ? formatResolutionDate(group[0].date) : ''}
+              </span>
+              <span className="t-caption text-[var(--color-ink-faint)]">
+                {group.length} {group.length === 1 ? 'prop' : 'props'}
+              </span>
             </span>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">

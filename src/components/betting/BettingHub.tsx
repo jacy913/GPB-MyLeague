@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
@@ -135,6 +135,7 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
           onPlace={onPlace}
           balance={balance}
           slateDate={slateDate}
+          moneyline={moneyline}
         />
       )}
       {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} calendar={calendar} teams={teams} />}
@@ -167,7 +168,21 @@ const SlateView: React.FC<{
   const totalsByGame = new Map(lines.map((line) => [line.key.replace(/^(total|first5):/, ''), line]));
 
   return (
-    <div className="grid gap-4">
+    /*
+     * THREE COLUMNS OF GAMES, from two up.
+     *
+     * The slate was one full-width card per game, and a card that used to hold a
+     * moneyline table, a total table and a 300px action rail is not a card that
+     * benefits from being 1200px wide -- roughly half of it was empty. Fifteen games
+     * meant fifteen screens of scrolling to find the one you wanted.
+     *
+     * `md` and not `xl`, because the betting page is often the right pane of the shell
+     * rather than a full-width route, and a three-column grid keyed off the viewport
+     * would give three cramped columns in a 900px pane. The columns are content-width
+     * enough to hold a crest, a price and a date on one line, which is what the card
+     * needs and all it needs.
+     */
+    <div className="grid items-start gap-3 md:grid-cols-2 2xl:grid-cols-3">
       {moneyline.length > 0
         ? moneyline.map((game) => (
           <GameBetCard
@@ -231,7 +246,7 @@ const GameBetCard: React.FC<{
 
   return (
     <Panel className="overflow-hidden">
-      <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
+      <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
         {/*
           TWO CRESTS AND AN "AT", with no city names between them. The header used to
           read "logo, Baltimore at Cleveland, logo", which said the same thing twice
@@ -249,74 +264,83 @@ const GameBetCard: React.FC<{
             {game.awayTeam.city} at {game.homeTeam.city}
           </span>
         </h2>
-        <span className="t-caption text-[var(--color-ink-faint)]">{game.date}</span>
+        {/*
+          THE DATE, PROMINENT.
+
+          Not a caption. On a board of fifteen games laid out three to a row, the
+          question every manager asks of a card is "when is this" and it cannot be
+          answered by a faint caption at the bottom of a panel that used to be full
+          width. It is in the header, beside the crests that identify the fixture,
+          because those two facts are the two things needed to decide whether to read
+          the rest of the card at all.
+        */}
+        <span className="t-caption text-[var(--color-ink-dim)]">{formatResolutionDate(game.date)}</span>
       </div>
 
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="flex flex-col gap-3">
-          <div>
-            <p className="t-caption text-[var(--color-ink-faint)]">Moneyline — each outlet's price</p>
-            {/*
-              Flex with content-width cells, not a three-column grid. A grid
-              divides the available width three ways, so on a wide card each
-              outlet's price sat alone in the middle of a long empty bar. These
-              are three short numbers about to be compared, and they should sit
-              next to each other rather than be spread across the panel.
-            */}
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {MEDIA_PROFILES.map((profile) => (
-                <div
-                  key={profile.id}
-                  className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-sunken)] px-2 py-1.5"
-                  style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
-                >
-                  <img
-                    src={MEDIA_MARKS_SQUARE[profile.id]}
-                    alt=""
-                    aria-hidden="true"
-                    className="h-5 w-5 object-contain"
-                  />
-                  <span className="t-stat-sm tabular-nums">{formatAmerican(game.odds[profile.id])}</span>
-                </div>
-              ))}
-            </div>
-            <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
-              House {formatAmerican(game.houseOdds)} · the three span {Math.round(game.disagreement * 100)} points
-              {game.disagreement >= 0.12 && ' — they are split on this one.'}
-              {/*
-                A game market resolves when the game is played, which is the only basis
-                on this board whose date is already known exactly rather than projected.
-                Shown because "resolves tonight" and "resolves in November" are different
-                products and a bettor holding both should not have to guess which is which.
-              */}
-              {' · '}
-              {game.status === 'completed' ? 'SETTLED' : `RESOLVES ON ${formatResolutionDate(game.date)}`}
-            </p>
-          </div>
+      {/*
+        ONE COLUMN, NOT A 1fr/300px SPLIT.
 
-          {total && (
-            <div>
-              <p className="t-caption text-[var(--color-ink-faint)]">
-                Run total — house line {total.houseLine.toFixed(1)}
-              </p>
-              <div className="mt-1 flex flex-wrap items-center gap-3">
-                {MEDIA_PROFILES.map((profile) => (
-                  <span key={profile.id} className="flex items-center gap-1.5">
-                    <img src={MEDIA_MARKS_SQUARE[profile.id]} alt="" aria-hidden="true" className="h-4 w-4 object-contain" />
-                    <span className="t-stat-sm tabular-nums">{total.fair[profile.id].toFixed(1)}</span>
-                  </span>
-                ))}
-                <span className="t-caption text-[var(--color-ink-faint)]">spread {total.spread.toFixed(1)}</span>
-              </div>
+        The card is now roughly a third of the screen wide, and a 300px action rail
+        beside a 300px content column left both too narrow to hold a price and a
+        crest side by side. Stacking them makes the card taller and the board shorter,
+        which is the right trade at this density: a manager scanning fifteen games
+        wants six visible at once, not four.
+
+        The moneyline section also lost its label. "Moneyline -- each outlet's price"
+        was a heading above three numbers, and the three outlet marks beside those
+        numbers already say whose prices they are.
+      */}
+      <div className="flex flex-col gap-2.5 p-3">
+        {/*
+          Flex with content-width cells, not a three-column grid. A grid divides the
+          available width three ways, so on a narrow card each outlet's price would sit
+          alone in the middle of a long empty bar. These are three short numbers about
+          to be compared, and they should sit next to each other.
+        */}
+        <div className="flex flex-wrap gap-1.5">
+          {MEDIA_PROFILES.map((profile) => (
+            <div
+              key={profile.id}
+              className="flex items-center gap-1.5 border-l-[3px] bg-[var(--color-sunken)] px-2 py-1"
+              style={{ borderLeftColor: `var(--color-media-${profile.accent})` }}
+            >
+              <img
+                src={MEDIA_MARKS_SQUARE[profile.id]}
+                alt=""
+                aria-hidden="true"
+                className="h-4 w-4 object-contain"
+              />
+              <span className="t-stat-sm tabular-nums">{formatAmerican(game.odds[profile.id])}</span>
             </div>
-          )}
+          ))}
         </div>
+        <p className="t-caption text-[var(--color-ink-faint)]">
+          House {formatAmerican(game.houseOdds)} · the three span {Math.round(game.disagreement * 100)} points
+          {game.disagreement >= 0.12 && ' — they are split on this one.'}
+          {/*
+            A game market resolves when the game is played, which is the only basis
+            on this board whose date is already known exactly rather than projected.
+            Kept because "resolves tonight" and "resolves in November" are different
+            products and a bettor holding both should not have to guess which is which.
+            The DATE itself moved to the header; this is the resolution basis.
+          */}
+          {' · '}
+          {game.status === 'completed' ? 'SETTLED' : 'RESOLVES WHEN PLAYED'}
+        </p>
 
-        <div className="flex flex-col gap-2">
+        {/* The two sides, first and largest: this is what most of the board is for. */}
+        <div className="flex flex-wrap gap-1.5">
           {side(game.awayTeam, 'away', game.houseOdds)}
           {side(game.homeTeam, 'home', game.homeOdds)}
-          {total && (
-            <>
+        </div>
+
+        {total && (
+          <div className="border-t border-[var(--color-chrome-lo)] pt-2.5">
+            <p className="t-caption text-[var(--color-ink-faint)]">
+              Run total — house line {total.houseLine.toFixed(1)} · outlets{' '}
+              {MEDIA_PROFILES.map((profile) => total.fair[profile.id].toFixed(1)).join(' / ')}
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
               <RetroButton
                 variant="primary"
                 size="sm"
@@ -351,14 +375,13 @@ const GameBetCard: React.FC<{
               >
                 Under {total.houseLine.toFixed(1)} {formatAmerican(total.underPrice)}
               </RetroButton>
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
     </Panel>
   );
 };
-
 const TotalMarketCard: React.FC<{
   market: LineMarket;
   balance: number;
@@ -476,8 +499,10 @@ const PropsView: React.FC<{
   focusedProp: PropFocus | null;
   slateDate: string | null;
   balance: number;
+  /** The slate's games, so a prop row can name the fixture it belongs to. */
+  moneyline: GameLine[];
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ boards, focusedProp, slateDate, balance, onPlace }) => {
+}> = ({ boards, focusedProp, slateDate, balance, moneyline, onPlace }) => {
   /*
    * Scroll the arrived-at row into view.
    *
@@ -497,6 +522,20 @@ const PropsView: React.FC<{
     if (!focusedProp) return;
     rowRefs.current.get(propRowKey(focusedProp))?.scrollIntoView({ block: 'center' });
   }, [focusedProp]);
+
+  /*
+   * Game id to the fixture, from the slate's OWN moneyline list.
+   *
+   * Not a second copy of the schedule and not a fresh build. The same `moneyline`
+   * array the Slate tab renders is already in props, it is keyed by `gameId`, and
+   * `PropMarket.gameId` is that key -- so the fixture a prop belongs to is a lookup
+   * rather than a new source that could disagree with the one the slate shows. A prop
+   * whose game is absent resolves to null and says so on the row.
+   */
+  const fixtureById = useMemo(
+    () => new Map(moneyline.map((game) => [game.gameId, game])),
+    [moneyline],
+  );
 
   const total = MEDIA_PROFILES.reduce((sum, profile) => sum + (boards.get(profile.id)?.length ?? 0), 0);
 
@@ -545,7 +584,7 @@ const PropsView: React.FC<{
               </span>
             </div>
 
-            <div className="grid gap-2 p-3">
+            <div className="grid items-stretch gap-2 p-3 md:grid-cols-2 2xl:grid-cols-3">
               {markets.map((market) => {
                 const key = propRowKey({ propId: market.propId, mediaId: profile.id });
                 return (
@@ -559,6 +598,7 @@ const PropsView: React.FC<{
                     // would leave the manager unsure which one to act on.
                     focused={focusedProp !== null && key === propRowKey(focusedProp)}
                     balance={balance}
+                    fixture={fixtureById.get(market.gameId) ?? null}
                     onPlace={onPlace}
                     registerRef={(node) => rowRefs.current.set(key, node)}
                   />
@@ -581,9 +621,18 @@ const PropBetRow: React.FC<{
   rowKey: string;
   focused: boolean;
   balance: number;
+  /**
+   * The game this prop belongs to, resolved from the slate's own moneyline list.
+   *
+   * Null when the game is not on the current slate -- a stale board, or a prop on a
+   * fixture that has dropped off the slate since the outlet published it. The strip
+   * degrades to the date alone rather than disappearing, because a prop with a date
+   * and no fixture is still placeable and still needs its resolution stated.
+   */
+  fixture: GameLine | null;
   onPlace: BettingSlateProps['onPlace'];
   registerRef: (node: HTMLDivElement | null) => void;
-}> = ({ market, mediaId, rowKey, focused, balance, onPlace, registerRef }) => {
+}> = ({ market, mediaId, rowKey, focused, balance, fixture, onPlace, registerRef }) => {
   const temperament = TEMPERAMENT[market.temperament[mediaId]];
   const { Icon } = temperament;
   const house = propSidePrices(market.consensusProbability);
@@ -633,32 +682,71 @@ const PropBetRow: React.FC<{
       // that no row matched.
       data-prop-row={rowKey}
       data-focused={focused ? 'true' : undefined}
-      className={`flex flex-wrap items-center gap-3 border bg-[var(--color-sunken)] px-3 py-2 ${
+      className={`flex flex-col gap-2 border bg-[var(--color-sunken)] p-3 ${
         focused ? 'ring-2 ring-[var(--color-gold)]' : ''
       }`}
       style={{ borderColor: temperament.border, borderLeftWidth: '3px' }}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="t-stat truncate">{market.playerName}</span>
-          <span className="t-caption text-[var(--color-ink-faint)]">
-            O/U {market.line} {market.statPlural}
-          </span>
-          <span
-            className="inline-flex items-center gap-1 border px-1.5 py-0.5 t-caption"
-            style={{ borderColor: temperament.border, color: temperament.border }}
-          >
-            <Icon className="h-3 w-3" aria-hidden="true" />
-            {temperament.label}
-          </span>
-        </div>
-        <p className="t-caption text-[var(--color-ink-faint)]">
-          {MEDIA_BY_ID[mediaId].outlet} reads {Math.round(market.probability[mediaId] * 100)}% over
-          {canFade && ` · ${Math.round(market.spread * 100)}pt from the other two`}
-        </p>
+      {/*
+        WHICH GAME, AND WHEN.
+
+        This is the fix for a real gap: the row said a player's name, a stat and a
+        line, and nothing about the fixture or the date. A manager could read a prop,
+        take it, and still not know which game to watch or on what day. The bet record
+        carried `marketKey: market.gameId` and the settlement could find the game --
+        but nothing on screen could.
+
+        The information was never missing. `PropMarket` has carried `gameId` and `date`
+        since the family was built; neither was ever painted. So this is a row that
+        says what it always knew.
+
+        Two crests and a date rather than a text matchup, for the same reason as
+        everywhere else on this screen: the marks identify the fixture in a third of
+        the width, and the city names are still the crests' accessible names.
+
+        The date is on the strip rather than buried in a tooltip because a prop bet
+        resolves when the game is played, which makes the date the second half of the
+        bet's identity. It settles the same night the game does.
+      */}
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--color-chrome-lo)] pb-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          {fixture ? (
+            <>
+              <TeamLogo team={fixture.awayTeam} sizeClass="h-5 w-5" />
+              <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
+              <TeamLogo team={fixture.homeTeam} sizeClass="h-5 w-5" />
+              <span className="sr-only">
+                {fixture.awayTeam.city} at {fixture.homeTeam.city}
+              </span>
+            </>
+          ) : (
+            <span className="t-caption text-[var(--color-warn)]">Fixture not on this slate</span>
+          )}
+        </span>
+        <span className="t-caption shrink-0 tabular-nums text-[var(--color-ink-dim)]">
+          {formatResolutionDate(market.date)}
+        </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span className="t-stat truncate">{market.playerName}</span>
+        <span
+          className="inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 t-caption"
+          style={{ borderColor: temperament.border, color: temperament.border }}
+        >
+          <Icon className="h-3 w-3" aria-hidden="true" />
+          {temperament.label}
+        </span>
+      </div>
+
+      <p className="t-caption text-[var(--color-ink-dim)]">
+        O/U {market.line} {market.statPlural}
+        {' · '}
+        {MEDIA_BY_ID[mediaId].outlet} reads {Math.round(market.probability[mediaId] * 100)}% over
+        {canFade && ` · ${Math.round(market.spread * 100)}pt from the other two`}
+      </p>
+
+      <div className="mt-auto flex flex-wrap items-center gap-1.5">
         <RetroButton
           variant="primary"
           size="sm"
@@ -690,8 +778,7 @@ const PropBetRow: React.FC<{
     </div>
   );
 };
-
-/* ------------------------------------------------------------------ *
+ /* ------------------------------------------------------------------ *
  * Field markets -- futures and awards
  * ------------------------------------------------------------------ */
 

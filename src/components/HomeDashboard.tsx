@@ -26,7 +26,7 @@ import {
   type StoryCandidate,
 } from '../logic/headlineEngine';
 import { buildLeagueRateBaselines, extractGameEvents } from '../logic/headlinerEvents';
-import { buildPersonaDeck, diagnosePersonaDeck, TOMBUCCELLI_IMPRESSION_SEASON_CAP } from '../logic/headlinerPipeline';
+import { buildPersonaDeck, diagnosePersonaDeck } from '../logic/headlinerPipeline';
 import type { GameEvent, HeadlinerContext, HeadlinerId } from '../logic/headliners';
 import { addDaysToISODate } from '../logic/simulation';
 import { EMPTY_HEADLINER_LEDGER, type HeadlinerLedger } from '../logic/localUniverseState';
@@ -704,8 +704,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           cards={personaDeck.cards}
           sourceDate={headlineDeck.sourceDate ?? null}
           timelineDate={timelineDate}
-          impressionsSpent={headlinerLedger.tombuccelliImpressions}
-          impressionCap={TOMBUCCELLI_IMPRESSION_SEASON_CAP}
         />
 
         {/*

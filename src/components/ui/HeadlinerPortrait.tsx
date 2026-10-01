@@ -23,21 +23,24 @@ import { HEADLINER_BY_ID, type HeadlinerId } from '../../logic/headliners';
 
 export interface HeadlinerPortraitProps {
   id: HeadlinerId;
-  /** `sm` 28px, `md` 32px, `lg` 40px, `xl` 72px. */
+  /** `sm` 28px, `md` 32px, `lg` 40px, `xl` 96px. */
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }
 
 /**
- * 28 / 32 / 40 / 72 px against a 95x95 source, so 3.4x down to 1.3x headroom.
+ * 28 / 32 / 40 / 96 px against a 95x95 source.
  *
- * `xl` exists because the byline portrait on the front page was asked to match the
- * size of the crests in the headline of the day above it, and 40px is not that. It
- * stops at 72 rather than 96 for a measured reason: the shipped art is 95x95, so a
- * 96px render is 1:1 and goes soft on any 2x display, while 72px keeps 1.3x of real
- * headroom. Going past this needs the portraits re-exported at 192px or larger --
- * the originals were 1024-2048px, so the source art supports it and only the shipped
- * WebP does not.
+ * `xl` is the front-page byline portrait, and 96 is a CEILING rather than a choice.
+ * The shipped art is 95x95 -- measured from the VP8X header of tombuccelli.webp -- so
+ * anything larger is the browser upscaling, and 96 is already exactly 1:1. Going past
+ * it needs the portraits re-exported at 192px or larger, and there is nothing to
+ * re-export FROM: the originals were 1024-2048px PNGs totalling 16.3MB, they were
+ * downscaled to these, and no higher-resolution copy is in the repository.
+ *
+ * That is worth knowing before anyone tries again, because "make the portraits bigger"
+ * looks like a one-line CSS change and is not one until the art is replaced. It is a
+ * one-line change the moment higher-resolution files land in src/assets/headliners.
  *
  * Named rather than accepting a raw Tailwind string, for the same reason `Meter` and
  * `StatValue` name their variants: an opaque class string here would make the plate
@@ -47,7 +50,7 @@ const SIZE_PX: Record<NonNullable<HeadlinerPortraitProps['size']>, number> = {
   sm: 28,
   md: 32,
   lg: 40,
-  xl: 72,
+  xl: 96,
 };
 
 const PORTRAIT_MODULES = import.meta.glob('../../assets/headliners/*.webp', {
