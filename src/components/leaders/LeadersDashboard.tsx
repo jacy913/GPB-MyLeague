@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { BarChart3, Table2 } from 'lucide-react';
-import type { Player, PlayerSeasonBatting, PlayerSeasonPitching, Team } from '../../types';
+import type { Game, Player, PlayerSeasonBatting, PlayerSeasonPitching, Team } from '../../types';
 import {
   battingMetrics,
   pitchingMetrics,
@@ -17,6 +17,7 @@ import {
   SegmentedControl,
   type QuadrantPoint,
 } from '../ui';
+import { SplitsExplorer } from './SplitsExplorer';
 
 /**
  * Leaders, second half: the league as a shape.
@@ -62,6 +63,13 @@ export interface LeadersDashboardProps {
   players: Player[];
   battingStats: PlayerSeasonBatting[];
   pitchingStats: PlayerSeasonPitching[];
+  /**
+   * Every game, completed or not.
+   *
+   * Present solely for the splits explorer, which derives its lines from the stored play
+   * log. The other three regions read the engine's own aggregates and never touch this.
+   */
+  games: readonly Game[];
   onOpenTables: () => void;
 }
 
@@ -72,6 +80,7 @@ const QUALIFYING_OUTS = 20;
 
 export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
   teams,
+  games,
   players,
   battingStats,
   pitchingStats,
@@ -290,6 +299,20 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
       <div className="grid gap-4 xl:grid-cols-2">
         <Quadrants batting={battingRows} pitching={pitchingRows} />
       </div>
+
+      {/*
+        REGION 4 -- SPLITS.
+
+        The last region, and the only one that derives anything rather than reading a stored
+        aggregate. Placed below the quadrants because it answers the question they raise: a
+        player in the good corner of the OPS plot may simply be a home hitter, and the only
+        way to find out is to look at the splits.
+
+        The plan specified a toggle across the split axes. This is a comparison table
+        instead, and the reason is in `SplitsExplorer`'s header: a toggle hides the difference
+        it exists to reveal.
+      */}
+      <SplitsExplorer games={games} players={players} />
 
       {/*
         The honest note, and the same one the Tables screen carries in its short-board

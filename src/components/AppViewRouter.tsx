@@ -597,6 +597,7 @@ export const AppViewRouter = ({
           players={playerState.players}
           battingStats={playerState.battingStats}
           pitchingStats={playerState.pitchingStats}
+          games={games}
           onOpenTables={() => onSetView('leaders')}
         />
       )}
