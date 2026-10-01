@@ -60,7 +60,7 @@ export type FeaturedGameCard = {
   angle: string;
 };
 
-type DerivedBattingLine = {
+export type DerivedBattingLine = {
   playerId: string;
   playerName: string;
   teamId: string;
@@ -77,7 +77,7 @@ type DerivedBattingLine = {
   runsScored: number;
 };
 
-type DerivedPitchingLine = {
+export type DerivedPitchingLine = {
   playerId: string;
   playerName: string;
   teamId: string;
@@ -334,19 +334,69 @@ const createGameHeadline = (game: Game, teamsById: Map<string, Team>): HeadlineC
   };
 };
 
-export const buildGameStoryCandidates = (
-  game: Game,
-  teamsById: Map<string, Team>,
-  battingStatsByPlayerId: Map<string, PlayerSeasonBatting>,
-  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
-  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
-): StoryCandidate[] => {
-  const fallback = createGameHeadline(game, teamsById);
-  const logs = parseStoredLogs(game);
-  if (logs.length === 0) {
-    return [{ ...fallback, priority: getHeadlinePriorityScore(game) }];
-  }
+/**
+ * What a single game's play log yields, derived once.
+ *
+ * EXTRACTED, NOT REWRITTEN, and that distinction is the whole point of the function
+ * existing. The play-log walk below is moved verbatim out of
+ * `buildGameStoryCandidates` so the persona pipeline can read the same batting and
+ * pitching lines from the same game without a second parser.
+ *
+ * Two parsers of one play log would eventually disagree, and nothing in the type
+ * system would catch it: both would return a well-typed `DerivedBattingLine`, just
+ * with different numbers. That is the same shape as the SLG bug in this file's
+ * history, where the board's total-bases formula drifted from the accumulator's and
+ * every value stayed plausible.
+ */
+export interface DerivedGameLines {
+  logs: PlayLogEvent[];
+  battingLines: DerivedBattingLine[];
+  pitchingLines: DerivedPitchingLine[];
+  /** Highest inning reached, floored at 9. */
+  extraInnings: number;
+  awayLargestDeficit: number;
+  homeLargestDeficit: number;
+  leadChanges: number;
+  tieCount: number;
+  walkOffBatterName: string | null;
+}
 
+/**
+ * Team-derived context for one game.
+ *
+ * Split from `deriveGameLines` because it needs `teamsById`, which the play-log walk
+ * does not: everything above is a fact about the game itself, and this is a fact
+ * about the game *in its division*.
+ */
+export interface GameShape {
+  awayTeam: Team | undefined;
+  homeTeam: Team | undefined;
+  awayWon: boolean;
+  winnerTeamId: string;
+  loserTeamId: string;
+  awayWinPct: number;
+  homeWinPct: number;
+  sameDivision: boolean;
+  sameLeague: boolean;
+  ratingGap: number;
+  winPctGap: number;
+  losingErrors: number;
+  winnerPitcherCount: number;
+  loserPitcherCount: number;
+  winnerWasUnderdog: boolean;
+  noHitOpponentId: string | null;
+  isPlayoffGame: boolean;
+}
+
+/**
+ * Walk one game's play log into per-player lines and the game-shape counters.
+ *
+ * Deterministic: it reads the stored log and nothing else, so two calls on the same
+ * game return the same numbers. That is what lets the headline feed be a function of
+ * the save rather than of when it was rendered.
+ */
+export const deriveGameLines = (game: Game): DerivedGameLines => {
+  const logs = parseStoredLogs(game);
   const battingByPlayer = new Map<string, DerivedBattingLine>();
   const pitchingByPlayer = new Map<string, DerivedPitchingLine>();
   let previousInning = logs[0]?.inning ?? 1;
@@ -514,43 +564,125 @@ export const buildGameStoryCandidates = (
     previousOuts = log.outs;
   }
 
-  const battingLines = Array.from(battingByPlayer.values());
-  const pitchingLines = Array.from(pitchingByPlayer.values());
-  const stories: StoryCandidate[] = [];
+  return {
+    logs,
+    battingLines: Array.from(battingByPlayer.values()),
+    pitchingLines: Array.from(pitchingByPlayer.values()),
+    extraInnings: Math.max(...logs.map((log) => log.inning), 9),
+    awayLargestDeficit,
+    homeLargestDeficit,
+    leadChanges,
+    tieCount,
+    walkOffBatterName,
+  };
+};
+
+/**
+ * The team-derived half of a game's context.
+ *
+ * `derived` is passed rather than recomputed so a caller that needs both walks the
+ * play log once. Every field here is read from `teamsById` or from the game record;
+ * none of it touches the play log except the pitcher counts, which come from the
+ * lines the first pass already produced.
+ */
+export const deriveGameShape = (
+  game: Game,
+  teamsById: Map<string, Team>,
+  derived: DerivedGameLines,
+): GameShape => {
   const awayTeam = teamsById.get(game.awayTeam);
   const homeTeam = teamsById.get(game.homeTeam);
   const awayWon = game.score.away > game.score.home;
-  const winnerTeam = awayWon ? awayTeam : homeTeam;
-  const loserTeam = awayWon ? homeTeam : awayTeam;
   const winnerTeamId = awayWon ? game.awayTeam : game.homeTeam;
   const loserTeamId = awayWon ? game.homeTeam : game.awayTeam;
-  const awayWinPct = awayTeam ? getWinPct(awayTeam) : 0;
-  const homeWinPct = homeTeam ? getWinPct(homeTeam) : 0;
-  const sameDivision = Boolean(
-    awayTeam &&
-      homeTeam &&
-      awayTeam.league === homeTeam.league &&
-      awayTeam.division === homeTeam.division,
-  );
-  const sameLeague = Boolean(awayTeam && homeTeam && awayTeam.league === homeTeam.league);
-  const ratingGap = awayTeam && homeTeam ? Math.abs(awayTeam.rating - homeTeam.rating) : 0;
-  const winPctGap = Math.abs(awayWinPct - homeWinPct);
-  const losingErrors = awayWon
-    ? (typeof game.stats.homeErrors === 'number' ? game.stats.homeErrors : 0)
-    : (typeof game.stats.awayErrors === 'number' ? game.stats.awayErrors : 0);
-  const winnerPitcherCount = pitchingLines.filter((line) => line.teamId === winnerTeamId).length;
-  const loserPitcherCount = pitchingLines.filter((line) => line.teamId === loserTeamId).length;
-  const extraInnings = Math.max(...logs.map((log) => log.inning), 9);
-  const winnerWasUnderdog =
-    Boolean(awayTeam && homeTeam) &&
-    ((awayWon && (awayTeam!.rating + 8 <= homeTeam!.rating || awayWinPct + 0.15 <= homeWinPct)) ||
-      (!awayWon && (homeTeam!.rating + 8 <= awayTeam!.rating || homeWinPct + 0.15 <= awayWinPct)));
-  const noHitOpponentId =
-    typeof game.stats.awayHits === 'number' && game.stats.awayHits === 0
-      ? game.awayTeam
-      : typeof game.stats.homeHits === 'number' && game.stats.homeHits === 0
-        ? game.homeTeam
-        : null;
+
+  return {
+    awayTeam,
+    homeTeam,
+    awayWon,
+    winnerTeamId,
+    loserTeamId,
+    awayWinPct: awayTeam ? getWinPct(awayTeam) : 0,
+    homeWinPct: homeTeam ? getWinPct(homeTeam) : 0,
+    sameDivision: Boolean(
+      awayTeam &&
+        homeTeam &&
+        awayTeam.league === homeTeam.league &&
+        awayTeam.division === homeTeam.division,
+    ),
+    sameLeague: Boolean(awayTeam && homeTeam && awayTeam.league === homeTeam.league),
+    ratingGap: awayTeam && homeTeam ? Math.abs(awayTeam.rating - homeTeam.rating) : 0,
+    winPctGap: Math.abs(
+      (awayTeam ? getWinPct(awayTeam) : 0) - (homeTeam ? getWinPct(homeTeam) : 0),
+    ),
+    losingErrors: awayWon
+      ? (typeof game.stats.homeErrors === 'number' ? game.stats.homeErrors : 0)
+      : (typeof game.stats.awayErrors === 'number' ? game.stats.awayErrors : 0),
+    winnerPitcherCount: derived.pitchingLines.filter((line) => line.teamId === winnerTeamId).length,
+    loserPitcherCount: derived.pitchingLines.filter((line) => line.teamId === loserTeamId).length,
+    winnerWasUnderdog:
+      Boolean(awayTeam && homeTeam) &&
+      ((awayWon && (awayTeam!.rating + 8 <= homeTeam!.rating || (awayTeam ? getWinPct(awayTeam) : 0) + 0.15 <= (homeTeam ? getWinPct(homeTeam) : 0))) ||
+        (!awayWon && (homeTeam!.rating + 8 <= awayTeam!.rating || (homeTeam ? getWinPct(homeTeam) : 0) + 0.15 <= (awayTeam ? getWinPct(awayTeam) : 0)))),
+    noHitOpponentId:
+      typeof game.stats.awayHits === 'number' && game.stats.awayHits === 0
+        ? game.awayTeam
+        : typeof game.stats.homeHits === 'number' && game.stats.homeHits === 0
+          ? game.homeTeam
+          : null,
+    isPlayoffGame: isPlayoffGame(game),
+  };
+};
+
+export const buildGameStoryCandidates = (
+  game: Game,
+  teamsById: Map<string, Team>,
+  battingStatsByPlayerId: Map<string, PlayerSeasonBatting>,
+  battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
+  pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
+): StoryCandidate[] => {
+  const fallback = createGameHeadline(game, teamsById);
+  const derived = deriveGameLines(game);
+  const logs = derived.logs;
+  if (logs.length === 0) {
+    return [{ ...fallback, priority: getHeadlinePriorityScore(game) }];
+  }
+
+  // Destructured back into the names the story blocks below already use, so those
+  // ~380 lines are untouched by this extraction. Anything the new persona pipeline
+  // needs reads `deriveGameLines` / `deriveGameShape` directly instead.
+  const {
+    battingLines,
+    pitchingLines,
+    extraInnings,
+    awayLargestDeficit,
+    homeLargestDeficit,
+    leadChanges,
+    tieCount,
+    walkOffBatterName,
+  } = derived;
+
+  const shape = deriveGameShape(game, teamsById, derived);
+  const {
+    awayTeam,
+    homeTeam,
+    awayWon,
+    awayWinPct,
+    homeWinPct,
+    sameDivision,
+    sameLeague,
+    ratingGap,
+    winPctGap,
+    losingErrors,
+    winnerPitcherCount,
+    loserPitcherCount,
+    winnerWasUnderdog,
+    noHitOpponentId,
+  } = shape;
+  const winnerTeam = awayWon ? awayTeam : homeTeam;
+  const loserTeam = awayWon ? homeTeam : awayTeam;
+
+  const stories: StoryCandidate[] = [];
 
   if (noHitOpponentId) {
     const pitchingTeamId = noHitOpponentId === game.awayTeam ? game.homeTeam : game.awayTeam;
