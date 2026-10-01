@@ -110,6 +110,21 @@ const LADDER: Record<PropStatKey, { offset: number; min: number; max: number }> 
   battingStrikeouts: { offset: -0.3, min: 0.5, max: 2.5 },
   pitcherStrikeouts: { offset: -1.5, min: 1.5, max: 7.5 },
   hitsAllowed: { offset: -1.5, min: 0.5, max: 6.5 },
+  /*
+   * The fitter's OWN copy of the ladder, deliberately separate from
+   * `PROP_LINE_RANGE` in playerProps.
+   *
+   * They have to be allowed to disagree: this one is what the fit searches over, and
+   * the shipped one is what the model then uses. If the fitter read the shipped
+   * range it could only ever confirm the range someone already chose, and the whole
+   * exercise would be a check that a guess agrees with itself.
+   *
+   * `triples` is capped at 1.5 rather than 2.5 for the reason the fit will show: a
+   * triple line above 1.5 is a bet on an event that almost never happens, so it would
+   * be priced at a long shot and contribute nothing but tail noise to the score.
+   */
+  doubles: { offset: -0.2, min: 0.5, max: 2.5 },
+  triples: { offset: -0.2, min: 0.5, max: 1.5 },
 };
 
 interface Observation {
@@ -155,11 +170,16 @@ const boxScoreValue = (stat: PropStatKey, line: PropBattingLine): number =>
   : stat === 'hits' ? line.hits
   : stat === 'rbi' ? line.rbi
   : stat === 'walks' ? line.walks
+  : stat === 'doubles' ? line.doubles
+  : stat === 'triples' ? line.triples
   : 0;
 
 const statValue = (
   stat: PropStatKey,
-  batting: Map<string, { hits: number; runsScored: number; rbi: number; homeRuns: number; walks: number; strikeouts: number }>,
+  batting: Map<string, {
+    hits: number; runsScored: number; rbi: number; homeRuns: number;
+    walks: number; strikeouts: number; doubles: number; triples: number;
+  }>,
   pitching: Map<string, { hitsAllowed: number; strikeouts: number }>,
   playerId: string,
 ): number | null => {
@@ -174,6 +194,8 @@ const statValue = (
     case 'homeRuns': return row.homeRuns;
     case 'walks': return row.walks;
     case 'battingStrikeouts': return row.strikeouts;
+    case 'doubles': return row.doubles;
+    case 'triples': return row.triples;
     default: return null;
   }
 };

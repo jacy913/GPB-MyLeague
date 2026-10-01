@@ -212,6 +212,8 @@ export const propActualStat = (
     case 'homeRuns': return line.homeRuns;
     case 'walks': return line.walks;
     case 'battingStrikeouts': return line.strikeouts;
+    case 'doubles': return line.doubles;
+    case 'triples': return line.triples;
     default: return null;
   }
 };
@@ -222,7 +224,14 @@ export const propActualStat = (
 
 export type PropStatKey =
   | 'hits' | 'runs' | 'rbi' | 'homeRuns' | 'walks'
-  | 'battingStrikeouts' | 'pitcherStrikeouts' | 'hitsAllowed';
+  | 'battingStrikeouts' | 'pitcherStrikeouts' | 'hitsAllowed'
+  // Added in the first batch of new lines. All three are RAW, which is the point:
+  // every one of them is counted per game by the play log AND carried in the season
+  // aggregate, so the fitter has exact ground truth and there is no derived quantity
+  // whose definition could disagree with the box score. A derived line (extra base
+  // hits, total bases) is a second definition of a number the box score already
+  // implies, and that is a settlement bug waiting to happen.
+  | 'doubles' | 'triples';
 
 export type PropRole = 'batting' | 'pitching';
 
@@ -260,6 +269,14 @@ export const PROP_STATS: Record<PropStatKey, PropStatConfig> = {
     key: 'hitsAllowed', role: 'pitching', singular: 'Hit Allowed', plural: 'Hits Allowed',
     settlementNote: 'counted from the play log against the pitcher of record',
   },
+  doubles: {
+    key: 'doubles', role: 'batting', singular: 'Double', plural: 'Doubles',
+    settlementNote: 'counted from the play log',
+  },
+  triples: {
+    key: 'triples', role: 'batting', singular: 'Triple', plural: 'Triples',
+    settlementNote: 'counted from the play log',
+  },
 };
 
 /**
@@ -277,7 +294,43 @@ export const PROP_STATS: Record<PropStatKey, PropStatConfig> = {
  * 0.5 home-run line clears about 11% of the time, which is not a pick, it is a
  * lottery ticket with an American price on it.
  */
-export const BATTING_PROP_STATS: PropStatKey[] = ['hits', 'runs', 'rbi', 'walks', 'battingStrikeouts'];
+export const BATTING_PROP_STATS: PropStatKey[] = [
+  'hits', 'runs', 'rbi', 'walks', 'battingStrikeouts',
+  /*
+   * `doubles` and `triples` ARE NOT HERE, and the fitting run is why. They were
+   * added, fitted, measured, and removed.
+   *
+   * BOTH SCORED BETTER THAN ANY SHIPPED STAT, and both are unshippable. That is the
+   * finding, and it is the reason the fitting step cannot be skipped:
+   *
+   *   stat     props      Brier    ladder, measured over two seasons
+   *   hits    132051    0.1593    0.5 -> 66%   1.5 -> 26%   2.5 -> 6%
+   *   rbi      88034    0.1428    0.5 -> 25%   1.5 -> 10%
+   *   doubles  88034    0.0845    0.5 -> 19%   1.5 ->  2%
+   *   triples  88034    0.0134    0.5 ->  3%   1.5 ->  0%
+   *
+   * A `triples` prop wins 3 per cent of the time. A model that correctly observes
+   * that nobody triples scores BRILLIANTLY, so the Brier rewarded the model for the
+   * market being dead. A score of 0.0134 is not a good forecast; it is a price on
+   * something that does not happen.
+   *
+   * `doubles` is subtler and is why a second gate exists. Its best line wins 18.7 per
+   * cent, which clears an 18 per cent floor by 0.7 points -- a pass too narrow to
+   * defend, on a threshold chosen by hand. The honest disqualification is its top
+   * rung at 2 per cent: a ladder whose upper steps pay 2 per cent is not a ladder.
+   * A bettor is shown "over 0.5" at 19 per cent -- a worse ticket than anything else
+   * on the board, where the coolest stat sits at 25 -- beside "over 1.5" at 2 per
+   * cent as though both were the same market.
+   *
+   * THE PLAN'S GATE IS NECESSARY AND NOT SUFFICIENT. 3.2 asks for "Brier < 0.2500" and
+   * both stats passed it. tools/verifyPropStatFit.ts adds two further checks, both
+   * of which exist because of these two results: a stat must offer a line that wins
+   * often enough to be a bet, and it must offer at least TWO such lines.
+   *
+   * The stats remain in PROP_STATS, PROP_MODEL_CONSTANTS and PROP_LINE_RANGE so the
+   * fitter and the gate can still reach them. Only this list publishes.
+   */
+];
 export const PITCHING_PROP_STATS: PropStatKey[] = ['pitcherStrikeouts', 'hitsAllowed'];
 
 /* ------------------------------------------------------------------ *
@@ -333,6 +386,23 @@ export const PROP_MODEL_CONSTANTS: Record<PropStatKey, { priorGames: number; dis
   battingStrikeouts: { priorGames: 96, dispersion: 0.9 },
   pitcherStrikeouts: { priorGames: 8, dispersion: 1.35 },
   hitsAllowed: { priorGames: 96, dispersion: 1.7 },
+  /*
+   * PLACEHOLDERS, NOT FITS. `doubles` and `triples` are NOT offered yet.
+   *
+   * These values are here only so the type is total, and they are deliberately
+   * marked rather than left to look fitted. tools/fitPropLines.ts produces the real
+   * numbers and they replace these before the stats reach BATTING_PROP_STATS.
+   *
+   * The starting guesses are the neighbouring batting counts, which is the honest
+   * prior: a double is rarer than a hit and a triple rarer still, so their
+   * dispersion should sit at or above the 0.9 that fits hits, and their priorGames
+   * should be long because both are low-count and therefore noisy early.
+   *
+   * DO NOT SHIP ON THESE. A guessed line on a stat is mispriced by a wide margin and
+   * the bettor finds out by losing money repeatedly.
+   */
+  doubles: { priorGames: 96, dispersion: 0.9 },
+  triples: { priorGames: 96, dispersion: 0.9 },
 };
 
 /**
@@ -453,6 +523,7 @@ export const leaguePropBaselines = (
 ): Record<PropStatKey, number> => {
   let battingGames = 0;
   let hits = 0; let runs = 0; let rbi = 0; let walks = 0; let battingK = 0; let homeRuns = 0;
+  let doubles = 0; let triples = 0;
   let pitcherAppearances = 0;
   let pitcherK = 0; let hitsAllowed = 0;
 
@@ -465,6 +536,8 @@ export const leaguePropBaselines = (
     walks += row.walks;
     homeRuns += row.homeRuns;
     battingK += row.strikeouts;
+    doubles += row.doubles;
+    triples += row.triples;
   });
   pitching.forEach((row) => {
     if (row.games <= 0) return;
@@ -481,6 +554,15 @@ export const leaguePropBaselines = (
     runs: perGame(runs, battingGames, 0.42),
     rbi: perGame(rbi, battingGames, 0.4),
     homeRuns: perGame(homeRuns, battingGames, 0.07),
+    /*
+     * Fallbacks for an empty league, and they are ROUNDED UP from a real league rate
+     * rather than invented: a double is rarer than a home run in this engine and a
+     * triple rarer still, so the cold-start prior sits just under the home run
+     * figure rather than at zero. A zero prior would make every double price
+     * identically in April, which is the exact failure the prior is there to avoid.
+     */
+    doubles: perGame(doubles, battingGames, 0.15),
+    triples: perGame(triples, battingGames, 0.02),
     walks: perGame(walks, battingGames, 0.32),
     battingStrikeouts: perGame(battingK, battingGames, 0.66),
     pitcherStrikeouts: perGame(pitcherK, pitcherAppearances, 1.35),
@@ -539,6 +621,8 @@ export const playerPropRate = (
     : stat === 'homeRuns' ? row.homeRuns
     : stat === 'walks' ? row.walks
     : stat === 'battingStrikeouts' ? row.strikeouts
+    : stat === 'doubles' ? row.doubles
+    : stat === 'triples' ? row.triples
     : 0;
   return { seasonTotal: total, gamesPlayed: row.gamesPlayed };
 };
@@ -683,6 +767,17 @@ export const PROP_LINE_RANGE: Record<
   battingStrikeouts: { offset: -0.3, step: 0.5, span: 1.0, min: 0.5, max: 3.5 },
   pitcherStrikeouts: { offset: -1.5, step: 0.5, span: 2.0, min: 1.5, max: 9.5 },
   hitsAllowed: { offset: -1.5, step: 0.5, span: 2.0, min: 0.5, max: 8.5 },
+  /*
+   * PLACEHOLDER RANGES for the first batch of new lines, not fitted ones.
+   *
+   * Shaped like the home-run ladder because a double and a triple are the same kind
+   * of quantity: low-count, zero-heavy, and mostly 0 or 1 in a game. The span is
+   * narrow on purpose -- offering a 3.5 triple line on a player whose mean is 0.1
+   * would be pricing a number that is almost always zero, and the fitter is what
+   * decides whether these are the right shape.
+   */
+  doubles: { offset: -0.2, step: 0.5, span: 0.5, min: 0.5, max: 2.5 },
+  triples: { offset: -0.2, step: 0.5, span: 0.5, min: 0.5, max: 1.5 },
 };
 
 /* ------------------------------------------------------------------ *
