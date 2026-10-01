@@ -1,6 +1,6 @@
 import type { Game, Team } from '../types';
 import type { MediaId } from '../data/media';
-import { formatAmerican } from './markets';
+import { WORLD_SERIES_MARKET_KEY, formatAmerican } from './markets';
 import { propActualStat, type PropStatKey } from './playerProps';
 
 /**
@@ -25,7 +25,7 @@ export const STARTING_BALANCE = 1000;
 export const MIN_STAKE = 5;
 export const MAX_STAKE = 250;
 
-export type BetKind = 'moneyline' | 'total' | 'first5' | 'prop' | 'division' | 'league' | 'award';
+export type BetKind = 'moneyline' | 'total' | 'first5' | 'prop' | 'division' | 'league' | 'world_series' | 'award';
 export type BetStatus = 'open' | 'won' | 'lost' | 'void';
 export type Selection = 'away' | 'home' | 'over' | 'under' | string;
 
@@ -109,6 +109,16 @@ export interface SettlementContext {
     seasonYear: number;
     divisions: Map<string, string>;
     leagues: Map<string, string>;
+    /**
+     * The title winner's team id, or null.
+     *
+     * `SeasonHistoryEntry.champion` already carries this as a
+     * `SeasonHistoryTeamRecord`, so it is read rather than newly archived. Null is
+     * a real state -- a league that finished without a champion -- and it settles as
+     * VOID rather than as a loss, because "no champion" cannot decide the bet. It is
+     * not the same as a season that has not finished, which is PENDING.
+     */
+    champion: string | null;
   } | null;
   /** Final award winners, keyed by award name. */
   awardWinners: Map<string, string> | null;
@@ -226,6 +236,23 @@ const resultFor = (bet: PlacedBet, context: SettlementContext): BetVerdict => {
     const winner = context.seasonWinners.leagues.get(bet.marketKey);
     if (!winner) return { status: 'void' };
     return { status: 'decided', won: winner === bet.selection };
+  }
+  if (bet.kind === 'world_series') {
+    /*
+     * A single champion, and a `marketKey` that is checked but not used to look
+     * anything up.
+     *
+     * Every other futures kind is a field market keyed by division, league or award
+     * name, so `marketKey` selects the winner from a map. The title is the one market
+     * with a single outcome, so there is nothing to select -- but the key is still
+     * checked, because a bet carrying some other kind's key should be refused rather
+     * than quietly resolved as if it were a title bet.
+     */
+    if (bet.marketKey !== WORLD_SERIES_MARKET_KEY) return { status: 'void' };
+    const champion = context.seasonWinners.champion;
+    // No champion is undetermined, not lost. See SettlementContext for why.
+    if (!champion) return { status: 'void' };
+    return { status: 'decided', won: champion === bet.selection };
   }
   if (bet.kind === 'award') {
     const winner = context.awardWinners?.get(bet.marketKey);

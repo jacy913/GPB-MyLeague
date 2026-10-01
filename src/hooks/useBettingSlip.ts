@@ -144,6 +144,10 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
             seasonYear: latest.seasonYear,
             divisions: new Map(latest.divisionWinners.map((w) => [`${w.league} ${w.division}`, w.teamId])),
             leagues: new Map(latest.divisionWinners.map((w) => [w.league, w.teamId])),
+            // Already archived on the history entry, so this is read rather than
+            // derived. Null when the season produced no champion, which settles the
+            // title bets as void -- undetermined, not lost.
+            champion: latest.champion?.teamId ?? null,
           }
           : null,
         awardWinners: latest

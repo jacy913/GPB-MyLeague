@@ -1,4 +1,5 @@
 import { MEDIA_PROFILES, type MediaId } from '../data/media';
+import { liveOutcomeCount } from './futuresRisk';
 
 /**
  * Market framework.
@@ -126,13 +127,33 @@ export interface MarketOutcome {
   disagreement: number;
   /** The forecaster furthest from the middle of the pack on this outcome. */
   outlier: MediaId;
+  /**
+   * True when the SCHEDULE has decided this outcome cannot happen.
+   *
+   * Undefined when the caller had no standings to decide it from, which is different
+   * from false: unknown is not the same as not-eliminated, and a UI that rendered
+   * undefined as false would assert a club is in contention when nobody checked.
+   */
+  eliminated?: boolean;
 }
 
 export type MarketKind =
   | 'moneyline'
   | 'division'
   | 'league'
+  | 'world_series'
   | 'award';
+
+/**
+ * The one constant market key for the title.
+ *
+ * It lives here rather than in `wallet.ts` because `wallet` already imports this
+ * module, so a key exported from there and consumed here would be a circular
+ * import -- and the cycle would resolve to `undefined` at module-init time in
+ * whichever direction happened to be evaluated first. A market key is a market
+ * concern anyway.
+ */
+export const WORLD_SERIES_MARKET_KEY = 'world_series:champion';
 
 export interface FieldMarket {
   shape: 'field';
@@ -141,6 +162,15 @@ export interface FieldMarket {
   title: string;
   subtitle?: string;
   outcomes: MarketOutcome[];
+  /**
+   * How many outcomes are still live in this field.
+   *
+   * Attached to the market rather than computed in the component because it is a
+   * property OF THE MARKET, and a component recomputing it would be a second place
+   * for the live floor to drift. See `LIVE_OUTCOME_FLOOR` for why 0.001 is the
+   * threshold.
+   */
+  liveOutcomes: number;
 }
 
 /**
@@ -174,7 +204,24 @@ export const buildFieldMarket = (input: {
     label: string;
     sublabel?: string;
     probability: Record<MediaId, number>;
+    /**
+     * True where the SCHEDULE has decided this outcome cannot happen, as opposed to
+     * the price being small. Distinct on purpose: an eliminated club still has a
+     * probability and a price, and those are the forecasters' opinion rather than a
+     * fact about the schedule.
+     */
+    eliminated?: boolean;
   }>;
+  /**
+   * Live-field count that overrides the probability-derived one.
+   *
+   * The override exists because the two mean different things and only one of them
+   * is true. A probability floor measures how confident the model is; a contention
+   * count measures how many clubs can still win. For a 32-club title race the
+   * forecasters' near-uniform scores make the first a constant, so the second is
+   * what a bettor actually needs.
+   */
+  liveOutcomesOverride?: number;
 }): FieldMarket => {
   const outcomes = input.entries.map((entry) => {
     const values = MEDIA_PROFILES.map((profile) => clampProbability(entry.probability[profile.id]));
@@ -200,6 +247,11 @@ export const buildFieldMarket = (input: {
       houseOdds: probabilityToAmerican(houseProbability),
       disagreement: Math.max(...values) - Math.min(...values),
       outlier,
+      // Carried through only when the caller knows it. Left undefined rather than
+      // defaulting to a probability test, because "the schedule has eliminated this
+      // club" and "the model rates this club low" are different claims and the UI
+      // must not make the second one in the first one's voice.
+      eliminated: entry.eliminated,
     };
   });
 
@@ -218,6 +270,7 @@ export const buildFieldMarket = (input: {
     title: input.title,
     subtitle: input.subtitle,
     outcomes: ordered,
+    liveOutcomes: input.liveOutcomesOverride ?? liveOutcomeCount(ordered),
   };
 };
 
@@ -360,5 +413,6 @@ export const MARKET_TITLES: Record<MarketKind, string> = {
   moneyline: 'Moneyline',
   division: 'Division Winner',
   league: 'League Winner',
+  world_series: 'Championship Winner',
   award: 'Award',
 };

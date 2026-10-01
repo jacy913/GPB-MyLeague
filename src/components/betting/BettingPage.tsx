@@ -7,9 +7,11 @@ import { MEDIA_BY_ID } from '../../data/media';
 import { buildMediaReads, type MediaReadInput } from '../../lib/mediaReads';
 import { buildGameLine, getNextSlateDate, type GameLine } from '../../lib/mediaOdds';
 import {
-  buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildAwardMarket,
+  buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildWorldSeriesMarkets, buildAwardMarket,
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
+import { remainingRegularSeasonGames } from '../../lib/futuresRisk';
+import { isPlayoffGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
 import {
   getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
@@ -207,10 +209,28 @@ const BettingPage: React.FC<BettingPageProps> = ({
    */
   const scoreBy = useMemo(() => scores, [scores]);
 
+  /*
+   * Games left per club, and who is still in the title.
+   *
+   * THIS IS WHAT MAKES THE RISK CURVE REAL. The forecasters' scores are
+   * roster-driven and barely move during a season -- measured, one forecaster's
+   * spread across the field actually shrank over the year -- so the probabilities on
+   * a 32-club title board are near-uniform and never eliminate anybody. Elimination
+   * is arithmetic instead: a club that can no longer win its division cannot win a
+   * title that is decided between two league champions.
+   */
+  const gamesRemainingByTeamId = useMemo(
+    () => remainingRegularSeasonGames(games, isPlayoffGame),
+    [games],
+  );
+
   const futures = useMemo<FieldMarket[]>(() => [
+    // The title FIRST, because it is the one season-long bet a manager actually
+    // wants and it was missing entirely. Everything below it is a narrower race.
+    ...buildWorldSeriesMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId }),
     ...buildLeagueMarkets({ teams: input.teams, scoreBy }),
     ...buildDivisionMarkets({ teams: input.teams, scoreBy }),
-  ], [input.teams, scoreBy]);
+  ], [input.teams, scoreBy, gamesRemainingByTeamId]);
 
   const awards = useMemo<FieldMarket[]>(() => {
     const awardInputs = {

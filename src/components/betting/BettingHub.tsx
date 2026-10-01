@@ -3,7 +3,8 @@ import { Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-re
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
 import type { FieldMarket, LineMarket } from '../../lib/markets';
-import { formatAmerican } from '../../lib/markets';
+import { formatAmerican, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
+import { futuresRiskRead } from '../../lib/futuresRisk';
 import type { GameLine } from '../../lib/mediaOdds';
 import { propMarketTitle, propSelectionLabel } from '../../lib/mediaProps';
 import { MAX_PROPS_PER_OUTLET } from '../../lib/mediaProps';
@@ -650,9 +651,19 @@ const FieldMarketCard: React.FC<{
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ market, balance, onPlace }) => {
   const kind: BetKind = market.kind === 'award' ? 'award' : market.kind;
-  // The market key is "<kind>:<group>"; settlement looks the group up by name, so
-  // only the group half travels with the bet.
-  const groupKey = market.key.slice(market.key.indexOf(':') + 1);
+  /*
+   * The key that travels with the bet.
+   *
+   * Every OTHER futures kind has a key of "<kind>:<group>", and settlement looks the
+   * group up by name, so only the group half travels. The title is the exception and
+   * it has to be handled rather than routed through the same slice: its key is
+   * already the constant `WORLD_SERIES_MARKET_KEY`, and settlement compares against
+   * that whole string. Slicing it would post a bet keyed "champion" that then fails
+   * its own settlement check and refunds every championship bet the manager takes.
+   */
+  const groupKey = market.kind === 'world_series'
+    ? WORLD_SERIES_MARKET_KEY
+    : market.key.slice(market.key.indexOf(':') + 1);
 
   return (
     <Panel className="overflow-hidden">
@@ -663,6 +674,18 @@ const FieldMarketCard: React.FC<{
         </div>
         <span className="t-caption text-[var(--color-ink-faint)]">
           {market.subtitle} · {market.outcomes.length} clubs
+          {/*
+            THE SEASON ADVANCING, IN THREE WORDS.
+
+            "31 REMAINING" on an April board and "4 REMAINING" in September are the
+            same market with completely different meaning, and a probability of
+            0.003 does not convey that. Counted on the market rather than recomputed
+            here so the live floor lives in exactly one place -- a component
+            recomputing it would be a second definition to drift.
+          */}
+          {market.liveOutcomes < market.outcomes.length && (
+            <> · {market.liveOutcomes} REMAINING</>
+          )}
         </span>
       </div>
       <div className="grid gap-1 p-3">
@@ -692,6 +715,42 @@ const FieldMarketCard: React.FC<{
                       away from the other two
                     </p>
                   )}
+                  {/*
+                    THE RISK TIER, and deliberately not the word VALUE.
+
+                    Every bet in this layer is priced from a calibrated model plus a
+                    margin, so every one of them is expected-value negative. A label
+                    reading VALUE would tell a manager a 3% shot is a good bet and
+                    make the whole calibration layer a lie to him. The tier names the
+                    VARIANCE, which is the thing the bettor is actually choosing when
+                    he takes a hail mary.
+
+                    An eliminated club is shown as such and its Back button is
+                    disabled below, because a title that can no longer be won is not a
+                    bet at any price.
+                  */}
+                  {(() => {
+                    /*
+                     * Elimination is a SCHEDULE fact, not a small price.
+                     *
+                     * The probability floor cannot supply it: the title board's
+                     * forecaster scores are roster-driven and barely move during a
+                     * season, so no club ever drops below 0.001 and the floor reports
+                     * 32 remaining all year. `outcome.eliminated` comes from whether
+                     * the club can still win its division, which is arithmetic, and it
+                     * is `undefined` rather than `false` when nobody supplied
+                     * standings -- so "unknown" never renders as "in contention".
+                     */
+                    if (outcome.eliminated === true) {
+                      return <p className="t-caption text-[var(--color-ink-faint)]">ELIMINATED</p>;
+                    }
+                    const read = futuresRiskRead(market.outcomes, outcome.consensusProbability);
+                    return (
+                      <p className="t-caption text-[var(--color-ink-faint)]">
+                        {read.label} · {market.liveOutcomes} REMAINING
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -718,7 +777,7 @@ const FieldMarketCard: React.FC<{
                   <RetroButton
                     variant="primary"
                     size="sm"
-                    disabled={balance < MIN_STAKE}
+                    disabled={balance < MIN_STAKE || outcome.eliminated === true}
                     onClick={() => onPlace({
                       kind,
                       marketKey: groupKey,

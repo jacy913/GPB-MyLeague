@@ -2,9 +2,10 @@ import type { Game, Team } from '../types';
 import type { AwardEntry } from './awardRace';
 import { MEDIA_PROFILES, type MediaId } from '../data/media';
 import {
-  buildFieldMarket, buildLineMarket,
+  WORLD_SERIES_MARKET_KEY, buildFieldMarket, buildLineMarket,
   type FieldMarket, type LineMarket,
 } from './markets';
+import { titleContenders } from './futuresRisk';
 
 /**
  * Market builders.
@@ -77,6 +78,17 @@ export interface FuturesInput {
    * construction. mediaReads says as much about itself.
    */
   scoreBy: Record<MediaId, Map<string, number>>;
+  /**
+   * Regular-season games each club has left, for title-contention purposes.
+   *
+   * OPTIONAL, and the board behaves differently without it. With no standings the
+   * live field falls back to counting outcomes above a probability floor, which
+   * measures 32 every day of the season and is therefore not worth displaying as a
+   * curve. With standings the field is arithmetic.
+   */
+  gamesRemainingByTeamId?: ReadonlyMap<string, number>;
+  /** Clubs whose league championship is already decided against them. */
+  eliminatedFromLeague?: ReadonlySet<string>;
 }
 
 /**
@@ -208,6 +220,101 @@ export const buildDivisionMarkets = (input: FuturesInput): FieldMarket[] =>
 
 export const buildLeagueMarkets = (input: FuturesInput): FieldMarket[] =>
   groupMarkets(input, 'league', (team) => team.league, (league) => `${league} League`);
+
+/**
+ * The championship futures board: who wins the title, out of every club in the league.
+ *
+ * This is the market the original request was actually about -- "a hail mary bet of
+ * who will win the world series, high risk high reward at the start of the season
+ * and it gets safer as the season draws to a closer" -- and it was the flagship
+ * season-long bet that did not exist. `groupMarkets` could not build it, because it
+ * partitions clubs into groups and a title is precisely the ONE market that spans
+ * every group: a Prestige club and a Platinum club compete for the same thing.
+ *
+ * WHICH IS EXACTLY WHY THE RISK CURVE IS FREE HERE. A thirty-two-way field in April
+ * compresses to four by October with no code at all, because the soft-max reads a
+ * shrinking set of live clubs. The tiers in futuresRisk.ts surface that; they do not
+ * create it.
+ *
+ * THE FIELD IS NOT THE LEAGUE FIELD.
+ *
+ * A league-title market is a race between the eight or so clubs in one league, and
+ * its temperature is already fitted for that. This is a race between every club in
+ * BOTH leagues, so the same fitted temperature would post a near-certain champion
+ * in April and put nine teams under one per cent. `temperatureFor` divides by
+ * sqrt(fieldSize / 4) precisely to hold the top-two ratio steady as a field grows, so
+ * passing the true field size is the whole correction and it is the same one the
+ * existing markets already rely on.
+ *
+ * A title decided by a playoff series is genuinely harder to forecast than a
+ * division won on the season record, and this soft-max does not model a series. It
+ * is a season-long strength read, and it is priced as one. That is a real
+ * simplification rather than a hidden one, and it is why a champion at 40 per cent
+ * in April is a statement about strength rather than a claim about the series.
+ */
+export const buildWorldSeriesMarkets = (input: FuturesInput): FieldMarket[] => {
+  if (input.teams.length === 0) return [];
+
+  /*
+   * WHO IS STILL IN IT, from division position rather than from a price.
+   *
+   * The soft-max over all 32 clubs is nearly uniform, because the forecasters'
+   * scores are roster-driven and barely move once a season starts -- measured, one
+   * forecaster's spread across the field actually shrank over the year. A
+   * near-uniform 32-way distribution has no elimination in it, so the risk curve the
+   * request asks for does not appear on its own.
+   *
+   * What DOES eliminate is arithmetic: a club that can no longer win its division
+   * cannot win the title, because the title is decided between two league
+   * champions. So the live field is computed from the schedule, and this is where
+   * "31 REMAINING" in April and "2 REMAINING" in October come from.
+   *
+   * Prices are NOT touched. An eliminated club keeps its probability and its price,
+   * because the probability is what the forecasters believe and the elimination is
+   * what the schedule permits. Overwriting one with the other would be inventing a
+   * forecast to match a fact, which is the thing this layer is built not to do.
+   */
+  const contenders = input.gamesRemainingByTeamId
+    ? titleContenders({
+        teams: input.teams,
+        gamesRemainingByTeamId: input.gamesRemainingByTeamId,
+        eliminatedFromLeague: input.eliminatedFromLeague,
+      })
+    : null;
+  const liveOutcomes = contenders ? contenders.size : undefined;
+
+  const probabilityBy = new Map<string, Record<MediaId, number>>();
+  MEDIA_PROFILES.forEach((profile) => {
+    const scores = input.teams.map((team) => input.scoreBy[profile.id].get(team.id) ?? 0);
+    const probabilities = softMaxProbabilities(
+      scores, temperatureFor(FUTURES_TEMPERATURE[profile.id], input.teams.length),
+    );
+    input.teams.forEach((team, position) => {
+      const row = probabilityBy.get(team.id) ?? {} as Record<MediaId, number>;
+      row[profile.id] = probabilities[position] ?? 0;
+      probabilityBy.set(team.id, row);
+    });
+  });
+
+  return [
+    buildFieldMarket({
+      kind: 'world_series',
+      key: WORLD_SERIES_MARKET_KEY,
+      title: 'Championship Winner',
+      subtitle: contenders ? `${contenders.size} of ${input.teams.length} in it` : `${input.teams.length} clubs`,
+      // Overrides the probability-derived count, because the probability-derived one
+      // is 32 all season and therefore says nothing. See the note above.
+      liveOutcomesOverride: liveOutcomes,
+      entries: input.teams.map((team) => ({
+        key: team.id,
+        label: team.city,
+        sublabel: team.name,
+        probability: probabilityBy.get(team.id) ?? ({} as Record<MediaId, number>),
+        eliminated: contenders ? !contenders.has(team.id) : undefined,
+      })),
+    }),
+  ];
+};
 
 /* ------------------------------------------------------------------ *
  * Awards
