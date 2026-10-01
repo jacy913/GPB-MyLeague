@@ -27,6 +27,7 @@ export { SectionTitle, type SectionTitleProps } from './SectionTitle';
  * path: there is no public/ directory, the assets are bundled through the glob.
  * The chrome plate travels with the resolver or not at all.
  */
+export { HeadlinerPortrait, type HeadlinerPortraitProps } from './HeadlinerPortrait';
 export { TeamLogo, type TeamLogoProps } from './TeamLogo';
 export { OddsBar, type OddsBarProps } from './OddsBar';
 export { MatchupStrip, type MatchupStripProps } from './MatchupStrip';
