@@ -206,6 +206,7 @@ const groupMarkets = (
         subtitle: `${members.length} clubs`,
         entries: members.map((team) => ({
           key: team.id,
+          teamId: team.id,
           label: team.city,
           sublabel: team.name,
           probability: probabilityBy.get(team.id) ?? ({} as Record<MediaId, number>),
@@ -307,6 +308,7 @@ export const buildWorldSeriesMarkets = (input: FuturesInput): FieldMarket[] => {
       liveOutcomesOverride: liveOutcomes,
       entries: input.teams.map((team) => ({
         key: team.id,
+        teamId: team.id,
         label: team.city,
         sublabel: team.name,
         probability: probabilityBy.get(team.id) ?? ({} as Record<MediaId, number>),
@@ -376,6 +378,7 @@ export const buildAwardMarket = (
     title,
     entries: entries.map((entry) => ({
       key: entry.playerId,
+      teamId: entry.team?.id,
       label: entry.name,
       sublabel: entry.team ? `${entry.team.city} ${entry.team.name}` : 'Free agent',
       probability: probabilityBy.get(entry.playerId) ?? ({} as Record<MediaId, number>),

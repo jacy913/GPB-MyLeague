@@ -23,13 +23,21 @@ import { HEADLINER_BY_ID, type HeadlinerId } from '../../logic/headliners';
 
 export interface HeadlinerPortraitProps {
   id: HeadlinerId;
-  /** `sm` 28px, `md` 32px, `lg` 40px. */
-  size?: 'sm' | 'md' | 'lg';
+  /** `sm` 28px, `md` 32px, `lg` 40px, `xl` 72px. */
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }
 
 /**
- * 28 / 32 / 40 px, so 96px of source is 2x-3x headroom at every size.
+ * 28 / 32 / 40 / 72 px against a 95x95 source, so 3.4x down to 1.3x headroom.
+ *
+ * `xl` exists because the byline portrait on the front page was asked to match the
+ * size of the crests in the headline of the day above it, and 40px is not that. It
+ * stops at 72 rather than 96 for a measured reason: the shipped art is 95x95, so a
+ * 96px render is 1:1 and goes soft on any 2x display, while 72px keeps 1.3x of real
+ * headroom. Going past this needs the portraits re-exported at 192px or larger --
+ * the originals were 1024-2048px, so the source art supports it and only the shipped
+ * WebP does not.
  *
  * Named rather than accepting a raw Tailwind string, for the same reason `Meter` and
  * `StatValue` name their variants: an opaque class string here would make the plate
@@ -39,6 +47,7 @@ const SIZE_PX: Record<NonNullable<HeadlinerPortraitProps['size']>, number> = {
   sm: 28,
   md: 32,
   lg: 40,
+  xl: 72,
 };
 
 const PORTRAIT_MODULES = import.meta.glob('../../assets/headliners/*.webp', {

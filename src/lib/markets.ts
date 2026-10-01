@@ -115,6 +115,18 @@ export const clampLogit = logistic;
 export interface MarketOutcome {
   /** Stable identifier, used for settlement. A team id or a player id. */
   key: string;
+  /**
+   * The club this outcome belongs to, when there is one.
+   *
+   * Needed because an award market is keyed by PLAYER, so key cannot be used to find
+   * a crest. Carried rather than parsed out of sublabel, which for awards is the
+   * string `city name` and would mean matching text against the team list in a
+   * component -- a lookup that silently yields no logo the day a club is renamed.
+   *
+   * Undefined for a genuinely club-less outcome, such as a free agent. The crest is
+   * then omitted rather than replaced with a broken image; label still names them.
+   */
+  teamId?: string;
   label: string;
   sublabel?: string;
   /** Each forecaster's fair probability that this outcome wins. */

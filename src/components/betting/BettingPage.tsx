@@ -295,6 +295,7 @@ const BettingPage: React.FC<BettingPageProps> = ({
     calendar={calendar}
         awards={awards}
         slateDate={slateDate}
+        teams={input.teams}
         bets={wallet.bets}
         balance={wallet.balance}
         onPlace={select}

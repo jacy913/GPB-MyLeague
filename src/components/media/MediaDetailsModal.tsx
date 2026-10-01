@@ -1,68 +1,54 @@
 import React from 'react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_BY_ID } from '../../data/media';
-import type { GameLine } from '../../lib/mediaOdds';
-import { formatAmerican } from '../../lib/mediaOdds';
 import { MEDIA_IMAGES, MEDIA_MARKS } from './mediaImages';
-import { MediaPropBoard } from './MediaPropCards';
 import { MediaMethodPanel, MediaVoicePanel } from './MediaCard';
-import type { PropMarket } from '../../lib/playerProps';
-import { Modal, TeamLogo } from '../ui';
+import { Modal } from '../ui';
 
 /**
- * The details popup.
+ * The details popup: WHO YOU ARE TRUSTING, AND NOTHING ELSE.
  *
- * Opens from the "details" control on a forecaster's card and carries that
- * outlet's logo, its published moneyline lines, and its five props, laid out the
- * way a betting site lays out a market: game headers, then a grid of cards.
+ * This used to be the outlet's whole night -- logo, published moneylines, five props,
+ * method, voice -- and it duplicated what the page already shows directly beneath the
+ * card you clicked. Opening it told you less than the screen you were already on.
  *
- * The logo leads because the popup is reached from a card that already names the
- * outlet. Its presence is not redundancy -- it is the thing that makes the popup
- * usable once it is on top of everything else. A panel of nine prices with no
- * attribution is a list of numbers; with the masthead it is a claim, and the
- * manager can see at a glance whose opinion they are reading before they act on
- * it. The three outlets are deliberately distinguishable by logo and colour
- * rather than by name, so recognition does not require reading.
+ * So it now carries one thing: the character. The photograph, the name, the outlet and
+ * desk, the conviction figure, the thesis in their own framing, the actual weights
+ * behind the number, the stated weakness, and the voice samples.
  *
- * Moneylines and props share this one popup rather than getting one each. A
- * manager choosing where to put money on a night is choosing between a game and
- * its players, and splitting those across two dialogs would make them dismiss one
- * to consult the other and remember the price. The moneylines stay exactly as
- * they are published on the slate -- same prices, same disagreement figure --
- * so nothing here restates a number the slate already shows in a different form.
+ * That is the right division because the two things it dropped were reachable without
+ * a click, and the thing it kept was not. An outlet's published prices are on the slate
+ * and on the props panel in the page body. Nobody has to open a dialog to find them.
+ * But there was no other route to the method, and the method is the whole basis for
+ * treating this forecaster as worth a wager -- a number you cannot audit is a number
+ * you cannot act on. So the dialog kept the part that was otherwise unreachable and
+ * dropped the part that was already in front of you.
+ *
+ * The masthead still leads, because the popup is reached from a card that already
+ * names the outlet and this has to be usable once it is on top of everything else. The
+ * three outlets are distinguishable by logo and colour rather than by name, so
+ * recognition does not require reading.
  */
 export const MediaDetailsModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   mediaId: MediaId;
-  lines: GameLine[];
-  props: PropMarket[];
-  slateDate: string | null;
-  matchupLabel: (gameId: string) => string;
-  teamCity: (teamId: string) => string;
-  onOpenProp: (propId: string, mediaId: MediaId) => void;
+  /** Sends the manager to the betting page, where every market is actually wagered. */
   onGoToBetting: () => void;
-}> = ({
-  isOpen, onClose, mediaId, lines, props, slateDate, matchupLabel, teamCity, onOpenProp, onGoToBetting,
-}) => {
+}> = ({ isOpen, onClose, mediaId, onGoToBetting }) => {
   const profile = MEDIA_BY_ID[mediaId];
   const image = MEDIA_IMAGES[mediaId];
-
-  const safeCount = props.filter((market) => market.temperament[mediaId] === 'safe').length;
-  const hotCount = props.length - safeCount;
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       accent={profile.accent}
-      widthClass="max-w-5xl"
-      title={profile.outlet}
+      widthClass="max-w-4xl"
+      title={profile.name}
       barRight={(
         <span className="t-caption text-[var(--color-ink-faint)]">
-          {props.length > 0
-            ? `${props.length} props · ${safeCount} safe · ${hotCount} hot`
-            : lines.length > 0 ? `${lines.length} lines` : 'nothing published'}
+          {profile.outlet} · {profile.role}
         </span>
       )}
     >
@@ -105,61 +91,22 @@ export const MediaDetailsModal: React.FC<{
           </button>
         </div>
 
-        {/* The moneylines, unchanged from the slate. Same prices, same
-            disagreement figure, no re-derivation -- a second presentation of the
-            same number that disagreed with the first would be worse than none. */}
-        <section>
-          <h3 className="t-label mb-2 text-[var(--color-ink-faint)]">
-            Moneyline
-            {slateDate ? <span className="ml-2 normal-case">{slateDate}</span> : null}
-          </h3>
-          {lines.length === 0 ? (
-            <p className="t-body text-[var(--color-ink-dim)]">No games on the current slate.</p>
-          ) : (
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              {lines.map((line) => (
-                <div
-                  key={line.gameId}
-                  className="flex items-center gap-2 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2.5 py-1.5"
-                >
-                  <TeamLogo team={line.awayTeam} sizeClass="h-6 w-6" />
-                  <span className="truncate t-stat-sm">{line.awayTeam.city}</span>
-                  <span className="t-caption text-[var(--color-ink-faint)]">at</span>
-                  <TeamLogo team={line.homeTeam} sizeClass="h-6 w-6" />
-                  <span className="truncate t-stat-sm">{line.homeTeam.city}</span>
-                  <span className="ml-auto flex shrink-0 items-center gap-2">
-                    <span
-                      className="t-stat-sm tabular-nums"
-                      style={{ color: `var(--color-media-${profile.accent}-hi)` }}
-                    >
-                      {formatAmerican(line.odds[mediaId])}
-                    </span>
-                    <span className="t-caption tabular-nums text-[var(--color-ink-faint)]">
-                      {Math.round(line.disagreement * 100)}pt
-                    </span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        {/*
+          THE THESIS, which used to live in a collapsible panel on the page itself.
 
+          It reads as prose and it is deliberately not truncated. The earlier version
+          clamped it to two lines and appended an ellipsis, which produced a sentence
+          ending mid-clause with no way to see the rest -- the panel could be expanded,
+          but only if you happened to notice it was clamped at all. Prose that carries
+          the argument has to arrive whole or not at all.
+        */}
         <section>
-          <h3 className="t-label mb-2 text-[var(--color-ink-faint)]">Props</h3>
-          <MediaPropBoard
-            markets={props}
-            mediaId={mediaId}
-            slateDate={slateDate}
-            matchupLabel={matchupLabel}
-            teamCity={teamCity}
-            onOpen={onOpenProp}
-          />
+          <h3 className="t-label mb-2 text-[var(--color-ink-faint)]">How they see it</h3>
+          <p className="t-body text-[var(--color-ink-dim)]">{profile.thesis}</p>
         </section>
 
         {/* The method, because the card's whole argument is that a forecaster you
-            cannot audit is not usable. It lives at the foot of the popup rather
-            than in it: it is the reason to trust the numbers, not part of the
-            numbers. */}
+            cannot audit is not usable. */}
         <section className="border-t border-[var(--color-chrome-lo)] pt-4">
           <MediaMethodPanel profile={profile} />
         </section>

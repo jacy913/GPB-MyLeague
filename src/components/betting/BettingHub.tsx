@@ -15,6 +15,7 @@ import { MAX_STAKE, MIN_STAKE, STARTING_BALANCE, settleReturn } from '../../lib/
 import type { PropFocus } from '../../hooks/useBettingSlip';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
 import { Panel, RetroButton, SegmentedControl, TeamLogo } from '../ui';
+import type { Team } from '../../types';
 
 type BettingView = 'slate' | 'props' | 'futures' | 'awards';
 
@@ -29,6 +30,14 @@ interface BettingSlateProps {
   focusedProp: PropFocus | null;
   futures: FieldMarket[];
   awards: FieldMarket[];
+  /**
+   * Every club, so a field row can draw the crest.
+   *
+   * `MarketOutcome.key` is already the team id -- settlement looks the club up by it --
+   * so this map is the only new thing a crest needs, and it removes any second way of
+   * writing down which club a row is about.
+   */
+  teams: Team[];
   /**
    * The season's projected calendar, so every market can say when it resolves.
    *
@@ -69,7 +78,7 @@ interface BettingSlateProps {
  * version of this that is a decision rather than a coin toss.
  */
 export const BettingHub: React.FC<BettingSlateProps> = ({
-  view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, calendar, slateDate, bets, onPlace, balance,
+  view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, teams, calendar, slateDate, bets, onPlace, balance,
 }) => {
   const propCount = MEDIA_PROFILES.reduce((sum, profile) => sum + (propBoards.get(profile.id)?.length ?? 0), 0);
 
@@ -128,8 +137,8 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
           slateDate={slateDate}
         />
       )}
-      {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} calendar={calendar} />}
-      {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} calendar={calendar} />}
+      {view === 'futures' && <FuturesView markets={futures} onPlace={onPlace} balance={balance} calendar={calendar} teams={teams} />}
+      {view === 'awards' && <AwardsView markets={awards} onPlace={onPlace} balance={balance} calendar={calendar} teams={teams} />}
     </section>
   );
 };
@@ -191,6 +200,20 @@ const GameBetCard: React.FC<{
       variant="default"
       size="sm"
       disabled={balance < MIN_STAKE}
+      /*
+       * THE CREST IS THE LABEL now. The city beside it was the same four letters the
+       * mark already stands for, repeated twice on the card -- once in the header and
+       * once on each of the two buttons -- for a slate of fifteen games that meant
+       * thirty words of city names in a fixed right-hand column.
+       *
+       * The name does not disappear, it stops being painted: it is the button's
+       * accessible name and its tooltip, and it is what the bet records as
+       * `selectionLabel`, so the slip, the wallet and the settlement log all still say
+       * "Baltimore" rather than an empty string. What is gone is the duplicate, not
+       * the information.
+       */
+      aria-label={`Back ${team.city} ${formatAmerican(price)}`}
+      title={`${team.city} ${team.name}`}
       onClick={() => onPlace({
         kind: 'moneyline',
         marketKey: game.gameId,
@@ -201,21 +224,31 @@ const GameBetCard: React.FC<{
         backedMedia: null,
       })}
     >
-      <TeamLogo team={team} sizeClass="h-5 w-5" />
-      {team.city} {formatAmerican(price)}
+      <TeamLogo team={team} sizeClass="h-6 w-6" />
+      <span className="t-stat tabular-nums">{formatAmerican(price)}</span>
     </RetroButton>
   );
 
   return (
     <Panel className="overflow-hidden">
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <TeamLogo team={game.awayTeam} sizeClass="h-6 w-6" />
-          <h2 className="t-h3 truncate">
-            {game.awayTeam.city} <span className="text-[var(--color-ink-dim)]">at</span> {game.homeTeam.city}
-          </h2>
-          <TeamLogo team={game.homeTeam} sizeClass="h-6 w-6" />
-        </div>
+        {/*
+          TWO CRESTS AND AN "AT", with no city names between them. The header used to
+          read "logo, Baltimore at Cleveland, logo", which said the same thing twice
+          and took the full width of the card to say it. The club is named in the
+          button tooltips and in the bet record; here the marks are the heading.
+
+          The accessible name carries the matchup so the header is not three
+          unlabelled images to a screen reader.
+        */}
+        <h2 className="flex min-w-0 items-center gap-2">
+          <TeamLogo team={game.awayTeam} sizeClass="h-7 w-7" />
+          <span className="text-[var(--color-ink-dim)]" aria-hidden="true">at</span>
+          <TeamLogo team={game.homeTeam} sizeClass="h-7 w-7" />
+          <span className="sr-only">
+            {game.awayTeam.city} at {game.homeTeam.city}
+          </span>
+        </h2>
         <span className="t-caption text-[var(--color-ink-faint)]">{game.date}</span>
       </div>
 
@@ -666,8 +699,9 @@ const FieldMarketCard: React.FC<{
   market: FieldMarket;
   balance: number;
   calendar: SeasonCalendar;
+  teamById: Map<string, Team>;
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ market, balance, calendar, onPlace }) => {
+}> = ({ market, balance, calendar, teamById, onPlace }) => {
   const kind: BetKind = market.kind === 'award' ? 'award' : market.kind;
   /*
    * The key that travels with the bet.
@@ -685,27 +719,27 @@ const FieldMarketCard: React.FC<{
 
   return (
     <Panel className="overflow-hidden">
-      <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <div className="flex items-center gap-2">
-          <Trophy className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
-          <h2 className="t-h3">{market.title}</h2>
+      <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Trophy className="h-4 w-4 shrink-0 text-[var(--color-gold)]" aria-hidden="true" />
+          <h2 className="truncate t-h3">{market.title}</h2>
         </div>
         <span className="t-caption text-[var(--color-ink-faint)]">
           {/*
             THE RESOLUTION DATE, on every market.
-            
+
             Item 1 of the betting expansion, and the smallest-looking change in the
             document. It is also the one that answers a question a bettor cannot
             currently ask: a futures bet settles off `seasonComplete && seasonWinners`
             -- one boolean, no date -- so the only honest answer today is "not yet",
             which is not an answer.
-            
+
             The basis differs per market because the DAY differs. A championship bet
             resolves on the last possible game of the World Series, roughly five
             weeks after a division bet, and that difference is exactly what nobody can
             see. Showing one date for all of them would be a lie in the cases that
             matter most.
-            
+
             It is rendered on the header rather than each row because it is a property
             of the MARKET, not of an outcome, and repeating it fifteen times down a
             board would be noise.
@@ -726,57 +760,77 @@ const FieldMarketCard: React.FC<{
             0.003 does not convey that. Counted on the market rather than recomputed
             here so the live floor lives in exactly one place -- a component
             recomputing it would be a second definition to drift.
+
+            It moved HERE from the individual rows during the compaction, and the
+            rows kept only their risk tier. It is the same fact on every row of a
+            market, so sixteen copies of it was sixteen chances to read as sixteen
+            separate claims, and it was the largest single line of type in each cell.
           */}
           {market.liveOutcomes < market.outcomes.length && (
             <> · {market.liveOutcomes} REMAINING</>
           )}
         </span>
       </div>
-      <div className="grid gap-1 p-3">
+
+      {/*
+        TWO COLUMNS OF CLUBS, NOT A STACK OF FULL-WIDTH ROWS.
+
+        This board was the least efficient surface in the app. Every division, every
+        league, every award and the championship were each a full-width panel, and
+        every club inside them a full-width row -- so a division title read "Baltimore
+        at +240" consumed the same horizontal space as a line of prose sixteen words
+        long. On a 1600px screen the manager saw two clubs.
+
+        The crest replaces the name. A club's city and nickname are longer than the
+        mark that already identifies it, they repeat across every market on the page,
+        and the crest is the thing a manager recognises from the standings rather
+        than reads. The name is still in the cell, in the accessible name, and in the
+        bet's `selectionLabel`, so nothing is lost -- it is just no longer painted at
+        a size that competes with the price.
+
+        The cells are deliberately THICKER than the old rows rather than merely
+        narrower: at two columns a cell is roughly 300px, and a 4px crest beside a
+        12px price needs the vertical room to stop the two competing. Shrinking the
+        type to win density would have made the only thing on the page -- the price --
+        the hardest thing to read.
+      */}
+      <div className="grid gap-2 p-3 sm:grid-cols-2">
         {market.outcomes.map((outcome) => {
           const isFavourite = outcome.key === market.outcomes[0]?.key;
           // A row where the three barely differ is not worth a second price. The
           // disagreement threshold is where taking someone's number stops being a
           // bet and starts being a vote.
           const split = outcome.disagreement >= 0.06;
+          const team = outcome.teamId ? teamById.get(outcome.teamId) : undefined;
+
           return (
             <div
               key={outcome.key}
-              className="border-l-[3px] bg-[var(--color-sunken)] px-3 py-2"
+              className="flex flex-col gap-2 border-l-[3px] bg-[var(--color-sunken)] px-3 py-2.5"
               style={{ borderLeftColor: isFavourite ? 'var(--color-gold)' : 'transparent' }}
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                {/*
+                  THE CREST, with the name kept beside it rather than replaced by it.
+
+                  `outcome.teamId` rather than `outcome.key`, because an award market is
+                  keyed by player and a lookup on `key` would silently find no club and
+                  render a blank square on every award row -- a bug that looks exactly
+                  like "this player has no team". The name stays: a crest alone cannot
+                  be searched, selected, or read by a screen reader as a name.
+                */}
+                {team ? (
+                  <TeamLogo team={team} sizeClass="h-9 w-9 shrink-0" />
+                ) : (
+                  <span className="h-9 w-9 shrink-0" aria-hidden="true" />
+                )}
+                <div className="min-w-0 flex-1">
                   <p className={`truncate t-stat ${isFavourite ? 'text-[var(--color-gold-hi)]' : ''}`}>
                     {outcome.label}
-                    {outcome.sublabel && (
-                      <span className="ml-2 t-caption text-[var(--color-ink-dim)]">{outcome.sublabel}</span>
-                    )}
                   </p>
-                  {split && (
-                    <p className="t-caption text-[var(--color-warn)]">
-                      {MEDIA_BY_ID[outcome.outlier].outlet} is {Math.round(outcome.disagreement * 100)} points
-                      away from the other two
-                    </p>
+                  {outcome.sublabel && (
+                    <p className="truncate t-caption text-[var(--color-ink-dim)]">{outcome.sublabel}</p>
                   )}
-                  {/*
-                    THE GAP IS INFORMATION, NOT AN EDGE, and the label says so because
-                    it was measured rather than because it is modest.
-
-                    The expansion plan proposed surfacing a fade-the-outlier row as
-                    "the actual play in this layer". Measured over six seasons of
-                    championship futures it does not pay: fading returned -0.030 a bet
-                    and following returned -0.967, and both being negative is the
-                    signature of paying the house margin on every stake rather than
-                    of a strategy with an edge. So the disagreement is shown as the
-                    interesting fact it is -- these two forecasters really do differ by
-                    this much -- and nothing on this board invites a bettor to act on
-                    it.
-
-                    tools/checkOutlierFade.ts is the measurement. If the forecasters'
-                    slopes are ever refitted, that tool is what decides whether this
-                    line can change.
-                  */}
                   {/*
                     THE RISK TIER, and deliberately not the word VALUE.
 
@@ -807,52 +861,58 @@ const FieldMarketCard: React.FC<{
                       return <p className="t-caption text-[var(--color-ink-faint)]">ELIMINATED</p>;
                     }
                     const read = futuresRiskRead(market.outcomes, outcome.consensusProbability);
-                    return (
-                      <p className="t-caption text-[var(--color-ink-faint)]">
-                        {read.label} · {market.liveOutcomes} REMAINING
-                      </p>
-                    );
+                    return <p className="t-caption text-[var(--color-ink-faint)]">{read.label}</p>;
                   })()}
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    {MEDIA_PROFILES.map((profile) => (
-                      <span key={profile.id} className="flex items-center gap-1">
-                        <img
-                          src={MEDIA_MARKS_SQUARE[profile.id]}
-                          alt=""
-                          aria-hidden="true"
-                          className="h-4 w-4 object-contain"
-                        />
-                        <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
-                          {formatAmerican(outcome.odds[profile.id])}
-                        </span>
+                <span className="t-stat-lg shrink-0 tabular-nums text-[var(--color-gold-hi)]">
+                  {formatAmerican(outcome.houseOdds)}
+                </span>
+              </div>
+
+              {split && (
+                <p className="t-caption text-[var(--color-warn)]">
+                  {MEDIA_BY_ID[outcome.outlier].outlet} is {Math.round(outcome.disagreement * 100)} points
+                  away from the other two
+                </p>
+              )}
+
+              {/*
+                THE GAP IS INFORMATION, NOT AN EDGE, and the label says so because
+                it was measured rather than because it is modest.
+
+                The expansion plan proposed surfacing a fade-the-outlier row as
+                "the actual play in this layer". Measured over six seasons of
+                championship futures it does not pay: fading returned -0.030 a bet
+                and following returned -0.967, and both being negative is the
+                signature of paying the house margin on every stake rather than
+                of a strategy with an edge. So the disagreement is shown as the
+                interesting fact it is -- these two forecasters really do differ by
+                this much -- and nothing on this board invites a bettor to act on
+                it.
+
+                tools/checkOutlierFade.ts is the measurement. If the forecasters'
+                slopes are ever refitted, that tool is what decides whether this
+                line can change.
+              */}
+              <div className="flex items-center justify-between gap-2 border-t border-[var(--color-chrome-lo)] pt-2">
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  {MEDIA_PROFILES.map((profile) => (
+                    <span key={profile.id} className="flex items-center gap-1">
+                      <img
+                        src={MEDIA_MARKS_SQUARE[profile.id]}
+                        alt=""
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5 object-contain"
+                      />
+                      <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
+                        {formatAmerican(outcome.odds[profile.id])}
                       </span>
-                    ))}
-                  </div>
+                    </span>
+                  ))}
+                </div>
 
-                  <span className="t-stat-lg w-16 text-right tabular-nums text-[var(--color-gold-hi)]">
-                    {formatAmerican(outcome.houseOdds)}
-                  </span>
-
-                  <RetroButton
-                    variant="primary"
-                    size="sm"
-                    disabled={balance < MIN_STAKE || outcome.eliminated === true}
-                    onClick={() => onPlace({
-                      kind,
-                      marketKey: groupKey,
-                      marketTitle: market.title,
-                      selection: outcome.key,
-                      selectionLabel: outcome.label,
-                      price: outcome.houseOdds,
-                      backedMedia: null,
-                    })}
-                  >
-                    Back
-                  </RetroButton>
-
+                <div className="flex shrink-0 items-center gap-1.5">
                   {split && (
                     <RetroButton
                       variant="ghost"
@@ -869,9 +929,25 @@ const FieldMarketCard: React.FC<{
                         backedMedia: outcome.outlier,
                       })}
                     >
-                      Fade to theirs
+                      Fade
                     </RetroButton>
                   )}
+                  <RetroButton
+                    variant="primary"
+                    size="sm"
+                    disabled={balance < MIN_STAKE || outcome.eliminated === true}
+                    onClick={() => onPlace({
+                      kind,
+                      marketKey: groupKey,
+                      marketTitle: market.title,
+                      selection: outcome.key,
+                      selectionLabel: outcome.label,
+                      price: outcome.houseOdds,
+                      backedMedia: null,
+                    })}
+                  >
+                    Back
+                  </RetroButton>
                 </div>
               </div>
             </div>
@@ -881,45 +957,104 @@ const FieldMarketCard: React.FC<{
     </Panel>
   );
 };
+/**
+ * The club lookup every field row needs.
+ *
+ * Built once per view rather than per card, and memoised on the teams array itself --
+ * thirty-odd `find` calls per card across a page of markets was the kind of thing that
+ * makes a board feel slow to open, and it is free to avoid.
+ */
+const useTeamLookup = (teams: Team[]): Map<string, Team> => {
+  const [lookup, setLookup] = useState<Map<string, Team>>(() => new Map(teams.map((t) => [t.id, t])));
+  useEffect(() => { setLookup(new Map(teams.map((t) => [t.id, t]))); }, [teams]);
+  return lookup;
+};
+
+/**
+ * Season futures and awards.
+ *
+ * Both views are the same shape -- a caption explaining how these markets differ, then
+ * every market in the view -- so they share a body rather than keeping two copies that
+ * would drift the first time either was restyled.
+ *
+ * The grid is TWO COLUMNS OF MARKETS, and that is the whole change on this screen.
+ * There are four divisions, two leagues, a championship and six awards: thirteen
+ * full-width panels stacked in order, each holding a handful of rows that used the
+ * entire width to say a club name and a price. The manager had to scroll to compare
+ * two clubs on the same board, and had to scroll again to compare two divisions.
+ *
+ * Markets side by side is what makes a leaderboard comparable. A 2-column inner grid
+ * of clubs inside a 2-column outer grid of markets puts four markets on screen at
+ * once, so "who leads the North" and "who leads the batting title" are answerable
+ * without scrolling between them.
+ */
+const FieldMarketsView: React.FC<{
+  markets: FieldMarket[];
+  balance: number;
+  calendar: SeasonCalendar;
+  teams: Team[];
+  caption: string;
+  emptyMessage: string;
+  onPlace: BettingSlateProps['onPlace'];
+}> = ({ markets, onPlace, balance, calendar, teams, caption, emptyMessage }) => {
+  const teamById = useTeamLookup(teams);
+  return (
+    <div className="grid gap-4">
+      <p className="t-caption px-1 text-[var(--color-ink-faint)]">{caption}</p>
+      {markets.length === 0
+        ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">{emptyMessage}</p></Panel>
+        : (
+          <div className="grid items-start gap-4 xl:grid-cols-2">
+            {markets.map((market) => (
+              <FieldMarketCard
+                key={market.key}
+                market={market}
+                balance={balance}
+                calendar={calendar}
+                teamById={teamById}
+                onPlace={onPlace}
+              />
+            ))}
+          </div>
+        )}
+    </div>
+  );
+};
 
 const FuturesView: React.FC<{
   markets: FieldMarket[];
   balance: number;
   calendar: SeasonCalendar;
+  teams: Team[];
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance, calendar }) => (
-  <div className="grid gap-4">
-    <p className="t-caption px-1 text-[var(--color-ink-faint)]">
-      Season-long markets settle when a season is archived, not before. Each price is the mean of
-      the three outlets' probabilities; the faint marks show which outlet sits furthest from the
-      other two on that club.
-    </p>
-    {markets.length === 0
-      ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">No division or league races could be built.</p></Panel>
-      : markets.map((market) => (
-        <FieldMarketCard key={market.key} market={market} balance={balance} calendar={calendar} onPlace={onPlace} />
-      ))}
-  </div>
+}> = ({ markets, onPlace, balance, calendar, teams }) => (
+  <FieldMarketsView
+    markets={markets}
+    balance={balance}
+    calendar={calendar}
+    teams={teams}
+    onPlace={onPlace}
+    caption="Season-long markets settle when a season is archived, not before. Each price is the mean of the three outlets' probabilities; the small marks beside it show each outlet's own price, and where one of them sits furthest from the other two it is named."
+    emptyMessage="No division or league races could be built."
+  />
 );
 
 const AwardsView: React.FC<{
   markets: FieldMarket[];
   balance: number;
   calendar: SeasonCalendar;
+  teams: Team[];
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance, calendar }) => (
-  <div className="grid gap-4">
-    <p className="t-caption px-1 text-[var(--color-ink-faint)]">
-      The three outlets differ on awards by how hard they regress a hot start toward the field. The
-      metrics forecaster pulls hardest, which makes a narrow leader look narrow; the narrative one
-      barely regresses at all, so it will pay 5-to-1 for a player nobody else has noticed.
-    </p>
-    {markets.length === 0
-      ? <Panel className="p-6"><p className="t-body text-[var(--color-ink-dim)]">No award race is available yet.</p></Panel>
-      : markets.map((market) => (
-        <FieldMarketCard key={market.key} market={market} balance={balance} calendar={calendar} onPlace={onPlace} />
-      ))}
-  </div>
+}> = ({ markets, onPlace, balance, calendar, teams }) => (
+  <FieldMarketsView
+    markets={markets}
+    balance={balance}
+    calendar={calendar}
+    teams={teams}
+    onPlace={onPlace}
+    caption="The three outlets differ on awards by how hard they regress a hot start toward the field. The metrics forecaster pulls hardest, which makes a narrow leader look narrow; the narrative one barely regresses at all, so it will pay 5-to-1 for a player nobody else has noticed. The crest is the player's club -- these races are keyed by player, so the name beside it is the player and not the team."
+    emptyMessage="No award race is available yet."
+  />
 );
 
 /* ------------------------------------------------------------------ *

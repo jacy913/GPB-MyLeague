@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { BarChart3, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { BarChart3, Users } from 'lucide-react';
 import type { Game } from '../../types';
 import type { MediaId } from '../../data/media';
 import { MEDIA_BY_ID, MEDIA_PROFILES } from '../../data/media';
@@ -8,7 +8,7 @@ import { buildGameLine, getNextSlateDate, HOUSE_MARGIN, type GameLine } from '..
 import { usePropBoard } from '../../hooks/usePropBoard';
 import type { PropFocus } from '../../hooks/useBettingSlip';
 import { Panel, SegmentedControl } from '../ui';
-import { MediaCards, MediaMethodPanel, MediaVoicePanel } from './MediaCard';
+import { MediaCards } from './MediaCard';
 import { MediaDisagreementTable, MediaRanking } from './MediaTables';
 import { MediaOddsSlate } from './MediaOddsSlate';
 import { MediaPropBoard } from './MediaPropCards';
@@ -81,7 +81,6 @@ export const MediaHub: React.FC<MediaHubProps> = ({
    * expand whichever character was clicked, and three collapsed rows stacked
    * would be the same page it is now with more furniture.
    */
-  const [detailsOpen, setDetailsOpen] = useState(true);
   /** Which outlet's popup is open, or null. */
   const [detailsMediaId, setDetailsMediaId] = useState<MediaId | null>(null);
   const profile = MEDIA_BY_ID[selectedId];
@@ -152,7 +151,19 @@ export const MediaHub: React.FC<MediaHubProps> = ({
   });
 
   const teamCity = useCallback(
-    (teamId: string) => input.teams.find((team) => team.id === teamId)?.city ?? '—',
+    (teamId: string) => input.teams.find((team) => team.id === teamId)?.city ?? '-',
+    [input.teams],
+  );
+  /*
+   * The club itself, for the crest on a prop card.
+   *
+   * `teamCity` stays for the matchup label, which genuinely wants a readable city and
+   * is the one place a name is clearer than a crest. The cards want the opposite: a
+   * fifteen-card board repeats the same handful of clubs, so a name on every card is
+   * fifteen repetitions of something the crest already says, and it costs a line.
+   */
+  const teamOf = useCallback(
+    (teamId: string) => input.teams.find((team) => team.id === teamId),
     [input.teams],
   );
 
@@ -185,21 +196,17 @@ export const MediaHub: React.FC<MediaHubProps> = ({
   );
 
   /**
-   * Selecting an outlet, and collapsing the one whose box is open.
+   * Selecting an outlet.
    *
-   * Clicking a character collapses their own details box, so the control is a
-   * toggle on a repeat click and a plain selection the first time. The first
-   * click on a different outlet opens that outlet's box rather than leaving the
-   * previous outlet's argument on screen under the new outlet's name, which would
-   * be a worse confusion than a box that is briefly shut.
+   * This used to be a toggle -- a second click on the same card collapsed its
+   * character box -- because the box lived on the page and needed a way shut. The box
+   * is gone; the character is in the details popup, which has a close control and does
+   * not need the card to double as one. So selecting is now selecting, and a repeat
+   * click does nothing, which is what a selection should do.
    */
   const handleSelect = useCallback((id: MediaId) => {
-    if (id === selectedId) setDetailsOpen((open) => !open);
-    else {
-      setSelectedId(id);
-      setDetailsOpen(true);
-    }
-  }, [selectedId]);
+    setSelectedId(id);
+  }, []);
 
   return (
     <section className="space-y-5">
@@ -224,50 +231,18 @@ export const MediaHub: React.FC<MediaHubProps> = ({
       />
 
       {/*
-        The details box. Collapsed it is a single bar -- outlet name, role, and the
-        fact that there is more under it -- so a manager skimming the page can
-        leave it shut and still see which outlet is selected. Expanded it carries
-        the argument: the thesis, the actual weights, the stated weakness, and the
-        outlet's own voice.
+        NO CHARACTER PANEL HERE ANY MORE.
 
-        The bar is a disclosure, not a heading, so it reports its state to assistive
-        technology and can be reached by keyboard. aria-expanded on a div with an
-        onClick would announce nothing, which is the usual way a collapse like
-        this ships broken.
+        The thesis, the weights, the stated weakness and the voice samples used to sit
+        in a collapsible panel directly under the cards, and the per-outlet detail
+        popup repeated all of it. Two copies of the same argument, one of them behind
+        a click, and the copy on the page occupying the width of the screen to say
+        something a reader had no reason to read before looking at the prices.
+
+        It is now only in the details popup, where it is the entire subject rather than
+        a section of a market page. The space it held goes to the props board, which
+        is what a manager actually came to this screen to act on.
       */}
-      <Panel className="overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setDetailsOpen((open) => !open)}
-          aria-expanded={detailsOpen}
-          aria-controls="media-details-body"
-          className="chrome-bar flex w-full flex-wrap items-center justify-between gap-3 px-4 text-left"
-          style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
-        >
-          <span className="flex items-center gap-2">
-            {detailsOpen
-              ? <ChevronDown className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
-              : <ChevronRight className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />}
-            <span className="t-h3" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
-              {profile.name}
-            </span>
-          </span>
-          <span className="t-caption text-[var(--color-ink-faint)]">
-            {profile.outlet} · {profile.role} · {detailsOpen ? 'collapse' : 'expand'}
-          </span>
-        </button>
-
-        {detailsOpen && (
-          <div id="media-details-body" className="flex flex-col gap-5 p-4">
-            <p className="t-body max-w-3xl text-[var(--color-ink-dim)]">{profile.thesis}</p>
-            <MediaMethodPanel profile={profile} />
-            <div>
-              <p className="t-label mb-2 text-[var(--color-ink-faint)]">In their own words</p>
-              <MediaVoicePanel profile={profile} />
-            </div>
-          </div>
-        )}
-      </Panel>
 
       <MediaOddsSlate lines={lines} slateDate={slateDate} />
 
@@ -297,7 +272,7 @@ export const MediaHub: React.FC<MediaHubProps> = ({
             mediaId={selectedId}
             slateDate={slateDate}
             matchupLabel={matchupLabel}
-            teamCity={teamCity}
+            teamOf={teamOf}
             onOpen={openProp}
           />
         </div>
@@ -346,12 +321,6 @@ export const MediaHub: React.FC<MediaHubProps> = ({
         isOpen={detailsMediaId !== null}
         onClose={() => setDetailsMediaId(null)}
         mediaId={detailsMediaId ?? selectedId}
-        lines={lines}
-        props={detailsMediaId ? (outletProps.get(detailsMediaId) ?? []) : []}
-        slateDate={slateDate}
-        matchupLabel={matchupLabel}
-        teamCity={teamCity}
-        onOpenProp={openProp}
         onGoToBetting={() => { setDetailsMediaId(null); onNavigateToBetting?.(); }}
       />
     </section>

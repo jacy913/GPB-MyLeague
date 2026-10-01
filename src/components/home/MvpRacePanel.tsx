@@ -40,6 +40,21 @@ export const MvpRacePanel: React.FC<{
         options={[{ value: 'batting', label: 'Batting' }, { value: 'pitching', label: 'Pitching' }]}
       />
 
+      {/*
+        THE CREST ONLY -- the club's city and nickname are gone from each row.
+
+        They were the second line of every row and they said nothing the mark did not.
+        A reader scanning a leaderboard reads the crests first and the numbers second;
+        the text line sat between the two, so the eye had to decode a string before it
+        reached the figure that decides anything. It was also the widest element in the
+        row, which is what set how narrow the odds bar and the score had to be.
+
+        The crest grew from 28px to 32px to take up the space the text vacated, and the
+        club is still named -- in the logo's accessible name and in the row's tooltip
+        -- so nothing became unreachable. What is gone is the duplication, not the
+        information.
+      */}
+
       {leader && runnerUp && (
         <p className="t-caption mt-2 text-[var(--color-ink-dim)]">
           Lead over second: <StatValue size="sm" variant="accent">{gap.toFixed(1)}</StatValue> points
@@ -59,15 +74,19 @@ export const MvpRacePanel: React.FC<{
                 index === 0 ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
               }`}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-                {entry.team && <TeamLogo team={entry.team} sizeClass="h-7 w-7" />}
-                <div className="min-w-0 flex-1">
-                  <p className={`truncate t-stat-sm ${index === 0 ? 'text-[var(--color-gold-hi)]' : ''}`}>{entry.name}</p>
-                  <p className="truncate t-caption text-[var(--color-ink-faint)]">
-                    {entry.team ? `${entry.team.city} ${entry.team.name}` : 'FREE AGENT'}
-                  </p>
-                </div>
+                {entry.team ? (
+                  <TeamLogo team={entry.team} sizeClass="h-8 w-8 shrink-0" />
+                ) : (
+                  <span className="h-8 w-8 shrink-0" aria-hidden="true" />
+                )}
+                <p
+                  className={`min-w-0 flex-1 truncate t-stat-sm ${index === 0 ? 'text-[var(--color-gold-hi)]' : ''}`}
+                  title={entry.team ? `${entry.name} — ${entry.team.city} ${entry.team.name}` : `${entry.name} — Free agent`}
+                >
+                  {entry.name}
+                </p>
                 <StatValue variant="accent">{entry.total.toFixed(1)}</StatValue>
               </div>
               <OddsBar odds={entry.odds} label={entry.name} />

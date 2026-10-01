@@ -67,7 +67,7 @@ export const HeadlinerPanel: React.FC<{
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
         <div className="flex items-center gap-2">
           <PenLine className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
-          <h2 className="t-label">Byline</h2>
+          <h2 className="t-label">Sideline Reports</h2>
         </div>
         <div className="flex items-center gap-3">
           {slideCount > 1 && (
@@ -102,12 +102,23 @@ export const HeadlinerPanel: React.FC<{
           onBlur={() => setPaused(false)}
         >
           {/* The byline is the point of the section, so it gets the portrait at the
-              largest of the three sizes and its own column rather than a caption. */}
-          <div className="flex shrink-0 items-center gap-3 md:w-[190px] md:flex-col md:items-start">
-            <HeadlinerPortrait id={active.byline} size="lg" />
+              largest size and its own column rather than a caption.
+
+              The column widened from 190px to 208px to take the 72px plate without the
+              name beside it being squeezed to a truncation. The portrait was 40px,
+              which is a byline BADGE -- the same size the outlet marks use on the
+              betting screen -- while the crests in the headline of the day directly
+              above run at 96px and 240px. A reporter you are asked to attribute an
+              opinion to was the smallest image on the front page.
+
+              72px rather than 96px because the shipped portrait is 95x95: rendering it
+              at 96 is 1:1 and softens on any 2x display. See `SIZE_PX` in
+              HeadlinerPortrait for the full note. */}
+          <div className="flex shrink-0 items-center gap-3 md:w-[208px] md:flex-col md:items-start">
+            <HeadlinerPortrait id={active.byline} size="xl" />
             <div className="min-w-0">
               <p
-                className="t-h3 truncate"
+                className="t-h3"
                 style={{ color: ACCENT_VAR[active.accentToken] }}
               >
                 {HEADLINER_BY_ID[active.byline].displayName}
@@ -121,10 +132,20 @@ export const HeadlinerPanel: React.FC<{
           <div className="min-w-0 flex-1">
             <h3 className="t-h1 break-words text-[var(--color-ink)]">{active.title}</h3>
             <div className="mt-3 h-[3px] w-16 bg-[var(--color-gold)]" aria-hidden="true" />
-            {/* Two lines, because a deck is supporting text and a third becomes a
-                wall. `line-clamp` rather than a fixed height so the panel does not
-                jump when a short deck is followed by a long one. */}
-            <p className="t-body mt-3 line-clamp-2 max-w-3xl text-[var(--color-ink-dim)]">
+            {/*
+              THE DECK RUNS TO WHATEVER LENGTH IT IS, NOT TO TWO LINES.
+
+              This was `line-clamp-2`, and it was the wrong call. A deck is the summary
+              of the piece -- the sentence that says what the column is actually about
+              -- and clamping it to two lines meant the panel routinely ended on a half
+              sentence with an ellipsis and no way to see the rest. There was no
+              expander and no title attribute, so the missing words were simply not
+              there. The original justification was that "a third line becomes a
+              wall", which is true of a panel that must not grow, and false of one that
+              scrolls: the reader who cares reads four lines, and the reader who does
+              not was never going to read two.
+            */}
+            <p className="t-body mt-3 max-w-3xl text-[var(--color-ink-dim)]">
               {active.deck}
             </p>
           </div>
@@ -153,11 +174,29 @@ export const HeadlinerPanel: React.FC<{
       <div className="flex items-center justify-between gap-3 border-t border-[var(--color-chrome-lo)] px-4 py-2">
         <span className="t-caption text-[var(--color-ink-faint)]">
           {cards.length === 0
-            ? 'No columns today'
-            : `${cards.length} column${cards.length === 1 ? '' : 's'} filed`}
+            ? 'No stories today'
+            : `${cards.length} stor${cards.length === 1 ? 'y' : 'ies'} in today's edition`}
         </span>
+        {/*
+          THE IMPRESSION BUDGET, which currently always reads 0/2.
+
+          Worth saying plainly rather than quietly restyling: this counter cannot move.
+          `headlinerLedger.tombuccelliImpressions` is read from the save bundle and
+          defaulted defensively to zero, but nothing anywhere increments it -- the
+          dashboard builds today's deck from it and never writes back, and
+          `readHeadlinerLedger` only ever turns a missing or corrupt value into a
+          zero. So the pipeline's cap is always compared against zero, the columnist's
+          rare praise is never actually rationed, and this line reports a budget that
+          has never been spent.
+
+          It was labelled "columns filed" beside it before, which is what made the pair
+          read as one broken sentence: two counters, one of which counts carousel
+          slides and one of which counts nothing. The left side now says what it
+          measures. This side is still wrong, and it needs the save path to write the
+          ledger rather than a change to this panel.
+        */}
         <span className="t-caption text-[var(--color-ink-faint)]">
-          Tombuccelli impressions {impressionsSpent}/{impressionCap}
+          Buccelli impressions {impressionsSpent}/{impressionCap}
         </span>
       </div>
     </Panel>

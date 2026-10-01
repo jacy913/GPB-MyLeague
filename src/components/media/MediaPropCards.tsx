@@ -4,6 +4,8 @@ import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
 import { formatAmerican } from '../../lib/mediaOdds';
 import { propSidePrices, type PropMarket, type PropTemperament } from '../../lib/playerProps';
+import { TeamLogo } from '../ui';
+import type { Team } from '../../types';
 
 /**
  * A published prop, as a card.
@@ -46,9 +48,17 @@ const TEMPERAMENT_STYLE: Record<PropTemperament, {
 export const MediaPropCard: React.FC<{
   market: PropMarket;
   mediaId: MediaId;
-  teamCity: string;
+  /**
+   * The club the prop is on, or undefined if the id does not resolve.
+   *
+   * The whole object rather than a city string, because the card now draws the crest
+   * and needs `TeamLogo`'s `team` prop. Passing a string would mean a second lookup
+   * here and a third in `MediaPropBoard`, and the one that failed would be a blank
+   * cell rather than a missing name.
+   */
+  team: Team | undefined;
   onOpen: (propId: string, mediaId: MediaId) => void;
-}> = ({ market, mediaId, teamCity, onOpen }) => {
+}> = ({ market, mediaId, team, onOpen }) => {
   const temperament = market.temperament[mediaId];
   const style = TEMPERAMENT_STYLE[temperament];
   const { Icon } = style;
@@ -67,7 +77,20 @@ export const MediaPropCard: React.FC<{
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate t-stat-sm">{market.playerName}</p>
-          <p className="truncate t-caption text-[var(--color-ink-faint)]">{teamCity}</p>
+          {/*
+            THE CREST, NOT THE CLUB'S NAME.
+
+            A fifteen-card board repeats the same handful of clubs, so a city name on
+            every card is fifteen repetitions of a fact the reader can infer from the
+            crest, and it costs a whole line each time. The logo says it in a third of
+            the width and stays legible at a glance down a column. The name is still on
+            the card for anyone who needs it -- as a title attribute and in the
+            accessible name -- so nothing is lost, it is just no longer painted.
+          */}
+          <span className="mt-0.5 flex h-5 items-center gap-1.5">
+            {team ? <TeamLogo team={team} sizeClass="h-5 w-5" /> : null}
+            <span className="sr-only">{team ? `${team.city} ${team.name}` : ''}</span>
+          </span>
         </div>
         <span
           className="inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 t-caption"
@@ -125,10 +148,10 @@ export const MediaPropBoard: React.FC<{
   slateDate: string | null;
   /** Game id to its "Away at Home" label, in slate order. */
   matchupLabel: (gameId: string) => string;
-  /** Team id to city, for the club a prop is on. */
-  teamCity: (teamId: string) => string;
+  /** Team id to the club itself, for the crest on each card. */
+  teamOf: (teamId: string) => Team | undefined;
   onOpen: (propId: string, mediaId: MediaId) => void;
-}> = ({ markets, mediaId, slateDate, matchupLabel, teamCity, onOpen }) => {
+}> = ({ markets, mediaId, slateDate, matchupLabel, teamOf, onOpen }) => {
   if (markets.length === 0) {
     return (
       <p className="p-4 t-body text-[var(--color-ink-dim)]">
@@ -162,7 +185,7 @@ export const MediaPropBoard: React.FC<{
                 key={market.propId}
                 market={market}
                 mediaId={mediaId}
-                teamCity={teamCity(market.teamId)}
+                team={teamOf(market.teamId)}
                 onOpen={onOpen}
               />
             ))}

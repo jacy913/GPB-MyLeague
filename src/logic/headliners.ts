@@ -251,8 +251,8 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
   },
   {
     id: 'tombuccelli',
-    displayName: 'TOMBUCCELLI',
-    shortName: 'TOMBUCCELLI',
+    displayName: 'TOM BUCCELLI',
+    shortName: 'TOM BUCCELLI',
     role: 'COLUMNIST',
     portraitKey: 'tombuccelli',
     accentToken: 'sour',
