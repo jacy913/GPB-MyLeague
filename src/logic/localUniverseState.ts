@@ -6,6 +6,7 @@ import type {
   SimulationSettings,
   Team,
 } from '../types';
+import { PRICE_MAX, PRICE_MIN, type PriceSeries } from '../lib/analytics/sharePrice';
 import type { DraftClassState, DraftHistoryEntry } from './draftLogic';
 import { auditRosterInvariants } from './rosterManagement';
 
@@ -85,6 +86,57 @@ export const readHeadlinerLedger = (value: unknown): HeadlinerLedger => {
   };
 };
 
+/**
+ * The HXSE share-price closes for a league, newest last.
+ *
+ * Optional and additive, exactly as `headlinerLedger` is: absence means a league that never traded,
+ * not a broken one, and every existing save loads without a migration script.
+ *
+ * Deliberately NOT stored inside `Game[]` or on `Team`. Both of those serialize per row to
+ * Supabase, and a per-day-per-club price is a presentation concern -- inflating a per-row schema
+ * with 32 numbers a day for something derived would be the wrong trade.
+ */
+export type SharePriceLedger = PriceSeries[];
+
+/**
+ * Read the price ledger defensively.
+ *
+ * Every field is checked rather than trusted, and a malformed day is DROPPED rather than repaired.
+ * The difference matters: a repaired day invents a price nobody traded at, and this ledger is the
+ * record of what the market did. Dropping it leaves a gap, which is honest, and the series simply
+ * resumes from the last good day.
+ *
+ * Non-finite or out-of-band closes are dropped for the same reason -- a price outside
+ * `[PRICE_MIN, PRICE_MAX]` means the save is corrupt, and coercing it would put a number on a chart
+ * that no price path could have produced.
+ */
+export const readSharePriceLedger = (value: unknown): SharePriceLedger => {
+  if (!Array.isArray(value)) return [];
+  const out: PriceSeries[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const date = entry.date;
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    if (!isRecord(entry.close)) continue;
+    const close: Record<string, number> = {};
+    let any = false;
+    for (const [teamId, raw] of Object.entries(entry.close)) {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+      if (raw < PRICE_MIN || raw > PRICE_MAX) continue;
+      close[teamId] = raw;
+      any = true;
+    }
+    // A day where every club was corrupt carries no information. Keeping it as an empty object
+    // would read downstream as "the market was shut", which is a claim this save cannot support.
+    if (any) out.push({ date, close });
+  }
+  // Ascending by date, so callers can treat the last entry as today without sorting. Duplicates are
+  // collapsed to the LAST occurrence, because a re-saved day is more recent than the one it replaced.
+  const byDate = new Map<string, PriceSeries>();
+  out.forEach((day) => byDate.set(day.date, day));
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+};
+
 export interface LocalUniverseBundle {
   format: typeof LOCAL_UNIVERSE_FORMAT;
   version: typeof LOCAL_UNIVERSE_VERSION;
@@ -107,6 +159,11 @@ export interface LocalUniverseBundle {
    * loads cleanly. Absence means an untouched season, not a broken one.
    */
   headlinerLedger?: HeadlinerLedger;
+  /**
+   * HXSE share-price closes. Optional and additive, so no migration script is needed and every
+   * existing save loads cleanly. Absence means the market has not traded yet.
+   */
+  sharePriceLedger?: SharePriceLedger;
 }
 
 export interface LocalUniverseValidationResult {
@@ -256,6 +313,14 @@ export const validateLocalUniverseBundle = (value: unknown): LocalUniverseValida
     warnings.push('Headliner ledger is not an object; the newsroom will start from zero.');
   }
 
+  // Same reasoning as the newsroom ledger: a PRESENT but malformed price ledger is worth a warning
+  // and not an error, because `readSharePriceLedger` drops the bad days and keeps the good ones.
+  // Refusing to load a whole league over a corrupt price would be a far worse outcome than a chart
+  // with a gap in it, so this warns.
+  if (value.sharePriceLedger !== undefined && !Array.isArray(value.sharePriceLedger)) {
+    warnings.push('Share price ledger is not an array; the market will start from no history.');
+  }
+
   return { valid: errors.length === 0, errors, warnings };
 };
 
@@ -268,4 +333,9 @@ export const createLocalUniverseBundle = (input: Omit<LocalUniverseBundle, 'form
   // `headlinerLedger: undefined` would otherwise overwrite the seeded default with
   // undefined, and the save would carry a missing field it was supposed to have.
   headlinerLedger: { ...EMPTY_HEADLINER_LEDGER, ...(input.headlinerLedger ?? {}) },
+  // Same reasoning, opposite default. The newsroom ledger has a meaningful empty state, so it is
+  // seeded. The price ledger's meaningful empty state IS an empty array, so `?? []` is the honest
+  // default rather than a seeded zero -- and going through the reader means a malformed ledger
+  // passed by a caller is sanitised on the way in rather than on the way out.
+  sharePriceLedger: readSharePriceLedger(input.sharePriceLedger),
 });

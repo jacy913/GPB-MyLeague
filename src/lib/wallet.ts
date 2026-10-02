@@ -85,6 +85,15 @@ export interface PlacedBet {
 export interface Wallet {
   balance: number;
   bets: PlacedBet[];
+  /**
+   * The number to put on the next bet id, and the only monotonic thing about bet ids.
+   *
+   * It cannot be derived from `bets`, because voiding a bet REMOVES it from the array and frees
+   * whatever number it held. Only ever increments, and is carried through every operation that
+   * rebuilds a wallet -- `placeBet` increments it, `removeBet` preserves it, `loadWallet` restores
+   * it or reconstructs a safe lower bound for a save that predates it.
+   */
+  nextBetNumber: number;
 }
 
 /** Profit or return on a winning bet at a given price. */
@@ -94,9 +103,78 @@ export const settleReturn = (stake: number, price: number, won: boolean): number
   return stake + (stake * 100) / Math.abs(price);
 };
 
-export const createWallet = (): Wallet => ({ balance: STARTING_BALANCE, bets: [] });
+export const createWallet = (): Wallet => ({ balance: STARTING_BALANCE, bets: [], nextBetNumber: 1 });
 
-const betId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+/**
+ * A bet id, derived from the wallet rather than from the clock.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS CHANGED
+ * ---------------------------------------------------------------------------
+ *
+ * It used to be `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`. Harmless
+ * while the wallet is local; a sync hazard the moment it is not, because two devices that placed
+ * "the same bet" at two different milliseconds would produce two different ids for one economic
+ * event, and neither could be told from a duplicate. The HXSE price path refuses to touch
+ * unseeded randomness for exactly the same reason -- a reloaded save must show the same market --
+ * and a bet id is the same class of thing: it is a fact about the save, not about when the save
+ * happened to be written.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY IT HAD TO BE A STORED COUNTER, AND TWO SCHEMES THAT LOOKED FINE
+ * ---------------------------------------------------------------------------
+ *
+ * `removeBet` in `useBettingSlip` VOIDS open bets and filters them out of the array, so
+ * `wallet.bets.length` is not monotonic. Place a bet, void it, place another, and the length is
+ * back where it started. `removeBet` looks bets up BY ID, so a repeated id is a wrong-stake refund
+ * or a voided the wrong bet -- not a cosmetic collision.
+ *
+ * First attempt: take the HIGHEST surviving `bet-<n>` and add one. That is monotonic as long as
+ * nothing is ever removed -- and the void removes the highest one. `checkSharePersistence` caught it
+ * reproducing `bet-1` immediately after `bet-1` was voided. The reasoning was wrong in exactly the
+ * place it claimed to be safe.
+ *
+ * Second attempt, and the reason this field exists: the counter is stored on the Wallet and only
+ * ever increments. Nothing derives it from current contents, so nothing can lower it.
+ *
+ * Legacy ids -- base36 timestamp, hyphen, random suffix -- are left exactly as they are. They do
+ * not parse as `bet-<n>`, so `readBetCounter` ignores them and they cannot collide with a new id.
+ * Ids are never parsed anywhere in the app, so the format was free to change and existing bets
+ * keep working.
+ */
+const BET_ID_PATTERN = /^bet-(\d+)$/;
+
+/**
+ * The highest new-style id currently in the wallet, plus one.
+ *
+ * Used ONLY when loading a save that predates the counter, where there is no stored value to trust.
+ * Once a save carries `nextBetNumber` that field is authoritative and this is never consulted, so
+ * its inability to see a voided bet does not matter.
+ */
+const readBetCounter = (bets: PlacedBet[]): number => {
+  let highest = 0;
+  for (const bet of bets) {
+    const match = BET_ID_PATTERN.exec(bet.id);
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return highest + 1;
+};
+
+/**
+ * The number to put on the next bet id.
+ *
+ * Defensive about a wallet whose `nextBetNumber` is missing or malformed, rather than trusting it.
+ * A field added to a persisted shape can always turn up absent -- an old save, a hand-edited
+ * localStorage entry, a caller that built a literal. Trusting it produced `bet-undefined`, which
+ * `removeBet` would then be unable to look up by id, so the void would silently do nothing while
+ * the stake was still refunded. Reconstructing a lower bound is always safe: it can only ever be
+ * too low to collide with a legacy id, and never collides with a live one because live ids are
+ * counted upward.
+ */
+const betId = (wallet: Wallet): number =>
+  typeof wallet.nextBetNumber === 'number' && Number.isInteger(wallet.nextBetNumber) && wallet.nextBetNumber > 0
+    ? wallet.nextBetNumber
+    : readBetCounter(wallet.bets);
 
 export const canAfford = (wallet: Wallet, stake: number): boolean =>
   stake >= MIN_STAKE && stake <= MAX_STAKE && stake <= wallet.balance;
@@ -108,9 +186,15 @@ export const placeBet = (
   if (!canAfford(wallet, input.stake)) {
     return { error: `Stake must be ${MIN_STAKE}-${MAX_STAKE} and within your balance.` };
   }
-  const bet: PlacedBet = { ...input, id: betId(), status: 'open', payout: 0 };
+  const bet: PlacedBet = { ...input, id: `bet-${betId(wallet)}`, status: 'open', payout: 0 };
   return {
-    wallet: { balance: wallet.balance - bet.stake, bets: [bet, ...wallet.bets] },
+    wallet: {
+      balance: wallet.balance - bet.stake,
+      bets: [bet, ...wallet.bets],
+      // Incremented here and nowhere else. `removeBet` must PRESERVE this rather than recompute it
+      // -- see the note on `Wallet.nextBetNumber`.
+      nextBetNumber: betId(wallet) + 1,
+    },
     bet,
   };
 };
@@ -308,7 +392,11 @@ export const settleWallet = (wallet: Wallet, context: SettlementContext): Wallet
   });
   // Identity is preserved when nothing settled, so the caller's effect comparing
   // by reference does not fire on every render of every game.
-  return changed ? { balance, bets } : wallet;
+  //
+  // `nextBetNumber` is carried rather than recomputed. Settlement never removes a bet, so this is
+  // not a collision risk -- but dropping the field would leave it `undefined`, and the next
+  // `placeBet` would then produce `bet-NaN`. Every path that rebuilds a wallet has to carry it.
+  return changed ? { balance, bets, nextBetNumber: wallet.nextBetNumber } : wallet;
 };
 
 export const summariseWallet = (wallet: Wallet) => {
@@ -372,7 +460,17 @@ export const loadWallet = (): Wallet => {
     // Anything already decided is stored as decided, and only open bets are
     // re-examined on load, so a tampered or stale balance cannot mint money by
     // replaying settled bets.
-    return { balance: parsed.balance, bets: parsed.bets };
+    return {
+      balance: parsed.balance,
+      bets: parsed.bets,
+      // A save written before the counter existed has no field for it. The reconstruction is a
+      // LOWER BOUND, not a guess: it cannot collide with the legacy ids still in the wallet,
+      // because those do not parse as `bet-<n>`. And once written, the stored value is
+      // authoritative -- it only ever goes up, so a later void cannot hand a number back out.
+      nextBetNumber: typeof parsed.nextBetNumber === 'number' && Number.isInteger(parsed.nextBetNumber) && parsed.nextBetNumber > 0
+        ? parsed.nextBetNumber
+        : readBetCounter(parsed.bets),
+    };
   } catch {
     return createWallet();
   }

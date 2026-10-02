@@ -244,6 +244,11 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
       return {
         balance: current.balance + bet.stake,
         bets: current.bets.filter((b) => b.id !== id),
+        // CARRIED, not recomputed. This line is what makes a void safe: the voided bet's number
+        // is now free, so deriving the next id from the remaining bets would hand it straight back
+        // out -- and this very function looks bets up BY ID, so a repeated id would refund the
+        // wrong stake. See `Wallet.nextBetNumber` in lib/wallet.ts.
+        nextBetNumber: current.nextBetNumber,
       };
     });
   }, []);
