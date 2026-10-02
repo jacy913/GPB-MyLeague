@@ -2,12 +2,15 @@ import type { MediaId } from '../../data/media';
 import glorestMasthead from '../../assets/media/glorestpress-masthead.jpg';
 import glorestMark from '../../assets/media/glorestpresslogo-trim.png';
 import glorestSquare from '../../assets/media/glorestpresslogo-trim-square.png';
+import glorestPortrait from '../../assets/media/glorest-portrait.png';
 import hollisMasthead from '../../assets/media/quincyhollis-masthead.jpg';
 import hollisMark from '../../assets/media/quincyhollislogo-trim.png';
 import hollisSquare from '../../assets/media/quincyhollislogo-trim-square.png';
+import hollisPortrait from '../../assets/media/hollis-portrait.png';
 import sharplyMasthead from '../../assets/media/linedsharply-masthead.jpg';
 import sharplyMark from '../../assets/media/linedsharplylogo-trim.png';
 import sharplySquare from '../../assets/media/linedsharplylogo-trim-square.png';
+import sharplyPortrait from '../../assets/media/sharply-portrait.png';
 
 /**
  * Forecaster photography, kept apart from the character data on purpose.
@@ -40,6 +43,58 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
   sharply: {
     src: sharplyMasthead,
     alt: 'The Lined Sharply podcast studio',
+  },
+};
+
+/**
+ * Forecaster portraits, for the character popup.
+ *
+ * These are the three supplied 2048x2048 RGBA cut-outs, re-framed and reduced by
+ * `tools/buildMediaPortraits.ts`. The sources weighed 13.1MB between them; these weigh 1.6MB,
+ * a saving the tool reports rather than one asserted here.
+ *
+ * 4:5 rather than square, because a square crop of a person is a passport photograph. The frame
+ * is anchored to the alpha bounds of the rows ABOVE the vertical midpoint, not to the whole
+ * silhouette -- Hollis's arms and elbow make his full outline far wider than his head, so a
+ * frame centred on the whole subject would leave a third of the picture empty beside his face.
+ *
+ * THE THREE ARE DELIBERATELY NOT THE SAME PICTURE, and the tool reports why per outlet:
+ *
+ *   hollis   a loose figure, set right of centre -> framed head and shoulders
+ *   glorest  already a tight head-and-shoulders  -> framed the same way, lands the same
+ *   sharply  TWO hosts, both logos visible       -> whole canvas kept
+ *
+ * That last one is the reason the crop rule has a fallback rather than being a single formula.
+ * Sharply is a podcast with two presenters and an embroidered logo on each of them; cropping to
+ * one face would delete half the outlet. So the rule yields to the picture and says so.
+ *
+ * TRANSPARENT, NOT WHITE. The sources are genuine alpha cut-outs, so these sit directly on the
+ * popup's own surface with no plate behind them. That is why the popup does not put a white or
+ * photographic background behind the portrait -- doing so would put a visible rectangle around
+ * a subject who has no rectangular edge.
+ */
+export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
+  hollis: {
+    src: hollisPortrait,
+    alt: 'Quincy Hollis at the press box, adjusting his collar before the game',
+  },
+  /*
+    * ALT TEXT DESCRIBES THE PICTURE, NOT THE PERSON.
+    *
+    * The first draft of this said "Vance Wardley Jr", which I took from the character data
+    * rather than from the photograph -- and there is no way to confirm from here that the man
+    * in the file is the man in the data. An alt attribute is read aloud to a screen-reader user
+    * who cannot see the image and has no other way to check it, so a name asserted there is a
+    * claim the interface cannot stand behind. The outlet's mark on the shirt is what is
+    * actually visible.
+    */
+  glorest: {
+    src: glorestPortrait,
+    alt: 'A Glorest presenter, arms folded, the network mark showing on his shirt',
+  },
+  sharply: {
+    src: sharplyPortrait,
+    alt: 'The two Lined Sharply hosts in the studio, each wearing the embroidered show mark',
   },
 };
 
