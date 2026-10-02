@@ -79,7 +79,7 @@ const OUT_H = 650;
  * exactly as wide as them crops the arms off at the edge, which reads as a mistake. It is not
  * a face box -- it is a head-and-shoulders frame.
  */
-const WIDTH_SLACK = 1.28;
+export const WIDTH_SLACK = 1.28;
 
 /**
  * Empty space above the hair, as a fraction of the subject's own height in the frame.
@@ -101,7 +101,7 @@ const ALPHA_FLOOR = 8;
  * narrower question would be wasteful and would make the helper in `pngCodec` do something
  * its name does not say.
  */
-const upperBounds = (image: DecodedImage, floor = ALPHA_FLOOR): Bounds | null => {
+export const upperBounds = (image: DecodedImage, floor = ALPHA_FLOOR): Bounds | null => {
   const limit = Math.floor(image.height / 2);
   let left = Infinity;
   let top = Infinity;
@@ -119,9 +119,9 @@ const upperBounds = (image: DecodedImage, floor = ALPHA_FLOOR): Bounds | null =>
   return right < 0 ? null : { left, top, right, bottom };
 };
 
-interface Frame { box: Bounds; note: string }
+export interface Frame { box: Bounds; note: string }
 
-const frameFor = (image: DecodedImage): Frame => {
+export const frameFor = (image: DecodedImage): Frame => {
   const upper = upperBounds(image);
   const full = alphaBounds(image);
   if (!upper || !full) throw new Error('image has no opaque pixels');
@@ -212,4 +212,9 @@ const main = (): void => {
   console.log('\n  LOOK AT THESE THREE FILES. The framing rule is deterministic, not verified.\n');
 };
 
-main();
+// Guarded, because rameFor is imported by tools/buildMediaMarksWebp.ts. An
+// unconditional call means merely importing the framing rule REBUILDS THE HERO PORTRAITS,
+// which happened the first time this guard was added: importing it printed a full
+// portrait build to stdout before the caller's own output. tools/buildMediaMarks.ts
+// already guards its main for the same reason.
+if (process.argv[1] && process.argv[1].endsWith('buildMediaPortraits.ts')) main();
