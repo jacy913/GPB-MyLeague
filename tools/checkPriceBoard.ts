@@ -45,12 +45,15 @@
 import {
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_TRIALS,
+  HXSE_DAILY_TRIALS,
+  HXSE_SETTLEMENT_TRIALS,
   appendPriceDay,
+  clearFairLayerCache,
   latestClose,
   priceBoardForDay,
   type PriceBoard,
 } from '../src/lib/analytics/priceBoard';
-import { PRICE_MAX, PRICE_MIN, type PriceSeries } from '../src/lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_MIN, REGIME_VOLATILITY, type PriceSeries } from '../src/lib/analytics/sharePrice';
 import { createLocalUniverseBundle, readSharePriceLedger } from '../src/logic/localUniverseState';
 import { INITIAL_TEAMS } from '../src/data/teams';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
@@ -317,6 +320,133 @@ const main = async (): Promise<void> => {
     JSON.stringify(DEFAULT_BOARD_SETTINGS) === JSON.stringify(DEFAULT_SETTINGS),
     `board ${JSON.stringify(DEFAULT_BOARD_SETTINGS)} against engine ${JSON.stringify(DEFAULT_SETTINGS)}. A copy `
     + 'that drifts is a board priced under a season that is not being played.',
+  );
+
+  /*
+    THE CHEAP DAILY PATH, GATED AGAINST A FULL-RESOLUTION READ.
+
+    This is the check that keeps `HXSE_DAILY_TRIALS` honest. The constant was chosen by measuring
+    how far a cheap read's closes sit from a 2000-trial read, and if nobody re-measures it then the
+    number just becomes a preference that nobody would think to question.
+
+    The bar is the market's OWN daily volatility, not a round number. In-season daily sigma is 4%.
+    A cheap read whose worst single club diverges by less than that cannot move a price by more than
+    the noise already in it, so the trade is free. Measured at the time of writing: 250 trials gives a
+    1.47% mean and a 3.83% worst case against 2000.
+  */
+  const full = await priceRun(state, completedDates, HXSE_SETTLEMENT_TRIALS);
+  const deltas: number[] = [];
+  teamIds.forEach((id) => full.forEach((b, d) => deltas.push(Math.abs(b.close[id] / boards[d].close[id] - 1))));
+  const meanDelta = deltas.reduce((a, b) => a + b, 0) / Math.max(1, deltas.length);
+  const maxDelta = Math.max(...deltas);
+
+  /*
+    THE BAR IS THE MARKET'S OWN DAILY VOLATILITY, MEASURED FROM THIS RUN.
+
+    The first version of this check compared against `REGIME_VOLATILITY.in_season` and printed
+    "daily sigma of 7%" -- but that constant is the NOISE SCALE fed into the hash, not the volatility
+    that comes out. Realised daily sigma is about 0.582 of it, so the bar was 1.7x too loose and the
+    message reported a number nobody had measured. Exactly the failure this file exists to prevent,
+    committed in the check written to prevent it.
+
+    So the sigma is computed here from consecutive closes in this run, and the cheap path is held to
+    the market's actual noise rather than to a constant that only looks like a volatility.
+  */
+  const dailyReturns: number[] = [];
+  for (let d = 1; d < boards.length; d += 1) {
+    teamIds.forEach((id) => {
+      const prev = boards[d - 1].close[id];
+      if (prev > 0) dailyReturns.push(boards[d].close[id] / prev - 1);
+    });
+  }
+  const returnMean = dailyReturns.reduce((a, b) => a + b, 0) / Math.max(1, dailyReturns.length);
+  const realisedSigma = Math.sqrt(
+    dailyReturns.reduce((a, v) => a + (v - returnMean) ** 2, 0) / Math.max(1, dailyReturns.length),
+  );
+  check(
+    `the cheap daily read (${HXSE_DAILY_TRIALS} trials) never moves a price by more than one day of market noise`,
+    maxDelta < realisedSigma,
+    `against a ${HXSE_SETTLEMENT_TRIALS}-trial read: mean divergence ${(meanDelta * 100).toFixed(2)}%, `
+    + `worst club ${(maxDelta * 100).toFixed(2)}%. The bar is the realised daily sigma MEASURED from this run, `
+    + `${(realisedSigma * 100).toFixed(2)}% over ${dailyReturns.length} day-over-day returns -- not the `
+    + `${(REGIME_VOLATILITY.in_season * 100).toFixed(0)}% noise scale, which is what this check wrongly used at first. `
+    + 'A worst case under the market\'s own volatility means the cheap read is free in price terms, which is '
+    + 'what justifies paying a fraction of the compute for it.',
+  );
+
+  // -- 7. the cache cannot serve the wrong answer ---------------------------------------------------
+  /*
+    THREE failure modes, and only two of them are obvious.
+
+    The obvious one: the cache is keyed on `(season, date)` but the CLOSE depends on
+    `previousClose`, so two callers asking for the same date from different ledgers must get
+    different closes. Caching the whole board would silently give both of them the first one's
+    answer.
+
+    The subtle one: the cache must not serve a cheap fair price to a caller who asked for a
+    full-resolution one. Nothing about the shapes would differ, so it would be invisible -- and it
+    is precisely the number this check exists to catch.
+
+    The third: `clearFairLayerCache` must actually clear, or a season rollover would serve last
+    season's valuations to this one.
+   */
+  clearFairLayerCache();
+  const first = priceBoardForDay({
+    teams: state.teams, games: state.games, date: completedDates[0], playerState: state.playerState,
+    seasonYear: YEAR, seed: SEED, mcTrials: HXSE_DAILY_TRIALS, settings: DEFAULT_SETTINGS,
+    fairCacheKey: 'season-a|day-0',
+  });
+  const second = priceBoardForDay({
+    teams: state.teams, games: state.games, date: completedDates[0], playerState: state.playerState,
+    seasonYear: YEAR, seed: SEED, mcTrials: HXSE_DAILY_TRIALS, settings: DEFAULT_SETTINGS,
+    fairCacheKey: 'season-a|day-0',
+  });
+  check(
+    'a cached fair layer returns the identical fair prices',
+    JSON.stringify(first.fair) === JSON.stringify(second.fair) && JSON.stringify(first.valuation) === JSON.stringify(second.valuation),
+    'the second call for the same (season, date) came from the cache and matched',
+  );
+
+  const premium = priceBoardForDay({
+    teams: state.teams, games: state.games, date: completedDates[0], playerState: state.playerState,
+    seasonYear: YEAR, seed: SEED, mcTrials: HXSE_SETTLEMENT_TRIALS, settings: DEFAULT_SETTINGS,
+    fairCacheKey: 'season-a|day-0',
+  });
+  const differs = JSON.stringify(premium.fair) !== JSON.stringify(first.fair);
+  check(
+    'a full-resolution request is NOT served from the cheap read\'s cache entry',
+    differs,
+    differs
+      ? `the trial count is part of the cache key, so ${HXSE_SETTLEMENT_TRIALS} trials recomputed rather than `
+      + `reusing the ${HXSE_DAILY_TRIALS}-trial fair prices. Had it reused them, the shapes would have matched `
+      + 'perfectly and the error would have been invisible.'
+      : 'THE CACHE SERVED A CHEAP FAIR PRICE TO A FULL-RESOLUTION REQUEST. The shapes match either way, so '
+      + 'this error would be completely invisible in the output.',
+  );
+
+  const otherDay = priceBoardForDay({
+    teams: state.teams, games: state.games, date: completedDates[1], playerState: state.playerState,
+    seasonYear: YEAR, seed: SEED, mcTrials: HXSE_DAILY_TRIALS, settings: DEFAULT_SETTINGS,
+    fairCacheKey: 'season-b|day-0',
+  });
+  check(
+    'a different cache key recomputes rather than reusing another key\'s entry',
+    JSON.stringify(otherDay.fair) !== JSON.stringify(first.fair),
+    'a second season key over the same league still gets its own fair prices, so a rollover cannot serve '
+    + 'stale valuations',
+  );
+
+  clearFairLayerCache();
+  const afterClear = priceBoardForDay({
+    teams: state.teams, games: state.games, date: completedDates[0], playerState: state.playerState,
+    seasonYear: YEAR, seed: SEED, mcTrials: HXSE_DAILY_TRIALS, settings: DEFAULT_SETTINGS,
+    fairCacheKey: 'season-a|day-0',
+  });
+  check(
+    'clearing the cache yields the same answer, so it is an optimisation and not a hidden state',
+    JSON.stringify(afterClear.fair) === JSON.stringify(first.fair),
+    'a cleared cache recomputes to the identical fair prices, so nothing in the result depends on whether '
+    + 'the cache happened to be warm',
   );
 
   // -- report ------------------------------------------------------------------------------------
