@@ -38,6 +38,15 @@ export type AppView =
   | 'history'
   | 'media'
   | 'betting'
+  /**
+   * The HXSE -- where club shares are priced.
+   *
+   * Its own destination rather than a fifth tab inside MacroBet. MacroBet already stacks four
+   * sub-views (slate, props, futures, awards) and they are all things you place a wager on; a share
+   * price is not a wager, it is the thing being priced. An exchange is where pricing happens, and
+   * putting it under MacroBet would have made the market a feature of the bookmaker.
+   */
+  | 'exchange'
   | 'betting_record'
   | 'teams'
   | 'players'

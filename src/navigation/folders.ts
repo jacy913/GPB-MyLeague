@@ -110,6 +110,18 @@ export const NAV_FOLDERS: NavFolder[] = [
         mobile rail where eight characters is what fits.
       */
       { view: 'betting', label: 'MacroBet', icon: Receipt, mobileLabel: 'MacroBet' },
+    /*
+      THE HXSE, next to MacroBet and not inside it.
+
+      MacroBet stacks four sub-views already -- slate, props, futures, awards -- and every one of
+      them is something you can stake on. A share price is not a stake; it is the thing being
+      priced. Putting this page under MacroBet would have made the market a tab of the bookmaker,
+      which is the wrong relationship between the two: the bookmaker quotes the exchange.
+
+      `mobileLabel` is 'HXSE' because the mobile rail is narrow and "Exchange" is nine characters.
+      The two names are for the same place and the full one is on the desktop leaf.
+    */
+    { view: 'exchange', label: 'Exchange', icon: ArrowLeftRight, mobileLabel: 'HXSE' },
     ],
   },
   {
@@ -215,6 +227,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
   dashboard: 'play',
   media: 'play',
   betting: 'play',
+  exchange: 'play',
   games_schedule: 'scores',
   team_calendar: 'scores',
   league_standings: 'league',

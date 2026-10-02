@@ -2485,7 +2485,13 @@ function App() {
       pendingTrades,
         sharePriceLedger: priceLedger,
     })
-  ), [currentDate, draftCenter, games, offseasonWorkflow, pendingTrades, playerState, progress, seasonComplete, seasonHistory, settings, teams]);
+  /*
+    `priceLedger` WAS MISSING FROM THIS DEPENDENCY LIST, so the backup callback captured whatever the
+    ledger was when the callback was last rebuilt -- `undefined` on a fresh load -- and exported an
+    empty price history. Found by building the Exchange page and asking why it showed "no prices yet"
+    against a league with forty-five simulated days behind it.
+  */
+  ), [currentDate, draftCenter, games, offseasonWorkflow, pendingTrades, playerState, priceLedger, progress, seasonComplete, seasonHistory, settings, teams]);
 
   const importLocalUniverseBackup = useCallback(async (payload: unknown): Promise<void> => {
     if (!acquireLocalOperation('backup_import')) {
@@ -3572,6 +3578,7 @@ function App() {
             setViewFallback={() => setView('betting')}
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
+          priceLedger={priceLedger}
             offseasonStage={offseasonStage}
             offseasonSeasonYear={offseasonEventSeasonYear}
             offseasonChampionLabel={seasonAwardsSelection?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}

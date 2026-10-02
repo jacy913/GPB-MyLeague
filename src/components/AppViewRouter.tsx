@@ -16,6 +16,8 @@ import {
   Team,
 } from '../types';
 import { GamesScheduleView } from './GamesScheduleView';
+import { ExchangeView } from './markets/ExchangeView';
+import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { HomeDashboard } from './HomeDashboard';
 import { SimulationHub, SimulationRunState } from './SimulationHub';
 import { TeamCalendar } from './TeamCalendar';
@@ -99,6 +101,8 @@ interface AppViewRouterProps {
   selectedDate: string;
   selectedTeamId: string;
   seasonComplete: boolean;
+  /** HXSE closes, one entry per simulated day. Undefined before anything is priced. */
+  priceLedger?: PriceSeries[];
   offseasonStage: OffseasonStage;
   hasPendingSeasonAwards: boolean;
   awardsUnlockDate: string;
@@ -211,6 +215,7 @@ export const AppViewRouter = ({
   selectedDate,
   selectedTeamId,
   seasonComplete,
+  priceLedger,
   offseasonStage,
   hasPendingSeasonAwards,
   awardsUnlockDate,
@@ -599,6 +604,20 @@ export const AppViewRouter = ({
           pitchingStats={playerState.pitchingStats}
           games={games}
           onOpenTables={() => onSetView('leaders')}
+        />
+      )}
+
+      {view === 'exchange' && (
+        /*
+          THE EXCHANGE. Scaffolded: one series, one chart, no controls.
+
+          It takes `priceLedger` straight from App rather than reaching for the save, because the
+          ledger is already threaded hook -> App -> bundle for the worker path and re-reading it here
+          would create a second source of truth for the same array.
+        */
+        <ExchangeView
+          priceLedger={priceLedger}
+          teamIds={teams.map((t) => t.id)}
         />
       )}
 
