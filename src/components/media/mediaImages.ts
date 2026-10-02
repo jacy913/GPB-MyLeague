@@ -17,6 +17,7 @@ import mussadMark from '../../assets/media/mussad-trim-square.webp';
 import mussadPortrait from '../../assets/media/mussad-portrait.png';
 import wardleyMark from '../../assets/media/wardley-trim-square.webp';
 import wardleyPortrait from '../../assets/media/wardley-portrait.png';
+import sallowWallpaper from '../../assets/media/garysallowwallpaper.png';
 import shinonomeMark from '../../assets/media/shinonome-trim-square.webp';
 import shinonomePortrait from '../../assets/media/shinonome-portrait.png';
 import jardinsWallpaper from '../../assets/media/audreyjardinswallpaper.png';
@@ -225,10 +226,11 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
 /**
  * OUTLET WALLPAPERS.
  *
- * Six of the nine outlets have one. Sharply has none supplied, Hollis has none supplied, and
- * SARLOW has none supplied either -- which is worth saying plainly, because the brief named only
- * Sharply and Hollis and it would be easy to read the gap as covering all three. It does not.
+ * Seven of the nine outlets have one. Sharply and Hollis have none supplied, which is worth saying
+ * plainly rather than leaving as a gap that reads as deliberate.
  *
+ * Sallow's arrived after the first pass and is now wired, so he is no longer the third exception
+ * the earlier version of this comment described.
  * It is OPTIONAL per outlet rather than a `Record<MediaId, ...>`, deliberately. A required entry
  * would have forced a placeholder for the three that have nothing, and a placeholder wallpaper is
  * worse than no wallpaper -- it looks like art rather than like a missing file.
@@ -237,6 +239,7 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
  * look at. A wallpaper at full strength behind a price is a wallpaper you cannot read a price on.
  */
 export const MEDIA_WALLPAPERS: Partial<Record<MediaId, MediaImage>> = {
+  sallow: { src: sallowWallpaper, alt: 'The Baseline Analytics floor, mid-session' },
   glorest: { src: glorestWallpaper, alt: 'The Glorest Sports broadcast backdrop' },
   jardins: { src: jardinsWallpaper, alt: 'The Other Side, set on the road' },
   boyle: { src: boyleWallpaper, alt: 'The Inning Order, from the third-base camera well' },
