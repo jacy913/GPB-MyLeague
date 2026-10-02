@@ -192,7 +192,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
      */
     id: 'sallow',
     name: 'Gary Sallow',
-    outlet: 'Baseline Analytics',
+    outlet: 'The Booth',
     role: 'Automated Read',
     thesis:
       'He runs the fit and publishes it. Nothing he posts is an opinion, which is precisely why everything else he publishes is worth measuring against.',
@@ -251,7 +251,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
      */
     id: 'jardins',
     name: 'Audrey Jardins',
-    outlet: 'The Other Side',
+    outlet: 'The Booth',
     role: 'Independent Columnist',
     thesis:
       'When seven people agree on a team, one of them is about to be wrong, and it is almost never the team they are praising.',
@@ -307,7 +307,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
      */
     id: 'boyle',
     name: 'Landon Boyle',
-    outlet: 'The Inning Order',
+    outlet: 'Calibrated Sports',
     role: 'Division Beat',
     thesis:
       'Thirty-two clubs is too many to know and eight is plenty. He knows his division down to which catcher gets benched against a lefty, and he prices all the others anyway.',
@@ -362,7 +362,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
      */
     id: 'mussad',
     name: 'Tariq Mussad',
-    outlet: 'Baseline Macro',
+    outlet: 'Calibrated Sports',
     role: 'League Environment Desk',
     thesis:
       'He does not cover teams. He covers the league they all play in, which moves every one of them and is why the market has a direction at all.',
@@ -403,7 +403,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
      */
     id: 'wardley',
     name: 'Vance Wardley Jr.',
-    outlet: 'Farm System',
+    outlet: 'Glorest Sports',
     role: 'Organizational Analyst',
     thesis:
       'The season everyone is watching was decided two years ago on a scouting sheet, by people who were not in the room when it happened.',
@@ -450,7 +450,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
   {
     id: 'shinonome',
     name: 'Fuyuka Shinonome',
-    outlet: 'The Bleacher Seat',
+    outlet: 'Fuyuka TV',
     role: 'Fan Consensus',
     thesis:
     'She was in the third row last season and she is on television now, and she brings with her the only thing that has ever moved a share price: the mood of people who want a team to win.',

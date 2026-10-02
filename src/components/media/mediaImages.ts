@@ -71,12 +71,12 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
    * the map uses the portrait they do have. MediaCard crops it square, so it reads correctly
    * in the collapsed card; only the alt text says plainly which it is.
    */
-  sallow: { src: sallowPortrait, alt: 'Gary Sallow, Baseline Analytics' },
-  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins, The Other Side' },
-  boyle: { src: boylePortrait, alt: 'Landon Boyle, The Inning Order' },
-  mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Baseline Macro' },
-  wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Farm System' },
-  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome of The Bleacher Seat' },
+  sallow: { src: sallowPortrait, alt: 'Gary Sallow, The Booth' },
+  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins, The Booth' },
+  boyle: { src: boylePortrait, alt: 'Landon Boyle, Calibrated Sports' },
+  mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Calibrated Sports' },
+  wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Glorest Sports' },
+  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome of Fuyuka TV' },
 };
 
 /**
@@ -129,8 +129,8 @@ export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
     src: sharplyPortrait,
     alt: 'The two Lined Sharply hosts in the studio, each wearing the embroidered show mark',
   },
-  sallow: { src: sallowPortrait, alt: 'Gary Sallow at Baseline Analytics' },
-  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins of The Other Side' },
+  sallow: { src: sallowPortrait, alt: 'Gary Sallow at The Booth' },
+  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins of The Booth' },
   boyle: { src: boylePortrait, alt: 'Landon Boyle, who covers one division closely' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, who covers the league rather than the clubs' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, who reads farm systems' },
@@ -239,11 +239,11 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
  * look at. A wallpaper at full strength behind a price is a wallpaper you cannot read a price on.
  */
 export const MEDIA_WALLPAPERS: Partial<Record<MediaId, MediaImage>> = {
-  sallow: { src: sallowWallpaper, alt: 'The Baseline Analytics floor, mid-session' },
+  sallow: { src: sallowWallpaper, alt: 'The Booth, mid-session' },
   glorest: { src: glorestWallpaper, alt: 'The Glorest Sports broadcast backdrop' },
-  jardins: { src: jardinsWallpaper, alt: 'The Other Side, set on the road' },
-  boyle: { src: boyleWallpaper, alt: 'The Inning Order, from the third-base camera well' },
-  mussad: { src: mussadWallpaper, alt: 'The Baseline Macro desk' },
-  wardley: { src: wardleyWallpaper, alt: 'A clubhouse wall at the Farm System outlet' },
-  shinonome: { src: fuyukaWallpaper, alt: 'The Bleacher Seat, third row, on a summer night' },
+  jardins: { src: jardinsWallpaper, alt: 'The Booth, set on the road' },
+  boyle: { src: boyleWallpaper, alt: 'Calibrated Sports, from the third-base camera well' },
+  mussad: { src: mussadWallpaper, alt: 'The Calibrated Sports desk' },
+  wardley: { src: wardleyWallpaper, alt: 'A clubhouse wall at the Glorest Sports outlet' },
+  shinonome: { src: fuyukaWallpaper, alt: 'Fuyuka TV, third row, on a summer night' },
 };
