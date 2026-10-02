@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PenLine } from 'lucide-react';
 import { ACCENT_VAR, HEADLINER_BY_ID, eventSeed, type HeadlineCandidate, type HeadlinerId } from '../../logic/headliners';
 import { pickBeat } from '../../logic/headlinerVoices';
-import { HEADLINER_WALLPAPERS } from '../media/headlinerImages';
 import { HeadlinerDetailsModal } from '../media/HeadlinerDetailsModal';
 import { Panel } from '../ui';
 import { HeadlinerPortrait } from '../ui/HeadlinerPortrait';
@@ -48,12 +47,6 @@ export const HeadlinerPanel: React.FC<{
 
   const slideCount = cards.length;
   const active = cards[Math.min(index, Math.max(0, slideCount - 1))] ?? null;
-  /*
-    The backdrop for whichever reporter is currently on screen. Looked up by the ACTIVE byline rather
-    than captured when the card was built, because the carousel rotates: holding the wallpaper of the
-    reporter who happened to be first would put Buccelli's backdrop under Perez's name.
-  */
-  const dossierWallpaper = active ? HEADLINER_WALLPAPERS[active.byline] : undefined;
 
   // Reset when the day changes. Keyed on the date rather than the card, so a re-order
   // within one day does not throw the reader back to the first card.
@@ -129,53 +122,21 @@ export const HeadlinerPanel: React.FC<{
               HeadlinerPortrait for the full note. */}
           <div className="relative flex shrink-0 items-center gap-3 md:w-[208px] md:flex-col md:items-start">
             {/*
-              THE REPORTER BACKDROP, at byline weight.
+              NO WALLPAPER HERE, and that is a measured decision rather than a retreat.
 
-              Lighter than the forecaster card's scrim on purpose. The forecaster registry's rule is
-              that "a wallpaper at full strength behind a price is a wallpaper you cannot read a price
-              on", and a byline is not a price -- it is a name, a role and a beat. So this stays warm
-              enough to give each voice a recognisable colour temperature, which is the actual payoff:
-              you learn that the dark one is Buccelli without reading the name.
+              This column is 208px wide and about 147px tall, and a reporter's backdrop behind it was
+              tried and screenshotted. It fails twice over. The crop of a 1376x768 photograph into
+              208x147 is an arbitrary slice -- on Perez's it landed on a face -- and any scrim light
+              enough to show that face washes the name out to "SIM / DAT / COR" fragments, while any
+              scrim dark enough to read the name erases the photograph entirely. There is no setting
+              in between, which is the forecaster registry's own point about wallpapers arriving full
+              strength in the wrong place.
 
-              `alt=""` and `aria-hidden` because the reporter is named in text two lines below. A
-              described backdrop is a screen reader announcing the same person twice.
-
-              The portrait sits on a solid plate of its own, so nothing legible ever rests directly on
-              the photograph.
+              So the artwork lives in the dossier, which has room for it and nothing numeric over it,
+              and this column stays a byline. That also means the five wallpapers are not being loaded
+              on every dashboard paint, which is the only thing that justified paying for them here.
             */}
-            {dossierWallpaper && (
-              <>
-                <img
-                  src={dossierWallpaper.src}
-                  alt=""
-                  aria-hidden="true"
-                  loading="lazy"
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-                <div
-                  aria-hidden="true"
-                  className="absolute inset-0"
-                  style={{
-                    background:
-                      'linear-gradient(180deg, rgba(5,7,13,0.70) 0%, rgba(5,7,13,0.88) 100%)',
-                  }}
-                />
-              </>
-            )}
-            {/*
-              A STRETCHED BUTTON rather than wrapping the column in one. The column is a flex row of
-              portrait and text, and a <button> cannot be that flex container without changing the
-              layout. So the button is an overlay across the whole column: it is what receives the
-              click and the focus ring, and the visible content above it stays plain text. This is the
-              standard way to make a whole card activatable without nesting text in a button.
-            */}
-            <button
-              type="button"
-              onClick={() => setDossierFor(active.byline)}
-              aria-label={`Open the ${HEADLINER_BY_ID[active.byline].displayName} dossier`}
-              className="absolute inset-0 z-10 cursor-pointer rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)]"
-            />
-            <div className="relative flex items-center gap-3">
+            <div className="relative flex w-full items-start gap-3 md:flex-col md:items-start">
             <HeadlinerPortrait id={active.byline} size="xl" />
             <div className="min-w-0">
               <p
@@ -206,6 +167,23 @@ export const HeadlinerPanel: React.FC<{
               </p>
             </div>
             </div>
+            {/*
+              A STRETCHED BUTTON across the whole column, rather than wrapping the column in one. The
+              column is a flex stack of portrait and text, and a <button> cannot be that flex
+              container without changing the layout. So the button is an overlay: it takes the click
+              and the focus ring, and the visible content stays plain text. This is what makes the
+              byline the entry point to the dossier, which is the only route a reporter has -- they
+              have no page of their own to be browsed from.
+
+              Added at the END of the column so that in DOM order it follows the name and role, which
+              is the order a screen reader should meet them in.
+            */}
+            <button
+              type="button"
+              onClick={() => setDossierFor(active.byline)}
+              aria-label={`Open the ${HEADLINER_BY_ID[active.byline].displayName} dossier`}
+              className="absolute inset-0 z-10 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)]"
+            />
           </div>
 
           <div className="min-w-0 flex-1">
