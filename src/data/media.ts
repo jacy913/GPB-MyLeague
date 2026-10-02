@@ -8,7 +8,7 @@
  */
 export type MediaId =
   | 'hollis' | 'glorest' | 'sharply'
-  | 'sallow' | 'jardins' | 'boyle' | 'mussad' | 'wardley' | 'shinonome';
+  | 'sallow' | 'jardins' | 'boyle' | 'mussad' | 'wardley';
 
 /*
  * The eight forecasting methods.
@@ -31,7 +31,6 @@ export type MediaMethod =
   | 'beat'              // Boyle    -- deep on one division, near-blind outside it
   | 'macro'             // Mussad   -- the league, not the clubs
   | 'scout'             // Wardley  -- organizational depth and development curve
-  | 'affect';           // Shinonome -- recency-weighted affection, floored so she rates no club below average
 
 export interface MediaWeights {
   /** Human-readable input labels paired with their contribution. */
@@ -426,53 +425,6 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'Draft slot is a price. It is not a prophecy. We treat it like a prophecy and then we act surprised every June.',
     ],
     accent: 'wardley',
-  },
-  /*
-   * FUYUKA SHINONOME, the ninth outlet, and the first added after the initial eight.
-   *
-   * Her read is AFFECTION, and the distinction from the attention-driven outlet is STRUCTURAL
-   * rather than a matter of emphasis: Sharply can rate a club at zero and Shinonome cannot rate
-   * anything below 0.5. That floor is the character -- "hard to hate" -- and it is also the
-   * weakness, because an outlet that never picks a loser cannot tell you which club is in
-   * trouble. Both halves are stated rather than only the flattering one.
-   *
-   * "Rose to fame quickly" is modelled as RECENCY, via the current win streak rather than season
-   * form, because `MediaReadInput` carries no game log and inventing one here would have been a
-   * second source of truth for something the engine already knows.
-   *
-   * CONFIDENCE IS MEASURED, and the measurement did NOT agree with the character. Reasoning from
-   * her being a fan desk suggested a high slope and a middling confidence; fitMediaOdds dumped her
-   * Brier over a grid against settled games and returned slope 0.10 at Brier 0.2498 -- barely
-   * better than a coin flip, and the same neighbourhood as hollis, glorest and sallow. She ships
-   * at the measured 0.38 rather than the reasoned 0.45, and the disagreement is recorded here
-   * rather than settled by picking the flattering number.
-   */
-  {
-    id: 'shinonome',
-    name: 'Fuyuka Shinonome',
-    outlet: 'Fuyuka TV',
-    role: 'Fan Consensus',
-    thesis:
-    'She was in the third row last season and she is on television now, and she brings with her the only thing that has ever moved a share price: the mood of people who want a team to win.',
-    weakness:
-    "She cannot say a club is bad. Every forecast she publishes is a variation on loving this team, and a view that never goes below neutral is a view that will call a losing season a great one. She will be right about how a club feels and wrong about how it is playing, and she has no way to know which one you asked for.",
-    confidence: 0.38,
-    confidenceStatus: 'fitted',
-    method: 'affect',
-    methodLabel: 'Recency-weighted affection',
-    weights: [
-      { label: 'Current streak', weight: 0.5 },
-      { label: 'Season form', weight: 0.3 },
-      { label: 'Best-known player', weight: 0.2 },
-    ],
-    voice: [
-      'I do not care about your run differential. I care that they have won four in a row and every one of those nights the building was shaking.',
-      'You are asking me to rate the worst team in baseball below average. I am not going to do that, and I would like you to notice that nobody else will either.',
-      'She signed for nothing. She signed for NOTHING and you are telling me she is not the reason anyone is watching.',
-      'I got famous in six weeks. You want to know what that is like? It is being asked about it every single day and having no idea whether you deserve it.',
-      'Buy the team you would rather lose with. That is the whole strategy and it works most of the time.',
-    ],
-    accent: 'shinonome',
   },
 ];
 

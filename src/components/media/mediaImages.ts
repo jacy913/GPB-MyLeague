@@ -18,10 +18,7 @@ import mussadPortrait from '../../assets/media/mussad-portrait.png';
 import wardleyMark from '../../assets/media/wardley-trim-square.webp';
 import wardleyPortrait from '../../assets/media/wardley-portrait.png';
 import sallowWallpaper from '../../assets/media/garysallowwallpaper.png';
-import shinonomeMark from '../../assets/media/shinonome-trim-square.webp';
-import shinonomePortrait from '../../assets/media/shinonome-portrait.png';
 import jardinsWallpaper from '../../assets/media/audreyjardinswallpaper.png';
-import fuyukaWallpaper from '../../assets/media/fuyukashinonomewallpaper.jpg';
 import glorestWallpaper from '../../assets/media/glorestsportswallpaper.jpg';
 import boyleWallpaper from '../../assets/media/landonboylewallpaper.jpg';
 import mussadWallpaper from '../../assets/media/tariqmussadwallpaper.jpg';
@@ -76,7 +73,6 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, Calibrated Sports' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Calibrated Sports' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Glorest Sports' },
-  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome of Fuyuka TV' },
 };
 
 /**
@@ -134,7 +130,6 @@ export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, who covers one division closely' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, who covers the league rather than the clubs' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, who reads farm systems' },
-  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome, who writes about the club she loves' },
 };
 
 /**
@@ -190,7 +185,6 @@ export const MEDIA_MARKS: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
-  shinonome: shinonomeMark,
 };
 
 /**
@@ -220,7 +214,6 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
-  shinonome: shinonomeMark,
 };
 
 /**
@@ -245,5 +238,4 @@ export const MEDIA_WALLPAPERS: Partial<Record<MediaId, MediaImage>> = {
   boyle: { src: boyleWallpaper, alt: 'Calibrated Sports, from the third-base camera well' },
   mussad: { src: mussadWallpaper, alt: 'The Calibrated Sports desk' },
   wardley: { src: wardleyWallpaper, alt: 'A clubhouse wall at the Glorest Sports outlet' },
-  shinonome: { src: fuyukaWallpaper, alt: 'Fuyuka TV, third row, on a summer night' },
 };

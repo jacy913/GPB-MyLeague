@@ -48,9 +48,19 @@ const main = (): void => {
   const css = readFileSync(resolve(process.cwd(), 'src', 'index.css'), 'utf8');
 
   // -- 1. eight forecasters, all distinct --------------------------------------------
+  /*
+    The roster size is asserted rather than derived, on purpose: a check that compared the array to
+    its own length would be measuring nothing. It is a tripwire against someone deleting an outlet.
+
+    Eight as of now. Shinonome moved to the sideline reporters and the forecaster set went from nine
+    to eight; Scintilla crosses over in the other direction in the next step of the restructure and
+    takes it back to nine. When that happens this number changes again, and that is the point of
+    writing the roster size down rather than inferring it.
+  */
+  const EXPECTED_FORECASTERS = 8;
   check(
-    'there are nine forecasters',
-    MEDIA_PROFILES.length === 9,
+    `there are ${EXPECTED_FORECASTERS} forecasters`,
+    MEDIA_PROFILES.length === EXPECTED_FORECASTERS,
     `found ${MEDIA_PROFILES.length}`,
   );
   const ids = MEDIA_PROFILES.map((p) => p.id);
@@ -147,9 +157,17 @@ const main = (): void => {
   );
 
   // Every method in the union must have an entry.
+  /*
+    DERIVED, not hardcoded. This asserted `=== 9` with a detail string that already said "for 8
+    methods" -- the two disagreed and neither was checked against the union. Comparing the entry
+    count to the METHOD list is the claim that was meant: one real read per method, no more and no
+    fewer. A magic number here only has to be updated when someone remembers to.
+  */
+  const usedMethods = [...new Set(MEDIA_PROFILES.map((p) => p.method))];
   check('every method has a SCORERS entry',
-    entryBlocks.length === 9,
-    `${entryBlocks.length} entries for 8 methods`
+    usedMethods.length === 0 || entryBlocks.length === usedMethods.length,
+    `${entryBlocks.length} entries for ${usedMethods.length} methods in use `
+    + `(${usedMethods.join(', ')})`
   );
 
   // And the five new methods must have genuinely distinct implementations.

@@ -128,7 +128,6 @@ const FUTURES_TEMPERATURE: Record<MediaId, number> = {
    */
   sallow: 8.0,
   jardins: 8.0,
-  shinonome: 8.0,
   boyle: 8.0,
   mussad: 8.0,
   wardley: 8.0,
@@ -358,14 +357,6 @@ const AWARD_REGRESSION: Record<MediaId, number> = {
    */
   sallow: 0.40,
   jardins: 0.18,
-  /*
-   * SHINONOME 0.10. A super fan does not pull a hot season back toward the mean, which is the
-   * same failure mode as the attention read and for the same reason: she is inside the moment
-   * rather than looking at it. It sits a little above Sharply 0.05 because she does carry some
-   * affection-based optimism that the attention desk lacks, but she is PROVISIONAL and
-   * `fitMediaOdds` owns this number.
-   */
-  shinonome: 0.10,
   boyle: 0.25,
   mussad: 0.30,
   wardley: 0.35,
@@ -596,25 +587,6 @@ const wardleyFactors = (team: Team, opponent: Team, input: RunEnvironmentInput):
   return { off: 1 + z, def: 1 - z };
 };
 
-/**
- * SHINONOME -- affection, on scoring, and a WEAKER read than her ranking.
- *
- * `RunEnvironmentInput` carries latent strength and observed output and nothing about streaks or
- * affection, so her actual edge -- what is HOT right now -- cannot be expressed on tomorrow's
- * run total at all. Wardley has the same gap for age; this is the same gap for recency, and it is
- * stated here rather than left to be discovered as "why is the fan desk the least differentiated
- * number on the board".
- *
- * What she can reach is latent strength, which is the weakest thing she could be reading and is
- * used precisely because it is the only one present. `SHINONOME_RUN_WEIGHT` is well under half
- * because a forecaster whose opinions live in the stands should not be steering a box score.
- */
-const SHINONOME_RUN_WEIGHT = 0.40;
-const shinonomeFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
-  const z = 0.34 * SHINONOME_RUN_WEIGHT * strengthZ(team.id, input);
-  return { off: 1 + z, def: 1 - z };
-};
-
 const FACTORS: Record<MediaId, (team: Team, opponent: Team, input: RunEnvironmentInput) => RunFactors> = {
   hollis: hollisFactors,
   glorest: glorestFactors,
@@ -624,7 +596,6 @@ const FACTORS: Record<MediaId, (team: Team, opponent: Team, input: RunEnvironmen
   boyle: boyleFactors,
   mussad: mussadFactors,
   wardley: wardleyFactors,
-  shinonome: shinonomeFactors,
 };
 
 /**
@@ -647,12 +618,6 @@ const TOTAL_SLOPE: Record<MediaId, number> = {
    */
   sallow: 0.50,
   jardins: 0.55,
-  /*
-   * SHINONOME 0.75. High, and high for the same reason Sharply is 0.90: she chases a run total
-   * that flatters a club she likes. PROVISIONAL -- reasoned from her character, not measured,
-   * and marked here rather than left to look fitted.
-   */
-  shinonome: 0.75,
   boyle: 0.50,
   mussad: 0.35,
   wardley: 0.45,
@@ -737,6 +702,6 @@ export const buildFirstHalfMarkets = (totalMarkets: LineMarket[]): LineMarket[] 
       title: market.title,
       subtitle: market.subtitle,
       fair,
-      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1, sallow: 0.7, jardins: 0.7, boyle: 0.65, mussad: 0.5, wardley: 0.65, shinonome: 0.7 },
+      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1, sallow: 0.7, jardins: 0.7, boyle: 0.65, mussad: 0.5, wardley: 0.65 },
     });
   });

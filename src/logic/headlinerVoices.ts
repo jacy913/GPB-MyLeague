@@ -829,12 +829,108 @@ const HOANI: VoiceBank = {
   },
 };
 
+/**
+ * SHINONOME -- the fan. Praise only, and no criticism anywhere in the bank.
+ *
+ * The constraint is HARD and enforced by her `eligible` gate (`valence === 'positive'`), so this bank
+ * is only ever asked for lines about good games. It could still go wrong by implying a criticism --
+ * "they had their chances" is a complaint, and "nothing went right" is one too. Hence the register
+ * note on every deck: she is pleased, and she is specific about what she is pleased about, which is
+ * how a fan actually sounds. A generic delighted sentence would be a parody of her instead of her.
+ *
+ * No exclamation marks. The temptation is to write enthusiasm as punctuation, and it reads as a
+ * parody of a fan immediately.
+ */
+const SHINONOME: VoiceBank = {
+  titles: {
+    walk_off: [
+      'AND THAT IS THE GAME',
+      'SHE WALKED IT OFF. OF COURSE SHE DID',
+    ],
+    no_hitter: [
+      'A NO-HITTER IN THIS LEAGUE TONIGHT',
+      'NOBODY TOUCHED IT. NINETY NINE PITCHES',
+    ],
+    winning_streak: [
+      'FOUR IN A ROW AND THE PLACE IS BUZZING',
+      'THAT IS FIVE NOW AND I LOSE COUNT',
+    ],
+    multi_homer: [
+      'THREE HOME RUNS. IN ONE GAME',
+      'SHE HIT ANOTHER ONE AND THE PARK STOOD UP',
+    ],
+    rbi_barrage: [
+      'SHE CAME UP WITH THE BASES LOADED',
+      'THAT IS A LOT OF RUNS IN ONE INNING',
+    ],
+    big_debut: [
+      'A DEBUT. IN THIS LEAGUE',
+      'FIRST GAME AND ALREADY THIS',
+    ],
+    extra_innings: [
+      'AND THEN WE WENT TO EXTRA INNINGS',
+      'ELEVEN INNING NIGHT AND I WOULD DO IT AGAIN',
+    ],
+    one_run_game: [
+      'ONE RUN. THAT IS THE WHOLE SCORE',
+      'ONE RUN AND IT COUNTED',
+    ],
+    generic: [
+      'What a game. Genuinely, what a game.',
+      'They did it again and I am not even surprised.',
+      'I do not care about the run differential tonight. Tonight was good.',
+      'Best game I have paid to watch in a long while.',
+      'That one is going on the wall above my seat.',
+    ],
+  },
+  decks: {
+    walk_off: [
+      'You do not get a walk-off every season and when you do you remember where you were standing.',
+      'The whole park knew before the ball landed. The whole park was right.',
+    ],
+    no_hitter: [
+      'One team, one batter, ninety-nine pitches and not one of them was a hit. I have no notes.',
+      'I will be thinking about this one for a while. That is the entire review.',
+    ],
+    winning_streak: [
+      'They keep finding a way and I keep watching and nobody has explained to me why that is not better.',
+      'A good stretch, a good month, and a good seat to watch it from.',
+    ],
+    multi_homer: [
+      'Two of them were necessary. The third one was just for everyone in the building.',
+      'Every one of them was hit. That is the part worth saying twice.',
+    ],
+    rbi_barrage: [
+      'Bases loaded and a hitter up. There is not much to decide there.',
+      'The kind of inning where the scoreboard stops keeping up with the game.',
+    ],
+    big_debut: [
+      'First game in this league and she arrives like she has been here a season. Enjoy it.',
+      'You only get a first game once. That one was a good one to spend it on.',
+    ],
+    extra_innings: [
+      'Nobody wanted to go home. Honestly, neither did I.',
+      'The kind of night where the lights stay on and everybody stays in the seats.',
+    ],
+    one_run_game: [
+      'One run decided it. The rest of it was everybody else failing to score, which I can live with.',
+      'Close game, good ending, and I will take that trade every time.',
+    ],
+    generic: [
+      'I am not going to break this down for you. I watched it and I liked it.',
+      'That was the best thing on television today and it was not close.',
+      'People want a cold read on it. My cold read is that I enjoyed it.',
+    ],
+  },
+};
+
 export const VOICE_BANKS: Readonly<Record<HeadlinerId, VoiceBank>> = {
   perez: PEREZ,
   soo: SOO,
   gatz: GATZ,
   scintilla: SCINTILLA,
   hoani: HOANI,
+  shinonome: SHINONOME,
   tombuccelli: TOMBUCCELLI,
 };
 

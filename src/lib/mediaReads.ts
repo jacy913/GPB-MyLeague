@@ -520,40 +520,6 @@ const wardleyScore = (team: Team, derived: DerivedInputs, rosterMean: number): n
  */
 const OVERCONFIDENCE = 1.35;
 
-/**
- * SHINONOME: affection, and the one read in this file that cannot rank a club below average.
- *
- * The floor is the whole design and it is a FLOOR, not a tilt. Every other method here can put
- * a club at the bottom of the range; this one maps its affection onto [0.5, 1.0] and cannot. That
- * is the character -- hard to hate, easy to love -- and it is also the honest weakness: a view
- * with no floor has no way to say a club is in trouble.
- *
- * It is therefore NOT the attention read with different weights. Sharply ranks by how much
- * attention a club has generated over a season and can return 0. Shinonome ranks by how much
- * affection it has RIGHT NOW and cannot return less than 0.5. `checkMediaProfiles` asserts that
- * structural difference rather than leaving it to a comment, because it is the whole reason she
- * is a ninth outlet rather than a ninth weighting of an existing one.
- *
- * RECENCY, and the constraint behind it. "Rose to fame quickly" wants a signal about what is
- * happening lately rather than what has happened all season. `MediaReadInput` carries no game
- * log, so the honest recency proxy is the CURRENT WIN STREAK, which the engine already maintains
- * and which is by construction about the most recent games. It is weighted at 0.5 against season
- * form at 0.3 -- an inversion of `popularityOf`, where form leads at 0.45 and streak trails at
- * 0.25. A club on a hot run right now therefore reads high in her view whatever its season looks
- * like, which is exactly the asymmetry her character implies.
- *
- * Note the range is halved. Every other read spans the full 0-1 and she spans half of it, so her
- * contribution to `weightedConsensus` is real but can never outvote a forecaster who will commit
- * to a club being bad. That is a property of the character rather than a calibration knob.
- */
-const shinonomeScore = (team: Team, derived: DerivedInputs): number => {
-  const streak = scale(derived.winStreakByTeam.get(team.id) ?? 0, -3, 6);
-  const form = recentForm(team, derived);
-  const star = scale(derived.bestOverallByTeam.get(team.id) ?? 0, 60, 90);
-  const affection = streak * 0.5 + form * 0.3 + star * 0.2;
-  return 0.5 + 0.5 * Math.max(0, Math.min(1, affection));
-};
-
 const SCORERS: Record<MediaMethod, (team: Team, derived: DerivedInputs, rosterMean: number) => number> = {
   advanced: hollisScore,
   conventional: (team, derived) => glorestScore(team, derived),
@@ -566,7 +532,6 @@ const SCORERS: Record<MediaMethod, (team: Team, derived: DerivedInputs, rosterMe
   beat: (team, derived, rosterMean) => boyleScore(team, derived, rosterMean),
   macro: (team, derived) => mussadScore(team, derived),
   scout: (team, derived, rosterMean) => wardleyScore(team, derived, rosterMean),
-    affect: (team, derived) => shinonomeScore(team, derived),
 };
 
 /* ------------------------------------------------------------------ *

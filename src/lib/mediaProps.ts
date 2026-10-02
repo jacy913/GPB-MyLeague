@@ -78,12 +78,6 @@ export const PROP_TILT: Record<MediaId, number> = {
   glorest: 0.08,
   sharply: 0.26,
   /*
-   * SHINONOME 0.15, DERIVED from her 0.45 moneylines the same way the three fitted values were:
-   * a third of the slope. Her prop board is therefore more tilted than the flat-0.25 group and
-   * less tilted than the attention desk, which is consistent with her ranking read.
-   */
-  shinonome: 0.15,
-  /*
    * PROVISIONAL for the five, and DERIVED from their moneylines rather than chosen.
    *
    * The three fitted values are the moneyline slopes cut to a third: Hollis 0.30 -> 0.10,

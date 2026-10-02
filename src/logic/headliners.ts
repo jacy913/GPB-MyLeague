@@ -25,7 +25,7 @@
 import type { Game } from '../types';
 
 /** A reporter. Adding a sixth touches this file and its voice bank, nothing else. */
-export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'scintilla' | 'hoani' | 'tombuccelli';
+export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'scintilla' | 'hoani' | 'tombuccelli' | 'shinonome';
 
 /**
  * A semantic accent name, never a gradient string.
@@ -413,6 +413,51 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     ],
     eligible: (event) => event.severity >= HOANI_MIN_SEVERITY,
     priorityWeight: 1.1,
+  },
+  {
+    id: 'shinonome',
+    displayName: 'FUYUKA SHINONOME',
+    shortName: 'SHINONOME',
+    role: 'FAN',
+    outlet: 'Fuyuka TV',
+    portraitKey: 'shinonome',
+    accentToken: 'house',
+    /*
+      THE EXACT INVERSE OF TOM BUCCELLI, and that is the whole design of this entry.
+
+        Buccelli          gate `valence === 'negative'`   writes about bad games
+        Shinonome         gate `valence === 'positive'`   writes about good games
+        Buccelli          criticism unrestricted
+        Shinonome         CANNOT criticise. She cannot say a club is bad.
+
+      Her stated weakness as a forecaster was "she cannot say a club is bad; every forecast she
+      publishes is a variation on loving this team". As a forecaster that was a NARRATIVE limitation
+      showing up as a biased number -- the worst place for it, because a number is supposed to be
+      disinterested. As a reporter it is simply who she is: the fan in the third row who became a
+      public figure, which is who she was before the league made her publish probabilities.
+
+      Her old outlet name was "The Bleacher Seat" and it was her channel, not her employer. Renamed to
+      Fuyuka TV on the way across; `house` -- which was a declared-but-unassigned token pointing at the
+      dimmest ink in the theme -- is now hers and now points at her own measured accent.
+    */
+    covers: [
+      'walk_off', 'no_hitter', 'extra_innings', 'one_run_game',
+      'winning_streak', 'multi_homer', 'rbi_barrage', 'big_debut',
+    ],
+    /*
+      SHE CANNOT WRITE A BAD GAME, so nothing in these beats is a criticism. They are what she is
+      allowed to say, and the register is a person who is delighted rather than a person performing
+      delight -- which is why there is no exclamation mark anywhere in the bank.
+    */
+    beat: [
+      'I do not care about your run differential. I care that they have won four in a row.',
+      'Buy the team you would rather lose with. That is the whole strategy.',
+      'I have watched every one of these games in a seat I paid for and I have never once been disappointed.',
+      'People ask me for analysis. I do not have analysis. I have a season I am enjoying.',
+      'If you are not watching this team you are not watching the game.',
+    ],
+    eligible: (event) => event.valence === 'positive',
+    priorityWeight: 0.85,
   },
   {
     id: 'tombuccelli',

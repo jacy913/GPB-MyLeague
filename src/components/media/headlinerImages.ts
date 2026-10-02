@@ -6,6 +6,7 @@ import sooWallpaper from '../../assets/media/christinesoowallpaper.jpg';
 import buccelliWallpaper from '../../assets/media/tombuccelliwallpaper.jpg';
 import hoaniWallpaper from '../../assets/media/simonhoaniwallpaper.jpg';
 import scintillaWallpaper from '../../assets/media/scintilla2wallpaper.jpg';
+import shinonomeWallpaper from '../../assets/media/fuyukashinonomewallpaper.jpg';
 
 /**
  * A reporter's backdrop, in the same `{ src, alt }` shape as `MEDIA_WALLPAPERS`.
@@ -73,16 +74,18 @@ export const HEADLINER_WALLPAPERS: Partial<Record<HeadlinerId, HeadlinerImage>> 
     alt: 'The Scintilla channel, mid-read',
   },
   /*
-   * SHINONOME IS DELIBERATELY ABSENT, and the compiler says so.
+   * SHINONOME IS HERE NOW, and this is the last of the six.
    *
-   * Her wallpaper (`fuyukashinonomewallpaper.jpg`) is not imported either, so nothing here references
-   * an asset this registry cannot place. Adding her key before she crosses over is a type error --
-   * `shinonome` is not a `HeadlinerId` while she is still a forecaster -- and widening `HeadlinerId`
-   * to make her fit would have produced a reporter id that resolves to no profile at all.
-   *
-   * This is the same seam Scintilla is on from the other side: his forecaster assets cannot land until
-   * his profile exists, because the media image maps are keyed by `MediaId`.
+   * The same file is still registered in `MEDIA_WALLPAPERS`, because the forecaster-side removal that
+   * would retire it is deliberately the SECOND half of her move. She has to stop being a forecaster
+   * before her card can leave the forecaster set, and that is a separate change with a separate
+   * reviewable diff. One import, two references, no copy of the asset -- and once the forecaster entry
+   * goes this becomes the only one.
    */
+  shinonome: {
+    src: shinonomeWallpaper,
+    alt: 'Fuyuka TV, third row, on a summer night',
+  },
 };
 
 /**
