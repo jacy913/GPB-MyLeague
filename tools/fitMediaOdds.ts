@@ -118,12 +118,30 @@ const main = async (): Promise<void> => {
       const slateDate = state.currentDate;
       const { scores, spread } = buildMediaReads({
         teams: state.teams,
-        players: playerState.players,
-        battingRatings: playerState.battingRatings,
-        pitchingRatings: playerState.pitchingRatings,
-        battingStats: playerState.battingStats,
-        pitchingStats: playerState.pitchingStats,
-        playerState,
+        /*
+         * `state.playerState`, NOT the season-opening `playerState`.
+         *
+         * This used to pass the outer binding, which is built once per season at line 103 and never
+         * reassigned. `manager.run` has been returning an updated player state on every one of these
+         * 220 iterations and the tool was throwing it away.
+         *
+         * What that cost: `battingStats` and `pitchingStats` stayed empty for the whole season, so
+         * every read that leans on season output or recent form -- which is most of them -- was
+         * scoring an opening-day roster against real settled results. Ratings never aged or
+         * developed either. The fitted slopes were therefore slopes for a league that never plays a
+         * game, which is the likeliest reason this tool disagreed with the shipped values rather than
+         * confirming them.
+         *
+         * `state.playerState` is as of the START of the slate being priced, so this keeps the
+         * no-look-ahead property the loop already had. `teams` was already read correctly from
+         * `state`; only the player side was frozen.
+         */
+        players: state.playerState.players,
+        battingRatings: state.playerState.battingRatings,
+        pitchingRatings: state.playerState.pitchingRatings,
+        battingStats: state.playerState.battingStats,
+        pitchingStats: state.playerState.pitchingStats,
+        playerState: state.playerState,
         seasonYear: year,
       });
 
