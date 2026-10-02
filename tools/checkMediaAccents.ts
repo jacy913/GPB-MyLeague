@@ -38,7 +38,7 @@ const check = (label: string, pass: boolean, detail?: string): void => {
 };
 
 /** The eight outlets, in the order they appear in index.css. */
-const OUTLETS = ['hollis', 'glorest', 'sharply', 'sallow', 'jardins', 'boyle', 'mussad', 'wardley'];
+const OUTLETS = ['hollis', 'glorest', 'sharply', 'sallow', 'jardins', 'boyle', 'mussad', 'wardley', 'shinonome'];
 
 /**
  * The minimum OKLab distance between any two accents.

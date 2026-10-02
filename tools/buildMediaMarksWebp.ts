@@ -86,6 +86,7 @@ const MARKS: Array<{ id: string; name: string; file: string }> = [
   { id: 'boyle', name: 'Landon Boyle', file: 'landonboyle.png' },
   { id: 'mussad', name: 'Tariq Mussad', file: 'tariqmussad.png' },
   { id: 'wardley', name: 'Vance Wardley Jr.', file: 'vancewardleyjr.png' },
+  { id: 'shinonome', name: 'Fuyuka Shinonome', file: 'fuyukashinonome.png' },
 ];
 
 /** Qualities swept, so the shipped one is chosen from measured bytes rather than taste. */

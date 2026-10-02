@@ -49,8 +49,8 @@ const main = (): void => {
 
   // -- 1. eight forecasters, all distinct --------------------------------------------
   check(
-    'there are eight forecasters',
-    MEDIA_PROFILES.length === 8,
+    'there are nine forecasters',
+    MEDIA_PROFILES.length === 9,
     `found ${MEDIA_PROFILES.length}`,
   );
   const ids = MEDIA_PROFILES.map((p) => p.id);
@@ -148,7 +148,7 @@ const main = (): void => {
 
   // Every method in the union must have an entry.
   check('every method has a SCORERS entry',
-    entryBlocks.length === 8,
+    entryBlocks.length === 9,
     `${entryBlocks.length} entries for 8 methods`
   );
 

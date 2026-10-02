@@ -123,6 +123,10 @@
   --color-media-mussad-hi:#a68cff;
   --color-media-mussad-dim: rgba(123, 92, 240, 0.18);
 
+  --color-media-shinonome:  #e8a3fa;
+    --color-media-shinonome-hi:#f7ccfd;
+    --color-media-shinonome-dim: rgba(232, 163, 250, 0.18);
+
   --color-media-wardley:  #787600;
   --color-media-wardley-hi:#b8b52e;
   --color-media-wardley-dim: rgba(120, 118, 0, 0.18);

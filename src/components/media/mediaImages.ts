@@ -17,6 +17,14 @@ import mussadMark from '../../assets/media/mussad-trim-square.webp';
 import mussadPortrait from '../../assets/media/mussad-portrait.png';
 import wardleyMark from '../../assets/media/wardley-trim-square.webp';
 import wardleyPortrait from '../../assets/media/wardley-portrait.png';
+import shinonomeMark from '../../assets/media/shinonome-trim-square.webp';
+import shinonomePortrait from '../../assets/media/shinonome-portrait.png';
+import jardinsWallpaper from '../../assets/media/audreyjardinswallpaper.png';
+import fuyukaWallpaper from '../../assets/media/fuyukashinonomewallpaper.jpg';
+import glorestWallpaper from '../../assets/media/glorestsportswallpaper.jpg';
+import boyleWallpaper from '../../assets/media/landonboylewallpaper.jpg';
+import mussadWallpaper from '../../assets/media/tariqmussadwallpaper.jpg';
+import wardleyWallpaper from '../../assets/media/vancewardleyjrwallpaper.jpg';
 import sharplyMasthead from '../../assets/media/linedsharply-masthead.jpg';
 import sharplyMark from '../../assets/media/linedsharplylogo-trim.png';
 import sharplySquare from '../../assets/media/linedsharplylogo-trim-square.png';
@@ -67,6 +75,7 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, The Inning Order' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Baseline Macro' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Farm System' },
+  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome of The Bleacher Seat' },
 };
 
 /**
@@ -124,6 +133,7 @@ export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, who covers one division closely' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, who covers the league rather than the clubs' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, who reads farm systems' },
+  shinonome: { src: shinonomePortrait, alt: 'Fuyuka Shinonome, who writes about the club she loves' },
 };
 
 /**
@@ -179,6 +189,7 @@ export const MEDIA_MARKS: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
+  shinonome: shinonomeMark,
 };
 
 /**
@@ -208,4 +219,28 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
+  shinonome: shinonomeMark,
+};
+
+/**
+ * OUTLET WALLPAPERS.
+ *
+ * Six of the nine outlets have one. Sharply has none supplied, Hollis has none supplied, and
+ * SARLOW has none supplied either -- which is worth saying plainly, because the brief named only
+ * Sharply and Hollis and it would be easy to read the gap as covering all three. It does not.
+ *
+ * It is OPTIONAL per outlet rather than a `Record<MediaId, ...>`, deliberately. A required entry
+ * would have forced a placeholder for the three that have nothing, and a placeholder wallpaper is
+ * worse than no wallpaper -- it looks like art rather than like a missing file.
+ *
+ * Intended as a low-contrast backdrop behind the outlet's own surface, not as a photograph to
+ * look at. A wallpaper at full strength behind a price is a wallpaper you cannot read a price on.
+ */
+export const MEDIA_WALLPAPERS: Partial<Record<MediaId, MediaImage>> = {
+  glorest: { src: glorestWallpaper, alt: 'The Glorest Sports broadcast backdrop' },
+  jardins: { src: jardinsWallpaper, alt: 'The Other Side, set on the road' },
+  boyle: { src: boyleWallpaper, alt: 'The Inning Order, from the third-base camera well' },
+  mussad: { src: mussadWallpaper, alt: 'The Baseline Macro desk' },
+  wardley: { src: wardleyWallpaper, alt: 'A clubhouse wall at the Farm System outlet' },
+  shinonome: { src: fuyukaWallpaper, alt: 'The Bleacher Seat, third row, on a summer night' },
 };

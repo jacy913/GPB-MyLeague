@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const OUTLETS = ['hollis', 'glorest', 'sharply', 'sallow', 'jardins', 'boyle', 'mussad', 'wardley'];
+const OUTLETS = ['hollis', 'glorest', 'sharply', 'sallow', 'jardins', 'boyle', 'mussad', 'wardley', 'shinonome'];
 
 interface Rgb { r: number; g: number; b: number }
 

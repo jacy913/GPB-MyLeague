@@ -97,6 +97,17 @@ const SLOPE: Record<MediaId, number> = {
   glorest: 0.25,
   sharply: 0.80,
   /*
+   * SHINONOME 0.45, and PROVISIONAL -- reasoned from her character rather than measured.
+   *
+   * The other five unfitted outlets all sit at a flat 0.25, and copying that would have been a
+   * DEFAULT dressed as a decision: a fan desk that overreacts to form is not the same forecaster
+   * as a macro desk or a scout, and pretending otherwise would make her indistinguishable on the
+   * board for no reason. 0.45 puts her between the fitted base rates and Sharply 0.80, which is
+   * where "chases what is hot right now" belongs. `tools/fitMediaOdds.ts` replaces this by
+   * dumping her Brier score over a slope grid against settled games.
+   */
+  shinonome: 0.45,
+  /*
    * THE FIVE NEW SLOPES ARE PROVISIONAL AND THIS IS NOT AN OVERSIGHT.
    *
    * The three above are measured: tools/fitMediaOdds.ts dumped each outlet's Brier score over a

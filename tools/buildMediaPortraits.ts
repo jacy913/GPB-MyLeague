@@ -84,6 +84,12 @@ const SOURCES: Array<{ id: string; file: string; out: string }> = [
   { id: 'boyle', file: 'landonboyle.png', out: 'boyle-portrait.png' },
   { id: 'mussad', file: 'tariqmussad.png', out: 'mussad-portrait.png' },
   { id: 'wardley', file: 'vancewardleyjr.png', out: 'wardley-portrait.png' },
+  /*
+   * FUYUKA SHINONOME, the ninth outlet. Supplied as uyukashinonome.png, the same full-body style
+   * as the five before her, so rameFor crops to head and shoulders on the same rule and the tool
+   * reports whether it had to fall back.
+   */
+  { id: 'shinonome', file: 'fuyukashinonome.png', out: 'shinonome-portrait.png' },
 ];
 
 /** 4:5. A portrait of a person is not a square, and a square face crop is a passport photo. */

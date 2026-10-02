@@ -2,7 +2,7 @@ import React from 'react';
 import { AlertTriangle, ChevronRight, Gauge } from 'lucide-react';
 import type { MediaProfile } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
-import { MEDIA_IMAGES, MEDIA_MARKS } from './mediaImages';
+import { MEDIA_IMAGES, MEDIA_MARKS, MEDIA_WALLPAPERS } from './mediaImages';
 
 /**
  * Media identity card.
@@ -23,6 +23,26 @@ export const MediaCard: React.FC<{
   onOpenDetails: (id: MediaProfile['id']) => void;
 }> = ({ profile, selected, onSelect, onOpenDetails }) => {
   const image = MEDIA_IMAGES[profile.id];
+  /*
+    THE WALLPAPER TAKKES THE CARD'S IMAGE SLOT WHERE ONE EXISTS.
+
+    Six outlets have a supplied wallpaper and three do not, so this is a fallback rather than a
+    replacement. It matters because a WALLPAPER is a different kind of picture from a masthead: it
+    is the room the outlet works out of, where a masthead is the room's sign. The card wants the
+    first of those, and three outlets are currently showing their portrait in that slot because
+    they have nothing else -- which is a substitution the alt text has to apologise for and this
+    removes for five of the nine.
+
+    The three with no wallpaper (Sharply, Hollis and Sallow) keep whatever they had, unchanged. A
+    placeholder would be worse than the gap: it looks like art rather than like a missing file, so
+    the absence stays visible.
+
+    The PORTRAIT is deliberately not rendered here. It belongs in the details popup, where there is
+    room to frame a person, and a 160px card slot is where a portrait gets letterboxed into
+    something nobody would recognise.
+  */
+  const wallpaper = MEDIA_WALLPAPERS[profile.id];
+  const cardImage = wallpaper ?? image;
   return (
   <button
     type="button"
@@ -37,8 +57,8 @@ export const MediaCard: React.FC<{
   >
     <div className="relative h-40 w-full overflow-hidden">
       <img
-        src={image.src}
-        alt={image.alt}
+        src={cardImage.src}
+        alt={cardImage.alt}
         className="h-full w-full object-cover"
         loading="lazy"
       />
