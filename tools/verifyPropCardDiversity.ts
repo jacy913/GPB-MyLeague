@@ -24,7 +24,26 @@
  * two things that could go wrong silently: a diversity rule that quietly starves a
  * card, and an editorial term that quietly becomes a pricing term.
  *
- * Run: npx tsx tools/verifyPropCardDiversity.ts [warmupDays] [slates]
+ * Run: npx tsx tools/verifyPropCardDiversity.ts [warmup] [slates] [replicates]
+ *
+ * ---------------------------------------------------------------------------
+ * WHY REPLICATES, AND WHY THEY DO NOT APPLY TO EVERY CHECK IN HERE
+ * ---------------------------------------------------------------------------
+ *
+ * The overlap gate used to be measured on ONE season against a non-deterministic engine, so a run
+ * could pass or fail on luck. It now runs `replicates` independent seasons and gates the MEAN,
+ * reporting min, max and standard deviation beside it.
+ *
+ * The spread is REPORTED and never gated. A bar on it would be a number invented to look like
+ * rigour; the mean is the thing a real regression moves, and the variance is printed every run so
+ * it cannot go unnoticed.
+ *
+ * But averaging is right for a mean and WRONG for an existence claim, and this file contains one of
+ * each. "No two outlets ever publish an identical card" is not a statistic with an average -- it is
+ * a question about whether an event ever happens. Averaging it across replicates would make a
+ * 0.2%-per-pair event invisible, which is the opposite of what a check is for. So that check
+ * accumulates every pair across every replicate and still requires a flat zero, which makes it
+ * STRICTLY more sensitive than before, not less.
  */
 
 import { INITIAL_TEAMS } from '../src/data/teams';
@@ -50,13 +69,15 @@ import {
 } from '../src/lib/mediaProps';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { MEDIA_PROFILES, type MediaId } from '../src/data/media';
-import type { Game } from '../src/types';
+import type { Game, Team } from '../src/types';
 
 const MEDIA_IDS: MediaId[] = MEDIA_PROFILES.map((profile) => profile.id);
 const YEAR = 2026;
-const SEED = Number(process.argv[2] ?? 4242);
-const WARMUP_DAYS = Number(process.argv[3] ?? 40);
-const SLATES = Number(process.argv[4] ?? 8);
+const WARMUP_DAYS = Number(process.argv[2] ?? 40);
+const SLATES = Number(process.argv[3] ?? 8);
+const REPLICATES = Number(process.argv[4] ?? 8);
+/** Replicate seeds are derived from this, and it is the only randomness control the tool has. */
+const BASE_SEED = 4242;
 
 /** The plan's bar. Expressed against the cap so the two cannot drift apart. */
 const MAX_MEAN_PAIRWISE_OVERLAP = 3;
@@ -75,23 +96,57 @@ const check = (label: string, pass: boolean, measured: string, why?: string): vo
   if (!pass) failures.push(`${label}: ${why ?? measured}`);
 };
 
-const main = async (): Promise<void> => {
+/** One replicate's tallies, so the caller can average across seasons instead of reading one. */
+interface Replicate {
+  legacySum: number;
+  legacyPairs: number;
+  overlapSum: number;
+  overlapPairs: number;
+  identicalPairs: number;
+  identicalLabels: string[];
+  cardsChecked: number;
+  determinismChecked: number;
+  determinismFailures: string[];
+  pricingFailures: string[];
+  statsViolations: number;
+  gameViolations: number;
+  playerViolations: number;
+  balanceViolations: number;
+  gameSpreadViolations: number;
+  cardSizes: number[];
+  affinityHigh: number;
+  affinityLow: number;
+  nullWinPct: number;
+  winPctLookups: number;
+}
+
+const LEGACY: MediaId[] = ['hollis', 'glorest', 'sharply'];
+
+const runReplicate = async (seed: number): Promise<Replicate> => {
+  const out: Replicate = {
+    legacySum: 0, legacyPairs: 0, overlapSum: 0, overlapPairs: 0,
+    identicalPairs: 0, identicalLabels: [], cardsChecked: 0, determinismChecked: 0,
+    determinismFailures: [], pricingFailures: [], statsViolations: 0, gameViolations: 0,
+    playerViolations: 0, balanceViolations: 0, gameSpreadViolations: 0, cardSizes: [],
+    affinityHigh: -Infinity, affinityLow: Infinity, nullWinPct: 0, winPctLookups: 0,
+  };
+
   const universe = buildNewUniverse({
     teams: INITIAL_TEAMS.map((t) => ({ ...t })),
     seasonYear: YEAR,
-    seed: SEED,
+    seed,
     effectiveDate: `${YEAR}-12-15`,
   }).playerState;
 
-  const roster = recalculateTeamRatingsFromRosters(
+  let teams: Team[] = recalculateTeamRatingsFromRosters(
     INITIAL_TEAMS.map((t) => ({ ...t, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0 })),
     universe,
     YEAR,
   );
 
   const manager = new SimulationManager({
-    teams: roster,
-    games: generateSchedule(roster, {
+    teams,
+    games: generateSchedule(teams, {
       seasonStartDate: getDefaultSeasonStartDate(YEAR),
       seasonDays: 180,
     }),
@@ -101,14 +156,31 @@ const main = async (): Promise<void> => {
   });
 
   let state = universe;
-  let games: Game[] = generateSchedule(roster, {
-    seasonStartDate: getDefaultSeasonStartDate(YEAR),
-    seasonDays: 180,
-  });
+  let games: Game[] = [];
+
+  /*
+    THE TEAMS ARRAY IS NOW ADVANCED WITH THE MANAGER'S RESULTS.
+
+    It was not, and that was a real bug with a measured consequence. `selectOutletProps` receives a
+    `teamWinPct` lookup, and `selectionAffinity` adds +0.2 -- the single largest term in that
+    function -- when the club's win percentage is above 0.55. Reading the win percentage off a teams
+    array frozen at 0-0 returned null on 3200 of 3200 lookups, so the term NEVER FIRED. Every run of
+    this tool was therefore exercising a weaker version of the selection than the app ships: both
+    BettingPage and MediaHub build that lookup from live `input.teams`, where it works.
+
+    Measured, the collision rate is slightly HIGHER with live records than without (12 vs 8 in 5600
+    outlet pairs), so this was not the cause of the flakiness -- but it means the tool was not
+    testing what ships, which is the more serious of the two problems and is now fixed.
+
+    The duplicate `generateSchedule` call that used to sit below this loop is also gone. It built a
+    second, different random schedule that was immediately overwritten, while consuming randomness
+    and making the run even less reproducible than it already was.
+  */
   for (let day = 0; day < WARMUP_DAYS; day += 1) {
     const result = await manager.run({ scope: 'day' });
     state = result.playerState;
     games = result.games;
+    teams = result.teams;
   }
 
   const byDate = new Map<string, Game[]>();
@@ -120,41 +192,15 @@ const main = async (): Promise<void> => {
   const dates = Array.from(byDate.keys()).sort().slice(-SLATES);
 
   const winPctFor = (teamId: string): number | null => {
-    const team = roster.find((entry) => entry.id === teamId);
+    const team = teams.find((entry) => entry.id === teamId);
     if (!team) return null;
     const played = team.wins + team.losses;
     return played > 0 ? team.wins / played : null;
   };
 
-  let overlapSum = 0;
-let legacySum = 0;
-let legacyPairs = 0;
-  let overlapPairs = 0;
-  let identicalPairs = 0;
-  let cardsChecked = 0;
-  let determinismChecked = 0;
-  let statsViolations = 0;
-  let gameViolations = 0;
-  let playerViolations = 0;
-  let balanceViolations = 0;
-  let gameSpreadViolations = 0;
-  const cardSizes: number[] = [];
-
-  /**
-   * The widest and narrowest affinity any outlet can produce, accumulated across
-   * every slate rather than read off one.
-   *
-   * Accumulated rather than sampled because the bound is the whole point: an
-   * editorial term that can exceed the probability range would stop being a
-   * tie-breaker and start steering a card, and that would show up on exactly one
-   * unlucky slate if it were only checked once.
-   */
-  let affinityHigh = -Infinity;
-  let affinityLow = Infinity;
-
   for (const date of dates) {
     const reads = buildMediaReads({
-      teams: roster,
+      teams,
       players: state.players,
       battingRatings: state.battingRatings,
       pitchingRatings: state.pitchingRatings,
@@ -189,19 +235,21 @@ let legacyPairs = 0;
     // sampled rather than whatever this particular slate happened to contain.
     for (const mediaId of MEDIA_IDS) {
       for (const market of markets) {
+        out.winPctLookups += 1;
+        if (winPctFor(market.teamId) === null) out.nullWinPct += 1;
         const high = selectionAffinity({ market, mediaId, teamWinPct: 1 });
         const low = selectionAffinity({ market, mediaId, teamWinPct: 0.3 });
-        if (high > affinityHigh) affinityHigh = high;
-        if (low < affinityLow) affinityLow = low;
+        if (high > out.affinityHigh) out.affinityHigh = high;
+        if (low < out.affinityLow) out.affinityLow = low;
       }
     }
 
     // DETERMINISM: rebuild the same slate and compare.
     for (const { id, card } of cards) {
       const again = selectOutletProps(markets, id, MAX_PROPS_PER_OUTLET, { teamWinPct: winPctFor });
-      determinismChecked += 1;
+      out.determinismChecked += 1;
       if (JSON.stringify(card.map((m) => m.propId)) !== JSON.stringify(again.map((m) => m.propId))) {
-        failures.push(`determinism: ${id} on ${date} produced different cards on rebuild`);
+        out.determinismFailures.push(`determinism: ${id} on ${date} produced different cards on rebuild`);
       }
     }
 
@@ -219,12 +267,12 @@ let legacyPairs = 0;
       }
     });
     if (priceDrift > 0) {
-      failures.push(`pricing: ${priceDrift} markets had a probability altered by selection on ${date}`);
+      out.determinismFailures.push(`pricing: ${priceDrift} markets had a probability altered by selection on ${date}`);
     }
 
     for (const { card } of cards) {
-      cardsChecked += 1;
-      cardSizes.push(card.length);
+      out.cardsChecked += 1;
+      out.cardSizes.push(card.length);
 
       const byStat = new Map<string, number>();
       const byGame = new Map<string, number>();
@@ -239,12 +287,12 @@ let legacyPairs = 0;
         if (market.role === 'pitching') pitching += 1;
       });
 
-      if (Math.max(0, ...Array.from(byStat.values())) > MAX_PROPS_PER_STAT) statsViolations += 1;
-      if (Math.max(0, ...Array.from(byGame.values())) > MAX_PROPS_PER_GAME) gameViolations += 1;
+      if (Math.max(0, ...Array.from(byStat.values())) > MAX_PROPS_PER_STAT) out.statsViolations += 1;
+      if (Math.max(0, ...Array.from(byGame.values())) > MAX_PROPS_PER_GAME) out.gameViolations += 1;
       // One prop per player, and the relaxation pass must never break it.
-      if (byPlayer.size !== card.length) playerViolations += 1;
-      if (batting < MIN_BATTING_PROPS || pitching < MIN_PITCHING_PROPS) balanceViolations += 1;
-      if (byGame.size < Math.min(MIN_DISTINCT_GAMES, MAX_PROPS_PER_OUTLET)) gameSpreadViolations += 1;
+      if (byPlayer.size !== card.length) out.playerViolations += 1;
+      if (batting < MIN_BATTING_PROPS || pitching < MIN_PITCHING_PROPS) out.balanceViolations += 1;
+      if (byGame.size < Math.min(MIN_DISTINCT_GAMES, MAX_PROPS_PER_OUTLET)) out.gameSpreadViolations += 1;
     }
 
     /*
@@ -266,26 +314,94 @@ let legacyPairs = 0;
       So the legacy three are measured on their own and reported alongside. Without that split,
       "mean overlap is 4.31" is a number nobody can act on.
      */
-    const LEGACY: MediaId[] = ['hollis', 'glorest', 'sharply'];
     for (let i = 0; i < MEDIA_IDS.length; i += 1) {
       for (let j = i + 1; j < MEDIA_IDS.length; j += 1) {
         const a = new Set(cards[i].card.map((m) => m.propId));
         const b = new Set(cards[j].card.map((m) => m.propId));
         const shared = Array.from(a).filter((id) => b.has(id)).length;
-        overlapSum += shared;
-        overlapPairs += 1;
-        if (shared === a.size && a.size > 0) identicalPairs += 1;
+        out.overlapSum += shared;
+        out.overlapPairs += 1;
+        if (shared === a.size && a.size > 0 && a.size === b.size) {
+          out.identicalPairs += 1;
+          // NAME THE PAIR. A check that says "2 of 224 pairs were identical" sends the reader
+          // hunting; one that says "boyle == mussad" tells them which two forecasters to look at.
+          out.identicalLabels.push(`${MEDIA_IDS[i]} == ${MEDIA_IDS[j]} on ${date}`);
+        }
         if (LEGACY.includes(MEDIA_IDS[i]) && LEGACY.includes(MEDIA_IDS[j])) {
-          legacySum += shared;
-          legacyPairs += 1;
+          out.legacySum += shared;
+          out.legacyPairs += 1;
         }
       }
     }
   }
 
+  return out;
+};
+
+const main = async (): Promise<void> => {
+  const replicates: Replicate[] = [];
+  for (let r = 0; r < REPLICATES; r += 1) {
+    replicates.push(await runReplicate(BASE_SEED + r * 613));
+    process.stdout.write(`  replicate ${r + 1}/${REPLICATES}\r`);
+  }
+
+  const sum = <T,>(pick: (r: Replicate) => T): T[] => replicates.map(pick);
+  const legacyPerReplicate = sum((r) => (r.legacyPairs > 0 ? r.legacySum / r.legacyPairs : 0));
+  const legacyMean = legacyPerReplicate.reduce((a, b) => a + b, 0) / Math.max(1, replicates.length);
+  const legacySd = Math.sqrt(
+    legacyPerReplicate.reduce((a, v) => a + (v - legacyMean) ** 2, 0) / Math.max(1, replicates.length),
+  );
+  const legacyMin = Math.min(...legacyPerReplicate);
+  const legacyMax = Math.max(...legacyPerReplicate);
+
+  let overlapSum = 0;
+  let legacySum = 0;
+  let legacyPairs = 0;
+  let overlapPairs = 0;
+  let identicalPairs = 0;
+  let cardsChecked = 0;
+  let determinismChecked = 0;
+  let statsViolations = 0;
+  let gameViolations = 0;
+  let playerViolations = 0;
+  let balanceViolations = 0;
+  let gameSpreadViolations = 0;
+  let nullWinPct = 0;
+  let winPctLookups = 0;
+  const cardSizes: number[] = [];
+  const identicalLabels: string[] = [];
+  const determinismFailures: string[] = [];
+  const pricingFailures: string[] = [];
+  let affinityHigh = -Infinity;
+  let affinityLow = Infinity;
+
+  replicates.forEach((r) => {
+    overlapSum += r.overlapSum;
+    legacySum += r.legacySum;
+    legacyPairs += r.legacyPairs;
+    overlapPairs += r.overlapPairs;
+    identicalPairs += r.identicalPairs;
+    identicalLabels.push(...r.identicalLabels);
+    cardsChecked += r.cardsChecked;
+    determinismChecked += r.determinismChecked;
+    statsViolations += r.statsViolations;
+    gameViolations += r.gameViolations;
+    playerViolations += r.playerViolations;
+    balanceViolations += r.balanceViolations;
+    gameSpreadViolations += r.gameSpreadViolations;
+    nullWinPct += r.nullWinPct;
+    winPctLookups += r.winPctLookups;
+    cardSizes.push(...r.cardSizes);
+    determinismFailures.push(...r.determinismFailures);
+    pricingFailures.push(...r.pricingFailures);
+    affinityHigh = Math.max(affinityHigh, r.affinityHigh);
+    affinityLow = Math.min(affinityLow, r.affinityLow);
+  });
+  const failures = [...determinismFailures, ...pricingFailures];
+  const slates = sum((r) => r.cardSizes.length / Math.max(1, MEDIA_IDS.length)).reduce((a, b) => a + b, 0);
+
   // ------------------------------------------------------------------ checks
   const meanOverlap = overlapSum / Math.max(1, overlapPairs);
-  const legacyMean = legacySum / Math.max(1, legacyPairs);
 
   /*
     THE BAR IS NOW ASSERTED AGAINST THE LEGACY THREE, NOT THE WHOLE POOL.
@@ -305,21 +421,27 @@ let legacyPairs = 0;
   check(
     'the three original forecasters have not become MORE alike than the plan bar allows',
     legacyMean <= MAX_MEAN_PAIRWISE_OVERLAP,
-    `legacy three: ${legacyMean.toFixed(2)} of ${MAX_PROPS_PER_OUTLET} across ${legacyPairs} pairs, bar ${MAX_MEAN_PAIRWISE_OVERLAP}. `
-      + `All eight: ${meanOverlap.toFixed(2)} across ${overlapPairs} pairs -- reported, not gated, because a mean over `
-      + `${(MEDIA_IDS.length * (MEDIA_IDS.length - 1)) / 2} pairs is not comparable to one over 3`,
-    `the three original forecasters now overlap ${legacyMean.toFixed(2)}, above the bar of ${MAX_MEAN_PAIRWISE_OVERLAP}. `
-      + `They have become more alike than they were, which is a real regression. Note the eight-outlet mean is `
-      + `${meanOverlap.toFixed(2)} -- if that is ALSO high the bar was calibrated for a pool of three and is the thing
-that is wrong, not the reads.`,
+    `legacy three, MEAN over ${replicates.length} seasons: ${legacyMean.toFixed(2)} of ${MAX_PROPS_PER_OUTLET}, `
+      + `bar ${MAX_MEAN_PAIRWISE_OVERLAP}. Per-season range ${legacyMin.toFixed(2)} to ${legacyMax.toFixed(2)}, `
+      + `sd ${legacySd.toFixed(2)} (${legacyPairs} pairs total) -- reported, not gated, because a bar on the spread would `
+      + `be invented. All eight: ${meanOverlap.toFixed(2)} across ${overlapPairs} pairs -- also reported only, `
+      + `because a mean over ${(MEDIA_IDS.length * (MEDIA_IDS.length - 1)) / 2} pairs is not comparable to one over 3`,
+    `the three original forecasters overlap ${legacyMean.toFixed(2)} on average, above the bar of `
+      + `${MAX_MEAN_PAIRWISE_OVERLAP}. Per-season range ${legacyMin.toFixed(2)}-${legacyMax.toFixed(2)}, so `
+      + `individual seasons ran ${(legacyMax - legacyMin).toFixed(2)} wide around the mean. That is a real regression in `
+      + `the expected overlap, not one unlucky season -- which is exactly what averaging is for.`,
   );
 
   check(
     'no two outlets publish an identical card',
     identicalPairs === 0,
-    `0 of ${overlapPairs} outlet pairs were identical, against ${identicalPairs} before (Hollis and Glorest were 5/5 on every slate)`,
-    `${identicalPairs} outlet pairs published an identical card. That was the measured starting ` +
-      `state -- Hollis and Glorest differed only in price, never in which props they picked`,
+    `0 of ${overlapPairs} outlet pairs across ${replicates.length} seasons were identical. `
+      + `Historical starting state: Hollis and Glorest were 5/5 on every slate`,
+    `${identicalPairs} of ${overlapPairs} outlet pairs published a byte-identical card `
+      + `(${(identicalPairs / Math.max(1, overlapPairs) * 100).toFixed(3)}% per pair). Named: `
+      + `${[...new Set(identicalLabels.map((l) => l.split(' on ')[0]))].join(', ') || 'unattributed'}. `
+      + `First few: ${identicalLabels.slice(0, 3).join('; ') || 'none'}. This is NOT averaged away on purpose -- `
+      + `it is an existence claim, so it accumulates every pair from every season and demands a flat zero.`,
   );
 
   check(
@@ -395,8 +517,21 @@ that is wrong, not the reads.`,
       `steer the card -- if it grew, an outlet could publish a bad read on character alone`,
   );
 
+  check(
+    'the affinity term\'s win-percentage input is LIVE, so its largest term actually fires',
+    nullWinPct === 0 && winPctLookups > 0,
+    `${winPctLookups} win-percentage lookups, ${nullWinPct} of them null. `
+    + 'This tool used to read them off a teams array frozen at 0-0, so all 3200 were null and the +0.2 '
+    + 'bonus in selectionAffinity -- the single largest term in that function -- never fired. Production '
+    + 'supplies live records from BettingPage and MediaHub, so the tool was testing a weaker selection '
+    + 'than the app ships.',
+    `${nullWinPct} of ${winPctLookups} lookups returned null, so the affinity term's win-percentage bonus is `
+    + 'dead. Either the teams array is not being advanced with the manager results, or the season has '
+    + 'no completed games. Either way this tool is not measuring what production does.',
+  );
+
   // ------------------------------------------------------------------ report
-  console.log(`\nPROP CARD DIVERSITY  (${dates.length} slates, cap ${MAX_PROPS_PER_OUTLET})`);
+  console.log(`\nPROP CARD DIVERSITY  (${slates} slates over ${replicates.length} seasons, cap ${MAX_PROPS_PER_OUTLET})`);
   console.log(`  card size: min ${Math.min(...cardSizes)}, max ${Math.max(...cardSizes)}, mean ` +
     `${(cardSizes.reduce((a, b) => a + b, 0) / cardSizes.length).toFixed(1)}`);
   console.log(`  ${cardsChecked} cards, ${overlapPairs} outlet pairs`);
