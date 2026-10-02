@@ -1,38 +1,54 @@
 import React from 'react';
-import { HEADLINER_BY_ID, type HeadlinerId } from '../../logic/headliners';
+import { ACCENT_VAR, HEADLINER_BY_ID, type GameEventKind, type HeadlinerId } from '../../logic/headliners';
 import { VOICE_BANKS } from '../../logic/headlinerVoices';
 import { HEADLINER_WALLPAPERS } from './headlinerImages';
-import { HeadlinerPortrait } from '../ui/HeadlinerPortrait';
 import { Modal } from '../ui';
-import { ACCENT_VAR } from '../../logic/headliners';
 
 /**
  * A REPORTER'S DOSSIER.
  *
  * ============================================================================
- * WHY A MODAL AND NOT A PAGE
+ * THE PREVIOUS DESIGN, AND WHY IT WAS REPLACED
  * ============================================================================
  *
- * Reporters have no hub, no route, no card grid and no table. They exist in exactly one place: the
- * byline on a headline. Building them a page means inventing navigation for six characters who are
- * never browsed, and a page with one entry point is a page nobody finds. So the entry point is the
- * byline itself, and the destination is the only shape that suits something you reach from a
- * sentence rather than from a list.
+ * It opened with a full-bleed photograph of the reporter at 208px tall, with a small portrait plate
+ * sitting on top of it in the corner, and then ran three italic beat lines, five bordered "covers"
+ * boxes and two more italic quotes. Screenshotted, it read as soup: a large photo of a person
+ * shouting at the reader, a second smaller picture of the same person pasted over it, and then eleven
+ * nearly identical italic lines with no hierarchy between them. The photograph was competing with the
+ * portrait for the job of saying who this is, and losing, because a 96px plate is what you actually
+ * recognise a byline by.
  *
  * ============================================================================
- * WHY THE WALLPAPER RUNS AT FULL STRENGTH HERE, AND ONLY HERE
+ * WHAT REPLACED IT, AND THE ONE IDEA
  * ============================================================================
  *
- * The forecaster registry's comment is the rule and it is not negotiable: "a wallpaper at full
- * strength behind a price is a wallpaper you cannot read a price on." Nothing numeric is layered over
- * this hero -- no price, no figure, no probability -- so the thing the rule protects is not present
- * and the budget can relax. This is the one surface where the wallpaper is being LOOKED AT rather than
- * sat behind, which is the distinction the wallpaper plan draws in its §5.4.
+ * It is now a PRINTED PAGE, and the single organising idea is ONE THING PER BLOCK, in the order a
+ * reader wants them:
  *
- * The byline strip on the newsroom panel uses a LIGHTER scrim than the forecaster card for the same
- * reason in the other direction: a name is not a price, so the reporter backdrop can stay warmer and
- * still be readable.
+ *   WHO      a 16:9 masthead carrying the name and role
+ *   WHAT THEY BELIEVE   one beat, set as a pull-quote
+ *   WHAT THEY COVER     one line of text
+ *   WHAT THEY SAY       one sample, under a rule
+ *
+ * ONE THING PER BLOCK also means ONE PICTURE. The previous version had a large photograph AND a
+ * portrait plate pasted over it -- two pictures of the same person arguing about who he is, in a
+ * layout where the big one lost. The wallpaper is a picture OF the reporter, so it does the job on
+ * its own and the plate is gone from here. The circular mark still exists, on the byline, which is
+ * the one place a reader recognises a voice by its badge.
+ *
+ * The masthead is 16:9 because that is the shape the artwork is: every reporter wallpaper is a
+ * 1376x768 frame. Letterboxing a 16:9 source into a 20px strip threw away most of the picture and
+ * left a smear, which is the third way this design had been wrong. Kept at its own shape it reads as
+ * a photograph of a place, and the reporter's name sits on the bottom third where the gradient is
+ * heaviest -- so the forecaster registry's rule still holds and nothing legible rests on the image
+ * itself.
+ *
+ * One beat instead of three, one sample instead of two. That is not a reduction for its own sake:
+ * three italic lines of identical weight is a wall, and a wall is what you stop reading. A single
+ * line, larger and set against an accent rule, is a claim -- which is what a beat is.
  */
+
 export interface HeadlinerDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -40,7 +56,7 @@ export interface HeadlinerDetailsModalProps {
 }
 
 /** Event-kind labels, so a beat reads as English rather than as an enum. */
-const KIND_LABEL: Record<string, string> = {
+const KIND_LABEL: Record<GameEventKind, string> = {
   no_hitter: 'no-hitter',
   perfect_game: 'perfect game',
   cycle: 'cycle',
@@ -70,24 +86,24 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /**
- * Two voice samples, taken deterministically from the persona's own banks.
+ * One quote, taken deterministically from the persona's own banks.
  *
- * Deterministic on purpose: `pickBeat` already seeds from the event so the same save shows the same
- * newsroom, and a dossier that reshuffled its quotes on every open would be a different kind of lie.
- * These come from the `generic` banks, which are the lines that render on any event, so the samples
- * cannot fail to match whatever game the reader happened to arrive from.
+ * Deterministic because `pickBeat` already seeds from the event so the same save shows the same
+ * newsroom; a dossier that reshuffled its quote on every open would be a different kind of lie. These
+ * come from the `generic` banks, which are the lines that render on any event, so a sample can never
+ * fail to match whatever game the reader arrived from.
  */
-const sampleVoices = (id: HeadlinerId, count: number): string[] => {
+const oneVoice = (id: HeadlinerId, offset: number): string | null => {
   const bank = VOICE_BANKS[id];
-  if (!bank) return [];
+  if (!bank) return null;
   const pool = [...bank.titles.generic, ...bank.decks.generic];
-  const out: string[] = [];
-  for (let i = 0; i < Math.min(count, pool.length); i += 1) {
-    const line = pool[(i * 2 + 1) % pool.length];
-    if (line && !out.includes(line)) out.push(line);
-  }
-  return out;
+  if (pool.length === 0) return null;
+  return pool[offset % pool.length];
 };
+
+const BlockLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <span className="t-label text-[var(--color-ink-faint)]">{children}</span>
+);
 
 export const HeadlinerDetailsModal: React.FC<HeadlinerDetailsModalProps> = ({
   isOpen,
@@ -100,7 +116,8 @@ export const HeadlinerDetailsModal: React.FC<HeadlinerDetailsModalProps> = ({
 
   const wallpaper = HEADLINER_WALLPAPERS[headlinerId];
   const accent = ACCENT_VAR[profile.accentToken];
-  const voices = sampleVoices(headlinerId, 2);
+  const beat = profile.beat[0];
+  const voice = oneVoice(headlinerId, 1);
 
   return (
     <Modal
@@ -109,87 +126,68 @@ export const HeadlinerDetailsModal: React.FC<HeadlinerDetailsModalProps> = ({
       title={
         <span className="flex items-center gap-2">
           <span style={{ color: accent }}>{profile.displayName}</span>
-          <span className="t-caption text-[var(--color-ink-faint)]">
-            {profile.outlet} &middot; {profile.role}
-          </span>
+          <span className="t-caption text-[var(--color-ink-faint)]">{profile.role}</span>
         </span>
       }
-      widthClass="max-w-2xl"
+      widthClass="max-w-xl"
     >
-      <div className="flex flex-col gap-4">
+      {/*
+        THE MASTHEAD. 16:9, the shape the artwork actually is, with the identity on the bottom third
+        where the gradient is heaviest. `alt` is kept -- unlike the byline backdrop, this is the only
+        description of the reporter's surroundings.
+      */}
+      <div className="relative mb-4 overflow-hidden border border-[var(--color-chrome-lo)]">
         {wallpaper ? (
-          <div className="relative overflow-hidden border border-[var(--color-chrome-lo)]">
+          <>
             <img
               src={wallpaper.src}
               alt={wallpaper.alt}
               loading="lazy"
-              className="h-40 w-full object-cover sm:h-52"
+              className="aspect-video w-full object-cover"
             />
-            {/*
-              A short gradient rather than the forecaster card's three-stop scrim. There is nothing
-              to read across this strip -- the name is in the modal's own title bar -- so the job here
-              is only to stop the portrait from sitting on a raw photograph. Kept deliberately weak so
-              the wallpaper is actually visible, which is the entire reason this surface exists.
-            */}
             <div
               aria-hidden="true"
               className="absolute inset-0"
               style={{
-                background: 'linear-gradient(180deg, rgba(5,7,13,0.10) 0%, rgba(5,7,13,0.55) 100%)',
+                background:
+                  'linear-gradient(180deg, rgba(5,7,13,0.25) 0%, rgba(5,7,13,0.55) 55%, rgba(5,7,13,0.94) 100%)',
               }}
             />
-            <div className="absolute bottom-2 left-3 flex items-center gap-2">
-              <HeadlinerPortrait id={headlinerId} size="lg" />
-              <span className="t-caption text-[var(--color-ink-dim)]">{profile.outlet}</span>
-            </div>
-          </div>
+          </>
         ) : (
-          /*
-            The bare fallback, kept real. The wallpaper plan wanted Gatz to have none so the absence
-            would read as character; he has one, so this path is no longer a designed moment. It stays
-            because a `Partial` registry has to have a defined behaviour for absence, and because a
-            reporter who loses an asset should degrade rather than break.
-          */
-          <div className="flex items-center gap-3 border border-[var(--color-chrome-lo)] px-3 py-4">
-            <HeadlinerPortrait id={headlinerId} size="lg" />
-            <span className="t-caption text-[var(--color-ink-faint)]">{profile.outlet}</span>
-          </div>
+          <div className="aspect-video w-full bg-[var(--color-sunken)]" aria-hidden="true" />
         )}
-
-        {/*
-          THE BEAT, verbatim. This reporter's standing position, in their own words -- the same lines
-          the newsroom panel shows, because the dossier is a deeper look at the same person rather
-          than a different one.
-        */}
-        <div className="flex flex-col gap-1">
-          {profile.beat.slice(0, 3).map((line) => (
-            <p key={line} className="t-body italic text-[var(--color-ink-dim)]">&ldquo;{line}&rdquo;</p>
-          ))}
+        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-0.5 p-3">
+          <p className="t-h3" style={{ color: accent }}>{profile.displayName}</p>
+          <p className="t-caption text-[var(--color-ink-dim)]">
+            {profile.outlet} &middot; {profile.role}
+          </p>
         </div>
-
-        <div className="flex flex-col gap-1">
-          <span className="t-caption text-[var(--color-ink-faint)]">Covers</span>
-          <div className="flex flex-wrap gap-1">
-            {profile.covers.map((kind) => (
-              <span
-                key={kind}
-                className="border border-[var(--color-chrome-lo)] px-2 py-0.5 t-caption text-[var(--color-ink-dim)]"
-              >
-                {KIND_LABEL[kind] ?? kind}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {voices.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <span className="t-caption text-[var(--color-ink-faint)]">In their words</span>
-            {voices.map((line) => (
-              <p key={line} className="t-body text-[var(--color-ink)]">&ldquo;{line}&rdquo;</p>
-            ))}
-          </div>
-        )}
       </div>
+
+      {/* WHAT THEY BELIEVE. One line, against an accent rule. */}
+      {beat && (
+        <div className="mt-4 border-l-2 pl-3" style={{ borderColor: accent }}>
+          <BlockLabel>The beat</BlockLabel>
+          <p className="mt-0.5 t-body italic text-[var(--color-ink)]">{beat}</p>
+        </div>
+      )}
+
+      {/* WHAT THEY COVER. A line of text, not a row of boxes. */}
+      <div className="mt-4 flex flex-col gap-1">
+        <BlockLabel>Covers</BlockLabel>
+        <p className="t-caption text-[var(--color-ink-dim)]">
+          {profile.covers.map((k) => KIND_LABEL[k]).join(' · ')}
+        </p>
+      </div>
+
+      {/* WHAT THEY SAY. One sample, below a rule, deliberately quieter than the beat. */}
+      {voice && (
+        <div className="mt-4 border-t border-[var(--color-chrome-lo)] pt-3">
+          <BlockLabel>Also says</BlockLabel>
+          <p className="mt-0.5 t-caption italic text-[var(--color-ink-dim)]">{voice}</p>
+        </div>
+      )}
     </Modal>
   );
 };
