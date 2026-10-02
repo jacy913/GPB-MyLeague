@@ -153,7 +153,15 @@ export const NAV_FOLDERS: NavFolder[] = [
     label: 'SCORES',
     icon: CalendarDays,
     leaves: [
-      { view: 'games_schedule', label: 'Scores', icon: CalendarDays },
+      /*
+        RESULTS, not "Scores".
+
+        The folder is already called SCORES and this leaf was called Scores as well, so the rail
+        printed the same word twice within three lines -- the same fault MacroBet had when its leaf
+        said "Betting" beside a screen headed with the MacroBet wordmark. The folder keeps the name;
+        the leaf inside it now says what it shows.
+      */
+      { view: 'games_schedule', label: 'Results', icon: CalendarDays, mobileLabel: 'Results' },
       { view: 'team_calendar', label: 'Schedule', icon: CalendarRange },
     ],
   },
