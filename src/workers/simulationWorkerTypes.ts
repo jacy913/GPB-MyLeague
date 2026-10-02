@@ -1,4 +1,5 @@
 import type { PriceSeries } from '../lib/analytics/sharePrice';
+import type { PriceBoard } from '../lib/analytics/priceBoard';
 import { Game, LeaguePlayerState, PendingTradeProposal, SimulationSettings, SimulationTarget, Team } from '../types';
 
 export interface SimulationWorkerSnapshot {
@@ -20,6 +21,14 @@ export interface SimulationWorkerSnapshot {
    * rebuilding a price path that was never run.
    */
   priceLedger?: PriceSeries[];
+  /**
+   * The last board the worker priced, so a caller can keep pricing through the crowd afterwards.
+   *
+   * OPTIONAL and additive, for the same reason `priceLedger` is. Without it, a caller pricing a
+   * single day after a bulk run has no fair values from the day before and must either invent them
+   * or run that day with no crowd -- two markets from one set of clubs.
+   */
+  priceBoard?: PriceBoard | null;
 }
 
 export interface SimulationWorkerStartPayload {
@@ -42,6 +51,24 @@ export interface SimulationWorkerStartPayload {
    * what makes a re-run reproduce the same closes instead of a plausible new market.
    */
   priceSeed: number;
+  /**
+   * The closes the run should CONTINUE from, oldest first.
+   *
+   * The ledger has to arrive with the run, not only leave with it. The price path is sequential --
+   * each day's close is yesterday's close plus drift, shock and noise -- so a worker that starts
+   * from an empty ledger prices its first day with no previous close, and `priceBoardForDay`
+   * answers that by opening every club at exactly fair value with a move of 0.000%. Measured on the
+   * real pricing path by `tools/probePreviousClose.ts`.
+   *
+   * The visible consequence of omitting it: every "simulate forward" run reopens the whole market at
+   * fair, so a club that had climbed to 900 prints 500 on the first day of the next run and the
+   * share-price chart shows a cliff that no game produced. Momentum and mean reversion also restart
+   * from nothing on every run, so the crowd has no history to read on day one.
+   *
+   * OPTIONAL, because a genuinely new market has no prior closes. Absent means "no market yet" and
+   * the run opens at fair, which is correct for a first day and wrong for every day after it.
+   */
+  priceLedger?: PriceSeries[];
 }
 
 export type SimulationWorkerRequest =

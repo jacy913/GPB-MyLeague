@@ -1750,6 +1750,7 @@ function App() {
     playerState,
     settings,
     currentDate,
+    priceLedger,
     isSupabaseConfigured,
     isDraftProcessing,
     seasonResetInProgress: seasonResetStatus.isResetting,
@@ -2529,6 +2530,14 @@ function App() {
     // absent ledger means the save predates the market and the league starts with none -- which is
     // different from a ledger of zero days, and is not the same claim.
     setPriceLedger(readSharePriceLedger(bundle.sharePriceLedger));
+      /*
+       * A save carries closes, not fair values, so there is no board to restore -- and the board in
+       * memory at this moment belongs to whatever league was open BEFORE this one. It has to be
+       * dropped, or the first stepped day after a load would have the crowd trading against another
+       * universe's fair prices. One day without a crowd is the correct price for that; a day with
+       * the wrong crowd is not.
+       */
+      setLastPriceBoard(null);
       setPlayerState(bundle.players);
       setSeasonHistory(bundle.seasonHistory);
       setOffseasonWorkflow(bundle.offseasonWorkflow);
@@ -2646,6 +2655,14 @@ function App() {
        * because undefined and empty are different claims and the save records the difference.
        */
       nextPriceLedger?: PriceSeries[],
+    /**
+     * The last board the worker priced.
+     *
+     * REPLACED, never merged and never left stale. The crowd prices a single stepped day from the
+     * previous day's fair values, so a board left over from before a bulk run would have the crowd
+     * trading against an assessment of a league state that no longer exists.
+     */
+    nextPriceBoard?: PriceBoard | null,
   ) {
     React.startTransition(() => {
       setTeams(nextTeams);
@@ -2658,6 +2675,7 @@ function App() {
         // Only ever replaced, never appended to. The worker already returns the whole ledger for
         // the run, so merging here would double-count every day the run covered.
         setPriceLedger(nextPriceLedger);
+      setLastPriceBoard(nextPriceBoard ?? null);
     });
   }
 
@@ -3078,7 +3096,7 @@ function App() {
         : `Simulated ${orderedResults.length} earlier games and updated the slate.`,
       'info',
     );
-  }, [teams, games, playerState, currentDate, selectedDate, getProgressFromGames, persistLeagueState, settings, pushNotice]);
+  }, [teams, games, playerState, currentDate, selectedDate, getProgressFromGames, persistLeagueState, settings, pushNotice, priceLedger, lastPriceBoard]);
 
   const openGameScreen = useCallback((gameId: string) => {
     const targetGame = games.find((game) => game.gameId === gameId);

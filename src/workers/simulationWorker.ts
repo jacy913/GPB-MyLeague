@@ -98,8 +98,14 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       each day's close depends on the previous day's. A ledger reconstructed from the finished game
       list would be a price path that was never run, and it would disagree with every close already
       on screen.
+
+      Seeded from `startPayload.priceLedger`, NOT from `[]`. Those two are the same on the first run of
+      a league and completely different on every run after it: an empty ledger means no previous
+      close, which `priceBoardForDay` answers by opening every club at exactly fair value with a
+      0.000% move. So a worker started from `[]` reopens the whole market at fair every time it was
+      asked to advance, putting a cliff in the share-price chart that no game produced.
     */
-    priceLedger: [] as PriceSeries[],
+    priceLedger: startPayload.priceLedger ?? [],
   };
 
     /*
@@ -150,6 +156,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
               seasonComplete: working.games.every((game) => game.status === 'completed'),
               simulatedGameCount: totalSimulatedGames,
         priceLedger: working.priceLedger,
+        priceBoard: lastBoard,
             },
             message: 'Simulation stopped by the commissioner before the next day began.',
           },
@@ -297,6 +304,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
           seasonComplete: working.games.every((game) => game.status === 'completed'),
           simulatedGameCount: totalSimulatedGames,
         priceLedger: working.priceLedger,
+        priceBoard: lastBoard,
         },
         message: totalSimulatedGames > 0
           ? `Simulation completed through ${working.currentDate}.`

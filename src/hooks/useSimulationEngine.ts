@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SimulationRunState } from '../components/SimulationHub';
 import { SimulationProgressUpdate } from '../logic/simulationManager';
 import { saveSupabaseSeasonRun } from '../lib/storage';
-import { leaguePriceSeed } from '../lib/analytics/priceBoard';
+import { leaguePriceSeed, type PriceBoard } from '../lib/analytics/priceBoard';
 import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { Game, LeaguePlayerState, PendingTradeProposal, SimulationSettings, SimulationTarget, Team } from '../types';
 import { SimulationWorkerResponse } from '../workers/simulationWorkerTypes';
@@ -35,6 +35,13 @@ interface UseSimulationEngineArgs {
   playerState: LeaguePlayerState;
   settings: SimulationSettings;
   currentDate: string;
+  /**
+   * The HXSE closes so far, so a run continues the market instead of restarting it.
+   *
+   * Read fresh on every run rather than captured, because a run is started by a click and the
+   * ledger will have moved since the hook last rendered.
+   */
+  priceLedger?: PriceSeries[];
   isSupabaseConfigured: boolean;
   isDraftProcessing: boolean;
   seasonResetInProgress: boolean;
@@ -73,6 +80,14 @@ interface UseSimulationEngineArgs {
      * the caller persists that difference into the save rather than flattening it here.
      */
     nextPriceLedger?: PriceSeries[],
+    /**
+     * The last board the worker priced, so the caller can keep pricing through the crowd.
+     *
+     * Optional for the same reason `nextPriceLedger` is. The distinction that matters to the caller
+     * is "no market yet" against "a market exists and this is where it ended", and only the caller
+     * can act on which.
+     */
+    nextPriceBoard?: PriceBoard | null,
   ) => void;
 }
 
@@ -117,6 +132,7 @@ export const useSimulationEngine = ({
   playerState,
   settings,
   currentDate,
+  priceLedger,
   isSupabaseConfigured,
   isDraftProcessing,
   seasonResetInProgress,
@@ -370,6 +386,10 @@ export const useSimulationEngine = ({
               // `undefined` means "this build never priced the market" and `[]` would claim it never
               // traded. Both are read defensively on the other side.
               snapshot.priceLedger,
+              // The last board the worker priced. Carried so a single-day step after a bulk run
+              // reads a fair price from the day before rather than from a board the run has already
+              // superseded. Same defensive read as the ledger: absent means this build never priced.
+              snapshot.priceBoard ?? null,
           );
 
           if (message.type === 'complete' && snapshot.seasonComplete && snapshot.simulatedGameCount > 0) {
@@ -457,6 +477,10 @@ export const useSimulationEngine = ({
           // The HXSE price seed, derived from the league's own identity so no schema field is
           // needed and an old save reproduces its own market. See `leaguePriceSeed`.
           priceSeed: leaguePriceSeed(teams),
+          // The closes to CONTINUE from. Without this the worker prices its first day with no
+          // previous close, which reopens every club at exactly fair value -- so every "advance"
+          // would erase the market the last one built. See `SimulationWorkerStartPayload`.
+          priceLedger,
         throttleMs: getSimulationThrottleMs(target),
       },
     });
@@ -478,6 +502,7 @@ export const useSimulationEngine = ({
     onTradeInterruption,
     persistSimulationSnapshot,
     playerState,
+    priceLedger,
     pushNotice,
     seasonResetInProgress,
     settings,
