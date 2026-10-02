@@ -3,6 +3,7 @@ import { MEDIA_PROFILES, type MediaId } from '../data/media';
 import {
   HOUSE_MARGIN, HOME_ADVANTAGE_LOGIT,
   probabilityToAmerican, americanToProbability, formatAmerican, HOUSE_SHADE,
+  weightedConsensus,
 } from './markets';
 
 /*
@@ -137,7 +138,7 @@ export const buildGameLine = (input: OddsInput): GameLine => {
   });
 
   const values = MEDIA_PROFILES.map((profile) => probability[profile.id]);
-  const rawConsensus = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const rawConsensus = weightedConsensus((profile) => probability[profile.id]);
 
   /*
    * Shade toward even, then price both sides independently.

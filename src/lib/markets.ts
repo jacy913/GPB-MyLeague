@@ -1,4 +1,4 @@
-import { MEDIA_PROFILES, type MediaId } from '../data/media';
+import { MEDIA_PROFILES, type MediaId, type MediaProfile } from '../data/media';
 import { liveOutcomeCount } from './futuresRisk';
 
 /**
@@ -107,6 +107,47 @@ export const formatAmerican = (value: number): string => (value > 0 ? `+${value}
 
 const logistic = (value: number): number => 1 / (1 + Math.exp(-value));
 export const clampLogit = logistic;
+
+/**
+ * Confidence-weighted mean across the forecaster pool.
+ *
+ * The consensus used to be an unweighted mean of every outlet's probability, which is a
+ * simplification that only holds while the pool is small and homogeneous. At eight forecasters
+ * it stops being defensible: an outlet the calibration says is barely better than a coin flip
+ * moves the house line exactly as much as the best-calibrated forecaster in the league, and the
+ * resulting price is neither the consensus nor anyone's view.
+ *
+ * Weighting by the same `confidence` the profile already publishes means the number on the card
+ * and the number in the maths can no longer disagree -- which was already possible, because
+ * confidence used to feed only the on-screen error bar. A manager could read "62% conviction"
+ * on a card and have no way to know the price behind it was computed as though every forecaster
+ * were equally sure.
+ *
+ * Takes a SELECTOR rather than a record, deliberately. Every call site transforms its own
+ * quantity before averaging -- a clamp on some, a logistic on others -- and a signature taking
+ * `Record<MediaId, number>` would either push that transformation out to all four callers or,
+ * worse, tempt one of them into averaging the wrong thing.
+ *
+ * It also CANNOT be pointed at a mean that is not over forecasters. `mediaMarkets.ts` has two
+ * means that look identical in a grep and must NOT be weighted: the per-forecaster softmax that
+ * centres a team's scores against the field, and the award candidates' totals. Both average over
+ * teams or players rather than over outlets, and weighting them would either double-count
+ * confidence or break every division and championship market. Taking a selector over profiles
+ * makes the "over whom" question structural rather than a comment nobody reads.
+ *
+ * Returns 0.5 if the pool carries no weight at all, so a misconfigured profile set degrades to
+ * "even" rather than to NaN.
+ */
+export const weightedConsensus = (pick: (profile: MediaProfile) => number): number => {
+  let sum = 0;
+  let weight = 0;
+  for (const profile of MEDIA_PROFILES) {
+    const w = profile.confidence;
+    sum += pick(profile) * w;
+    weight += w;
+  }
+  return weight > 0 ? sum / weight : 0.5;
+};
 
 /* ------------------------------------------------------------------ *
  * Field markets
@@ -246,7 +287,7 @@ export const buildFieldMarket = (input: {
 }): FieldMarket => {
   const outcomes = input.entries.map((entry) => {
     const values = MEDIA_PROFILES.map((profile) => clampProbability(entry.probability[profile.id]));
-    const consensusProbability = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const consensusProbability = weightedConsensus((profile) => clampProbability(entry.probability[profile.id]));
     const houseProbability = clampProbability(consensusProbability * (1 + HOUSE_MARGIN));
 
     const odds = {} as Record<MediaId, number>;
@@ -381,7 +422,7 @@ export const buildLineMarket = (input: {
    * the posted line. The rounding error itself is a residual the half-run grid
    * cannot avoid, and tools/checkTotalVig.ts bounds it.
    */
-  const meanFair = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const meanFair = weightedConsensus((profile) => input.fair[profile.id]);
   const houseLine = Math.round((meanFair + LINE_MARGIN) * 2) / 2;
 
   const overProbability = {} as Record<MediaId, number>;
@@ -410,8 +451,7 @@ export const buildLineMarket = (input: {
    * like it should: the two probabilities are complementary, so (0.5-a) + (0.5+a)
    * is 1, and scaling both about 0.5 leaves the sum at exactly 1.
    */
-  const meanOver = values.reduce((sum, value) => sum + logistic((value - houseLine) * 0.55), 0)
-    / values.length;
+  const meanOver = weightedConsensus((profile) => logistic((input.fair[profile.id] - houseLine) * 0.55));
   const overPriceProbability = clampProbability(meanOver);
   const underPriceProbability = clampProbability(1 - meanOver);
   const overPrice = probabilityToAmerican(overPriceProbability);
