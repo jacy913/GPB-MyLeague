@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PenLine } from 'lucide-react';
-import { ACCENT_VAR, HEADLINER_BY_ID, eventSeed, type HeadlineCandidate } from '../../logic/headliners';
+import { ACCENT_VAR, HEADLINER_BY_ID, eventSeed, type HeadlineCandidate, type HeadlinerId } from '../../logic/headliners';
 import { pickBeat } from '../../logic/headlinerVoices';
+import { HEADLINER_WALLPAPERS } from '../media/headlinerImages';
+import { HeadlinerDetailsModal } from '../media/HeadlinerDetailsModal';
 import { Panel } from '../ui';
 import { HeadlinerPortrait } from '../ui/HeadlinerPortrait';
 import { formatHeadlineDate } from './shared';
@@ -37,9 +39,21 @@ export const HeadlinerPanel: React.FC<{
 }> = ({ cards, sourceDate, timelineDate }) => {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  /*
+    Which reporter's dossier is open, or null. `null` rather than a boolean plus an id, because "no
+    dossier" and "a dossier whose reporter is missing" are the same state and one field cannot
+    disagree with itself.
+  */
+  const [dossierFor, setDossierFor] = useState<HeadlinerId | null>(null);
 
   const slideCount = cards.length;
   const active = cards[Math.min(index, Math.max(0, slideCount - 1))] ?? null;
+  /*
+    The backdrop for whichever reporter is currently on screen. Looked up by the ACTIVE byline rather
+    than captured when the card was built, because the carousel rotates: holding the wallpaper of the
+    reporter who happened to be first would put Buccelli's backdrop under Perez's name.
+  */
+  const dossierWallpaper = active ? HEADLINER_WALLPAPERS[active.byline] : undefined;
 
   // Reset when the day changes. Keyed on the date rather than the card, so a re-order
   // within one day does not throw the reader back to the first card.
@@ -61,6 +75,7 @@ export const HeadlinerPanel: React.FC<{
   );
 
   return (
+    <>
     <Panel className="overflow-hidden">
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
         <div className="flex items-center gap-2">
@@ -112,7 +127,55 @@ export const HeadlinerPanel: React.FC<{
               72px rather than 96px because the shipped portrait is 95x95: rendering it
               at 96 is 1:1 and softens on any 2x display. See `SIZE_PX` in
               HeadlinerPortrait for the full note. */}
-          <div className="flex shrink-0 items-center gap-3 md:w-[208px] md:flex-col md:items-start">
+          <div className="relative flex shrink-0 items-center gap-3 md:w-[208px] md:flex-col md:items-start">
+            {/*
+              THE REPORTER BACKDROP, at byline weight.
+
+              Lighter than the forecaster card's scrim on purpose. The forecaster registry's rule is
+              that "a wallpaper at full strength behind a price is a wallpaper you cannot read a price
+              on", and a byline is not a price -- it is a name, a role and a beat. So this stays warm
+              enough to give each voice a recognisable colour temperature, which is the actual payoff:
+              you learn that the dark one is Buccelli without reading the name.
+
+              `alt=""` and `aria-hidden` because the reporter is named in text two lines below. A
+              described backdrop is a screen reader announcing the same person twice.
+
+              The portrait sits on a solid plate of its own, so nothing legible ever rests directly on
+              the photograph.
+            */}
+            {dossierWallpaper && (
+              <>
+                <img
+                  src={dossierWallpaper.src}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-0"
+                  style={{
+                    background:
+                      'linear-gradient(180deg, rgba(5,7,13,0.70) 0%, rgba(5,7,13,0.88) 100%)',
+                  }}
+                />
+              </>
+            )}
+            {/*
+              A STRETCHED BUTTON rather than wrapping the column in one. The column is a flex row of
+              portrait and text, and a <button> cannot be that flex container without changing the
+              layout. So the button is an overlay across the whole column: it is what receives the
+              click and the focus ring, and the visible content above it stays plain text. This is the
+              standard way to make a whole card activatable without nesting text in a button.
+            */}
+            <button
+              type="button"
+              onClick={() => setDossierFor(active.byline)}
+              aria-label={`Open the ${HEADLINER_BY_ID[active.byline].displayName} dossier`}
+              className="absolute inset-0 z-10 cursor-pointer rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-gold)]"
+            />
+            <div className="relative flex items-center gap-3">
             <HeadlinerPortrait id={active.byline} size="xl" />
             <div className="min-w-0">
               <p
@@ -141,6 +204,7 @@ export const HeadlinerPanel: React.FC<{
               <p className="mt-1.5 border-l-2 border-[var(--color-chrome-lo)] pl-2 t-caption italic text-[var(--color-ink-dim)]">
                 {pickBeat(HEADLINER_BY_ID[active.byline], eventSeed(active.event))}
               </p>
+            </div>
             </div>
           </div>
 
@@ -217,5 +281,12 @@ export const HeadlinerPanel: React.FC<{
         save-path change and it is not a presentation one.
       */}
     </Panel>
+      <HeadlinerDetailsModal
+        isOpen={dossierFor !== null}
+        onClose={() => setDossierFor(null)}
+        headlinerId={dossierFor}
+      />
+  );
+    </>
   );
 };
