@@ -58,8 +58,8 @@ import {
   type PriceBoard,
 } from '../src/lib/analytics/priceBoard';
 import { shocksForDate, type PriceSeries } from '../src/lib/analytics/sharePrice';
-import { weightedConsensus } from '../src/lib/markets';
 import { buildMediaReads } from '../src/lib/mediaReads';
+import { plainConsensusWinPct } from '../src/lib/analytics/teamValue';
 import { INITIAL_TEAMS } from '../src/data/teams';
 import { marketSizeFor } from '../src/lib/analytics/fanbase';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
@@ -112,11 +112,15 @@ const simulateTo = async (days: number) => {
  * The PLAIN consensus per team and its league mean.
  *
  * The crowd's analyst archetype reads the plain mean rather than the confidence-weighted one, so it
- * needs both, and `priceBoardForDay` only exposes the weighted side through the valuation. This
- * is computed alongside rather than inside it, because the two are genuinely different quantities.
+ * needs both, and `priceBoardForDay` only exposes the weighted side through the valuation.
+ *
+ * This used to compute the mean itself. It no longer does: `plainConsensusWinPct` in `teamValue.ts`
+ * is the shipping implementation, added when the crowd was wired into the market floor, and a check
+ * that keeps its own copy is measuring the copy. A second implementation of a forecast is exactly
+ * the thing that drifts silently -- it would still pass here long after the real one had changed.
  */
 const plainConsensus = (state: {
-  teams: Team[]; playerState: LeaguePlayerState; games: Game[];
+  teams: Team[]; playerState: LeaguePlayerState;
 }): Map<string, number> => {
   const reads = buildMediaReads({
     teams: state.teams,
@@ -128,14 +132,7 @@ const plainConsensus = (state: {
     playerState: state.playerState,
     seasonYear: YEAR,
   });
-  void weightedConsensus;
-  void state.games;
-  const out = new Map<string, number>();
-  for (const t of state.teams) {
-    const values = Object.values(reads.scores).map((m) => m.get(t.id)).filter((v): v is number => typeof v === 'number');
-    out.set(t.id, values.length ? mean(values) : 0.5);
-  }
-  return out;
+  return plainConsensusWinPct(state.teams, reads).byId;
 };
 
 /**
@@ -264,8 +261,6 @@ const main = async (): Promise<void> => {
 
   for (let d = MOMENTUM_LOOKBACK; d + HORIZON < withCrowd.length; d += 1) {
     ids.forEach((id) => {
-      const entry = withCrowd[MOMENTUM_LOOKBACK + d - MOMENTUM_LOOKBACK];
-      void entry;
       const a = withCrowd[d - MOMENTUM_LOOKBACK].close[id];
       const b = withCrowd[d].close[id];
       if (!a || !b || b / a - 1 < 0.06) return;   // only genuine runs
