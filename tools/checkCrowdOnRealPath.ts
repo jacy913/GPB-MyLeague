@@ -46,7 +46,7 @@
  */
 
 import {
-  crowdFlowsFor,
+  crowdFlowsForDay,
   crowdShocksById,
   MOMENTUM_LOOKBACK,
   type CrowdFlow,
@@ -57,11 +57,10 @@ import {
   priceBoardForDay,
   type PriceBoard,
 } from '../src/lib/analytics/priceBoard';
-import { shocksForDate, type PriceSeries } from '../src/lib/analytics/sharePrice';
+import type { PriceSeries } from '../src/lib/analytics/sharePrice';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { plainConsensusWinPct } from '../src/lib/analytics/teamValue';
 import { INITIAL_TEAMS } from '../src/data/teams';
-import { marketSizeFor } from '../src/lib/analytics/fanbase';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
 import { SimulationManager } from '../src/logic/simulationManager';
 import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
@@ -157,25 +156,32 @@ const runPath = async (
   const out: DayRecord[] = [];
   const consensus = withCrowd ? plainConsensus(state) : null;
   const leagueMean = consensus ? mean([...consensus.values()]) : 0;
-  const sizeById = new Map(state.teams.map((t) => [t.id, marketSizeFor(t)]));
 
   for (const date of dates) {
     let eventShocks: Record<string, number> = {};
     let net: Record<string, number> = {};
 
     if (withCrowd && ledger.length > 0) {
-      const gameShocks = shocksForDate(state.games.filter((g) => g.date === date && g.status === 'completed'));
       const lastFair = fairByDay[fairByDay.length - 1];
-      const flows: CrowdFlow[] = crowdFlowsFor(state.teams.map((t) => ({
-        teamId: t.id,
-        closes: ledger.filter((d) => d.close[t.id] !== undefined).map((d) => d.close[t.id]),
-        fair: lastFair?.[t.id] ?? 500,
-        gameShock: gameShocks[t.id] ?? 0,
-        weightedConsensusWinPct: 0.5,
-        plainConsensusWinPct: consensus?.get(t.id) ?? 0.5,
-        plainConsensusLeagueMean: leagueMean,
-        marketSize: sizeById.get(t.id) ?? 50,
-      })));
+      /*
+       * `crowdFlowsForDay` is the shipping assembly, so this exercises the same code the market
+       * floor runs. It used to hand-build the flow inputs here, which meant the check was measuring
+       * a copy -- and the two differed in a way that mattered: the copy took every close in the
+       * ledger where the real one takes `closesFor`, and it filtered games to completed ones where
+       * the real one does not. Both are defensible on their own. Having two is not.
+       *
+       * The flows are needed as well as their sum, because check 2 asks whether net flow turns
+       * negative once a run is established -- a claim about the flows, not about the shocks.
+       */
+      const flows: CrowdFlow[] = crowdFlowsForDay({
+        teams: state.teams,
+        games: state.games,
+        date,
+        ledger,
+        fair: lastFair ?? {},
+        plain: consensus ?? new Map(),
+        plainLeagueMean: leagueMean,
+      });
       eventShocks = crowdShocksById(flows);
       net = Object.fromEntries(flows.map((f) => [f.teamId, f.net]));
     }

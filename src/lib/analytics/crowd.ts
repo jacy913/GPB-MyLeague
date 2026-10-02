@@ -256,15 +256,17 @@ export const crowdShocksById = (flows: CrowdFlow[]): Record<string, number> =>
  *
  * This is the shape the market floor has: it holds the teams, the games, the ledger so far, and
  * yesterday's fair values and plain consensus. Gathering them here rather than in the worker means
- * the worker's day loop stays a call, and means `checkCrowdOnRealPath` and production assemble the
- * crowd from identical inputs -- which is the same "the fit measures what ships" requirement that
+ * the worker's day loop stays a call.
+ *
+ * `checkCrowdOnRealPath` assembles the crowd through `crowdFlowsForDay` below, so it exercises this
+ * same code rather than a copy of it -- the same "the check measures what ships" requirement that
  * `buildValueInputs` exists to satisfy on the valuation side.
  *
  * `closesFor` is deliberately NOT filtered to yesterday. Momentum is a three-day lookback, so the
  * crowd is meant to see the last few closes, and truncating the ledger to one day would silently
  * disable the archetype that matters most.
  */
-export const crowdEventShocksFor = (input: {
+export interface CrowdDayInput {
   teams: Team[];
   games: Game[];
   /** ISO date being priced. Game shocks come from this date's completed games. */
@@ -276,9 +278,23 @@ export const crowdEventShocksFor = (input: {
   /** The PLAIN-MEAN consensus by team, which is not what `fair` is built from. */
   plain: Map<string, number>;
   plainLeagueMean: number;
-}): Record<string, number> => {
+}
+
+/**
+ * The crowd's per-club flows for one day, from league state and the ledger so far.
+ *
+ * Split out from `crowdEventShocksFor` so a caller can see the flows and not only the shocks they
+ * add up to. `checkCrowdOnRealPath` needs exactly that: it measures whether net flow turns negative
+ * once a run is established, which is a claim about the flows rather than about their sum.
+ *
+ * The alternative was the check assembling these inputs itself, which is what it used to do -- and
+ * which meant it was measuring a hand-built copy of this function rather than this function. The
+ * comment above `crowdEventShocksFor` already claimed the two assembled the crowd identically, which
+ * was not true until this existed.
+ */
+export const crowdFlowsForDay = (input: CrowdDayInput): CrowdFlow[] => {
   const gameShocks = shocksForDate(input.games.filter((g) => g.date === input.date));
-  const flows = crowdFlowsFor(input.teams.map((team) => ({
+  return crowdFlowsFor(input.teams.map((team) => ({
     teamId: team.id,
     closes: closesFor(input.ledger, team.id, input.date),
     fair: input.fair[team.id] ?? 500,
@@ -290,8 +306,10 @@ export const crowdEventShocksFor = (input: {
     plainConsensusLeagueMean: input.plainLeagueMean,
     marketSize: marketSizeFor(team),
   })));
-  return crowdShocksById(flows);
 };
+
+export const crowdEventShocksFor = (input: CrowdDayInput): Record<string, number> =>
+  crowdShocksById(crowdFlowsForDay(input));
 
 /**
  * Extract one club's closes up to and including a date from a ledger.
