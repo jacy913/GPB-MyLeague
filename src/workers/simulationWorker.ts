@@ -6,6 +6,8 @@ import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../logic
 import { SimulationManager } from '../logic/simulationManager';
 import { isRegularSeasonGame } from '../logic/playoffs';
 import { generatePendingTradeProposals } from '../logic/tradeLogic';
+import { latestClose, priceAndAppendDay } from '../lib/analytics/priceBoard';
+import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { SimulationWorkerRequest, SimulationWorkerResponse, SimulationWorkerSnapshot, SimulationWorkerStartPayload } from './simulationWorkerTypes';
 
 interface SimulationMarketAlert {
@@ -52,28 +54,6 @@ const getSimulationFreeAgencyAlerts = (payload: SimulationWorkerStartPayload): S
     .sort((left, right) => right.interest - left.interest || left.playerName.localeCompare(right.playerName))
     .slice(0, 6);
 
-const buildSnapshot = (payload: SimulationWorkerStartPayload, simulatedGameCount: number): SimulationWorkerSnapshot => ({
-  teams: payload.teams.map((team) => ({ ...team })),
-  games: payload.games.map((game) => ({
-    ...game,
-    playoff: game.playoff ? { ...game.playoff } : null,
-    score: { ...game.score },
-    stats: { ...game.stats },
-  })),
-  playerState: {
-    players: payload.playerState.players.map((player) => ({ ...player })),
-    battingStats: payload.playerState.battingStats.map((stat) => ({ ...stat })),
-    pitchingStats: payload.playerState.pitchingStats.map((stat) => ({ ...stat })),
-    battingRatings: payload.playerState.battingRatings.map((rating) => ({ ...rating })),
-    pitchingRatings: payload.playerState.pitchingRatings.map((rating) => ({ ...rating })),
-    rosterSlots: payload.playerState.rosterSlots.map((slot) => ({ ...slot })),
-    transactions: payload.playerState.transactions.map((transaction) => ({ ...transaction })),
-  },
-  currentDate: payload.startingDate,
-  seasonComplete: payload.games.every((game) => game.status === 'completed'),
-  simulatedGameCount,
-});
-
 const postMessageToMain = (message: SimulationWorkerResponse) => {
   workerScope.postMessage(message);
 };
@@ -110,6 +90,15 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       transactions: startPayload.playerState.transactions.map((transaction) => ({ ...transaction })),
     },
     currentDate: startPayload.startingDate,
+    /*
+      The HXSE price ledger, appended once per simulated day.
+
+      Carried in `working` rather than rebuilt at the end because the price path is sequential --
+      each day's close depends on the previous day's. A ledger reconstructed from the finished game
+      list would be a price path that was never run, and it would disagree with every close already
+      on screen.
+    */
+    priceLedger: [] as PriceSeries[],
   };
 
   try {
@@ -150,6 +139,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
               currentDate: working.currentDate,
               seasonComplete: working.games.every((game) => game.status === 'completed'),
               simulatedGameCount: totalSimulatedGames,
+        priceLedger: working.priceLedger,
             },
             message: 'Simulation stopped by the commissioner before the next day began.',
           },
@@ -230,6 +220,38 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         working.playerState = automaticallyAcceptTrades(newTrades, working.playerState, result.currentDate);
       }
 
+      /*
+        PRICE THE DAY.
+
+        Placed after the day's trade and free-agency resolution rather than straight after
+        `manager.run`, because the board's fair value is built from `playerState` -- a club that
+        signed someone this morning should be valued as the club it is this morning, not as it was
+        before the signings.
+
+        `fairCacheKey` is (starting date, day), so a re-request for a day already priced in this
+        run reuses the fair layer instead of paying for another Monte Carlo. The previous close comes
+        from the LEDGER, not from the cache -- the close depends on yesterday, and the cache only
+        holds the league-dependent half. That separation is the reason `priceBoardForDay` caches the
+        fair layer rather than the whole board.
+
+        SAFE HERE BECAUSE THE WORKER IS SERIAL. `playoffMonteCarlo` swaps the global `Math.random`
+        and is not reentrant; this loop handles one request at a time so nothing overlaps. That is
+        the whole reason the price path sits on this side of the worker boundary and not in a React
+        render path.
+      */
+      working.priceLedger = priceAndAppendDay(working.priceLedger, {
+        teams: working.teams,
+        games: working.games,
+        date: result.currentDate,
+        playerState: working.playerState,
+        seasonYear: Number(result.currentDate.slice(0, 4)),
+        seed: startPayload.priceSeed,
+        previousClose: latestClose(working.priceLedger),
+        settings: startPayload.settings,
+        regime: 'in_season',
+        fairCacheKey: `${startPayload.startingDate}|${result.currentDate}`,
+      });
+
       if (startPayload.throttleMs > 0) {
         await delay(startPayload.throttleMs);
       }
@@ -249,6 +271,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
           currentDate: working.currentDate,
           seasonComplete: working.games.every((game) => game.status === 'completed'),
           simulatedGameCount: totalSimulatedGames,
+        priceLedger: working.priceLedger,
         },
         message: totalSimulatedGames > 0
           ? `Simulation completed through ${working.currentDate}.`

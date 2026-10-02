@@ -252,6 +252,57 @@ export interface PriceBoard {
  * state as it stood at the START of the day, which is what a reader looking at yesterday's page
  * would expect.
  */
+/**
+ * The season seed for the price path, derived from the league's own identity.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS IS DERIVED RATHER THAN STORED, AND WHY THAT IS THE RIGHT WAY ROUND
+ * ---------------------------------------------------------------------------
+ *
+ * `SimulationWorkerStartPayload` carries no seed and `LocalUniverseBundle` has no field for one,
+ * so the price path had nothing to seed itself with. The alternatives were both worse:
+ *
+ *   - A FRESH RANDOM SEED PER RUN. The price path's entire reason for existing is that a reloaded
+ *     save shows the same market. A seed that changes when the page reloads would make every close
+ *     in the ledger a lie the moment it was written.
+ *
+ *   - A NEW FIELD ON THE BUNDLE. That is a schema change and a backfill, for a value that is
+ *     completely determined by which clubs are in the league.
+ *
+ * So it is hashed from the sorted club ids. Stable across save and load, stable across devices,
+ * stable across a season rollover that keeps the same clubs, and needing no stored state at all.
+ *
+ * The ids are SORTED before hashing, deliberately. A seed derived from list order would change the
+ * entire market if the team array were ever re-sorted for display, which would retroactively
+ * invalidate every stored close -- and would do it for no reason a player could perceive.
+ */
+export const leaguePriceSeed = (teams: Array<{ id: string }>): number => {
+  let h = 0x811c9dc5;
+  for (const id of [...teams.map((t) => t.id)].sort()) {
+    for (let i = 0; i < id.length; i += 1) {
+      h ^= id.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  }
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  return (h ^ (h >>> 15)) >>> 0;
+};
+
+/**
+ * Price and append one day. Returns the ledger with the day in it.
+ *
+ * Exported from here rather than written inline in the worker so the worker's day loop stays a thin
+ * call to something that is already tested. The worker is not directly testable -- it binds
+ * `self` as a worker scope at module scope, so importing it outside a worker context fails -- which
+ * means any logic left in the loop body would be untestable by construction. Putting the three
+ * lines here keeps the worker a wiring detail.
+ */
+export const priceAndAppendDay = (
+  ledger: PriceSeries[],
+  input: PriceBoardInput,
+): PriceSeries[] => appendPriceDay(ledger, priceBoardForDay(input));
+
 export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
   const mcTrials = input.mcTrials ?? DEFAULT_BOARD_TRIALS;
   const regime = input.regime ?? 'in_season';

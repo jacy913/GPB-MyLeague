@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { SimulationRunState } from '../components/SimulationHub';
 import { SimulationProgressUpdate } from '../logic/simulationManager';
 import { saveSupabaseSeasonRun } from '../lib/storage';
+import { leaguePriceSeed } from '../lib/analytics/priceBoard';
+import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { Game, LeaguePlayerState, PendingTradeProposal, SimulationSettings, SimulationTarget, Team } from '../types';
 import { SimulationWorkerResponse } from '../workers/simulationWorkerTypes';
 
@@ -63,6 +65,14 @@ interface UseSimulationEngineArgs {
     nextCurrentDate: string,
     nextProgress: number,
     nextSeasonComplete: boolean,
+    /**
+     * The HXSE share-price closes the worker accumulated, or undefined if it priced none.
+     *
+     * Optional because the field postdates the worker snapshot, so a caller may legitimately have
+     * nothing. Deliberately NOT defaulted to `[]`: undefined and empty are different claims, and
+     * the caller persists that difference into the save rather than flattening it here.
+     */
+    nextPriceLedger?: PriceSeries[],
   ) => void;
 }
 
@@ -355,6 +365,11 @@ export const useSimulationEngine = ({
             snapshot.currentDate,
             nextProgress,
             snapshot.seasonComplete,
+              // The HXSE price ledger. Optional on the snapshot because the field postdates older
+              // builds, so a snapshot without it must be tolerated rather than coerced to `[]` --
+              // `undefined` means "this build never priced the market" and `[]` would claim it never
+              // traded. Both are read defensively on the other side.
+              snapshot.priceLedger,
           );
 
           if (message.type === 'complete' && snapshot.seasonComplete && snapshot.simulatedGameCount > 0) {
@@ -439,6 +454,9 @@ export const useSimulationEngine = ({
         queuedDates: plan.dates,
         targetDate: plan.targetDate,
         label,
+          // The HXSE price seed, derived from the league's own identity so no schema field is
+          // needed and an old save reproduces its own market. See `leaguePriceSeed`.
+          priceSeed: leaguePriceSeed(teams),
         throttleMs: getSimulationThrottleMs(target),
       },
     });

@@ -21,6 +21,7 @@ import {
   SimulationSettings,
   SimulationTarget,
 } from './types';
+import type { PriceSeries } from './lib/analytics/sharePrice';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
 import { SeasonAwardsModal } from './components/SeasonAwardsModal';
@@ -73,6 +74,7 @@ import { useSeasonLifecycle } from './hooks/useSeasonLifecycle';
 import { buildOffseasonEventSchedule } from './logic/offseasonSchedule';
 import {
   createLocalUniverseBundle,
+  readSharePriceLedger,
   LocalUniverseBundle,
   validateLocalUniverseBundle,
 } from './logic/localUniverseState';
@@ -1209,6 +1211,15 @@ function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [progress, setProgress] = useState(0);
   const [seasonComplete, setSeasonComplete] = useState(false);
+
+  /**
+   * The HXSE share-price closes, replaced wholesale by each simulation run.
+   *
+   * `undefined` means the market has never been priced in this session; `[]` means it was priced and
+   * there was nothing to record. The distinction is preserved all the way into the save, because
+   * coercing the first into the second would claim a league that never traded never traded.
+   */
+  const [priceLedger, setPriceLedger] = useState<PriceSeries[] | undefined>(undefined);
   const [view, setView] = useState<AppView>('dashboard');
 
   /*
@@ -2468,6 +2479,7 @@ function App() {
       offseasonWorkflow,
       draftCenter,
       pendingTrades,
+        sharePriceLedger: priceLedger,
     })
   ), [currentDate, draftCenter, games, offseasonWorkflow, pendingTrades, playerState, progress, seasonComplete, seasonHistory, settings, teams]);
 
@@ -2508,6 +2520,12 @@ function App() {
       setSelectedDate(bundle.league.currentDate);
       setProgress(bundle.league.progress);
       setSeasonComplete(bundle.league.seasonComplete);
+
+    // The price ledger is read through its defensive reader even though `bundle` has already been
+    // validated, because that reader is the one place that knows what a corrupt day looks like. An
+    // absent ledger means the save predates the market and the league starts with none -- which is
+    // different from a ledger of zero days, and is not the same claim.
+    setPriceLedger(readSharePriceLedger(bundle.sharePriceLedger));
       setPlayerState(bundle.players);
       setSeasonHistory(bundle.seasonHistory);
       setOffseasonWorkflow(bundle.offseasonWorkflow);
@@ -2618,6 +2636,13 @@ function App() {
     nextCurrentDate: string,
     nextProgress: number,
     nextSeasonComplete: boolean,
+      /**
+       * The HXSE share-price closes the worker accumulated this run.
+       *
+       * Optional because the worker snapshot field postdates older builds. Not defaulted to `[]`,
+       * because undefined and empty are different claims and the save records the difference.
+       */
+      nextPriceLedger?: PriceSeries[],
   ) {
     React.startTransition(() => {
       setTeams(nextTeams);
@@ -2627,6 +2652,9 @@ function App() {
       setSelectedDate(nextCurrentDate);
       setProgress(nextProgress);
       setSeasonComplete(nextSeasonComplete);
+        // Only ever replaced, never appended to. The worker already returns the whole ledger for
+        // the run, so merging here would double-count every day the run covered.
+        setPriceLedger(nextPriceLedger);
     });
   }
 
