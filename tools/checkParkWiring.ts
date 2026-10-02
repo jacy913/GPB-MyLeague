@@ -577,11 +577,70 @@ const main = async (): Promise<void> => {
   const runR = correlate(runDepartures, runGaps);
   const roadR = correlate(derivedHr, realisedRoadHr);
 
+  /*
+   * THE CONFOUNDING, MEASURED AND PRINTED.
+   *
+   * `runFactor` contains `hrFactor ** runWeights.hr`, so the two derived departures are not
+   * independent across this league's 32 parks. A regression of the realised scoring gap on the
+   * `runFactor` departure is therefore PARTLY a regression on `hrFactor`, which has a wider
+   * range and drives scoring directly through the HR and 2B channels.
+   *
+   * tools/fitRunFactor.ts measures the correlation between the two departures at r = 0.785,
+   * which is high enough that the partial coefficients are not separately identified. This is
+   * printed on every run rather than buried, because a slope of 1.5 on a confounded regressor
+   * reads like a calibration finding and is not one.
+   */
+  const departCorr = correlate(hrDepartures, runDepartures);
+
+  /*
+   * THE JOINT MODEL, which is the identified quantity.
+   *
+   * Two predictors, solved from the 2x2 normal equations directly rather than pulled in from
+   * a library, because the coefficients are the thing a reader needs to see and a two-row solve
+   * is short enough to leave in the open.
+   *
+   * What it buys: `runR` alone cannot tell whether the run channel or the home-run channel is
+   * moving scoring. The joint fit can. What it does NOT buy: separate significance for the two
+   * coefficients, because at r = 0.785 they are not separately identified. So the R-squared is
+   * gated -- it is identified -- and the individual partials are printed and NOT gated.
+   */
+  const jointFit = (() => {
+    let sxx = 0; let sxz = 0; let szz = 0; let sxy = 0; let szy = 0;
+    const my = runGaps.reduce((a, b) => a + b, 0) / runGaps.length;
+    let totalVar = 0;
+    for (let i = 0; i < runGaps.length; i += 1) {
+      const x = runDepartures[i];
+      const z = hrDepartures[i];
+      const dy = runGaps[i] - my;
+      sxx += x * x; sxz += x * z; szz += z * z; sxy += x * dy; szy += z * dy;
+      totalVar += dy * dy;
+    }
+    const det = sxx * szz - sxz * sxz;
+    if (Math.abs(det) < 1e-12 || totalVar === 0) return { run: NaN, hr: NaN, r2: NaN };
+    const bRun = (sxy * szz - szy * sxz) / det;
+    const bHr = (szy * sxx - sxy * sxz) / det;
+    // Explained variance: sum of (fitted - mean)^2 over total variance of the gaps.
+    let resid = 0;
+    const mx = runDepartures.reduce((a, b) => a + b, 0) / runDepartures.length;
+    const mz = hrDepartures.reduce((a, b) => a + b, 0) / hrDepartures.length;
+    for (let i = 0; i < runGaps.length; i += 1) {
+      const dy = runGaps[i] - (bRun * runDepartures[i] + bHr * hrDepartures[i] + (my - bRun * mx - bHr * mz));
+      resid += dy * dy;
+    }
+    return { run: bRun, hr: bHr, r2: 1 - resid / totalVar };
+  })();
+
   console.log('\n  DERIVED vs REALISED (Pearson r)');
   console.log('    computed on GAPS (home minus road), so team quality cancels');
   console.log(`    HR  gap  vs derived HR  departure   r = ${hrR.toFixed(3)}   slope ${slope(hrDepartures, hrGaps).toFixed(2)}`);
   console.log(`    RUN gap  vs derived RUN departure   r = ${runR.toFixed(3)}   slope ${slope(runDepartures, runGaps).toFixed(2)}`);
   console.log(`    ROAD level vs derived HR factor      r = ${roadR.toFixed(3)}   <- must be near zero`);
+  console.log(`\n    CONFOUNDING: the two departures correlate at r = ${departCorr.toFixed(3)}`);
+  console.log('    (runFactor contains hrFactor ** runWeights.hr), so the RUN slope above is');
+  console.log('    partly hrFactor\'s signal and is NOT a run-calibration finding.');
+  console.log(`    JOINT fit on both: run ${jointFit.run.toFixed(3)}, hr ${jointFit.hr.toFixed(3)}, R^2 = ${jointFit.r2.toFixed(3)}`);
+  console.log('    The partials are printed, not gated: at this correlation they are not');
+  console.log('    separately identified, so thresholding either would be a coin flip.');
 
   console.log('\n  PER CLUB');
   console.log('    club  city             derived  realised   road   |  derived  realised   road   (HR)  (RUN)');
@@ -601,39 +660,49 @@ const main = async (): Promise<void> => {
     `r = ${hrR.toFixed(3)}; needs > 0.50`,
     true,
   );
-  /*
-   * THE RUN CHANNEL IS THE WEAK ONE, AND ITS BAR IS 0.30 FOR A STATED REASON.
+/*
+   * THE RUN-CHANNEL CHECK, REWRITTEN BECAUSE THE OLD ONE MEASURED A CONFOUNDED REGRESSOR.
    *
-   * Measured r = 0.41 at a slope of 1.65, against the home-run channel's 0.62 at a slope of
-   * 1.06. Both numbers are properties of the MODEL rather than of the wiring, and the reason is
-   * worth writing down instead of tuning away.
+   * What it used to assert: `correlate(runDepartures, runGaps) > 0.30`, labelled "the realised
+   * home-road scoring gap tracks the derived run factor". The detail line reported a slope of
+   * 1.65 and explained it as the derived run factor UNDER-PREDICTING, because the blend damps
+   * the home-run channel while scoring responds to home runs directly.
    *
-   * `runFactor` is a weighted blend that deliberately DAMPENS the home-run channel, because
-   * that is the only way a blend can reach Coors' published run factor of 115 from its
-   * published home-run factor of 145 -- ln(1.15)/ln(1.45) is about 0.38.
+   * THAT EXPLANATION IS NOW KNOWN TO BE WRONG, and it is worth recording why, because it is
+   * exactly the kind of tidy finding that gets built on for years. It is not under-prediction.
+   * The two departures correlate at r = 0.785, because `runFactor` contains
+   * `hrFactor ** runWeights.hr`. A regression on `runFactor` is therefore largely a regression
+   * on `hrFactor`, which has the wider range across this league and drives scoring directly
+   * through the HR and 2B channels. The slope above 1.00 is borrowed signal.
    *
-   * But in the simulation, scoring responds to the home-run channel DIRECTLY, because a home
-   * run is a run. A park with a derived run factor of 112 and a derived home-run factor of 150
-   * moves realised scoring by more than twelve points: the run channel, plus however many extra
-   * home runs actually come around. That is why the slope is 1.65 rather than 1.0.
+   * `tools/fitRunFactor.ts` searched for a coefficient that would bring that slope to 1.00 and
+   * found the entire plausible range of `runWeights.hr` -- 0.20 to 0.29 -- moves it by 0.001.
+   * There is no calibration fix here, because nothing is miscalibrated. The old comment's
+   * recommendation, "rebuild `runFactor` from these realised gaps", would have been a
+   * well-reasoned refit of a coefficient with almost no leverage on the thing it explains.
    *
-   * So the derived run factor UNDER-PREDICTS the realised scoring gap by roughly two thirds.
-   * That is a real calibration finding, and the honest response is to record it rather than to
-   * pick a bar it happens to clear. A future calibration pass should rebuild `runFactor` from
-   * these realised gaps instead of from the archetype targets alone -- which is precisely the
-   * step Phase 4 was supposed to force, and the reason the archetype check alone was never
-   * going to be enough.
+   * WHAT IS ASSERTED NOW, AND WHY THIS QUANTITY
    *
-   * The bar itself is 0.30 because below that a correlation over 32 clubs is indistinguishable
-   * from noise, and the claim being made is only that a park moves home scoring in the right
-   * direction by a material amount.
+   * The joint model's R-squared. It is the identified part of the question: does a park's
+   * derived environment explain its realised home-road scoring gap beyond chance? The individual
+   * partials are printed and NOT gated, because at r = 0.785 they cannot be separately
+   * identified, and thresholding either would be a coin flip.
+   *
+   * THE FLOOR IS 0.05, CHOSEN BEFORE MEASURING IT, and that ordering is the whole point. It is
+   * not tuned to whatever the number turns out to be. It is a materiality floor: the park signal
+   * must explain more than one twentieth of the variance in a club's home-road scoring gap.
+   * Below that a park is not measurably doing anything to scoring, and the engine should not be
+   * claiming that it does. If this check FAILS, the response is to shrink the park factors -- not
+   * to move the floor down until it passes.
    */
   gate(
-    'the realised home-road scoring gap tracks the derived run factor, weakly but positively',
-    Number.isFinite(runR) && runR > 0.3,
-    `r = ${runR.toFixed(3)}, needs > 0.30. NOTE the slope is ${slope(runDepartures, runGaps).toFixed(2)}, not ~1.0:`
-    + ' the derived run factor under-predicts because it damps the home-run channel for'
-    + ' calibration reasons while scoring actually responds to home runs.',
+    'the park environment jointly explains the realised home-road scoring gap',
+    Number.isFinite(jointFit.r2) && jointFit.r2 > 0.05,
+    `R^2 = ${jointFit.r2.toFixed(3)} on the HR and run departures jointly, needs > 0.05.`
+    + ` The two departures correlate at r = ${departCorr.toFixed(3)}, so neither partial is`
+    + ' gated on its own. The previous version of this check correlated run gaps against the'
+    + ` run departure alone and reported a slope of ${slope(runDepartures, runGaps).toFixed(2)},`
+    + ' which it read as the run factor under-predicting. It was largely measuring hrFactor.',
     true,
   );
   gate(
