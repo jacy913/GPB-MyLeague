@@ -22,6 +22,7 @@ import {
   SimulationTarget,
 } from './types';
 import type { PriceSeries } from './lib/analytics/sharePrice';
+import { latestClose, leaguePriceSeed, priceAndAppendDay } from './lib/analytics/priceBoard';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
 import { SeasonAwardsModal } from './components/SeasonAwardsModal';
@@ -3007,6 +3008,38 @@ function App() {
     setSelectedDate(orderedResults[orderedResults.length - 1]?.game.date ?? selectedDate);
     setProgress(nextProgress);
     setSeasonComplete(nextSeasonComplete);
+
+      /*
+        PRICE THE DAY ON THE INTERACTIVE PATH TOO.
+
+        This path advances a game without going through the worker, so before it was added the
+        market went stale relative to `currentDate` whenever a game was stepped individually -- the
+        ledger sat on an older day while the league moved on.
+
+        SAFE ON THE MAIN THREAD, and this corrects something asserted earlier in this project.
+        `playoffMonteCarlo` is not reentrant because it swaps the global `Math.random`, and that was
+        the stated reason the price path could not live in a render path. That reasoning was about
+        CONCURRENT calls. The function is synchronous and JavaScript is single-threaded, so an event
+        handler cannot reenter it -- the swap is set and cleared inside one turn of the event loop.
+        The worker was the right home for LONG runs so they do not block the UI; it was never the only
+        place the swap is safe.
+
+        Only the final date is priced. `priceBoardForDay` appends exactly one day, so a multi-date
+        jump would leave the intervening days unpriced rather than backfilling them. `appendPriceDay`
+        replaces an existing entry for a date, so re-stepping the same day overwrites rather than
+        duplicating -- which is the property that makes this safe to call repeatedly.
+      */
+      setPriceLedger(priceAndAppendDay(priceLedger, {
+        teams: nextTeams,
+        games: nextGames,
+        date: nextCurrentDate,
+        playerState: nextPlayerState,
+        seasonYear: resolveSeasonYear(nextCurrentDate, nextGames),
+        seed: leaguePriceSeed(nextTeams),
+        previousClose: latestClose(priceLedger ?? []),
+        settings,
+        regime: 'in_season',
+      }));
     saveLocalPlayerStateSafely(nextPlayerState);
 
     try {
