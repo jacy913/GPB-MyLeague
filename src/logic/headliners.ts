@@ -43,7 +43,23 @@ export const ACCENT_VAR: Readonly<Record<AccentToken, string>> = {
   fire: 'var(--color-gold)',
   data: 'var(--color-platinum)',
   sour: 'var(--color-neg)',
-  house: 'var(--color-ink-faint)',
+  /*
+   * `house` was declared and then never assigned, and its colour was a placeholder:
+   * `--color-ink-faint`, the dimmest ink in the theme. That is a bad trade for a named reporter,
+   * because an accent is how the eye finds the byline, and "faintest" reads as "least important"
+   * -- the opposite of what a byline is for.
+   *
+   * It now points at Shinonome's own measured forecaster accent. Two reasons rather than one. She
+   * keeps the same colour when she crosses from forecasting to reporting, so a reader who learned
+   * her in one role still recognises her in the other. And it is a colour that has already been
+   * through `pickAccent.ts` against the 0.10 OKLab floor, so choosing it here measures nothing new
+   * -- whereas picking a fresh hex for this slot would have meant running that search for a
+   * character who does not exist yet.
+   *
+   * "House" means HER house: Fuyuka TV is her own channel, which is the one reporter here who files
+   * for an outfit that belongs to her rather than to a desk that hired her.
+   */
+  house: 'var(--color-media-shinonome)',
 };
 
 /**
@@ -154,6 +170,19 @@ export interface HeadlinerProfile {
   /** Ticker use. */
   shortName: string;
   role: string;
+  /**
+   * The institution this reporter files for.
+   *
+   * Added with the outlet restructure. Headliners carried no affiliation at all, so a byline named
+   * a person with no newsroom behind them -- which is precisely the gap the forecaster side had
+   * already closed and the reporter side had not. It is display-only, like `MediaProfile.outlet`:
+   * nothing groups or filters on it yet, and nothing should until something wants to.
+   *
+   * Deliberately a plain string rather than a union of the four institutions. A union would need
+   * re-editing every time an outlet is renamed, which is the kind of coupling that turns a label
+   * into a migration. The forecaster side keeps a plain string for the same reason.
+   */
+  outlet: string;
   /** Asset basename under `src/assets/headliners/`, without extension. */
   portraitKey: string;
   accentToken: AccentToken;
@@ -204,6 +233,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     displayName: 'HILDAGO PEREZ',
     shortName: 'PEREZ',
     role: 'FIELD REPORTER',
+    outlet: 'Glorest Sports',
     portraitKey: 'hidalgoperez',
     accentToken: 'neutral',
     covers: [
@@ -235,6 +265,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     displayName: 'CHRISTINE SOO',
     shortName: 'SOO',
     role: 'YOUTH WRITER',
+    outlet: 'Calibrated Sports',
     portraitKey: 'christinesoo',
     accentToken: 'youth',
     covers: [
@@ -265,6 +296,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     displayName: 'CHRIS GATZ',
     shortName: 'GATZ',
     role: 'FORMER PLAYER',
+    outlet: 'Glorest Sports',
     portraitKey: 'chrisgatz',
     accentToken: 'fire',
     // The most permissive persona. He comments from inside the experience, so almost
@@ -299,6 +331,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     displayName: 'SCINTILLA',
     shortName: 'SCINTILLA',
     role: 'STATS ANALYST',
+    outlet: 'Scintilla',
     portraitKey: 'scintilla',
     accentToken: 'data',
     covers: ['anomaly', 'sustained_rate', 'expected_divergence', 'meltdown', 'pitching_dome'],
@@ -325,6 +358,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     displayName: 'TOM BUCCELLI',
     shortName: 'TOM BUCCELLI',
     role: 'COLUMNIST',
+    outlet: 'The Booth',
     portraitKey: 'tombuccelli',
     accentToken: 'sour',
     covers: ['meltdown', 'shutout', 'losing_streak', 'anomaly', 'underdog_win'],
