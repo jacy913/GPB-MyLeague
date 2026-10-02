@@ -206,6 +206,43 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * t-stat-hero — the headline number on a slate tile.
+
+ * Added for the two-team slate tile, where the MONEYLINE PRICE is the card. At t-stat-lg
+ * (26px) a price sat beside a caption and read as one more figure in a list of figures,
+ * which is exactly the "old" feel the tile redesign was for: nothing on the card looked
+ * like the thing you came to read.
+ *
+ * The hierarchy is carried by SIZE ALONE and not by colour, because on this screen colour
+ * means an outlet said something, and a house price is nobody's opinion.
+ *
+ * The clamp's floor is the part that had to be reasoned about rather than chosen, and the
+ * reasoning rests on an ASSUMPTION about the container that I could not measure:
+ *
+ *   - worst case price is six characters, "+1800", which is what a five-percent shot pays.
+ *   - tabular digits in this face run about 0.6em, so six characters is roughly 3.3em.
+ *   - at a 28px floor that is about 92px of glyphs.
+ *   - the half-tile at the slate's `md` breakpoint is assumed to be about 170px, and the
+ *     button contributes px-3 (24px) of its own, leaving roughly 146px.
+ *
+ * 92 < 146, so the worst case fits with room. At a 30px floor the glyphs are about 99px,
+ * which also fits, but the margin shrinks and the container assumption is the weak link
+ * either way.
+ *
+ * IF THE PRICE EVER WRAPS, do not fix it by shrinking this. The fix is `size="sm"` on the
+ * button, which gives px-3 instead of px-6, because a hero that is no longer visibly the
+ * largest thing on the card has stopped doing its job even if it fits.
+ */
+@utility t-stat-hero {
+  font-family: var(--font-num);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.0;
+  font-variant-numeric: tabular-nums;
+}
+
 @utility t-stat-lg {
   font-family: var(--font-num);
   font-size: 26px;

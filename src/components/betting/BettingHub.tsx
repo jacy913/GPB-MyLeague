@@ -249,6 +249,36 @@ const GameBetCard: React.FC<{
   balance: number;
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ game, total, balance, onPlace }) => {
+  /*
+    ONE HALF OF THE TILE, AND IT IS THE BIGGEST THING ON THE CARD.
+
+    This used to be a small `size="sm"` button holding a 24px crest and a 17px price --
+    one chip in a row of chips. Three of those passes were rejected in a row, and the
+    mistake they all shared is that I was reshaping a card rather than changing what a
+    card IS: it kept the chrome-bar header, the Panel-in-a-grid, and the small button,
+    and none of those are what the eye rejects.
+
+    So the pitchfork. Two equal halves, crest above price, and the price is the biggest
+    number anywhere on the board at `t-stat-hero` (30-44px). Backing a team is the act
+    the screen exists to offer, so the thing you press is the thing you read.
+
+    `flex-col` turns the button's own `inline-flex items-center justify-center` into a
+    column, which stacks crest over price and centres both. No display override is
+    needed, and that matters: fighting `inline-flex` with `flex` in a `className` is a
+    coin toss on Tailwind's utility order, whereas `py-5` beating the `size` utility's own
+    padding is not a coin toss, because padding utilities are emitted in ascending order.
+
+    `size="sm"` NOT `lg`, which looks like a step backwards and is not. On this button the
+    size utility only sets padding and a font class that both children override anyway, so
+    its whole visible effect is `px-3` against `px-6`. At the slate's `md` two-column
+    breakpoint a half-tile is about 170px, and 48px of that is the button's own horizontal
+    padding -- against a hero price that can be six characters wide on a +1800 long shot.
+    The vertical padding is set by `py-5` either way, which is the half that matters.
+
+    THE CREST IS THE LABEL. The user was asked and said keep crests only. The city is
+    still the button's accessible name, its tooltip, and the bet's `selectionLabel`, so
+    the slip, the wallet and the settlement log all still say "Baltimore".
+  */
   const side = (
     team: GameLine['awayTeam'],
     pick: 'away' | 'home',
@@ -258,18 +288,7 @@ const GameBetCard: React.FC<{
       variant="default"
       size="sm"
       disabled={balance < MIN_STAKE}
-      /*
-       * THE CREST IS THE LABEL now. The city beside it was the same four letters the
-       * mark already stands for, repeated twice on the card -- once in the header and
-       * once on each of the two buttons -- for a slate of fifteen games that meant
-       * thirty words of city names in a fixed right-hand column.
-       *
-       * The name does not disappear, it stops being painted: it is the button's
-       * accessible name and its tooltip, and it is what the bet records as
-       * `selectionLabel`, so the slip, the wallet and the settlement log all still say
-       * "Baltimore" rather than an empty string. What is gone is the duplicate, not
-       * the information.
-       */
+      className="w-full flex-col gap-3 py-5"
       aria-label={`Back ${team.city} ${formatAmerican(price)}`}
       title={`${team.city} ${team.name}`}
       onClick={() => onPlace({
@@ -283,146 +302,130 @@ const GameBetCard: React.FC<{
         resolvesOn: game.date,
       })}
     >
-      <TeamLogo team={team} sizeClass="h-6 w-6" />
-      <span className="t-stat tabular-nums">{formatAmerican(price)}</span>
+      <TeamLogo team={team} sizeClass="h-14 w-14" />
+      <span className="t-stat-hero">{formatAmerican(price)}</span>
     </RetroButton>
   );
 
   return (
     /*
-      THE CARD IS THE TEAL BOX.
+      THE TILE. NO HEADER STRIP.
 
-      `Panel` gives the outer border and the surface; the header strip inside it is the same
-      chrome every other panel uses. That is the whole of the card's structure, and it is one
-      rectangle rather than the three concentric ones this had a moment ago.
+      The `chrome-bar` band that used to sit on top of every game card -- two crests, an
+      "at", and the date -- is gone entirely, and that deletion is most of the redesign.
+      It was the single oldest-looking element on the screen: a filled strip across the
+      top of a card reads as a table row header, which is what makes a board look like a
+      1990s box score. Every pass before this one kept it.
 
-      The border is on the PANEL via a style rather than a nested div, so there is nothing
-      inside the card that could be mistaken for another card.
+      What replaced it is two lines of plain text at the top of the tile and nothing with
+      a background behind it. The date still leads, because on a board of fifteen games
+      "when is this" is the question that decides whether you read the rest at all, but
+      it is now a caption floating in the tile's own surface rather than a band.
+
+      The tile is a `flex-col` with the footer pushed to the bottom by `mt-auto`, so
+      tiles in the same grid row agree on their total height and the footers line up.
+      Without that the pitchfork heights float and the row reads as ragged.
     */
     <Panel
-      className="overflow-hidden"
+      className="flex flex-col overflow-hidden"
       style={{ borderLeft: `3px solid ${NEUTRAL_BORDER}` }}
     >
-      <div className="chrome-bar flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
-        {/*
-          TWO CRESTS AND AN "AT", with no city names between them. The header used to
-          read "logo, Baltimore at Cleveland, logo", which said the same thing twice
-          and took the full width of the card to say it. The club is named in the
-          button tooltips and in the bet record; here the marks are the heading.
-
-          The accessible name carries the matchup so the header is not three
-          unlabelled images to a screen reader.
-
-          h-9 rather than h-7, at the user's request for bigger logos. It is also what makes
-          the crest the card's primary identifier rather than a decoration on one: the prices
-          below are set a step smaller than the marks, so the eye lands on WHO is playing before
-          WHAT it costs.
-        */}
-        <h2 className="flex min-w-0 items-center gap-2">
-          <TeamLogo team={game.awayTeam} sizeClass="h-9 w-9" />
-          <span className="text-[var(--color-ink-dim)]" aria-hidden="true">at</span>
-          <TeamLogo team={game.homeTeam} sizeClass="h-9 w-9" />
-          <span className="sr-only">
-            {game.awayTeam.city} at {game.homeTeam.city}
-          </span>
-        </h2>
-        {/*
-          THE DATE, PROMINENT.
-
-          Not a caption. On a board of fifteen games laid out three to a row, the
-          question every manager asks of a card is "when is this" and it cannot be
-          answered by a faint caption at the bottom of a panel that used to be full
-          width. It is in the header, beside the crests that identify the fixture,
-          because those two facts are the two things needed to decide whether to read
-          the rest of the card at all.
-        */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 pt-3">
+        <h2 className="sr-only">{game.awayTeam.city} at {game.homeTeam.city}</h2>
         <span className="t-caption text-[var(--color-ink-dim)]">{formatResolutionDate(game.date)}</span>
+        {game.disagreement >= 0.12 && (
+          <span className="t-caption text-[var(--color-neutral-hi)]">
+            outlets split
+          </span>
+        )}
       </div>
 
       {/*
-        ONE TEAL BOX FOR THE WHOLE CARD. NOT SEVERAL.
+        THE PITCHFORK.
 
-        This is the second pass, and the user was right about the first: "one teal box for
-        everything, it looks messy." The previous version wrapped the outlet prices and the run
-        total in two nested bordered blocks inside the card's own border, so a single game
-        rendered as three concentric teal rectangles with a header strip on top. That is the
-        definition of messy, and it came from treating "modelled on the props card" as "every
-        subsection gets a border" when the props card gets exactly one.
+        Two columns, equal, no divider between them. A divider was tried on the reasoning
+        that two halves need separating, and the tile is better without it: the two crests
+        face each other across a small gap and that gap IS the separation, while a rule
+        between them reads as a table column rule and pulls the whole tile back toward the
+        box-score look the redesign is trying to leave.
 
-        A prop card is ONE bordered box with the content inside it. So a game card is now one
-        bordered box: a header strip for the fixture and the date, then the two sides, then the
-        outlet prices as a single labelled row, then the run total as a labelled row. No nested
-        rectangles, no second border inside the first.
-
-        What still carries the outlet identity is the marks themselves and their own thin accent
-        edges -- those are the only thing on the card that belongs to a named forecaster, and
-        they should be the only coloured detail. Everything structural is teal.
+        `gap-2` rather than a gap between halves and a gap between rows -- there is only
+        ever one row, so a two-axis gap would be a grid pretending to be a table.
       */}
-      <div className="border-t border-[var(--color-chrome-lo)] p-3">
-        {/*
-          THE TWO SIDES FIRST AND LARGEST.
+      <div className="grid grid-cols-2 gap-2 px-3 pt-2">
+        {side(game.awayTeam, 'away', game.houseOdds)}
+        {side(game.homeTeam, 'home', game.homeOdds)}
+      </div>
 
-          At the top of the card body because "who wins" is what most of this board is for. This
-          used to sit below the outlet strip, so a manager read the fixture and then had to hunt
-          past a row of chips to find the number they came for.
-        */}
-        <div className="flex flex-wrap gap-1.5">
-          {side(game.awayTeam, 'away', game.houseOdds)}
-          {side(game.homeTeam, 'home', game.homeOdds)}
-        </div>
+      {/*
+        THE THIN FOOTER. Everything that is not the moneyline.
 
-        {/*
-          THE OUTLET PRICES, as one row under one label.
+        This is where the three outlets and the run total went, and the user's instruction
+        was to collapse them into a thin strip rather than let them compete with the
+        prices. Two things make it work.
 
-          `justify-between` rather than a flex of content-width chips: at a third of the screen
-          the three prices should use the full width they have rather than huddle at the left
-          with a gap behind them. Flex of chips was right when the card was half the screen and
-          wrong at a third.
+        First, the marks drop to h-4. Earlier passes argued at length that h-4 was too
+        small and pushed them to h-5, and that argument was correct for a strip that sat
+        beside prices in a card whose subject was the outlet read. It is wrong here. The
+        tile's subject is the moneyline; a mark in the footer is a citation, and a
+        citation does not need to be legible across the room, it needs to be identifiable
+        at the foot of the card. Making them h-5 is what kept the footer competing.
 
-          The marks are h-5 rather than h-4. At h-4 the three marks on this card were smaller
-          than the price they sat beside, which inverts the hierarchy -- the mark is how you
-          know WHOSE number this is, so it has to be at least as legible as the number.
-        */}
-        <div className="mt-2.5 border-t border-[var(--color-chrome-lo)] pt-2.5">
-          <p className="t-caption text-[var(--color-ink-faint)]">
-            Outlet prices
-            <span className="ml-1.5 text-[var(--color-ink-dim)]">
-              House {formatAmerican(game.houseOdds)} · they span {Math.round(game.disagreement * 100)} points
-            </span>
-            {game.disagreement >= 0.12 && (
-              <span className="ml-1.5 text-[var(--color-neutral-hi)]">they are split on this one.</span>
-            )}
-          </p>
-          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+        Second, the row is ONE line. Label, three mark+price pairs, house price, spread.
+        No wrapping second line, no second label row.
+
+        THE LABEL SAYS WHICH SIDE. `game.odds` is each outlet's posted price for the AWAY
+        club only (`GameLine.odds` is documented as exactly that), so an unlabelled row
+        of three prices under a tile showing two would be genuinely ambiguous -- a reader
+        could take them for the home side. "Away, per outlet" is the honest label and it
+        costs five words.
+      */}
+      <div className="mt-auto border-t border-[var(--color-chrome-lo)] px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+          <span className="t-caption text-[var(--color-ink-faint)]">Away, per outlet</span>
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             {MEDIA_PROFILES.map((profile) => (
-              <div key={profile.id} className="flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  className="h-5 w-[3px] shrink-0"
-                  style={{ background: `var(--color-media-${profile.accent})` }}
-                />
+              <span key={profile.id} className="flex items-center gap-1">
                 <img
                   src={MEDIA_MARKS_SQUARE[profile.id]}
                   alt=""
                   aria-hidden="true"
-                  className="h-5 w-5 object-contain"
+                  className="h-4 w-4 object-contain"
                 />
-                <span className="t-stat-sm tabular-nums">{formatAmerican(game.odds[profile.id])}</span>
-              </div>
+                <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
+                  {formatAmerican(game.odds[profile.id])}
+                </span>
+              </span>
             ))}
           </div>
+          <span className="t-caption tabular-nums text-[var(--color-ink-faint)]">
+            House {formatAmerican(game.houseOdds)} · {Math.round(game.disagreement * 100)} pts apart
+          </span>
         </div>
+      </div>
 
-        {total && (
-          <div className="mt-2.5 border-t border-[var(--color-chrome-lo)] pt-2.5">
-            <p className="t-caption text-[var(--color-ink-faint)]">
-              Run total
-              <span className="ml-1.5 text-[var(--color-ink-dim)]">
-                House line {total.houseLine.toFixed(1)} · outlets{' '}
-                {MEDIA_PROFILES.map((profile) => total.fair[profile.id].toFixed(1)).join(' / ')}
-              </span>
-            </p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {/*
+        THE TOTAL, as a second strip in the same footer language.
+
+        Its own hairline rather than sharing the outlets' row, because the two are
+        different kinds of fact: one is what three forecasters say about WHO wins, the
+        other is how many runs the house is offering. Merging them into one row would
+        read as a single six-figure row of numbers, which is the mess this screen was
+        redesigned to remove.
+
+        The line is the hero here and the prices are captions, because on a total the
+        LINE is the decision -- 8.5 is what you agree to, -110 is just what it costs.
+        That inverts the moneyline's hierarchy deliberately: there the price is the
+        decision because there is no line to agree to.
+      */}
+      {total && (
+        <div className="border-t border-[var(--color-chrome-lo)] px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <span className="flex items-baseline gap-2">
+              <span className="t-caption text-[var(--color-ink-faint)]">Total</span>
+              <span className="t-stat-sm tabular-nums">{total.houseLine.toFixed(1)}</span>
+            </span>
+            <div className="flex items-center gap-1.5">
               <RetroButton
                 variant="primary"
                 size="sm"
@@ -438,8 +441,16 @@ const GameBetCard: React.FC<{
                   backedMedia: null,
                   resolvesOn: game.date,
                 })}
+                /*
+                  The button now reads "O -110" and the line sits beside it as its own
+                  figure, so the accessible name and the tooltip have to carry the pairing.
+                  "O" alone is not a bet -- over WHAT -- and an abbreviation that only makes
+                  sense next to a number in the same visual group is not a name at all.
+                */
+                aria-label={`Back over ${total.houseLine.toFixed(1)} at ${formatAmerican(total.overPrice)}`}
+                title={`Over ${total.houseLine.toFixed(1)} at ${formatAmerican(total.overPrice)}`}
               >
-                Over {total.houseLine.toFixed(1)} {formatAmerican(total.overPrice)}
+                O {formatAmerican(total.overPrice)}
               </RetroButton>
               <RetroButton
                 variant="ghost"
@@ -456,13 +467,15 @@ const GameBetCard: React.FC<{
                   backedMedia: null,
                   resolvesOn: game.date,
                 })}
+                aria-label={`Back under ${total.houseLine.toFixed(1)} at ${formatAmerican(total.underPrice)}`}
+                title={`Under ${total.houseLine.toFixed(1)} at ${formatAmerican(total.underPrice)}`}
               >
-                Under {total.houseLine.toFixed(1)} {formatAmerican(total.underPrice)}
+                U {formatAmerican(total.underPrice)}
               </RetroButton>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </Panel>
   );
 };

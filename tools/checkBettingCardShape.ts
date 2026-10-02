@@ -38,23 +38,153 @@ const check = (label: string, pass: boolean, detail?: string): void => {
   checks.push({ label, pass, detail });
 };
 
+/**
+ * Remove comments, so the assertions read MARKUP and not prose.
+ *
+ * This file got this wrong twice, in the same direction, and both times a check failed
+ * for the right reason against the wrong text.
+ *
+ *   - "no `md:grid-cols` in PropsView" matched the letters `md` inside a comment that
+ *     described the mistake the fix was correcting.
+ *   - "the tile has no chrome-bar header" matched the word `chrome-bar` inside a comment
+ *     explaining that the header band had been deleted.
+ *
+ * A source-scraping check that can be satisfied -- or broken -- by prose is not a check.
+ * Every assertion below therefore runs against comment-stripped source, and this function
+ * exists so that no assertion has to remember to call it.
+ *
+ * A real scanner rather than a regex, because a regex cannot tell `//` inside a URL string
+ * from a comment, and this repository has `import` lines and template literals with
+ * slashes in them. String and template literals are copied through untouched; `//` and
+ * `/* *\/` are dropped, including the JSX `{/* ... *\/}` form.
+ */
+const stripComments = (input: string): string => {
+  let out = '';
+  let i = 0;
+  // Which quote character closes the literal we are inside, if any.
+  let quote: string | null = null;
+  while (i < input.length) {
+    const ch = input[i];
+    const next = input[i + 1];
+
+    if (quote !== null) {
+      out += ch;
+      if (ch === '\\') {
+        // Copy the escaped character verbatim so a `\/` does not end the literal.
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      while (i < input.length && input[i] !== '\n') i += 1;
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < input.length && !(input[i] === '*' && input[i + 1] === '/')) {
+        // Keep newlines so line-based debugging of a failure still lines up.
+        if (input[i] === '\n') out += '\n';
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+
+    out += ch;
+    i += 1;
+  }
+  return out;
+};
+
 /** The source of one component, from its declaration to the next top-level `const`. */
 const sliceOf = (source: string, from: string, to: string): string => {
   const start = source.indexOf(from);
   const end = source.indexOf(to, start + from.length);
   if (start < 0) return '';
-  return source.slice(start, end < 0 ? undefined : end);
+  return stripComments(source.slice(start, end < 0 ? undefined : end));
 };
 
 const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
 const main = (): void => {
-  const source = readFileSync(FILE, 'utf8');
+  /*
+    The whole file, comments gone. Every assertion below reads this, not the raw text, so
+    no check anywhere in this tool can be satisfied or broken by a sentence in a comment.
+   */
+  const source = stripComments(readFileSync(FILE, 'utf8'));
+  const css = readFileSync(resolve(process.cwd(), 'src', 'index.css'), 'utf8');
 
   const gameCard = sliceOf(source, 'const GameBetCard', 'const TotalMarketCard');
   const propsView = sliceOf(source, 'const PropsView', 'const propRowKey');
   const fieldView = sliceOf(source, 'const FieldMarketsView', 'const FuturesView');
   const fieldCard = sliceOf(source, 'const FieldMarketCard', 'export const OpenBets');
+
+  // -- 0. THE STRIPPER ITSELF ------------------------------------------------------------
+  /*
+    `stripComments` is load-bearing for every assertion in this file, and it is the kind of
+    helper that fails silently: if it stopped removing comments, every check here would
+    still "pass" while quietly testing prose again -- which is the exact failure this tool
+    already made twice.
+
+    So it is tested on inputs chosen to break the obvious implementations:
+
+      - `//` inside a string literal must survive (this repo has absolute Windows paths and
+        URLs in strings, and a regex stripper would eat the rest of the line);
+      - `/*` inside a string must not open a comment;
+      - a `//` inside a TEMPLATE literal must not eat the rest of the file, which is how a
+        naive stripper silently truncates a whole component;
+      - a real line comment and a real block comment must both go;
+      - line count must be preserved, so a failure still reports a usable line number.
+   */
+  const stripperCases: Array<{ label: string; input: string; expect: string }> = [
+    { label: 'a line comment is removed', input: 'a // b\nc', expect: 'a \nc' },
+    { label: 'a block comment is removed', input: 'a /* b */ c', expect: 'a  c' },
+    {
+      label: 'a JSX comment is removed',
+      input: '<p>{/* chrome-bar */}x</p>',
+      expect: '<p>{}x</p>',
+    },
+    {
+      label: 'double slashes INSIDE a string are kept',
+      input: 'const p = "C:\\\\a\\\\b"; // gone',
+      expect: 'const p = "C:\\\\a\\\\b"; ',
+    },
+    {
+      label: 'a block opener INSIDE a string does not start a comment',
+      input: 'const s = "/* not a comment */"; real();',
+      expect: 'const s = "/* not a comment */"; real();',
+    },
+    {
+      label: 'double slashes inside a TEMPLATE do not eat the rest of the file',
+      input: 'const u = `http://x/${y}`; after();',
+      expect: 'const u = `http://x/${y}`; after();',
+    },
+    {
+      label: 'newlines are preserved so line numbers survive',
+      input: 'a\n// one\n/* two */\nb',
+      expect: 'a\n\n\nb',
+    },
+  ];
+  stripperCases.forEach((c) => {
+    check(
+      `the comment stripper: ${c.label}`,
+      stripComments(c.input) === c.expect,
+      `expected ${JSON.stringify(c.expect)}, got ${JSON.stringify(stripComments(c.input))}`,
+    );
+  });
 
   // -- 1. ONE BOX PER GAME CARD -------------------------------------------------------
   check(
@@ -78,6 +208,107 @@ const main = (): void => {
     'the game card paints the neutral teal exactly once, on the panel itself',
     count(gameCard, "borderLeft: `3px solid ${NEUTRAL_BORDER}`") === 1,
     'one teal border per card',
+  );
+
+  // -- 1b. THE TILE, NOT A CARD WITH A HEADER BAND -------------------------------------
+  /*
+    THE THREE PASSES THAT WERE REJECTED, and what each one kept.
+
+    The user's first word about this screen was that it "looks old", and every response
+    reshaped the card while leaving the four things that actually read as old:
+
+      - the `chrome-bar` band across the top of each card, which reads as a table row
+        header and is the single most 1990s-box-score element on the screen;
+      - the two small `size="sm"` side buttons -- one chip among chips -- so the price,
+        the thing the screen exists to offer, was 17px of body text;
+      - 24px crests, so you had to recognise a mark to know which game you were reading;
+      - an `h-5` footer strip, which kept the outlets competing with the prices.
+
+    The tile deletes the band, splits the card into two equal clickable columns, and makes
+    the price the largest figure on the board. These assertions exist because all three
+    rejections looked like success to a type checker and to a build.
+   */
+  check(
+    'the tile has NO chrome-bar header band',
+    !gameCard.includes('chrome-bar'),
+    'the chrome-bar header was the oldest-looking element and it is deleted, not restyled',
+  );
+  check(
+    'the two sides are EQUAL columns of a two-column grid',
+    /<div className="grid grid-cols-2 gap-2 px-3 pt-2">/.test(gameCard),
+    'the pitchfork is grid-cols-2, so both sides get identical width by construction',
+  );
+  check(
+    'the moneyline price is the biggest type on the card',
+    /className="t-stat-hero"/.test(gameCard)
+    && /@utility t-stat-hero/.test(css),
+    't-stat-hero has to exist in index.css as well as being used, or the price silently '
+    + 'falls back to body text and the tile loses its subject',
+  );
+  check(
+    'the side buttons are full-width columns, not chips',
+    /className="w-full flex-col gap-3 py-5"/.test(gameCard),
+    'crest above price, in a column that fills its half of the tile',
+  );
+  check(
+    'the footer outlet marks are demoted to h-4',
+    /*
+      ONE occurrence, not three. The footer maps over `MEDIA_PROFILES`, so the three marks
+      are one line of source rendered three times. An earlier draft of this check counted
+      three and failed on a card that was correct -- the count was asserting the shape of
+      the JSX rather than the shape of the screen, and the source cannot tell you how many
+      outlets there are. The assertion is therefore "the mark is declared at h-4 and no
+      h-5 mark survives", which is what actually regressed when the strip was tuned.
+     */
+    count(gameCard, 'className="h-4 w-4 object-contain"') === 1
+    && !gameCard.includes('className="h-5 w-5 object-contain"'),
+    'the footer mark is declared at h-4 (rendered once per outlet) and no h-5 mark remains',
+  );
+  check(
+    'the footer says which side the outlet prices are for',
+    /Away, per outlet/.test(gameCard),
+    'GameLine.odds holds the AWAY club price only, so an unlabelled row of three prices '
+    + 'under a tile that shows two sides is genuinely ambiguous',
+  );
+  check(
+    'the tile pushes its footer to the bottom so a grid row has one baseline',
+    /className="flex flex-col overflow-hidden"/.test(gameCard)
+    && gameCard.includes('mt-auto border-t border-[var(--color-chrome-lo)] px-3 py-2'),
+    'flex-col on the panel plus mt-auto on the footer lines the footers across a row',
+  );
+
+  // -- 1c. THE ONE NUMBER HERE THAT IS AN ASSUMPTION, NOT A MEASUREMENT ------------------
+  /*
+    Everything else in this file is asserted against markup that can simply be read. The
+    hero price's size is the exception: nothing above proves it FITS, because nothing here
+    knows the rendered width of a half-tile. What can be checked is the arithmetic that
+    was used, so a later "just a touch smaller" edit cannot quietly eat the margin.
+
+    The reasoning, restated so it can be checked:
+      - worst case price is six characters ("+1800", a five-percent shot);
+      - tabular digits in this face run about 0.6em, so six characters is about 3.3em;
+      - a half-tile at the slate's `md` breakpoint is ASSUMED to be about 170px, less
+        px-3 of the button's own padding, so about 146px of room.
+
+    The container figure is the unmeasured half and cannot be checked from source at all.
+    So the floor is pinned at 28px (92px of glyphs against 146px of room) and the button
+    is pinned at `size="sm"` (px-3) rather than `size="lg"` (px-6), because 48px of
+    horizontal padding on a 146px half is a third of the space gone to nothing.
+   */
+  const heroFontSize = /@utility t-stat-hero\s*\{[^}]*font-size:\s*clamp\(\s*(\d+)px/.exec(css);
+  const heroFloor = heroFontSize ? Number(heroFontSize[1]) : 0;
+  check(
+    'the hero price floor is at least 28px, which the width arithmetic assumed',
+    heroFloor >= 28,
+    `t-stat-hero clamps at ${heroFloor}px. The six-character worst case ("+1800") is about`
+    + ' 3.3em of glyphs, so a floor below 28px starts eroding the margin the estimate'
+    + ' depended on -- and it would still LOOK fine, which is what makes it dangerous.',
+  );
+  check(
+    'the pitchfork button keeps its narrow horizontal padding',
+    /variant="default"\s*\n\s*size="sm"/.test(gameCard)
+    && !/size="lg"[\s\S]{0,80}className="w-full flex-col/.test(gameCard),
+    'size="sm" gives px-3; size="lg" gives px-6, which is 48px of a ~146px half-tile',
   );
 
   // -- 2. THE THREE OUTLET PANELS ARE COLUMNS ------------------------------------------
@@ -165,7 +396,7 @@ const main = (): void => {
   const posUses = count(source, 'var(--color-pos)');
   const temperamentPos = count(source, "safe: { border: 'var(--color-pos)'");
   const recordStart = source.indexOf('const statusAccent');
-  const recordSource = recordStart < 0 ? '' : source.slice(recordStart);
+  const recordSource = recordStart < 0 ? '' : stripComments(source.slice(recordStart));
   const recordPos = count(recordSource, 'var(--color-pos)');
 
   check(
