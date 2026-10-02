@@ -24,6 +24,7 @@ import { buildTotalMarkets, buildFirstHalfMarkets, LEAGUE_RUNS_PER_TEAM_GAME, FI
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { americanToProbability } from '../src/lib/markets';
 import type { MediaId } from '../src/data/media';
+import { listByMedia, uniformByMedia } from './mediaFixtures';
 
 const SEED = Number(process.argv[2] ?? 1337);
 const SEASONS = Number(process.argv[3] ?? 2);
@@ -39,7 +40,7 @@ const median = (values: number[]): number => {
 };
 
 const main = async (): Promise<void> => {
-  const predicted: Record<MediaId, number[]> = { hollis: [], glorest: [], sharply: [] };
+  const predicted = listByMedia<number>();
   const actualTotals: number[] = [];
   const actualFirstFive: number[] = [];
   /** [margin of actual total above the house line, did it go over] */

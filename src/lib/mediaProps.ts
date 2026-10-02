@@ -77,6 +77,26 @@ export const PROP_TILT: Record<MediaId, number> = {
   hollis: 0.10,
   glorest: 0.08,
   sharply: 0.26,
+  /*
+   * PROVISIONAL for the five, and DERIVED from their moneylines rather than chosen.
+   *
+   * The three fitted values are the moneyline slopes cut to a third: Hollis 0.30 -> 0.10,
+   * Glorest 0.25 -> 0.08, Sharply 0.80 -> 0.26. The five new SLOPEs are all 0.25, so a
+   * mechanical third would give every one of them 0.08 and make them indistinguishable
+   * on the props board, which would be a false claim -- they have genuinely different
+   * reads, and the prop is where that is supposed to show up.
+   *
+   * So they are set from CHARACTER instead, and flagged as the guess it is. Jardins is
+   * high because she inverts by reflex and a prop is where a reflex shows most; Mussad is
+   * lowest because a league desk has the least team-specific signal to offer; Wardley is
+   * moderate because his ordering edge is real but his is a two-year edge. Step 5 replaces
+   * all five with fitted values.
+   */
+  sallow: 0.10,
+  jardins: 0.22,
+  boyle: 0.12,
+  mussad: 0.06,
+  wardley: 0.14,
 };
 
 /**

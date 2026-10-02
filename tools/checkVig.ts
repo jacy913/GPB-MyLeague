@@ -27,6 +27,7 @@ import { buildFieldMarket } from '../src/lib/markets';
 import { buildDivisionMarkets } from '../src/lib/mediaMarkets';
 import { MEDIA_PROFILES, type MediaId } from '../src/data/media';
 import type { Team } from '../src/types';
+import { uniformByMedia } from './mediaFixtures';
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail: string): void => {
@@ -40,7 +41,8 @@ console.log('MONEYLINE');
  * A neutral pairing: both reads level, so the consensus is close to even and
  * the overround is not being masked by a one-sided favourite.
  */
-const level = { hollis: 0.5, glorest: 0.5, sharply: 0.5 };
+// Uniform on purpose: this check exercises the price construction, not the outlet.
+const level = uniformByMedia(0.5);
 const teams = {
   away: { id: 'a', city: 'Away', name: 'A' } as unknown as Team,
   home: { id: 'h', city: 'Home', name: 'H' } as unknown as Team,
@@ -49,7 +51,7 @@ const line = buildGameLine({
   game: { gameId: 'g1', date: '2026-04-02' } as never,
   away: teams.away, home: teams.home,
   awayScores: level, homeScores: level,
-  spread: { hollis: 1, glorest: 1, sharply: 1 },
+  spread: uniformByMedia(1),
 });
 
 /*
@@ -89,9 +91,9 @@ const division = buildDivisionMarkets({
     id: `t${i}`, city: `City${i}`, name: 'Club',
     league: 'Prestige', division: 'North',
   } as unknown as Team)),
-  scoreBy: {
-    hollis: score, glorest: score, sharply: score,
-  },
+  // The same score map for EVERY outlet: this check exercises the price construction, and a
+  // fixture where the forecasters disagree would be testing the outlets instead.
+  scoreBy: uniformByMedia(score),
 })[0];
 
 if (!division) {

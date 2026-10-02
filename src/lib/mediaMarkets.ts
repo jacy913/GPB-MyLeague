@@ -6,6 +6,7 @@ import {
   type FieldMarket, type LineMarket,
 } from './markets';
 import { titleContenders } from './futuresRisk';
+import { BOYLE_BEAT } from './mediaReads';
 
 /**
  * Market builders.
@@ -120,6 +121,16 @@ const FUTURES_TEMPERATURE: Record<MediaId, number> = {
   hollis: 8.0,
   glorest: 8.0,
   sharply: 8.0,
+  /*
+   * Nobody moves a futures temperature, which is why all eight are identical and why that is
+   * a fact rather than a default. A forecaster with an opinion about how warm the postseason
+   * feels would be modelling something no one in this league has an edge on.
+   */
+  sallow: 8.0,
+  jardins: 8.0,
+  boyle: 8.0,
+  mussad: 8.0,
+  wardley: 8.0,
 };
 
 /**
@@ -336,6 +347,19 @@ const AWARD_REGRESSION: Record<MediaId, number> = {
   hollis: 0.45,
   glorest: 0.25,
   sharply: 0.05,
+  /*
+   * How much a forecaster trusts SEASON TOTAL against season context, per run.
+   *
+   * PROVISIONAL for the five. Sharply's 0.05 is the meaningful end of the scale and it is
+   * measured: he barely regresses at all, which is why he overrates a hot season. Sallow sits
+   * highest among the new because a pure fitted read regresses hardest. Jardins is low
+   * because she inverts. Step 5 fits them.
+   */
+  sallow: 0.40,
+  jardins: 0.18,
+  boyle: 0.25,
+  mussad: 0.30,
+  wardley: 0.35,
 };
 
 export const buildAwardMarket = (
@@ -460,10 +484,118 @@ const sharplyFactors = (team: Team, opponent: Team, input: RunEnvironmentInput):
   };
 };
 
+/** z-score of a club's latent strength, the shared primitive for the metrics-driven reads. */
+const strengthZ = (id: string, input: RunEnvironmentInput): number =>
+  ((input.strength.get(id) ?? input.strengthMean) - input.strengthMean)
+  / Math.max(1, input.strengthSd);
+
+/**
+ * SALLOW -- the fitted base rate, on scoring.
+ *
+ * A deliberate BALANCE of the two signals the other three pick a side on: latent strength and
+ * observed output, weighted evenly. That is what "no editorial tilt" means operationally -- he
+ * is the one outlet here who does not believe one of those numbers is more trustworthy than the
+ * other, and his run numbers are the reference the other seven are measured against.
+ */
+const sallowFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  if (!input.hasSeasonOutput) return hollisFactors(team, opponent, input);
+  const off = observedScoring(team);
+  const oppAllowed = observedAllowed(opponent);
+  const clamp = (v: number | null): number | null =>
+    v === null ? null : Math.max(0.55, Math.min(1.75, v / LEAGUE_RUNS_PER_TEAM_GAME));
+  const fittedOff = 1 + 0.34 * strengthZ(team.id, input);
+  const fittedDef = 1 - 0.34 * strengthZ(opponent.id, input);
+  const obsOff = clamp(off);
+  const obsDef = clamp(oppAllowed);
+  return {
+    off: obsOff === null ? fittedOff : (fittedOff + obsOff) / 2,
+    def: obsDef === null ? fittedDef : (fittedDef + obsDef) / 2,
+  };
+};
+
+/**
+ * JARDINS -- the contrarian, on scoring.
+ *
+ * She inverts the OBSERVED signal rather than the fitted one. A club that has been scoring is
+ * the thing the market is pricing, and her whole position is that what is being priced is
+ * already in the number -- so she credits a hot club LESS than a metrics read does, and a cold
+ * one more.
+ *
+ * NOTE THE DIRECTION, because it reads like a bug and is not: this makes her totals run COLD
+ * when a club is hot. That is her character expressed on the run channel, and it is why fading
+ * her when she fades everyone is a real play rather than a slogan.
+ */
+const jardinsFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  if (!input.hasSeasonOutput) return hollisFactors(team, opponent, input);
+  const off = observedScoring(team);
+  const oppAllowed = observedAllowed(opponent);
+  const invert = (v: number | null): number =>
+    v === null ? 1 : 2 - Math.max(0.55, Math.min(1.75, v / LEAGUE_RUNS_PER_TEAM_GAME));
+  return { off: invert(off), def: invert(oppAllowed) };
+};
+
+/**
+ * BOYLE -- the beat, on scoring.
+ *
+ * Inside his division he is a metrics reader with conviction; outside it he is nearly flat. The
+ * beat constant is IMPORTED from `mediaReads.ts` rather than restated, because a forecaster who
+ * covers the West on the ranking page and the East on the totals page would be a bug that
+ * compiles perfectly and surfaces only as an inexplicable price.
+ */
+const boyleFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  const inBeat = team.division === BOYLE_BEAT;
+  const z = 0.34 * (inBeat ? 1 : 0.2);
+  return { off: 1 + z * strengthZ(team.id, input), def: 1 - z * strengthZ(opponent.id, input) };
+};
+
+/**
+ * MUSSAD -- the macro desk, on scoring.
+ *
+ * A LEAGUE-WIDE factor, not a club one. His terms are the same for both sides of the matchup,
+ * because he is not pricing the teams -- he is pricing the environment they play in. A tiny
+ * strength tilt keeps the read well-defined; without any tilt his total would be constant and
+ * the over/under price would not respond to anything at all.
+ *
+ * MUSSAD_RUN_TILT is deliberately small. Raising it would make his page more interesting and his
+ * character less true, which is the wrong trade.
+ */
+const MUSSAD_RUN_TILT = 0.05;
+const mussadFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  const tide = input.hasSeasonOutput ? 1 : 1.05;
+  const z = strengthZ(team.id, input) * MUSSAD_RUN_TILT;
+  return { off: tide + z, def: tide - z * 0.5 };
+};
+
+/**
+ * WARDLEY -- organisational depth, on scoring.
+ *
+ * A WEAKER read than his ranking, and that is honest rather than a shortcut: `RunEnvironmentInput`
+ * carries latent strength and observed output and NOTHING about age, so his farm-system edge --
+ * which is what makes him interesting -- cannot be expressed on tomorrow's run total at all.
+ *
+ * He therefore reads at a fraction of the metrics weight, and the reason is stated here rather
+ * than left to be discovered later as "why is the scout the least differentiated number on the
+ * board". His edge is on ORDERING and on a two-year horizon; the ranking read carries it
+ * properly because that path has the roster data.
+ *
+ * This is a known gap rather than a hidden one. `RunEnvironmentInput` gaining an age term would
+ * close it, and it is the right fix when someone builds the valuation index.
+ */
+const WARDLEY_RUN_WEIGHT = 0.45;
+const wardleyFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  const z = 0.34 * WARDLEY_RUN_WEIGHT * strengthZ(team.id, input);
+  return { off: 1 + z, def: 1 - z };
+};
+
 const FACTORS: Record<MediaId, (team: Team, opponent: Team, input: RunEnvironmentInput) => RunFactors> = {
   hollis: hollisFactors,
   glorest: glorestFactors,
   sharply: sharplyFactors,
+  sallow: sallowFactors,
+  jardins: jardinsFactors,
+  boyle: boyleFactors,
+  mussad: mussadFactors,
+  wardley: wardleyFactors,
 };
 
 /**
@@ -478,6 +610,17 @@ const TOTAL_SLOPE: Record<MediaId, number> = {
   hollis: 0.55,
   glorest: 0.50,
   sharply: 0.90,
+  /*
+   * PROVISIONAL for the five. Mussad is the notable one and it is not a shrug: a macro desk
+   * that covers the league rather than the clubs is ACTIVELY UNHELPFUL on a single game's
+   * run total, and his own stated weakness says so -- right about October, useless on a
+   * Tuesday. A flat 0.35 encodes that instead of pretending he has a next-Tuesday read.
+   */
+  sallow: 0.50,
+  jardins: 0.55,
+  boyle: 0.50,
+  mussad: 0.35,
+  wardley: 0.45,
 };
 
 const expectedTotal = (away: Team, home: Team, mediaId: MediaId, input: RunEnvironmentInput): number => {
@@ -559,6 +702,6 @@ export const buildFirstHalfMarkets = (totalMarkets: LineMarket[]): LineMarket[] 
       title: market.title,
       subtitle: market.subtitle,
       fair,
-      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1 },
+      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1, sallow: 0.7, jardins: 0.7, boyle: 0.65, mussad: 0.5, wardley: 0.65 },
     });
   });

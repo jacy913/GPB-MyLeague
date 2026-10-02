@@ -96,6 +96,33 @@ const SLOPE: Record<MediaId, number> = {
   hollis: 0.30,
   glorest: 0.25,
   sharply: 0.80,
+  /*
+   * THE FIVE NEW SLOPES ARE PROVISIONAL AND THIS IS NOT AN OVERSIGHT.
+   *
+   * The three above are measured: tools/fitMediaOdds.ts dumped each outlet's Brier score over a
+   * grid of slopes against settled games and these won. The five below were fitted against
+   * THREE forecasters and have no fitted value yet.
+   *
+   * They are set to 0.25 -- the value Glorest fitted to -- for one reason: a slope near zero is
+   * the CONSERVATIVE choice. A slope multiplies a z-scored gap, so an understated slope makes the
+   * forecaster read closer to the middle of the pack than he really is, which costs him
+   * discrimination. An OVERSTATED slope makes a forecaster who has never been measured look
+   * emphatic, and emphatic-and-unmeasured is how a house ends up confidently wrong.
+   *
+   * Step 5 re-fits all eight. Until then these five are the most visible uncalibrated numbers in
+   * the module, and `tools/checkMediaProfiles.ts` says so.
+   *
+   * SHARPLY'S 0.80 IS NOT A TYPO AND MUST SURVIVE RE-FITTING. It is roughly three times his
+   * fitted optimum of 0.25. That gap is the exploitable flaw the whole media layer is built
+   * around: being right on average and wrong about how sure you are are two different failures,
+   * and only the second is expensive. A recalibration pass that "corrects" him to his optimum
+   * destroys the best play in the game.
+   */
+  sallow: 0.25,
+  jardins: 0.25,
+  boyle: 0.25,
+  mussad: 0.25,
+  wardley: 0.25,
 };
 
 export interface OddsInput {

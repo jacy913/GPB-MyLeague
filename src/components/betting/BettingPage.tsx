@@ -3,7 +3,7 @@ import type {
   Game, SeasonHistoryEntry, PlayerBattingRatings, PlayerPitchingRatings,
 } from '../../types';
 import type { MediaId } from '../../data/media';
-import { MEDIA_BY_ID } from '../../data/media';
+import { MEDIA_BY_ID, MEDIA_PROFILES } from '../../data/media';
 import { buildMediaReads, type MediaReadInput } from '../../lib/mediaReads';
 import { buildGameLine, getNextSlateDate, type GameLine } from '../../lib/mediaOdds';
 import {
@@ -159,11 +159,18 @@ const BettingPage: React.FC<BettingPageProps> = ({
         const away = teamById.get(game.awayTeam);
         const home = teamById.get(game.homeTeam);
         if (!away || !home) return null;
-        const scoreFor = (teamId: string) => ({
-          hollis: scores.hollis.get(teamId) ?? 0.5,
-          glorest: scores.glorest.get(teamId) ?? 0.5,
-          sharply: scores.sharply.get(teamId) ?? 0.5,
-        });
+  /*
+   * DERIVED FROM THE PROFILE LIST, NOT THREE HARDCODED KEYS.
+   *
+   * This was a literal with three entries, and adding five forecasters broke it at compile
+   * time -- which is the type system doing precisely the job it is there for. Iterating
+   * MEDIA_PROFILES means the ninth forecaster needs no change here at all, and a scorer that
+   * forgets an outlet gets a neutral 0.5 rather than a missing key.
+   */
+  const scoreFor = (teamId: string): Record<MediaId, number> =>
+    Object.fromEntries(
+      MEDIA_PROFILES.map((profile) => [profile.id, scores[profile.id].get(teamId) ?? 0.5]),
+    ) as Record<MediaId, number>;
         return buildGameLine({
           game, away, home,
           awayScores: scoreFor(away.id), homeScores: scoreFor(home.id), spread,

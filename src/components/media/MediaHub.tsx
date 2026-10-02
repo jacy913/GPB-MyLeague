@@ -98,11 +98,18 @@ export const MediaHub: React.FC<MediaHubProps> = ({
         const away = input.teams.find((team) => team.id === game.awayTeam);
         const home = input.teams.find((team) => team.id === game.homeTeam);
         if (!away || !home) return null;
-        const scoreFor = (teamId: string) => ({
-          hollis: scores.hollis.get(teamId) ?? 0.5,
-          glorest: scores.glorest.get(teamId) ?? 0.5,
-          sharply: scores.sharply.get(teamId) ?? 0.5,
-        });
+  /*
+   * DERIVED FROM THE PROFILE LIST, NOT THREE HARDCODED KEYS.
+   *
+   * This was a literal with three entries, and adding five forecasters broke it at compile
+   * time -- which is the type system doing precisely the job it is there for. Iterating
+   * MEDIA_PROFILES means the ninth forecaster needs no change here at all, and a scorer that
+   * forgets an outlet gets a neutral 0.5 rather than a missing key.
+   */
+  const scoreFor = (teamId: string): Record<MediaId, number> =>
+    Object.fromEntries(
+      MEDIA_PROFILES.map((profile) => [profile.id, scores[profile.id].get(teamId) ?? 0.5]),
+    ) as Record<MediaId, number>;
         return buildGameLine({ game, away, home, awayScores: scoreFor(away.id), homeScores: scoreFor(home.id), spread });
       })
       .filter((line): line is GameLine => line !== null)

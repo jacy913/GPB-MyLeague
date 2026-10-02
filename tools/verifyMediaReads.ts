@@ -28,6 +28,7 @@ import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { MEDIA_PROFILES } from '../src/data/media';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import type { MediaId } from '../src/data/media';
+import { emptyByMedia } from './mediaFixtures';
 
 const SEED = Number(process.argv[2] ?? 1337);
 const SEASONS = Number(process.argv[3] ?? 3);
@@ -63,11 +64,7 @@ const spearman = (a: number[], b: number[]): number => {
 /** Index 0-100 -> a probability the team wins more than it loses. */
 const indexToProbability = (index: number): number => 1 / (1 + Math.pow(10, (50 - index) / 25));
 
-const accumulators: Record<MediaId, { rho: number[]; brier: number[]; top: number }> = {
-  hollis: { rho: [], brier: [], top: 0 },
-  glorest: { rho: [], brier: [], top: 0 },
-  sharply: { rho: [], brier: [], top: 0 },
-};
+const accumulators = emptyByMedia(() => ({ rho: [] as number[], brier: [] as number[], top: 0 }));
 
 const main = async (): Promise<void> => {
 let snapshots = 0;

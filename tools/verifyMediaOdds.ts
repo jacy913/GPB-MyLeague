@@ -23,6 +23,7 @@ import { MEDIA_PROFILES } from '../src/data/media';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { buildGameLine, probabilityToAmerican } from '../src/lib/mediaOdds';
 import type { MediaId } from '../src/data/media';
+import { emptyByMedia } from './mediaFixtures';
 
 const SEED = Number(process.argv[2] ?? 1337);
 const SEASONS = Number(process.argv[3] ?? 3);
@@ -40,11 +41,7 @@ type Bin = { n: number; predicted: number; actual: number };
 
 const main = async (): Promise<void> => {
   const houseBins: Bin[] = BINS.map(() => ({ n: 0, predicted: 0, actual: 0 }));
-  const outletScores: Record<MediaId, { n: number; brier: number; predicted: number; actual: number }> = {
-    hollis: { n: 0, brier: 0, predicted: 0, actual: 0 },
-    glorest: { n: 0, brier: 0, predicted: 0, actual: 0 },
-    sharply: { n: 0, brier: 0, predicted: 0, actual: 0 },
-  };
+  const outletScores = emptyByMedia(() => ({ n: 0, brier: 0, predicted: 0, actual: 0 }));
   let total = 0;
   let meanOfProbabilities: number[] = [];
   let meanOfPrices: number[] = [];
@@ -94,11 +91,27 @@ const main = async (): Promise<void> => {
         seasonYear: year,
       });
 
-      const scoreFor = (teamId: string) => ({
-        hollis: scores.hollis.get(teamId) ?? 0.5,
-        glorest: scores.glorest.get(teamId) ?? 0.5,
-        sharply: scores.sharply.get(teamId) ?? 0.5,
-      });
+      /*
+       * Derived from MEDIA_PROFILES rather than three hardcoded outlets. Widening
+       * MediaId broke this literal in four tools at once; iterating the profile list
+       * means the ninth forecaster needs no change here, and a missing outlet becomes a
+       * neutral 0.5 rather than a hole.
+       */
+      /*
+       * Derived from MEDIA_PROFILES rather than three hardcoded outlets. Widening
+       * MediaId broke this literal in four tools at once; iterating the profile list
+       * means the ninth forecaster needs no change here, and a missing outlet becomes a
+       * neutral 0.5 rather than a hole.
+       *
+       * The return type is annotated because spreading an Object.fromEntries widens the
+       * type to `{ [k: string]: number }` and silently stops satisfying
+       * `Record<MediaId, number>`. That failure is caught at compile time here; it would
+       * not be caught at runtime.
+       */
+      const scoreFor = (teamId: string): Record<MediaId, number> =>
+        Object.fromEntries(
+          MEDIA_PROFILES.map((profile) => [profile.id, scores[profile.id].get(teamId) ?? 0.5]),
+        ) as Record<MediaId, number>;
 
       const lines = state.games
         .filter((game) => game.date === slateDate && game.status !== 'completed')

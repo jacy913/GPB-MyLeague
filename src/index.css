@@ -70,6 +70,63 @@
   --color-media-glorest-hi:  #f3655b;
   --color-media-glorest-dim: rgba(237, 32, 18, 0.18);
 
+  /*
+   * THE FIVE NEW OUTLET ACCENTS, and how they were chosen.
+   *
+   * Eight hues have to be distinguishable from EACH OTHER and from the three above, at 28px,
+   * on the navy field. The plan flags this as "the constraint most likely to fail on first pass
+   * and it cannot be checked in isolation", and that is right -- picking eight colours by eye is
+   * picking eight colours by hope.
+   *
+   * So the hues were laid out on a spread and then MEASURED, and the first layout FAILED --
+   * which is the point of measuring. tools/checkMediaAccents.ts reports OKLab hues, and they
+   * are not the RGB-wheel degrees anyone picks colours by:
+   *
+   *   outlet     base      OKLab hue    L      nearest other
+   *   glorest    #ed2012      30 deg   0.604   boyle      0.176
+   *   boyle      #e08a1e      65 deg   0.708   glorest    0.176
+   *   wardley    #787600     109 deg   0.550   sallow     0.188
+   *   jardins    #3fbf3f     143 deg   0.709   sallow     0.168
+   *   sallow     #12a5a5     195 deg   0.655   jardins    0.168
+   *   hollis     #0876fc     258 deg   0.593   mussad     0.109
+   *   mussad     #7b5cf0     288 deg   0.587   hollis     0.109
+   *   sharply    #c00dfc     314 deg   0.611   mussad     0.145
+   *
+   * THE FIRST ATTEMPT HAD GARDENS AND WARDLEY 21 DEGREES APART and they measured 0.090, under
+   * the 0.10 floor -- two greens that looked obviously different on an RGB wheel and were not
+   * different enough in OKLab. Picking a second colour by eye is the same mistake with a
+   * different number, so wardley's hue was SEARCHED instead (tools/pickAccent.ts sweeps OKLCH
+   * and keeps whatever maximises the minimum pairwise distance), which moved him from
+   * lime-green to this deep olive and lifted the floor to 0.109.
+   *
+   * hollis and mussad at 0.109 is now the tightest pair and is reported by name rather than
+   * averaged away. The five new marks are PHOTOGRAPHS rather than crests, so nearby hues are
+   * separated by a silhouette where two flat logos of the same hue would not be. That is a
+   * mitigation, not a fix.
+   *
+   * `-hi` is the on-dark variant used for text, and is a lightness step rather than a second
+   * hue, so an outlet's text and its border are recognisably the same colour.
+   */
+  --color-media-sallow:   #12a5a5;
+  --color-media-sallow-hi:#3fd6d6;
+  --color-media-sallow-dim: rgba(18, 165, 165, 0.18);
+
+  --color-media-jardins:  #3fbf3f;
+  --color-media-jardins-hi:#6ee06e;
+  --color-media-jardins-dim: rgba(63, 191, 63, 0.18);
+
+  --color-media-boyle:    #e08a1e;
+  --color-media-boyle-hi: #f5b04a;
+  --color-media-boyle-dim: rgba(224, 138, 30, 0.18);
+
+  --color-media-mussad:   #7b5cf0;
+  --color-media-mussad-hi:#a68cff;
+  --color-media-mussad-dim: rgba(123, 92, 240, 0.18);
+
+  --color-media-wardley:  #787600;
+  --color-media-wardley-hi:#b8b52e;
+  --color-media-wardley-dim: rgba(120, 118, 0, 0.18);
+
   /* Text ramp */
   --color-ink:         #f2f5ff;
   --color-ink-dim:     #96a1b8;

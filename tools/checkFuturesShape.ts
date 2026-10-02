@@ -26,6 +26,7 @@ import { buildDivisionMarkets, buildLeagueMarkets } from '../src/lib/mediaMarket
 import { probabilityToAmerican, americanToProbability } from '../src/lib/markets';
 import { MEDIA_PROFILES } from '../src/data/media';
 import type { Team } from '../src/types';
+import { uniformByMedia } from './mediaFixtures';
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail: string): void => {
@@ -62,7 +63,7 @@ for (const span of SPANS) {
   const index = buildIndex(4, span);
   const market = buildDivisionMarkets({
     teams: makeTeams(4, 't'),
-    scoreBy: { hollis: index, glorest: index, sharply: index },
+    scoreBy: uniformByMedia(index),
   })[0];
   if (!market) { check(`span ${span} built`, false, 'no market'); continue; }
 
@@ -83,7 +84,7 @@ console.log('\nASSERTIONS on Hollis\'s measured mid-season spread');
 const index = buildIndex(4, 0.30);
 const division = buildDivisionMarkets({
   teams: makeTeams(4, 't'),
-  scoreBy: { hollis: index, glorest: index, sharply: index },
+  scoreBy: uniformByMedia(index),
 })[0];
 
 if (!division) {
@@ -135,7 +136,7 @@ console.log('\nOPENING DAY, all reads level');
 const level = new Map([['t0', 0.5], ['t1', 0.5], ['t2', 0.5], ['t3', 0.5]]);
 const levelMarket = buildDivisionMarkets({
   teams: makeTeams(4, 't'),
-  scoreBy: { hollis: level, glorest: level, sharply: level },
+  scoreBy: uniformByMedia(level),
 })[0];
 if (levelMarket) {
   const prices = levelMarket.outcomes.map((o) => o.houseOdds);
@@ -170,7 +171,7 @@ console.log('  clubs   leader p   leader price   last p   last price   longest')
   const scoreMap = new Map(Array.from({ length: n }, (_, i) => [`t${i}`, 0.30 * (1 - i / Math.max(1, n - 1))]));
   const market = buildDivisionMarkets({
     teams: makeTeams(n, 't'),
-    scoreBy: { hollis: scoreMap, glorest: scoreMap, sharply: scoreMap },
+    scoreBy: uniformByMedia(scoreMap),
   })[0];
   if (!market) { check(`${n} clubs built`, false, 'no market'); return; }
 
@@ -228,7 +229,7 @@ const league = buildLeagueMarkets({
     { id: 'a', city: 'Alpha', name: 'A', league: 'Prestige', division: 'North' } as unknown as Team,
     { id: 'b', city: 'Beta', name: 'B', league: 'Prestige', division: 'North' } as unknown as Team,
   ],
-  scoreBy: { hollis: twoClubs, glorest: twoClubs, sharply: twoClubs },
+  scoreBy: uniformByMedia(twoClubs),
 })[0];
 if (league) {
   const sum = league.outcomes.reduce((acc, o) => acc + o.consensusProbability, 0);
@@ -249,11 +250,7 @@ console.log('were the same string.\n');
 const identityTeams = makeTeams(4, 't');
 const identityMarket = buildDivisionMarkets({
   teams: identityTeams,
-  scoreBy: {
-    hollis: new Map(identityTeams.map((t) => [t.id, 90])),
-    glorest: new Map(identityTeams.map((t) => [t.id, 90])),
-    sharply: new Map(identityTeams.map((t) => [t.id, 90])),
-  },
+  scoreBy: uniformByMedia(new Map(identityTeams.map((t) => [t.id, 90]))),
 })[0];
 
 if (identityMarket) {

@@ -16,6 +16,7 @@
  */
 
 import { buildLineMarket, LINE_MARGIN, HOUSE_MARGIN } from '../src/lib/markets';
+import { uniformByMedia } from './mediaFixtures';
 
 const logistic = (v: number): number => 1 / (1 + Math.exp(-v));
 const SLOPE = 0.55;
@@ -35,8 +36,8 @@ const market = buildLineMarket({
   kind: 'total',
   key: 'total:test',
   title: 'Test at Test',
-  fair: { hollis: fairTotal, glorest: fairTotal, sharply: fairTotal },
-  slope: { hollis: SLOPE, glorest: SLOPE, sharply: SLOPE },
+  fair: uniformByMedia(fairTotal),
+  slope: uniformByMedia(SLOPE),
 });
 
 /**

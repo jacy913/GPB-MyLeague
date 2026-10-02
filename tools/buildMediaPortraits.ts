@@ -66,6 +66,24 @@ const SOURCES: Array<{ id: string; file: string; out: string }> = [
   { id: 'hollis', file: 'quincyhollisthumbnail.png', out: 'hollis-portrait.png' },
   { id: 'glorest', file: 'glorestsportsthumbnail.png', out: 'glorest-portrait.png' },
   { id: 'sharply', file: 'linedsharplythumbnail.png', out: 'sharply-portrait.png' },
+  /*
+   * THE FIVE NEW FORECASTERS, added with the profiles.
+   *
+   * They are here because `MediaDetailsModal` renders `MEDIA_PORTRAITS[mediaId]` and
+   * `MediaCard` renders `MEDIA_IMAGES[profile.id]`. Authoring five `MediaProfile` entries
+   * without portraits would have shipped five popups with a broken image in the hero slot, and
+   * the type system would not have caught it -- a missing asset is a runtime hole, not a type.
+   *
+   * The same framing rule applies, and the same caveat: these are full-body or half-body
+   * portraits, so `frameFor` crops them to head and shoulders or falls back to the whole frame
+   * when the subject fills the canvas. Either way the output is a 4:5 hero, which is what the
+   * popup frames it in.
+   */
+  { id: 'sallow', file: 'garysallow.png', out: 'sallow-portrait.png' },
+  { id: 'jardins', file: 'audreyjardins.png', out: 'jardins-portrait.png' },
+  { id: 'boyle', file: 'landonboyle.png', out: 'boyle-portrait.png' },
+  { id: 'mussad', file: 'tariqmussad.png', out: 'mussad-portrait.png' },
+  { id: 'wardley', file: 'vancewardleyjr.png', out: 'wardley-portrait.png' },
 ];
 
 /** 4:5. A portrait of a person is not a square, and a square face crop is a passport photo. */

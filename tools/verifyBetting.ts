@@ -28,6 +28,7 @@ import { buildTotalMarkets } from '../src/lib/mediaMarkets';
 import { createWallet, placeBet, settleWallet, settleReturn, STARTING_BALANCE } from '../src/lib/wallet';
 import { MEDIA_PROFILES, type MediaId } from '../src/data/media';
 import type { Game } from '../src/types';
+import { listByMedia, uniformByMedia } from './mediaFixtures';
 
 const SEED = Number(process.argv[2] ?? 1337);
 const SEASONS = Number(process.argv[3] ?? 2);
@@ -73,9 +74,7 @@ const runStrategy = (
 
 const main = async (): Promise<void> => {
   const samples: Array<{ probability: number; hit: boolean }> = { } as never;
-  const perOutlet: Record<MediaId, Array<{ probability: number; hit: boolean }>> = {
-    hollis: [], glorest: [], sharply: [],
-  };
+  const perOutlet = listByMedia<{ probability: number; hit: boolean }>();
   const totals: Array<{ line: number; over: boolean }> = [];
   const playedGames: Array<{ game: Game; awayId: string; homeId: string; awayProbability: number }> = [];
   const spreads: number[] = [];
@@ -143,11 +142,27 @@ const main = async (): Promise<void> => {
           const away = teamById.get(game.awayTeam);
           const home = teamById.get(game.homeTeam);
           if (!away || !home) return null;
-          const scoreFor = (teamId: string) => ({
-            hollis: scores.hollis.get(teamId) ?? 0.5,
-            glorest: scores.glorest.get(teamId) ?? 0.5,
-            sharply: scores.sharply.get(teamId) ?? 0.5,
-          });
+          /*
+           * Derived from MEDIA_PROFILES rather than three hardcoded outlets. Widening
+           * MediaId broke this literal in four tools at once; iterating the profile list
+           * means the ninth forecaster needs no change here, and a missing outlet becomes a
+           * neutral 0.5 rather than a hole.
+           */
+          /*
+           * Derived from MEDIA_PROFILES rather than three hardcoded outlets. Widening
+           * MediaId broke this literal in four tools at once; iterating the profile list
+           * means the ninth forecaster needs no change here, and a missing outlet becomes a
+           * neutral 0.5 rather than a hole.
+           *
+           * The return type is annotated because spreading an Object.fromEntries widens the
+           * type to `{ [k: string]: number }` and silently stops satisfying
+           * `Record<MediaId, number>`. That failure is caught at compile time here; it would
+           * not be caught at runtime.
+           */
+          const scoreFor = (teamId: string): Record<MediaId, number> =>
+            Object.fromEntries(
+              MEDIA_PROFILES.map((profile) => [profile.id, scores[profile.id].get(teamId) ?? 0.5]),
+            ) as Record<MediaId, number>;
           return buildGameLine({
             game, away, home,
             awayScores: scoreFor(away.id), homeScores: scoreFor(home.id), spread,

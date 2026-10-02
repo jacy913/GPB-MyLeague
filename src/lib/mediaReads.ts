@@ -144,7 +144,35 @@ interface DerivedInputs {
   winStreakByTeam: Map<string, number>;
   gamesPlayed: number;
   hasSeasonOutput: boolean;
+  /*
+   * THE THREE ADDED FOR THE FIVE NEW FORECASTERS.
+   *
+   * Each exists because one of the new read functions genuinely cannot be written without it,
+   * and inventing a weaker signal instead would have been a quieter way of shipping a stub.
+   *
+   *   meanAgeByTeam      Wardley. Organizational depth is an AGE curve. `Player` carries `age`,
+   *                      `yearsPro` and `draftClassYear`, so this is measured rather than modelled.
+   *   youngUpsideByTeam  Wardley. The upside is the best of a team's YOUNG players, not the best
+   *                      of its roster -- which is the whole reason a rebuild club scores well on
+   *                      his read and badly on everyone else's.
+   *   leagueRunEnvironment
+   *                      Mussad. The league-wide scoring rate. It is a constant across teams BY
+   *                      DESIGN, which is what makes him beta, so it is computed once here rather
+   *                      than per club.
+   */
+  meanAgeByTeam: Map<string, number>;
+  youngUpsideByTeam: Map<string, number>;
+  leagueRunEnvironment: number;
 }
+
+/**
+ * The age at or below which a player counts as "not yet arrived", for Wardley's upside term.
+ *
+ * CHOSEN, and worth being honest that it is chosen. Baseball's conventional prospect band is
+ * 22-24, and the midpoint is used so the term rewards depth rather than one very young player.
+ * Step 5 re-fits; this is the shape of the signal, not its calibration.
+ */
+const YOUNG_AGE = 22;
 
 const buildDerivedInputs = (input: MediaReadInput): DerivedInputs => {
   const { teams, players, battingRatings, pitchingRatings, battingStats, pitchingStats, playerState, seasonYear } = input;
@@ -171,13 +199,62 @@ const buildDerivedInputs = (input: MediaReadInput): DerivedInputs => {
   void preferredBatting;
   void preferredPitching;
 
+  /*
+   * AGE AND YOUNG UPSIDE, computed here rather than in the read function.
+   *
+   * Both are per-team aggregates over `players`, so computing them once per read is right: they
+   * are properties of the roster, not of one club being priced. `youngUpside` is the BEST young
+   * player's overall rather than an average, because a rebuild club's upside lives in one
+   * teenager and averaging him against nine journeymen hides exactly the signal Wardley trades on.
+   */
+  const agesByTeam = new Map<string, number[]>();
+  const youngByTeam = new Map<string, number>();
+  for (const player of players) {
+    if (!player.teamId) continue;
+    const bucket = agesByTeam.get(player.teamId);
+    if (bucket) bucket.push(player.age); else agesByTeam.set(player.teamId, [player.age]);
+
+    if (player.age > YOUNG_AGE) continue;
+    const batting = latestBatting.get(player.playerId);
+    const pitching = latestPitching.get(player.playerId);
+    const candidates = [batting?.overall, pitching?.overall].filter((v): v is number => typeof v === 'number');
+    if (candidates.length === 0) continue;
+    const best = Math.max(...candidates);
+    const existing = youngByTeam.get(player.teamId);
+    if (existing === undefined || best > existing) youngByTeam.set(player.teamId, best);
+  }
+  const meanAgeByTeam = new Map<string, number>();
+  for (const [teamId, ages] of agesByTeam) {
+    meanAgeByTeam.set(teamId, ages.reduce((a, b) => a + b, 0) / ages.length);
+  }
+
   const gamesPlayed = teams.reduce((max, team) => Math.max(max, team.wins + team.losses), 0);
+
+  /*
+   * THE LEAGUE RUN ENVIRONMENT, as a 0-1 scale.
+   *
+   * Scored league-wide and stored as one number, because Mussad's whole character is that he
+   * prices the league rather than the clubs: if this were computed per team it would stop being
+   * beta and become a seventh way of rating teams. He is the reason the market has a market-wide
+   * risk a bettor can observe.
+   *
+   * The early-season case returns the midpoint rather than a rate computed from three games,
+   * which would be noise presented as an environment.
+   */
+  const totalRuns = teams.reduce((sum, team) => sum + team.runsScored, 0);
+  const totalGames = teams.reduce((sum, team) => sum + team.wins + team.losses, 0) / 2;
+  const runsPerGame = totalGames > 20 ? totalRuns / totalGames : 3.5;
+  const leagueRunEnvironment = scale(runsPerGame, 3.5, 5);
+
   return {
     rosterStrength,
     bestOverallByTeam,
     winStreakByTeam: new Map<string, number>(),
     gamesPlayed,
     hasSeasonOutput: gamesPlayed > 0,
+    meanAgeByTeam,
+    youngUpsideByTeam: youngByTeam,
+    leagueRunEnvironment,
   };
 };
 
@@ -246,6 +323,165 @@ const glorestScore = (team: Team, derived: DerivedInputs): number => {
 
 const sharplyScore = (team: Team, derived: DerivedInputs): number =>
   popularityOf(team, derived);
+/* ------------------------------------------------------------------ *
+ * The five added for the HXSE expansion
+ *
+ * Each is written from its profile's DECLARED weights, so the weights shown on the character
+ * popup are the weights the read actually uses. That correspondence is the thing worth
+ * protecting: a profile that lists "Farm system grade 0.35" while the read ignores farm systems
+ * is a decoration, and the whole argument of this screen is that a forecaster you cannot audit
+ * is not usable.
+ * ------------------------------------------------------------------ */
+
+/**
+ * SALLOW -- the fitted base rate. Pythagorean expectation, which is a real statistic rather than
+ * a mood: the win percentage a club's own scoring and run allowance imply, from the standard
+ * exponent 1.83.
+ *
+ * His declared weights are Pythagorean 0.4, run differential 0.3, team rating 0.2, home field
+ * 0.1, and this is that arithmetic literally.
+ *
+ * He is deliberately the LEAST interesting read in the league, because he is the control. With
+ * one forecaster who has no editorial tilt, a gap between anyone and him is a signal rather than
+ * one more disagreement.
+ */
+const sallowScore = (team: Team, derived: DerivedInputs): number => {
+  const played = team.wins + team.losses;
+  if (!derived.hasSeasonOutput || played === 0) return scale(team.rating, 70, 90);
+  const rs = Math.max(1, team.runsScored);
+  const ra = Math.max(1, team.runsAllowed);
+  const rsPow = Math.pow(rs, 1.83);
+  const raPow = Math.pow(ra, 1.83);
+  const pythag = rsPow / (rsPow + raPow);
+  const rdiffPerGame = (team.runsScored - team.runsAllowed) / played;
+  return (
+    scale(pythag, 0.38, 0.62) * 0.4 +
+    scale(rdiffPerGame, -1.5, 1.5) * 0.3 +
+    scale(team.rating, 70, 90) * 0.2 +
+    0.1
+  );
+};
+
+/**
+ * JARDINS -- the contrarian. She reads the crowd and inverts it.
+ *
+ * Her declared weights are "what the market overprices" 0.4, roster quality 0.25, recent form
+ * 0.2, home field 0.15. "What the market overprices" is implemented as ONE MINUS POPULARITY: she
+ * is drawn to what the crowd is ignoring, not to a second opinion about what it is buying.
+ *
+ * THE MEASUREMENT CAVEAT IS NOT OPTIONAL and it lives on the profile too. This function inverts
+ * the crowd BY CONSTRUCTION, so calibrating her against the other forecasters would score her
+ * beautifully and prove nothing -- inverse-of-consensus is a strategy, not an edge. Step 5 fits
+ * her against independently computed truth. Expect a small number. That is the correct outcome:
+ * a contrarian who is reliably right is not a contrarian.
+ */
+const jardinsScore = (team: Team, derived: DerivedInputs, rosterMean: number): number => {
+  const crowd = popularityOf(team, derived);
+  const quality = scale(
+    derived.rosterStrength.get(team.id) ?? rosterMean,
+    rosterMean - 6,
+    rosterMean + 6,
+  );
+  const form = scale(recentForm(team, derived), 0.3, 0.7);
+  return (
+    (1 - crowd) * 0.4 +
+    (1 - quality) * 0.25 +
+    (1 - form) * 0.2 +
+    0.15
+  );
+};
+
+/**
+ * BOYLE'S BEAT -- which division he covers.
+ *
+ * PROVISIONAL AND ARBITRARY, and flagged as such rather than derived. Any of the four would be
+ * defensible and the choice has no effect on whether the mechanic works; what matters is that it
+ * is FIXED, so his inside/outside asymmetry is a property of the data rather than of a sort
+ * order. The user picks this one.
+ */
+export const BOYLE_BEAT: Team['division'] = 'West';
+
+/**
+ * BOYLE -- deep on one division, near-blind outside it.
+ *
+ * The asymmetry is the whole point and it is not cosmetic: inside his beat he leans hard on the
+ * two signals a beat reporter actually has (roster quality and current form), and outside it he
+ * flattens almost to the league mean.
+ *
+ * OUTSIDE HIS BEAT HE IS NOT EXACTLY CONSTANT. A literal 0.5 for all twenty-four would be a
+ * degenerate read -- every club tied, no ordering, and the outlier detector unable to find one.
+ * He keeps a fifth of the signal instead of all of it, which makes him weak outside his beat
+ * rather than absent, and that is both truer to "near-blind" and mechanically well-defined.
+ */
+const boyleScore = (team: Team, derived: DerivedInputs, rosterMean: number): number => {
+  const quality = scale(
+    derived.rosterStrength.get(team.id) ?? rosterMean,
+    rosterMean - 6,
+    rosterMean + 6,
+  );
+  const form = scale(recentForm(team, derived), 0.3, 0.7);
+  const inBeat = team.division === BOYLE_BEAT;
+  // 0.7/0.2 inside; 0.14/0.04 outside -- one fifth of the signal.
+  const q = inBeat ? 0.7 : 0.14;
+  const f = inBeat ? 0.2 : 0.04;
+  return quality * q + form * f + (inBeat ? 0.1 : 0.42);
+};
+
+/**
+ * MUSSAD -- the macro desk. He prices the league, not the clubs.
+ *
+ * THE TENSION IN THIS FUNCTION IS REAL AND IS NOT A BUG.
+ *
+ * A macro forecaster cannot produce a differentiated team ordering -- that is what "he does not
+ * cover teams" means -- but the read pipeline normalises every outlet into a ranking, so a
+ * perfectly flat read would be a degenerate one.
+ *
+ * What he gets instead is a league-wide term shared by every club (which IS beta, and is the
+ * character), plus a deliberately tiny per-team tilt for how much a club EXPOSES to the run
+ * environment he is pricing. The tilt is 6% of a team's scale span. It exists so his read is
+ * well-defined rather than a divide-by-zero in the normaliser, and it is small enough that he
+ * still reads as almost flat -- which is what a market-wide view should look like beside a
+ * beat reporter's.
+ *
+ * Do not raise TILT to make his page look more interesting. That is the whole design.
+ */
+const MUSSAD_TILT = 0.06;
+const mussadScore = (team: Team, derived: DerivedInputs): number => {
+  const played = Math.max(1, team.wins + team.losses);
+  // Offence-weighted clubs feel a rising run environment more than dead-banded ones do.
+  const exposure = scale(team.runsScored / played, 3, 6);
+  return 0.5 + (exposure - 0.5) * MUSSAD_TILT + (derived.leagueRunEnvironment - 0.5) * 0.02;
+};
+
+/**
+ * WARDLEY -- organizational depth. Farm system grade 0.35, development trajectory 0.3, age
+ * curve 0.2, current roster surplus 0.15.
+ *
+ * The two terms that make him different are `youngUpsideByTeam` (the best player a club has who
+ * has not arrived yet) and `meanAgeByTeam`. Both come from `Player.age` and `Player.yearsPro`,
+ * so this is measured from the roster rather than modelled.
+ *
+ * A rebuild club scores WELL here and badly on every other read in the league, which is the
+ * asymmetry that makes him tradeable: he is the forecaster who will disagree violently during a
+ * rebuild and be the only one who was right.
+ */
+const wardleyScore = (team: Team, derived: DerivedInputs, rosterMean: number): number => {
+  const upside = derived.youngUpsideByTeam.get(team.id);
+  // A club with no young player at all is not "neutral" on a farm-system read, it is BAD at it.
+  // Defaulting to the floor rather than the midpoint is the difference between an opinion and
+  // an absence, and this read is specifically about what a club has coming.
+  const farmGrade = scale(upside ?? 0, 40, 85);
+  const meanAge = derived.meanAgeByTeam.get(team.id) ?? 29;
+  // Younger is better for upside, and the term is deliberately gentle: a very young club is
+  // often a very bad club, and Wardley's weakness is exactly that he overrates the prospect.
+  const ageCurve = scale(meanAge, 32, 25);
+  const surplus = scale(
+    derived.rosterStrength.get(team.id) ?? rosterMean,
+    rosterMean - 6,
+    rosterMean + 6,
+  );
+  return farmGrade * 0.35 + ageCurve * 0.3 + surplus * 0.2 + 0.15;
+};
 
 /**
  * Overconfidence.
@@ -268,6 +504,11 @@ const SCORERS: Record<MediaMethod, (team: Team, derived: DerivedInputs, rosterMe
     const raw = popularityOf(team, derived);
     return 0.5 + (raw - 0.5) * OVERCONFIDENCE;
   },
+  systematic: (team, derived) => sallowScore(team, derived),
+  contrarian: (team, derived, rosterMean) => jardinsScore(team, derived, rosterMean),
+  beat: (team, derived, rosterMean) => boyleScore(team, derived, rosterMean),
+  macro: (team, derived) => mussadScore(team, derived),
+  scout: (team, derived, rosterMean) => wardleyScore(team, derived, rosterMean),
 };
 
 /* ------------------------------------------------------------------ *

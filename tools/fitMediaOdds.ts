@@ -21,6 +21,7 @@ import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { MEDIA_PROFILES } from '../src/data/media';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import type { MediaId } from '../src/data/media';
+import { listByMedia, uniformByMedia } from './mediaFixtures';
 
 const SEED = Number(process.argv[2] ?? 1337);
 const SEASONS = Number(process.argv[3] ?? 2);
@@ -36,9 +37,7 @@ const SLOPES = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.4, 1
 const HOME_ADV = 0.04;
 
 // Collected once: (z-score of the gap, did the away side win) per outlet.
-const samples: Record<MediaId, Array<{ z: number; won: boolean }>> = {
-  hollis: [], glorest: [], sharply: [],
-};
+const samples = listByMedia<{ z: number; won: boolean }>();
 
 const main = async (): Promise<void> => {
   for (let season = 0; season < SEASONS; season += 1) {
@@ -108,7 +107,7 @@ const main = async (): Promise<void> => {
   console.log(`seed ${SEED}   ${SEASONS} seasons   ${n} games per outlet\n`);
   console.log(`a flat 50/50 call scores Brier 0.2500 -- anything above that is worse than useless\n`);
 
-  let bestSlope: Record<MediaId, number> = { hollis: 0, glorest: 0, sharply: 0 };
+  let bestSlope = uniformByMedia(0);
 
   for (const profile of MEDIA_PROFILES) {
     const rows = samples[profile.id];

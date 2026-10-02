@@ -7,6 +7,16 @@ import hollisMasthead from '../../assets/media/quincyhollis-masthead.jpg';
 import hollisMark from '../../assets/media/quincyhollislogo-trim.png';
 import hollisSquare from '../../assets/media/quincyhollislogo-trim-square.png';
 import hollisPortrait from '../../assets/media/hollis-portrait.png';
+import sallowMark from '../../assets/media/sallow-trim-square.webp';
+import sallowPortrait from '../../assets/media/sallow-portrait.png';
+import jardinsMark from '../../assets/media/jardins-trim-square.webp';
+import jardinsPortrait from '../../assets/media/jardins-portrait.png';
+import boyleMark from '../../assets/media/boyle-trim-square.webp';
+import boylePortrait from '../../assets/media/boyle-portrait.png';
+import mussadMark from '../../assets/media/mussad-trim-square.webp';
+import mussadPortrait from '../../assets/media/mussad-portrait.png';
+import wardleyMark from '../../assets/media/wardley-trim-square.webp';
+import wardleyPortrait from '../../assets/media/wardley-portrait.png';
 import sharplyMasthead from '../../assets/media/linedsharply-masthead.jpg';
 import sharplyMark from '../../assets/media/linedsharplylogo-trim.png';
 import sharplySquare from '../../assets/media/linedsharplylogo-trim-square.png';
@@ -44,6 +54,19 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
     src: sharplyMasthead,
     alt: 'The Lined Sharply podcast studio',
   },
+  /*
+   * THE FIVE NEW OUTLETS POINT AT THEIR OWN HERO PORTRAIT, not a masthead.
+   *
+   * No masthead exists for them -- a masthead is a photograph of a set, and these five were
+   * supplied as portraits of people. Rather than leave five broken images or invent five sets,
+   * the map uses the portrait they do have. MediaCard crops it square, so it reads correctly
+   * in the collapsed card; only the alt text says plainly which it is.
+   */
+  sallow: { src: sallowPortrait, alt: 'Gary Sallow, Baseline Analytics' },
+  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins, The Other Side' },
+  boyle: { src: boylePortrait, alt: 'Landon Boyle, The Inning Order' },
+  mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Baseline Macro' },
+  wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Farm System' },
 };
 
 /**
@@ -96,6 +119,11 @@ export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
     src: sharplyPortrait,
     alt: 'The two Lined Sharply hosts in the studio, each wearing the embroidered show mark',
   },
+  sallow: { src: sallowPortrait, alt: 'Gary Sallow at Baseline Analytics' },
+  jardins: { src: jardinsPortrait, alt: 'Audrey Jardins of The Other Side' },
+  boyle: { src: boylePortrait, alt: 'Landon Boyle, who covers one division closely' },
+  mussad: { src: mussadPortrait, alt: 'Tariq Mussad, who covers the league rather than the clubs' },
+  wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, who reads farm systems' },
 };
 
 /**
@@ -134,6 +162,23 @@ export const MEDIA_MARKS: Record<MediaId, string> = {
   hollis: hollisMark,
   glorest: glorestMark,
   sharply: sharplyMark,
+  /*
+   * THE FIVE POINT AT THEIR SQUARE MARK, and that is a substitution worth naming.
+   *
+   * The first three have a real trim because they are CRESTS -- wide artwork with a shape that
+   * is not square, and letterboxing a crest looks wrong. The five new ones are photographs of
+   * people, and a square crop of a face letterboxes correctly because the composition is
+   * already centred.
+   *
+   * So they share one file per outlet across both maps rather than carrying two near-identical
+   * WebPs. The alternative -- a separate 4:5 trim each -- would add five files to save nothing,
+   * since the square is what every call site renders at anyway (h-8 to h-10, i.e. 32-40px).
+   */
+  sallow: sallowMark,
+  jardins: jardinsMark,
+  boyle: boyleMark,
+  mussad: mussadMark,
+  wardley: wardleyMark,
 };
 
 /**
@@ -158,4 +203,9 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
   hollis: hollisSquare,
   glorest: glorestSquare,
   sharply: sharplySquare,
+  sallow: sallowMark,
+  jardins: jardinsMark,
+  boyle: boyleMark,
+  mussad: mussadMark,
+  wardley: wardleyMark,
 };

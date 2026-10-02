@@ -12,8 +12,10 @@
  */
 
 import { buildLineMarket, probabilityToAmerican, americanToProbability } from '../src/lib/markets';
+import { uniformByMedia } from './mediaFixtures';
 
-const SLOPE = { hollis: 0.55, glorest: 0.50, sharply: 0.90 };
+// Uniform on purpose: this check tests the OVER/UNDER side construction, not the outlet.
+const SLOPE = uniformByMedia(0.55);
 
 let failures = 0;
 const check = (label: string, ok: boolean, detail: string): void => {
@@ -27,7 +29,7 @@ const market = buildLineMarket({
   kind: 'total',
   key: 'total:test',
   title: 'Test at Test',
-  fair: { hollis: 6.6, glorest: 6.6, sharply: 6.6 },
+  fair: uniformByMedia(6.6),
   slope: SLOPE,
 });
 
