@@ -279,6 +279,7 @@ const PERSONA_SEED_OFFSET: Readonly<Record<HeadlinerId, number>> = {
   soo: 0x3c4d,
   gatz: 0x5e6f,
   scintilla: 0x7a8b,
+  hoani: 0x8b9c,
   tombuccelli: 0x9cad,
 };
 

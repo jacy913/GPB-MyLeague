@@ -25,7 +25,7 @@
 import type { Game } from '../types';
 
 /** A reporter. Adding a sixth touches this file and its voice bank, nothing else. */
-export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'scintilla' | 'tombuccelli';
+export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'scintilla' | 'hoani' | 'tombuccelli';
 
 /**
  * A semantic accent name, never a gradient string.
@@ -225,6 +225,18 @@ const marqueeGate = (ctx: HeadlinerContext): boolean =>
   (ctx.awayWinPct >= 0.55 && ctx.homeWinPct >= 0.55) || ctx.sameDivision || ctx.isPlayoffGame;
 
 const SCINTILLA_MIN_SEVERITY = 55;
+/*
+ * CARRIED FORWARD FROM SCINTILLA UNCHANGED, and deliberately so.
+ *
+ * Hoani inherits Scintilla's whole beat in the forecaster restructure, and this is the gate that
+ * comes with it. It is the same 55, restated as its own constant rather than pointed at
+ * Scintilla's, so that when Scintilla crosses over and his entry is deleted this one still reads as
+ * a decision somebody made rather than as a leftover with a dangling reference.
+ *
+ * The gate is what keeps him on the maths. He should not editorialise about a game that was merely
+ * uneventful -- an event below the severity floor has nothing in it for him to interrogate.
+ */
+const HOANI_MIN_SEVERITY = 55;
 const SOO_MAX_AGE = 25;
 
 export const HEADLINERS: readonly HeadlinerProfile[] = [
@@ -351,6 +363,55 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       'Ask how many games are behind that before you ask what it means.',
     ],
     eligible: (event) => event.severity >= SCINTILLA_MIN_SEVERITY,
+    priorityWeight: 1.1,
+  },
+  {
+    id: 'hoani',
+    displayName: 'SIMON HOANI',
+    shortName: 'HOANI',
+    role: 'DATA CORRESPONDENT',
+    outlet: 'Calibrated Sports',
+    portraitKey: 'simonhoani',
+    /*
+     * `data` INHERITED, not chosen. It was Scintilla's as a reporter and it frees up when he crosses
+     * over to forecasting, so Hoani takes it rather than a second reporter ending up on the same
+     * colour. Which is convenient, because Scintilla needs a forecaster-side accent anyway and the
+     * two are being handed to each other.
+     */
+    accentToken: 'data',
+    /*
+     * SCINTILLA'S WHOLE BEAT, INHERITED WHOLESALE.
+     *
+     * This is the reason he exists. Scintilla held the only coverage of `sustained_rate` and
+     * `expected_divergence` -- verified across all five `covers` arrays before this entry was
+     * written -- so moving him to forecasting would have silenced two event kinds entirely, with no
+     * persona left to file on them. Taking the list intact is what makes the move safe.
+     *
+     * `tools/checkHeadlinerCoverage.ts` asserts that no event kind has zero coverage, so this stays
+     * true by measurement rather than by this comment.
+     */
+    covers: ['anomaly', 'sustained_rate', 'expected_divergence', 'meltdown', 'pitching_dome'],
+    /*
+     * HE TREATS EVERY BOX SCORE AS IF IT CONTAINS A CRIME, and -- this is the character -- he is not
+     * aggrieved about it. He is delighted. Scintilla was specified as someone who "loves advanced
+     * stats, anomalies, anything cool", which is a list of interests rather than a disposition.
+     * A disposition is what makes a byline worth reading twice.
+     *
+     * The contrast with Buccelli is the point. Buccelli prosecutes PEOPLE -- players, clubs,
+     * front offices -- and reaches indignation. Hoani prosecutes THE DATA -- rates, splits,
+     * sequences -- and reaches delight. Same critic, opposite target and opposite temperature, which
+     * is why he needed his own beat instead of being folded into an existing persona.
+     *
+     * No slots, per the beat rule: this is his standing view and must render on every card he files.
+     */
+    beat: [
+      'In every box score there is one number nobody checked. I find it, and then I get to tell people about it.',
+      'This is not a complaint. This is the best part of my job.',
+      'They will ask me about the starter. The starter is fine. The thing that is wrong is in the eighth inning.',
+      'Somebody is going to be very upset about a number I am about to say, and I cannot wait.',
+      'I do not read a box score for the result. I read it for the mistake.',
+    ],
+    eligible: (event) => event.severity >= HOANI_MIN_SEVERITY,
     priorityWeight: 1.1,
   },
   {

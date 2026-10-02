@@ -773,11 +773,68 @@ const TOMBUCCELLI: VoiceBank = {
   },
 };
 
+/**
+ * HOANI -- data correspondent. Enthusiastic, scientific, nerdish.
+ *
+ * NOT A COPY OF BUCCELLI WITH THE NAMES CHANGED, and the register is what separates them. Buccelli
+ * opens on a person and closes on a verdict; Hoani opens on a NUMBER and closes on what the number
+ * does not mean. Every piece here starts on a statistic, a sequence or a split -- the fifth reliever's
+ * K/9, a hitter 1-for-5 who reached on four walks -- because that is his signature move: naming the
+ * figure nobody else would have mentioned, and being visibly pleased about it.
+ *
+ * Two of these carry `{PLAYER}`, which means they collapse to the `generic` bank on any event that
+ * has no player attached. That is the intended behaviour and not a gap: the beat is that he is
+ * delighted by a number, and the number is usually somebody's.
+ */
+const HOANI: VoiceBank = {
+  titles: {
+    anomaly: [
+      'ONE NUMBER IN THAT BOX SCORE IS WRONG',
+      'THEY CHECKED THE WRONG THING',
+    ],
+    sustained_rate: [
+      'THAT NUMBER IS NOT A SLUMP',
+      'ONE PITCHER IS CARRYING A BULLPEN',
+    ],
+    expected_divergence: [
+      'THE LEAGUE GOT WORSE. HE DID NOT.',
+      'EVERYTHING ABOUT THAT LINE IS FLAT',
+    ],
+    generic: [
+      'Somebody went two-for-twelve and the box score says the third reliever did it.',
+      'The entire season is decided by a number nobody printed, and I am the one who printed it.',
+      'That is not a slumping pitcher. That is a bullpen with one arm and four men pretending.',
+      'Walk rate, home run rate, strikeout rate — all of it fine. One number is not fine, and it is not the one they will ask me about.',
+      'I want everyone to understand that {PLAYER} is not getting better. The league is getting worse and he is a flat line in it.',
+    ],
+  },
+  decks: {
+    anomaly: [
+      'I checked every number in that game. One of them is having a completely different season from the other thirty-one.',
+      'This is the part I like best: everybody watched the same game and only one of us will say what it means.',
+    ],
+    sustained_rate: [
+      'It looks like a slump and it is not a slump, which is why nobody can explain it. I can, and it is a sequence, not a talent.',
+      'Four men on that staff and one of them is why the number moved. Find him before the next one does.',
+    ],
+    expected_divergence: [
+      'The prediction was not wrong. The thing that moved underneath it was, and that is a different story with the same headline.',
+      'He is not the problem. I did the arithmetic twice because I wanted to be wrong about this one.',
+    ],
+    generic: [
+      'Not an opinion, not a feeling — a figure, and the figure does not care what anybody expected.',
+      'I am not here to tell you who won. I am here to tell you which part of it was an accident.',
+      'You are going to ask about the starter. The starter is the only part of this that was fine.',
+    ],
+  },
+};
+
 export const VOICE_BANKS: Readonly<Record<HeadlinerId, VoiceBank>> = {
   perez: PEREZ,
   soo: SOO,
   gatz: GATZ,
   scintilla: SCINTILLA,
+  hoani: HOANI,
   tombuccelli: TOMBUCCELLI,
 };
 
