@@ -89,8 +89,18 @@ const DAYS = Number(process.argv[3] ?? 60);
  *
  * Three replicates is the same choice `verifyDevelopmentFeedback` makes, and for the same
  * reason: enough that the mean is stable, few enough that the tool still runs.
+ *
+ * THE DEFAULT IS NOW THE GATE, NOT THREE. This used to default to 3, which is below
+ * GATE_MIN_REPLICATES, so every default run of this tool skipped all five statistical checks
+ * and still exited 0. That is the specific failure this file was written to prevent, and it
+ * was the tool's own default behaviour -- five checks shipped unverified for the whole life of
+ * the feature and nothing complained.
+ *
+ * Declared as a const below rather than inlined here because GATE_MIN_REPLICATES is defined
+ * further down; the two are checked against each other by `checkReplicateFloorIsGated`, so a
+ * future edit that lowers the gate cannot silently strand the default above it.
  */
-const REPLICATES = Number(process.argv[4] ?? 3);
+const REPLICATES = Number(process.argv[4] ?? 12);
 
 /**
  * HOW MANY REPLICATES ARE ENOUGH TO GATE ON, AND WHY THE ANSWER IS NOT THREE.
@@ -113,6 +123,27 @@ const REPLICATES = Number(process.argv[4] ?? 3);
  * need no replicates at all and are gated at any sample size.
  */
 const GATE_MIN_REPLICATES = 12;
+
+/*
+ * The default replicate count has to be AT LEAST the gate, or a default run skips the
+ * statistical checks and still reports success.
+ *
+ * This is checked rather than asserted in a comment, because the two constants are declared
+ * in different places and the failure is silent: lower the gate to 8 for a faster iteration
+ * and every later default run quietly stops gating without a single line of output changing
+ * its exit code.
+ */
+if (REPLICATES < GATE_MIN_REPLICATES) {
+  console.error(
+    `\n  REFUSING TO RUN: the default is ${REPLICATES} replicates and the statistical gate`
+    + ` needs ${GATE_MIN_REPLICATES}.\n`
+    + '  A run below the gate skips five checks and still exits 0, which is the one'
+    + ' behaviour this\n  tool exists to prevent. Pass an explicit count as argv[4] if you'
+    + ' want a fast look,\n  and understand that the statistical checks will be reported'
+    + ' rather than gated.\n',
+  );
+  process.exit(2);
+}
 
 const gated: Array<{ label: string; pass: boolean; detail?: string; statistical: boolean }> = [];
 const reported: string[] = [];
