@@ -5,7 +5,7 @@
  * Two levels maximum. The entire map is always visible.
  *
  * §7.1 Target Model:
- * HOME → SCORES → LEAGUE → TEAMS → PLAYOFFS → COMMISSIONER → SYSTEM
+ * PLAY → SCORES → LEAGUE → TEAMS → PLAYOFFS → COMMISSIONER → SYSTEM
  */
 
 import type { ComponentType } from 'react';
@@ -23,6 +23,7 @@ import {
   LayoutDashboard,
   Map as MapIcon,
   Megaphone,
+  Play,
   Receipt,
   ScrollText,
   Settings,
@@ -35,7 +36,7 @@ import {
 
 /** Folder identifier — not a destination itself */
 export type FolderId =
-  | 'home'
+  | 'play'
   | 'scores'
   | 'league'
   | 'teams'
@@ -72,16 +73,43 @@ export interface NavFolder {
  */
 export const NAV_FOLDERS: NavFolder[] = [
   {
-    id: 'home',
-    label: 'HOME',
-    icon: LayoutDashboard,
+    /*
+     * PLAY, and it holds the three screens you READ rather than the ones you administer.
+     *
+     * The user asked for Dashboard, Media and MacroBet together, which is the right grouping
+     * even before the renaming: all three are the surfaces that tell you something about the
+     * league without asking you to do anything -- your own summary, the press's read, and the
+     * market's. Everything that asks a manager to ACT is in COMMISSIONER, and everything that
+     * records what happened is in LEAGUE. The line is "read / do / record".
+     *
+     * Media and MacroBet used to sit in LEAGUE beside the standings and the map, and that was
+     * the wrong company: a forecaster's opinion and a price are not properties of the
+     * competition, they are things people are telling you about it.
+     *
+     * The identifier was renamed 'home' -> 'play' to match, rather than leaving a folder called
+     * PLAY with an id of 'home'. Nothing persists the id -- `expandedFolders` is React state
+     * seeded from the active view, and `VIEW_TO_FOLDER` is a compile-time record -- so the
+     * rename costs nothing at runtime.
+     *
+     * ICON: `Play`, which also removes a duplication. The folder was `LayoutDashboard` and so
+     * was its only leaf called Dashboard, so the rail showed the same glyph twice in a row,
+     * which reads as a rendering fault rather than a hierarchy.
+     */
+    id: 'play',
+    label: 'PLAY',
+    icon: Play,
     leaves: [
       { view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      // Offseason lives here whether or not it is unlocked. The user asked for
-      // it under Home on the grounds that a locked phase is still something a
-      // manager wants to look at and plan towards, rather than a destination
-      // that should be hidden until the calendar happens to reach it.
-      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
+      { view: 'media', label: 'The Media', icon: Megaphone, mobileLabel: 'Media' },
+      /*
+        MACROBET, not "Betting".
+
+        The page renamed itself, and the nav is how a manager gets there -- a leaf still
+        reading "Betting" beside a screen headed with the MacroBet wordmark is two names for
+        one destination. `mobileLabel` is left short because the leaf also renders in the
+        mobile rail where eight characters is what fits.
+      */
+      { view: 'betting', label: 'MacroBet', icon: Receipt, mobileLabel: 'MacroBet' },
     ],
   },
   {
@@ -95,6 +123,17 @@ export const NAV_FOLDERS: NavFolder[] = [
       { view: 'free_agency', label: 'Free Agents', icon: BriefcaseBusiness },
       { view: 'draft', label: 'Draft', icon: Clock3 },
       { view: 'lottery', label: 'Lottery', icon: Shuffle },
+      /*
+        OFFSEASON, and it is here now because it is a set of ACTIONS.
+
+        It used to sit under HOME with a comment arguing that a locked phase is still
+        something a manager wants to look at and plan towards. That reasoning was sound and the
+        user has overridden it anyway, which is their right: offseason is a calendar of things
+        you DO -- the draft, free agency, the roster moves -- and putting it with the screens
+        you merely read dilutes that. It also sits next to Draft and Lottery, which are the
+        other two places a manager goes to pull a lever on a rebuild.
+      */
+      { view: 'offseason', label: 'Offseason', icon: CalendarRange },
     ],
   },
   {
@@ -107,6 +146,13 @@ export const NAV_FOLDERS: NavFolder[] = [
     ],
   },
   {
+    /*
+     * LEAGUE is now only what the RECORD says.
+     *
+     * Standings, leaders, history and the map are all facts about the competition. Media and
+     * MacroBet moved out to PLAY, which leaves this folder coherent: nothing here is anybody's
+     * opinion, and nothing here can be acted on.
+     */
     id: 'league',
     label: 'LEAGUE',
     icon: Table2,
@@ -114,16 +160,6 @@ export const NAV_FOLDERS: NavFolder[] = [
       { view: 'league_standings', label: 'Standings', icon: Table2 },
       { view: 'leaders', label: 'Leaders', icon: BarChart3 },
       { view: 'history', label: 'History', icon: ScrollText },
-      { view: 'media', label: 'The Media', icon: Megaphone, mobileLabel: 'Media' },
-      /*
-        MACROBET, not "Betting".
-
-        The page renamed itself, and the nav is how a manager gets there -- a leaf still
-        reading "Betting" beside a screen headed with the MacroBet wordmark is two names for
-        one destination. `mobileLabel` is left short because the leaf also renders in the
-        mobile rail where eight characters is what fits.
-      */
-      { view: 'betting', label: 'MacroBet', icon: Receipt, mobileLabel: 'MacroBet' },
       { view: 'map', label: 'Map', icon: MapIcon },
     ],
   },
@@ -161,14 +197,6 @@ export const ALL_LEAVES: NavLeaf[] = NAV_FOLDERS.flatMap((f) => f.leaves);
 
 /** Reverse lookup: AppView → FolderId */
 export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
-  dashboard: 'home',
-  games_schedule: 'scores',
-  team_calendar: 'scores',
-  league_standings: 'league',
-  leaders: 'league',
-  history: 'league',
-  media: 'league',
-  betting: 'league',
   /*
    * The record has no leaf on purpose.
    *
@@ -178,9 +206,21 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
    * button off the screen. The record is reached from the slip and nowhere
    * else, so a screen most managers open twice a season does not get a
    * permanent place in a twenty-item sidebar.
+   *
+   * It points at `play` rather than `league` because it is part of MacroBet, which
+   * moved. Setting the view directly used to be a guess about which folder would
+   * open; it should follow the screen it belongs to.
    */
-  betting_record: 'league',
+  betting_record: 'play',
+  dashboard: 'play',
+  media: 'play',
+  betting: 'play',
+  games_schedule: 'scores',
+  team_calendar: 'scores',
+  league_standings: 'league',
+  leaders: 'league',
   leaders_dashboards: 'league',
+  history: 'league',
   map: 'league',
   teams: 'teams',
   players: 'teams',
@@ -200,7 +240,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
 
 /** Folder order for rendering */
 export const FOLDER_ORDER: FolderId[] = [
-  'home',
+  'play',
   'scores',
   'league',
   'teams',
