@@ -62,8 +62,9 @@
  */
 
 import type { PriceSeries, PriceRegime } from './sharePrice';
-import { MAX_DAILY_MOVE } from './sharePrice';
-import { gapRiskFor } from './fanbase';
+import { MAX_DAILY_MOVE, shocksForDate } from './sharePrice';
+import { gapRiskFor, marketSizeFor } from './fanbase';
+import type { Game, Team } from '../../types';
 
 /** The five archetypes, and how much of the crowd each is. */
 export const CROWD_SHARES = {
@@ -249,6 +250,48 @@ export const crowdFlowsFor = (inputs: CrowdInput[]): CrowdFlow[] => inputs.map(c
 /** Flow by team, ready to hand to `priceBoardForDay` as `eventShocks`. */
 export const crowdShocksById = (flows: CrowdFlow[]): Record<string, number> =>
   Object.fromEntries(flows.map((f) => [f.teamId, f.applied]));
+
+/**
+ * The whole crowd, for one day, from the league state and yesterday's closes.
+ *
+ * This is the shape the market floor has: it holds the teams, the games, the ledger so far, and
+ * yesterday's fair values and plain consensus. Gathering them here rather than in the worker means
+ * the worker's day loop stays a call, and means `checkCrowdOnRealPath` and production assemble the
+ * crowd from identical inputs -- which is the same "the fit measures what ships" requirement that
+ * `buildValueInputs` exists to satisfy on the valuation side.
+ *
+ * `closesFor` is deliberately NOT filtered to yesterday. Momentum is a three-day lookback, so the
+ * crowd is meant to see the last few closes, and truncating the ledger to one day would silently
+ * disable the archetype that matters most.
+ */
+export const crowdEventShocksFor = (input: {
+  teams: Team[];
+  games: Game[];
+  /** ISO date being priced. Game shocks come from this date's completed games. */
+  date: string;
+  /** The ledger so far, oldest first. */
+  ledger: PriceSeries[];
+  /** Yesterday's fair prices, from the previous board. */
+  fair: Record<string, number>;
+  /** The PLAIN-MEAN consensus by team, which is not what `fair` is built from. */
+  plain: Map<string, number>;
+  plainLeagueMean: number;
+}): Record<string, number> => {
+  const gameShocks = shocksForDate(input.games.filter((g) => g.date === input.date));
+  const flows = crowdFlowsFor(input.teams.map((team) => ({
+    teamId: team.id,
+    closes: closesFor(input.ledger, team.id, input.date),
+    fair: input.fair[team.id] ?? 500,
+    gameShock: gameShocks[team.id] ?? 0,
+    // The weighted consensus is not an input to any archetype; the constant is here because the
+    // interface carries it for the read that does not exist. Said rather than left to look deliberate.
+    weightedConsensusWinPct: 0.5,
+    plainConsensusWinPct: input.plain.get(team.id) ?? 0.5,
+    plainConsensusLeagueMean: input.plainLeagueMean,
+    marketSize: marketSizeFor(team),
+  })));
+  return crowdShocksById(flows);
+};
 
 /**
  * Extract one club's closes up to and including a date from a ledger.

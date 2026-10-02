@@ -22,7 +22,8 @@ import {
   SimulationTarget,
 } from './types';
 import type { PriceSeries } from './lib/analytics/sharePrice';
-import { latestClose, leaguePriceSeed, priceAndAppendDay } from './lib/analytics/priceBoard';
+import { latestClose, leaguePriceSeed, marketFloorFor, priceAndAppendDay, type PriceBoard } from './lib/analytics/priceBoard';
+import { crowdEventShocksFor } from './lib/analytics/crowd';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
 import { SeasonAwardsModal } from './components/SeasonAwardsModal';
@@ -1221,6 +1222,7 @@ function App() {
    * coercing the first into the second would claim a league that never traded never traded.
    */
   const [priceLedger, setPriceLedger] = useState<PriceSeries[] | undefined>(undefined);
+  const [lastPriceBoard, setLastPriceBoard] = useState<PriceBoard | null>(null);
   const [view, setView] = useState<AppView>('dashboard');
 
   /*
@@ -3029,7 +3031,8 @@ function App() {
         replaces an existing entry for a date, so re-stepping the same day overwrites rather than
         duplicating -- which is the property that makes this safe to call repeatedly.
       */
-      setPriceLedger(priceAndAppendDay(priceLedger, {
+      const floor = marketFloorFor(lastPriceBoard, nextTeams, nextPlayerState, resolveSeasonYear(nextCurrentDate, nextGames));
+      const priced = priceAndAppendDay(priceLedger, {
         teams: nextTeams,
         games: nextGames,
         date: nextCurrentDate,
@@ -3039,17 +3042,33 @@ function App() {
         previousClose: latestClose(priceLedger ?? []),
         settings,
         regime: 'in_season',
-      }));
-    saveLocalPlayerStateSafely(nextPlayerState);
+        eventShocks: floor ? crowdEventShocksFor({
+          teams: nextTeams,
+          games: nextGames,
+          date: nextCurrentDate,
+          ledger: priceLedger ?? [],
+          fair: floor.fair,
+          plain: floor.plain,
+          plainLeagueMean: floor.leagueMean,
+        }) : undefined,
+      });
+      setPriceLedger(priced.ledger);
+      /*
+       * Yesterday's board, kept so the crowd on this path reads a fair price from the day BEFORE.
+       * Without it the interactive path would price without a crowd at all, and the same day stepped
+       * through the worker would price with one -- two markets from one league.
+       */
+      setLastPriceBoard(priced.board);
+      saveLocalPlayerStateSafely(nextPlayerState);
 
-    try {
-      await persistLeagueState(nextTeams, settings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
-      if (isSupabaseConfigured) {
-        await saveSupabasePlayerState(nextPlayerState);
-      }
-    } catch (error) {
-      console.error('Failed to persist interactive game results:', error);
-      pushNotice('Game simulation completed, but saving failed.', 'warning');
+      try {
+        await persistLeagueState(nextTeams, settings, nextGames, nextCurrentDate, nextProgress, nextSeasonComplete);
+        if (isSupabaseConfigured) {
+          await saveSupabasePlayerState(nextPlayerState);
+        }
+      } catch (error) {
+        console.error('Failed to persist interactive game results:', error);
+        pushNotice('Game simulation completed, but saving failed.', 'warning');
       return;
     }
 

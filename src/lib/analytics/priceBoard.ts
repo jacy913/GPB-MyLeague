@@ -56,6 +56,7 @@ import { playoffMonteCarlo } from './playoffMonteCarlo';
 import {
   buildValueInputs,
   measureLeague,
+  plainConsensusWinPct,
   teamValueFor,
   type TeamValueInput,
 } from './teamValue';
@@ -297,11 +298,55 @@ export const leaguePriceSeed = (teams: Array<{ id: string }>): number => {
  * `self` as a worker scope at module scope, so importing it outside a worker context fails -- which
  * means any logic left in the loop body would be untestable by construction. Putting the three
  * lines here keeps the worker a wiring detail.
+ *
+ * Returns the BOARD as well as the ledger, because the crowd needs yesterday's FAIR prices and the
+ * persisted `PriceSeries` carries closes only. That is the right split: closes are the historical
+ * record and fair values are today's assessment of the same club, and putting a derived valuation
+ * into every saved day would put a number on disk that was true only on the day it was written.
  */
+/**
+ * Yesterday's fair prices and plain consensus, for the crowd to read.
+ *
+ * The crowd needs three things the price board already computes -- fair value per club, the game
+ * shocks, and the forecaster consensus -- and none of them is on `PriceBoard`. Rather than have the
+ * market floor recompute `buildMediaReads` a second time (which `priceBoardForDay` already does
+ * internally), this exposes the two pieces the board throws away.
+ *
+ * Returns `null` on the first day, when there is no previous board and the crowd has nothing to
+ * have an opinion about yet. That null is meaningful: the crowd genuinely cannot act on day one,
+ * and the market therefore opens at fair value with no flow in it.
+ *
+ * `plain` is the UNWEIGHTED consensus, which is not the same number `fair` is built from. That
+ * difference is the entire content of the analyst archetype, so it cannot be substituted here.
+ */
+export const marketFloorFor = (
+  previousBoard: PriceBoard | null,
+  teams: Team[],
+  playerState: LeaguePlayerState,
+  seasonYear: number,
+): { fair: Record<string, number>; plain: Map<string, number>; leagueMean: number } | null => {
+  if (!previousBoard) return null;
+  const reads = buildMediaReads({
+    teams,
+    players: playerState.players,
+    battingRatings: playerState.battingRatings,
+    pitchingRatings: playerState.pitchingRatings,
+    battingStats: playerState.battingStats,
+    pitchingStats: playerState.pitchingStats,
+    playerState,
+    seasonYear,
+  });
+  const plain = plainConsensusWinPct(teams, reads);
+  return { fair: previousBoard.fair, plain: plain.byId, leagueMean: plain.leagueMean };
+};
+
 export const priceAndAppendDay = (
   ledger: PriceSeries[],
   input: PriceBoardInput,
-): PriceSeries[] => appendPriceDay(ledger, priceBoardForDay(input));
+): { ledger: PriceSeries[]; board: PriceBoard } => {
+  const board = priceBoardForDay(input);
+  return { ledger: appendPriceDay(ledger, board), board };
+};
 
 export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
   const mcTrials = input.mcTrials ?? DEFAULT_BOARD_TRIALS;

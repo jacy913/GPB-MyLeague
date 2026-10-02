@@ -59,7 +59,8 @@
  * becomes valuation inputs, so the fit and production cannot drift apart on what "momentum" means.
  */
 
-import type { Game } from '../../types';
+import type { MediaReadResult } from '../mediaReads';
+import type { Game, Team } from '../../types';
 
 /** A club's valuation inputs, all already measured by something else. */
 export interface TeamValueInput {
@@ -254,6 +255,35 @@ export const recentFormFor = (games: Game[], teamId: string): number => {
   if (decisions.length < MOMENTUM_WINDOW) return 0.5;
   const recent = decisions.slice(-MOMENTUM_WINDOW);
   return recent.filter(Boolean).length / recent.length;
+};
+
+/**
+ * The PLAIN MEAN of the forecaster consensus, per team, plus the league mean of it.
+ *
+ * Exists because the crowd's analyst archetype reads the UNWEIGHTED consensus while fair value is
+ * built from the CONFIDENCE-WEIGHTED one -- that difference is the only reason they are two
+ * archetypes rather than one, and it is invisible unless both numbers are available side by side.
+ *
+ * Computing it here rather than in the crowd means the market floor, where the crowd runs, does not
+ * carry a second copy of `buildMediaReads`. `buildMediaReads` is called twice a day either way,
+ * which is the same cost the price path already pays, and it keeps one implementation of each
+ * forecast.
+ */
+export const plainConsensusWinPct = (
+  teams: Team[],
+  reads: MediaReadResult,
+): { byId: Map<string, number>; leagueMean: number } => {
+  const byId = new Map<string, number>();
+  teams.forEach((team) => {
+    const values = Object.values(reads.scores)
+      .map((scores) => scores.get(team.id))
+      .filter((v): v is number => typeof v === 'number');
+    byId.set(team.id, values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0.5);
+  });
+  const leagueMean = byId.size > 0
+    ? [...byId.values()].reduce((a, b) => a + b, 0) / byId.size
+    : 0.5;
+  return { byId, leagueMean };
 };
 
 /**

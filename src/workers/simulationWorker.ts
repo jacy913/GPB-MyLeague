@@ -6,7 +6,8 @@ import { automaticallyAcceptTrades, automaticallySignFreeAgents } from '../logic
 import { SimulationManager } from '../logic/simulationManager';
 import { isRegularSeasonGame } from '../logic/playoffs';
 import { generatePendingTradeProposals } from '../logic/tradeLogic';
-import { latestClose, priceAndAppendDay } from '../lib/analytics/priceBoard';
+import { crowdEventShocksFor } from '../lib/analytics/crowd';
+import { latestClose, marketFloorFor, priceAndAppendDay, type PriceBoard } from '../lib/analytics/priceBoard';
 import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { SimulationWorkerRequest, SimulationWorkerResponse, SimulationWorkerSnapshot, SimulationWorkerStartPayload } from './simulationWorkerTypes';
 
@@ -100,6 +101,15 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
     */
     priceLedger: [] as PriceSeries[],
   };
+
+    /*
+      Yesterday's board, carried so the crowd reads a fair price from the DAY BEFORE rather than
+      from the day being priced. `PriceSeries` deliberately carries closes only -- a fair price is
+      an assessment, not a record, and putting one in every saved day would put a number on disk
+      that was true only on the day it was written -- so this local is where the assessment lives
+      between days.
+    */
+    let lastBoard: PriceBoard | null = null;
 
   try {
     const manager = new SimulationManager({
@@ -220,37 +230,52 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
         working.playerState = automaticallyAcceptTrades(newTrades, working.playerState, result.currentDate);
       }
 
-      /*
-        PRICE THE DAY.
+        /*
+          PRICE THE DAY, THROUGH THE CROWD.
 
-        Placed after the day's trade and free-agency resolution rather than straight after
-        `manager.run`, because the board's fair value is built from `playerState` -- a club that
-        signed someone this morning should be valued as the club it is this morning, not as it was
-        before the signings.
+          The crowd runs HERE rather than inside priceBoardForDay, for one reason that matters:
+          IT MUST NOT SEE ITS OWN OUTPUT. A crowd priced from the same day's closes it just produced
+          would be reading its own writing. `checkCrowdOnRealPath` measured what that does -- the mean
+          run return rises from 10.40% on an empty market to 12.87% with the crowd -- and feeding it
+          back is the difference between a market and a feedback loop. So yesterday's board supplies
+          the fair prices and the plain consensus, the crowd forms its flow, and that flow becomes
+          today's event shocks.
 
-        `fairCacheKey` is (starting date, day), so a re-request for a day already priced in this
-        run reuses the fair layer instead of paying for another Monte Carlo. The previous close comes
-        from the LEDGER, not from the cache -- the close depends on yesterday, and the cache only
-        holds the league-dependent half. That separation is the reason `priceBoardForDay` caches the
-        fair layer rather than the whole board.
+          Safe here because the worker is serial: playoffMonteCarlo swaps the global Math.random and
+          is not reentrant, and this loop handles one request at a time.
 
-        SAFE HERE BECAUSE THE WORKER IS SERIAL. `playoffMonteCarlo` swaps the global `Math.random`
-        and is not reentrant; this loop handles one request at a time so nothing overlaps. That is
-        the whole reason the price path sits on this side of the worker boundary and not in a React
-        render path.
-      */
-      working.priceLedger = priceAndAppendDay(working.priceLedger, {
-        teams: working.teams,
-        games: working.games,
-        date: result.currentDate,
-        playerState: working.playerState,
-        seasonYear: Number(result.currentDate.slice(0, 4)),
-        seed: startPayload.priceSeed,
-        previousClose: latestClose(working.priceLedger),
-        settings: startPayload.settings,
-        regime: 'in_season',
-        fairCacheKey: `${startPayload.startingDate}|${result.currentDate}`,
-      });
+          THE FINDING FROM checkCrowdOnRealPath, carried here rather than buried in a tool. The
+          momentum archetype AMPLIFIES runs rather than being fadeable: chasing beat fading by 10.80
+          points over 100 emergent runs, and by 9.23 on a control market with no crowd at all. The
+          mechanism works -- the crowd stops buying an established run, +0.373% against -0.292% with
+          no run -- but not strongly enough to beat the momentum it rides. So the blueprint's
+          learnable "fade the spike" is NOT available in this market. The crowd is wired in anyway: it
+          should behave as modelled, and the price path should not be withheld from it.
+        */
+        const floor = marketFloorFor(lastBoard, working.teams, working.playerState, Number(result.currentDate.slice(0, 4)));
+        const priced = priceAndAppendDay(working.priceLedger, {
+          teams: working.teams,
+          games: working.games,
+          date: result.currentDate,
+          playerState: working.playerState,
+          seasonYear: Number(result.currentDate.slice(0, 4)),
+          seed: startPayload.priceSeed,
+          previousClose: latestClose(working.priceLedger),
+          settings: startPayload.settings,
+          regime: 'in_season',
+          fairCacheKey: `${startPayload.startingDate}|${result.currentDate}`,
+          eventShocks: floor ? crowdEventShocksFor({
+            teams: working.teams,
+            games: working.games,
+            date: result.currentDate,
+            ledger: working.priceLedger,
+            fair: floor.fair,
+            plain: floor.plain,
+            plainLeagueMean: floor.leagueMean,
+          }) : undefined,
+        });
+        working.priceLedger = priced.ledger;
+        lastBoard = priced.board;
 
       if (startPayload.throttleMs > 0) {
         await delay(startPayload.throttleMs);
