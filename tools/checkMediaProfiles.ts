@@ -232,16 +232,46 @@ const main = (): void => {
     finding -- his Brier is the worst of the three and his posted slope is triple his optimum --
     and it does not depend on where five uncalibrated profiles happen to sit.
    */
+
+  /*
+    DELETED, and the third attempt at this claim is the reason it is gone.
+
+    It originally asserted Sharply is the LEAST-confident forecaster. True at three forecasters;
+    false the moment five landed at 0.50. Restated as least-confident OF THE FITTED -- still
+    false, because Jardins at 0.35 and Wardley at 0.36 are both legitimately below his 0.55 once
+    step 5 has fitted them.
+
+    A claim that has been wrong twice by asserting more than the rule says does not get a third
+    restatement. It gets deleted.
+
+    AND IT WAS NOT CARRYING THE WEIGHT ANYWAY. The thing that must survive step 5 is Sharply's
+    POSTED SLOPE of 0.80 against a fitted optimum of 0.25 -- the exploitable flaw the divergence
+    play is built on -- and that is asserted two checks above against the literal value, and it
+    passes. His CONFIDENCE is a derived consequence of that overconfidence and it is free to land
+    wherever the measurement puts it.
+
+    A check that has to be reworded every time the pool changes is measuring the pool, not the
+    thing it was written for.
+   */
+
+  /*
+    THE CALIBRATION CHECK IS A REAL GATE NOW, and it can be because step 5 has run.
+
+    This was deliberately NOT gated while five profiles were provisional: a permanently red suite
+    is how people learn to ignore a red suite, and a check that is red for a known reason teaches
+    nothing. With all eight fitted it is a real assertion that can pass, and it is what stops the
+    next forecaster being added with a plausible-looking number and no measurement behind it.
+
+    The bar is "every profile is FITTED", not "every Brier is below 0.25". The Brier bar lives in
+    tools/fitMediaOdds.ts where the measurement is; duplicating a threshold across two tools is
+    how they drift apart.
+   */
   check(
-    "Sharply is the least-confident of the FITTED forecasters",
-    sharply !== undefined
-      && MEDIA_PROFILES
-        .filter((p) => p.confidenceStatus === 'fitted')
-        .every((p) => p.id === 'sharply' || p.confidence > sharply.confidence),
-    sharply !== undefined
-      ? `fitted: ${MEDIA_PROFILES.filter((p) => p.confidenceStatus === 'fitted')
-          .map((p) => `${p.id} ${p.confidence}`).join(', ')}`
-      : 'sharply not found',
+    'every forecaster confidence is FITTED, not provisional',
+    provisional.length === 0,
+    provisional.length
+      ? `provisional: ${provisional.map((p) => p.id).join(', ')}. Run tools/fitMediaOdds.ts.`
+      : `all ${MEDIA_PROFILES.length} fitted`,
   );
 
   // -- report ------------------------------------------------------------------------

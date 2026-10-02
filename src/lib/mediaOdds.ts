@@ -119,10 +119,10 @@ const SLOPE: Record<MediaId, number> = {
    * destroys the best play in the game.
    */
   sallow: 0.25,
-  jardins: 0.25,
-  boyle: 0.25,
-  mussad: 0.25,
-  wardley: 0.25,
+  jardins: 0.05,
+  boyle: 0.20,
+  mussad: 0.20,
+  wardley: 0.05,
 };
 
 export interface OddsInput {

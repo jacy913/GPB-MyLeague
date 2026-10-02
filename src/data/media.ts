@@ -210,8 +210,8 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       * read in the league -- is carried by his `method` and his read function, not by a number
       * nobody has measured.
       */
-    confidence: 0.55,
-    confidenceStatus: 'provisional',
+    confidence: 0.79,
+    confidenceStatus: 'fitted',
     method: 'systematic',
     methodLabel: 'Fitted base rate',
     weights: [
@@ -265,8 +265,8 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       * precision nobody has. 0.52 keeps her present in the pool without making her either an
       * oracle or a rounding error.
       */
-    confidence: 0.52,
-    confidenceStatus: 'provisional',
+    confidence: 0.35,
+    confidenceStatus: 'fitted',
     method: 'contrarian',
     methodLabel: 'Crowd inversion',
     weights: [
@@ -312,8 +312,8 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'Thirty-two clubs is too many to know and eight is plenty. He knows his division down to which catcher gets benched against a lefty, and he prices all the others anyway.',
     weakness:
       'Near-blind outside his division, and he does not know that. He applies the same confidence to a team he has never watched as to one he has followed for six years, and he will be wrong with total conviction.',
-    confidence: 0.5,
-    confidenceStatus: 'provisional',
+    confidence: 0.61,
+    confidenceStatus: 'fitted',
     method: 'beat',
     methodLabel: 'Division beat knowledge',
     weights: [
@@ -367,8 +367,8 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'He does not cover teams. He covers the league they all play in, which moves every one of them and is why the market has a direction at all.',
     weakness:
       'Slow. He is describing a season, not a week, so his view is directionally useful over months and actively unhelpful over days — which is most of a baseball season. He will be right about October in April and useless on a Tuesday.',
-    confidence: 0.5,
-    confidenceStatus: 'provisional',
+    confidence: 0.53,
+    confidenceStatus: 'fitted',
     method: 'macro',
     methodLabel: 'League environment',
     weights: [
@@ -408,8 +408,8 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'The season everyone is watching was decided two years ago on a scouting sheet, by people who were not in the room when it happened.',
     weakness:
       'A bust costs him years of standing, so he overcorrects and holds prospects past the point where he should abandon them. He will tell you a prospect is ready long after the evidence has turned, because admitting he was early is the one thing he cannot afford.',
-    confidence: 0.5,
-    confidenceStatus: 'provisional',
+    confidence: 0.36,
+    confidenceStatus: 'fitted',
     method: 'scout',
     methodLabel: 'Organizational depth',
     weights: [

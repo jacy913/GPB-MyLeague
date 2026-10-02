@@ -375,6 +375,8 @@ const sallowScore = (team: Team, derived: DerivedInputs): number => {
  * her against independently computed truth. Expect a small number. That is the correct outcome:
  * a contrarian who is reliably right is not a contrarian.
  */
+const JARDINS_FADE = 0.55;
+
 const jardinsScore = (team: Team, derived: DerivedInputs, rosterMean: number): number => {
   const crowd = popularityOf(team, derived);
   const quality = scale(
@@ -383,10 +385,31 @@ const jardinsScore = (team: Team, derived: DerivedInputs, rosterMean: number): n
     rosterMean + 6,
   );
   const form = scale(recentForm(team, derived), 0.3, 0.7);
+
+  /*
+    A PARTIAL FADE, NOT A MIRROR. The first version inverted outright -- `1 - crowd` -- and
+    measured WORSE THAN A COIN FLIP: best slope 0.05, Brier 0.2516.
+
+    That is a real finding rather than a bad number, and it says something true: the crowd's
+    signal is positively predictive, so an exact inverse of it is negatively predictive. A
+    columnist who exactly mirrors the crowd is not contrarian, she is a broken calculator.
+
+    What a real contrarian does is FADE -- she leans against the consensus without betting
+    everything on the reversal, because being right about the crowd being wrong is a different
+    and much rarer claim than being wrong. FADE is applied to the DEPARTURE from the middle
+    rather than to the level, so her read still points the other way but does not claim the
+    crowd is exactly inverted.
+
+    The consequence is that she should land NEAR the coin flip rather than below it: slightly
+    uninformative, occasionally spectacular, wrong in long stretches. That is the character the
+    profile describes and it is the correct outcome -- the plan is explicit that a contrarian
+    who is reliably right is not a contrarian, and that her fitted edge is expected to be SMALL.
+   */
+  const fade = (value: number): number => 0.5 + (0.5 - value) * JARDINS_FADE;
   return (
-    (1 - crowd) * 0.4 +
-    (1 - quality) * 0.25 +
-    (1 - form) * 0.2 +
+    fade(crowd) * 0.4 +
+    fade(quality) * 0.25 +
+    fade(form) * 0.2 +
     0.15
   );
 };
