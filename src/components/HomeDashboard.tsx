@@ -694,44 +694,59 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   return (
     <section className="space-y-5">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]">
-        <HeadlinePanel
-          deck={headlineDeck}
-          timelineDate={timelineDate}
-          teamLookup={teamsById}
-          onOpenGame={onOpenGame}
-        />
-
         {/*
-          The bylined newsroom, directly below the headline and inside the same
-          column. Adjacency rather than a new region on purpose: the two panels
-          describe the same day, so putting them apart would invite the reader to
-          think they describe different days, and the whole point is that one
-          publication's game of the day and another publication's column about it
-          sit next to each other.
+          THE COLUMNS ARE WRAPPED, AND THEY HAVE TO BE.
+
+          This grid had four direct children -- headline, newsroom, award race, featured odds -- and
+          a two-column grid places children ROW-major. So the newsroom landed in the NARROW column,
+          directly beside the headline rather than below it, which is the opposite of what the comment
+          under it has always claimed.
+
+          That went unnoticed while the newsroom was empty. "No stories filed today" is a short line
+          that fits in 360px. The first real headline on that panel is a long sentence, and at 121px
+          of usable width after the 208px byline column it rendered ONE WORD PER LINE down the panel
+          while the headline beside it sat in 800px of white space. A latent layout fault that only
+          became visible once the panel had content in it.
+
+          Wrapping each column in a flex-col is what makes the stated layout the actual layout:
+          headline, then the newsroom under it, then the award race -- all wide -- with the featured
+          odds alone on the right, which is where a priced matchup belongs anyway.
         */}
-        <HeadlinerPanel
-          cards={personaDeck.cards}
-          sourceDate={headlineDeck.sourceDate ?? null}
-          timelineDate={timelineDate}
-        />
+        <div className="flex min-w-0 flex-col gap-5">
+          <HeadlinePanel
+            deck={headlineDeck}
+            timelineDate={timelineDate}
+            teamLookup={teamsById}
+            onOpenGame={onOpenGame}
+          />
 
-        {/*
-          THE AWARD RACE MOVED UNDER THE SIDELINE REPORTS, into the wide column.
+          {/*
+            The bylined newsroom, directly below the headline and inside the same
+            column. Adjacency rather than a new region on purpose: the two panels
+            describe the same day, so putting them apart would invite the reader to
+            think they describe different days, and the whole point is that one
+            publication's game of the day and another publication's column about it
+            sit next to each other.
+          */}
+          <HeadlinerPanel
+            cards={personaDeck.cards}
+            sourceDate={headlineDeck.sourceDate ?? null}
+            timelineDate={timelineDate}
+          />
 
-          It was in the narrow right-hand stack beneath the featured game, where a
-          three-row leaderboard shared a 360px column with a priced matchup and lost.
-          Every row of it is a stat comparison, and stat comparisons want width: the
-          odds bar under each name had roughly a third of the room it needs to be
-          readable at a glance, which is the only thing an odds bar is for.
+          {/*
+            THE AWARD RACE SITS UNDER THE SIDELINE REPORTS, in the wide column.
 
-          The wide column was also the one with slack. HeadlinePanel is a fixed-height
-          hero and the newsroom carousel below it is one card, so the left column ran
-          short of the right -- and this is the panel that fills that space rather than
-          stretching anything to fit.
-        */}
-        <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
+            It was in the narrow right-hand stack beneath the featured game, where a
+            three-row leaderboard shared a 360px column with a priced matchup and lost.
+            Every row of it is a stat comparison, and stat comparisons want width: the
+            odds bar under each name had roughly a third of the room it needs to be
+            readable at a glance, which is the only thing an odds bar is for.
+          */}
+          <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
+        </div>
 
-        <div className="flex flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
           <FeaturedGamePanel
             gameId={featuredGame ? featuredGame.game.gameId : null}
             angle={featuredGame ? featuredGame.angle : null}

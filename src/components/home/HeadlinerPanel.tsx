@@ -264,7 +264,6 @@ export const HeadlinerPanel: React.FC<{
         onClose={() => setDossierFor(null)}
         headlinerId={dossierFor}
       />
-  );
     </>
   );
 };
