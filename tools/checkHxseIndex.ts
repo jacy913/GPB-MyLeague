@@ -35,9 +35,17 @@ import {
   indexShare,
   valueAllTeams,
   valueWeightedIndex,
+  type HxseIndices,
   type ValuedTeam,
 } from '../src/lib/analytics/hxseIndex';
-import { measureLeague, teamValueFor, TEAM_VALUE_WEIGHTS, type TeamValueInput } from '../src/lib/analytics/teamValue';
+import {
+  buildValueInputs,
+  measureLeague,
+  teamValueFor,
+  TEAM_VALUE_TERMS,
+  TEAM_VALUE_WEIGHTS,
+  type TeamValueInput,
+} from '../src/lib/analytics/teamValue';
 
 const checks: Array<{ label: string; pass: boolean; detail?: string }> = [];
 const check = (label: string, pass: boolean, detail?: string): void => {
@@ -65,6 +73,10 @@ const syntheticField = (): ValuedTeam[] => {
       expectedWinPct: 0.35 + (i / 31) * 0.3,
       rosterSurplus: strength,
       momentum: 0.4 + ((i * 7) % 11) / 30,
+      // Correlated with the others on purpose, as it is in the real league: a strong roster
+      // produces both a better consensus read and a likelier postseason. Independent synthetic
+      // columns would make the standardisation test pass for reasons that never occur live.
+      playoffProbability: ((i / 31) * 0.3) ** 2,
     });
     meta.set(id, {
       city: `City ${i}`,
@@ -151,25 +163,82 @@ const main = (): void => {
     `value-weighted ${before.toFixed(3)} against equal-weighted ${beforeEqual.toFixed(3)}`,
   );
 
-  // -- 3. THE REFUSAL ---------------------------------------------------------------------
-  let threw = false;
-  let message = '';
+  /*
+    THE GATE, WHICH HAS CHANGED STATE SINCE THIS FILE WAS FIRST WRITTEN.
+
+    It originally asserted that `buildHxseIndices` THROWS while the playoff-probability term is
+    missing, and that the error names the term. That was correct then: there was no source for the
+    term, so refusing to publish was the honest behaviour.
+
+    The Monte Carlo now exists and the weights are fitted with the term included, so
+    PLAYOFF_PROBABILITY_AVAILABLE is true and the index builds. Asserting a throw from here on
+    would be asserting that the project stays unfinished -- a check that fails the moment the work
+    lands, which is the mirror image of the "check that fails at random" problem.
+
+    So the gate is tested from the side that actually carries risk now. The danger is no longer
+    "the index publishes while incomplete"; it is the flag claiming completeness while the
+    valuation quietly ignores the term. PLAYOFF_PROBABILITY_AVAILABLE is a constant, and a constant
+    can be flipped by anyone in a hurry. So: build the composite, then prove a club's
+    playoffProbability actually moves it.
+   */
+  let indices: HxseIndices | null = null;
+  let buildError = '';
   try {
-    buildHxseIndices(teams);
+    indices = buildHxseIndices(teams);
   } catch (e) {
-    threw = true;
-    message = (e as Error).message;
+    buildError = (e as Error).message;
   }
   check(
-    'the index REFUSES to build while the playoff-probability term is missing',
-    threw,
-    threw ? `threw as intended: "${message.slice(0, 90)}..."` : 'IT BUILT. An index that silently omits its largest input is not a valuation.',
+    'the index BUILDS now that the playoff term has a source and the weights are fitted with it',
+    indices !== null,
+    indices !== null
+      ? `composite ${indices.composite.level.toFixed(4)} across ${indices.composite.constituents} clubs, `
+      + `${Object.keys(indices.divisions).length} divisions, ${Object.keys(indices.leagues).length} leagues`
+      : `it still refused: "${buildError.slice(0, 100)}..." -- the flag and the value function disagree`,
   );
   check(
-    'the refusal names the missing term rather than failing generically',
-    threw && /playoff/i.test(message),
-    'an error that says "invalid state" sends the reader to the file; one that says which term '
-    + 'is missing sends them to the work.',
+    'and every division and league actually reports a reading',
+    indices !== null
+      && Object.values(indices.divisions).every((d) => d.constituents === 8)
+      && Object.values(indices.leagues).every((l) => l.constituents === 16),
+    indices === null
+      ? 'not built'
+      : `divisions ${Object.entries(indices.divisions).map(([k, v]) => `${k}:${v.constituents}`).join(' ')}, `
+      + `leagues ${Object.entries(indices.leagues).map(([k, v]) => `${k}:${v.constituents}`).join(' ')}. `
+      + 'Eight per division and sixteen per league is what the 32-club structure requires.',
+  );
+
+  /*
+    THE ONE THAT MATTERS. Prove the term is not merely declared present.
+   */
+  const playoffCarries: number[] = [];
+  {
+    const mid = teams[16];
+    const knocked = buildValueInputs({
+      teamIds: teams.map((t) => t.teamId),
+      consensusWinPctById: new Map(teams.map((t) => [t.teamId, 0.5])),
+      surplusById: new Map(teams.map((t) => [t.teamId, 0])),
+      playoffProbabilityById: new Map(teams.map((t) => [t.teamId, t.teamId === mid.teamId ? 1 : 0])),
+      games: [],
+    });
+    const other = buildValueInputs({
+      teamIds: teams.map((t) => t.teamId),
+      consensusWinPctById: new Map(teams.map((t) => [t.teamId, 0.5])),
+      surplusById: new Map(teams.map((t) => [t.teamId, 0])),
+      playoffProbabilityById: new Map(teams.map((t) => [t.teamId, 0])),
+      games: [],
+    });
+    const leagueA = measureLeague(knocked);
+    const leagueB = measureLeague(other);
+    playoffCarries.push(teamValueFor(knocked.find((i) => i.teamId === mid.teamId) as TeamValueInput, leagueA)
+      - teamValueFor(other.find((i) => i.teamId === mid.teamId) as TeamValueInput, leagueB));
+  }
+  check(
+    'a club made certain by playoff probability is valued far above one with none',
+    playoffCarries[0] > 5,
+    `the same club differs by ${playoffCarries[0].toFixed(2)} points of value on playoff odds alone. `
+    + 'If this were near zero the PLAYOFF_PROBABILITY_AVAILABLE flag would be a lie, and the index '
+    + 'would publish a composite that quietly omits the term the flag claims is present.',
   );
 
   // -- 4. the index helpers themselves ----------------------------------------------------
@@ -187,75 +256,85 @@ const main = (): void => {
   );
 
   // -- 5. the value function -------------------------------------------------------------
-  const weightSum = TEAM_VALUE_WEIGHTS.rosterSurplus
-    + TEAM_VALUE_WEIGHTS.expectedWinPct
-    + TEAM_VALUE_WEIGHTS.momentum;
+  const weightSum = TEAM_VALUE_TERMS.reduce((sum, term) => sum + TEAM_VALUE_WEIGHTS[term], 0);
   check(
-    'the value weights sum to 1, so the blend is an average not a scale',
-    Math.abs(weightSum - 1) < 1e-9,
-    `they sum to ${weightSum.toFixed(4)}`,
+    'the value weights sum to 1 across ALL four terms, so the blend is an average not a scale',
+    Math.abs(weightSum - 1) < 1e-9 && TEAM_VALUE_TERMS.length === 4,
+    `${TEAM_VALUE_TERMS.length} terms summing to ${weightSum.toFixed(6)}: `
+    + TEAM_VALUE_TERMS.map((t) => `${t} ${TEAM_VALUE_WEIGHTS[t]}`).join(', '),
+  );
+  check(
+    'every weight is positive -- a term the fit could not justify ships at a floor, never negative',
+    TEAM_VALUE_TERMS.every((term) => TEAM_VALUE_WEIGHTS[term] > 0),
+    TEAM_VALUE_TERMS.map((t) => `${t} ${TEAM_VALUE_WEIGHTS[t]}`).join(', '),
   );
 
   /*
-    THE UNITS TEST. Win percentage, roster surplus and momentum do not share units, so blending
+    THE UNITS TEST. The four terms do not share units -- win percentage is 0-1, roster surplus is
+    points on the league scale, momentum is a capped win rate, playoff probability is 0-1. Blending
     them raw would let whichever has the widest spread dominate and quietly publish a
-    roster-strength index labelled as a valuation. A pure momentum club and a pure strength club
-    must produce the SAME value, which is only true if each term is standardised first.
-   */
-  const league = measureLeague([
-    { teamId: 'a', expectedWinPct: 0.5, rosterSurplus: 50, momentum: 0.5 },
-    { teamId: 'b', expectedWinPct: 0.6, rosterSurplus: 60, momentum: 0.6 },
-    { teamId: 'c', expectedWinPct: 0.4, rosterSurplus: 40, momentum: 0.4 },
-  ]);
-  /*
-    THE UNITS TEST, AND THE FIRST VERSION OF IT MEASURED THE WRONG THING.
-
-    It compared a club lifted 30 roster-surplus points against one lifted 0.3 momentum, and
-    called the difference a units failure. Those are the same number of STANDARD DEVIATIONS on
-    terms with DIFFERENT WEIGHTS (0.45 and 0.20), so they were bound to differ -- the test was
-    measuring the weights, not the standardisation, and it failed against code that standardises
-    correctly.
+    roster-strength index labelled as a valuation.
 
     What proves standardisation is per-term and weight-aware: lifting any one term by exactly one
     standard deviation must raise the value by exactly that term's weight times (50 / 3), because
     the mapping is 50 + z * (50/3) and the blend is weight * z.
+
+    TWO EARLIER VERSIONS OF THIS TEST WERE WRONG, and both failed against correct code.
+
+    The first compared a club lifted 30 roster-surplus points against one lifted 0.3 momentum and
+    called the difference a units failure. Those are the same number of STANDARD DEVIATIONS on
+    terms with DIFFERENT WEIGHTS, so they were bound to differ -- it was measuring the weights,
+    not the standardisation.
+
+    The rewrite then hard-coded sd 0.1 for the probability terms when measureLeague gives 0.08165
+    over three clubs (population variance). Surplus was hard-coded correctly and passed, which made
+    the failure look like a term-specific units bug when it was one wrong constant in the test.
+
+    So the sds below are MEASURED from the league, and the loop runs over TEAM_VALUE_TERMS rather
+    than naming terms individually -- which means a term added later is covered by this check
+    automatically instead of silently escaping it.
    */
   const SD_SCALE = 50 / 3;
-  const baseInput = { teamId: 'x', expectedWinPct: 0.5, rosterSurplus: 50, momentum: 0.5 };
+  // Every term sits exactly at its league mean, so the base value is a clean 50 and any lift is
+  // attributable to the single term that moved.
+  const leagueRows: TeamValueInput[] = [
+    { teamId: 'a', expectedWinPct: 0.5, rosterSurplus: 50, momentum: 0.5, playoffProbability: 0.20 },
+    { teamId: 'b', expectedWinPct: 0.6, rosterSurplus: 60, momentum: 0.6, playoffProbability: 0.40 },
+    { teamId: 'c', expectedWinPct: 0.4, rosterSurplus: 40, momentum: 0.4, playoffProbability: 0.00 },
+  ];
+  const league = measureLeague(leagueRows);
+  const baseInput: TeamValueInput = {
+    teamId: 'x',
+    expectedWinPct: 0.5,
+    rosterSurplus: 50,
+    momentum: 0.5,
+    playoffProbability: 0.2,
+  };
   const baseValue = teamValueFor(baseInput, league);
-  // The league above has winPct and momentum sd 0.0816 and surplus sd 8.165, so 0.1 is one
-  // standard deviation in the two probability terms and SD_SURPLUS is one in the surplus term.
-  /*
-    The standard deviations are MEASURED from the same three-club league, not hard-coded. The
-    first run hard-coded 0.1 and 8.165, and the two terms disagreed by a factor of 1.2246 --
-    which is exactly sqrt(1.5). measureLeague uses population variance over three clubs
-    (0.5, 0.6, 0.4), giving sd 0.08165, not 0.1. Surplus happened to be hard-coded correctly
-    and so passed, which made the failure look like a term-specific units bug when it was one
-    wrong constant in the test.
-   */
+
   const measuredSd = (values: number[]): number => {
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
     return Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length);
   };
-  const sdWin = measuredSd([0.4, 0.5, 0.6]);
-  const sdMomentum = measuredSd([0.4, 0.5, 0.6]);
-  const sdSurplus = measuredSd([40, 50, 60]);
-  const liftWin = teamValueFor({ ...baseInput, expectedWinPct: baseInput.expectedWinPct + sdWin }, league) - baseValue;
-  const liftMomentum = teamValueFor({ ...baseInput, momentum: baseInput.momentum + sdMomentum }, league) - baseValue;
-  const liftRoster = teamValueFor({ ...baseInput, rosterSurplus: baseInput.rosterSurplus + sdSurplus }, league) - baseValue;
-  const expected = (w: number): number => w * SD_SCALE;
+  const leagueColumn = (pick: (i: TeamValueInput) => number): number[] =>
+    [0, 1, 2].map((i) => pick(leagueRows[i]));
+
+  const liftReport = TEAM_VALUE_TERMS.map((term) => {
+    const sd = measuredSd(leagueColumn((i) => i[term]));
+    const lifted = teamValueFor({ ...baseInput, [term]: baseInput[term] + sd }, league) - baseValue;
+    const want = TEAM_VALUE_WEIGHTS[term] * SD_SCALE;
+    return { term, sd, lifted, want, ok: Math.abs(lifted - want) < 0.05 };
+  });
+  const liftFails = liftReport.filter((r) => !r.ok);
 
   check(
     'a one-standard-deviation move in ANY term raises the value by exactly weight * (50/3)',
-    Math.abs(liftWin - expected(TEAM_VALUE_WEIGHTS.expectedWinPct)) < 0.05
-      && Math.abs(liftRoster - expected(TEAM_VALUE_WEIGHTS.rosterSurplus)) < 0.05
-      && Math.abs(liftMomentum - expected(TEAM_VALUE_WEIGHTS.momentum)) < 0.05,
-    `expected winPct ${expected(TEAM_VALUE_WEIGHTS.expectedWinPct).toFixed(3)}, `
-    + `roster ${expected(TEAM_VALUE_WEIGHTS.rosterSurplus).toFixed(3)}, `
-    + `momentum ${expected(TEAM_VALUE_WEIGHTS.momentum).toFixed(3)}; `
-    + `measured winPct ${liftWin.toFixed(3)}, roster ${liftRoster.toFixed(3)}, `
-    + `momentum ${liftMomentum.toFixed(3)}. A mismatch means a term is contributing raw units, `
-    + 'and whichever has the widest raw spread is silently dominating the blend.',
+    liftFails.length === 0,
+    liftFails.length === 0
+      ? TEAM_VALUE_TERMS.map((t) => `${t} ${liftReport.find((r) => r.term === t)?.lifted.toFixed(2)}/${liftReport.find((r) => r.term === t)?.want.toFixed(2)}`).join('  ')
+      : liftFails.map((r) => `${r.term}: measured ${r.lifted.toFixed(3)}, expected ${r.want.toFixed(3)} (sd ${r.sd.toFixed(4)})`).join('; ')
+      + '. A mismatch means a term is contributing raw units, and whichever has the widest raw '
+      + 'spread is silently dominating the blend.',
   );
 
   // -- report -------------------------------------------------------------------------------
