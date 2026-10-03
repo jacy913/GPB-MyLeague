@@ -410,7 +410,21 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
     : null;
 
   return (
-    <div className="flex flex-col gap-5">
+    /*
+      THE TWO COLUMNS, AND WHY THE LEFT ONE STICKS.
+
+      2/3 chart, 1/3 roster. The grid is `items-start` so the sticky child is not stretched to its
+      grid area -- without it a sticky element inside a stretched parent pins to the BOTTOM of that
+      parent and never moves, which looks like the sticky silently failing.
+
+      The left column sticks because the roster is unavoidably taller than the chart: thirty-two
+      crests at four across is eight rows, and no amount of shrinking makes that shorter than a
+      chart you can actually read. So the alternative is either a page you scroll half a season to
+      get through, or a nested scrollbar on the roster. Pinning the chart means the price path stays
+      on screen the whole way down the list, which is the thing you are reading the list FOR.
+    */
+    <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
+      <div className="flex flex-col gap-5 lg:col-span-2 lg:sticky lg:top-4">
       <Panel className="overflow-hidden">
         <PanelHeader
           title="The Exchange"
@@ -529,100 +543,118 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               "Agents share price" are different numbers and the reader should never have to guess
               which one they are looking at.
             */}
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-start gap-5">
               {/*
-                THE CREST, and the league mark stands in for the league.
+                THE CREST, 96px, and the league mark stands in for the league.
 
                 On "All clubs (average)" there is no club to draw, and drawing no crest would leave the
                 figure floating with nothing identifying what it is a price OF. The GPB mark is the
-                league's own and is the honest stand-in: it says "this is the league", which is what
-                the average is.
+                league's own and is the honest stand-in: it says "this is the league", which is what the
+                average is.
 
-                THE TWO MARKS ARE NOT THE SAME SHAPE, and the box has to admit that. A club crest is
-                square and fills a 48px box. `gpb.png` is 2560x1184 -- 2.16 wide -- so forced into a
+                THE TWO MARKS ARE NOT THE SAME SHAPE and the box has to admit that. A club crest is
+                square and fills its box. `gpb.png` is 2560x1184 -- 2.16 wide -- so forced into a
                 square it letterboxed down to about 22px of visible artwork in a 48px hole and read as
-                a rendering fault rather than a logo. It is therefore sized by HEIGHT alone and given
-                its natural width, which is what actually matches the optical weight of the number
-                beside it.
+                a rendering fault rather than a logo. It is sized by HEIGHT alone and given its natural
+                width, which is what actually matches the optical weight of the number beside it.
+
+                96px rather than 400px is the correction the last pass asked for: the crest is how you
+                recognise the club, and at four hundred it was the largest object on the page by a
+                wide margin while the PRICE -- the thing the page is for -- sat underneath it in
+                caption weight.
               */}
               {activeClub && teamById.has(activeClub) ? (
-                <TeamLogo team={teamById.get(activeClub) as Team} sizeClass="w-12 h-12" />
+                <TeamLogo team={teamById.get(activeClub) as Team} sizeClass="w-24 h-24 shrink-0" />
               ) : (
                 <img
                   src={gpbMark}
                   alt=""
                   aria-hidden="true"
-                  className="h-9 w-auto shrink-0 object-contain"
+                  className="h-16 w-auto shrink-0 object-contain"
                 />
               )}
+
               {/*
-                `flex-1 min-w-0` is load-bearing, not decoration. The stat row is long -- figure,
-                caption, date range, day count, stray, spread -- and without a min-width of 0 the row
-                reports its full intrinsic width to the parent, the parent's `flex-wrap` decides it
-                does not fit beside a 48px crest, and the WHOLE ROW drops to its own line. That is
-                what happened: the crest sat above the number like a section heading.
+                STACKED, NOT ONE WRAPPING ROW. The crest is 96px, the price is 56px, and there are five
+                more figures behind them -- caption, date range, day count, premium, spread. On one
+                `flex-wrap` baseline row they collide, and the row that wrapped put the crest on a
+                line of its own like a section heading.
 
-                Letting the row shrink and wrap internally keeps the crest beside the figure it
-                belongs to and puts the overflow where it belongs, at the end of the line.
+                Three lines by rank instead: what it costs, which club and over what window, then how
+                it sits against fair and against the comparison. Each line is independently
+                `flex-wrap`, so a long caption degrades to a second line of its own rather than
+                shoving the crest out of place.
+
+                `min-w-0` on the column so it can shrink inside the flex parent -- without it the
+                widest child sets the intrinsic width and the whole column refuses to fit.
               */}
-              <div className="flex flex-1 min-w-0 flex-wrap items-baseline gap-4">
-              <span className="t-stat-lg text-[var(--color-ink)]">
-                {latest ? Math.round(latest.value) : '--'}
-              </span>
-              <span className="t-caption text-[var(--color-ink-faint)]">
-                {clubName ? `${clubName} share price` : 'average club price'}
-                {first && latest && first.date !== latest.date
-                  ? ` · ${first.date} to ${latest.date}`
-                  : ''}
-              </span>
-              <span className="t-caption text-[var(--color-ink-faint)]">
-                {points.length} {points.length === 1 ? 'day' : 'days'}
-                {/*
-                  WHY THE WINDOW IS SMALLER THAN THE BUTTON SAYS.
-
-                  `points.length` alone is true but leaves a question: the reader pressed "30d" and
-                  sees 14. Saying so costs one clause and pre-empts the reasonable suspicion that the
-                  page silently truncated something.
-                */}
-                {rangeDays !== null && points.length < rangeDays
-                  ? ` of the ${rangeDays}-day window`
-                  : ''}
-                {(priceLedger?.length ?? 0) > points.length
-                  ? ` · ${(priceLedger?.length ?? 0) - points.length} earlier not shown`
-                  : ''}
-              </span>
-              {/*
-                THE STRAY FIGURE, and it only appears for a single club.
-
-                On the average it would be a real number and a useless one -- the mean of every club's
-                deviation is not a statement about anything, and showing it would invite the reader to
-                treat "the league is 2% rich" as a finding.
-
-                Teal, not green or orange. A deviation from fair is not an outcome: being 8% above fair
-                is neither good news nor bad news, it is expensive.
-              */}
-              {stray ? (
-                <span className="t-caption text-[var(--color-neutral)]">
-                  {stray.fraction >= 0 ? '+' : ''}
-                  {(stray.fraction * 100).toFixed(1)}% vs fair on {stray.date}
-                </span>
-              ) : null}
-              {/*
-                THE SPREAD, last day, beside the stray rather than replacing it. Both are "how far
-                from something" figures and they answer different questions -- one says whether this
-                club is expensive, the other says which of two clubs the market likes more.
-              */}
-              {spread !== null && latestCompare ? (
-                <span className="flex items-center gap-2">
-                  {activeCompare && teamById.has(activeCompare) ? (
-                    <TeamLogo team={teamById.get(activeCompare) as Team} sizeClass="w-7 h-7" />
-                  ) : null}
-                  <span className="t-caption text-[var(--color-ink-dim)]">
-                    {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
-                    {latest ? ` on ${latest.date}` : ''}
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <span className="t-stat-xl text-[var(--color-ink)]">
+                    {latest ? Math.round(latest.value) : '--'}
                   </span>
-                </span>
-              ) : null}
+                  <span className="t-caption text-[var(--color-ink-dim)]">
+                    {clubName ? `${clubName} share price` : 'average club price'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 t-caption text-[var(--color-ink-faint)]">
+                  <span>
+                    {first && latest ? `${first.date} to ${latest.date}` : ''}
+                  </span>
+                  <span>
+                    {points.length} {points.length === 1 ? 'day' : 'days'}
+                    {/*
+                      WHY THE WINDOW IS SMALLER THAN THE BUTTON SAYS.
+
+                      `points.length` alone is true but leaves a question: the reader pressed "30d" and
+                      sees 14. Saying so costs one clause and pre-empts the reasonable suspicion that
+                      the page silently truncated something.
+                    */}
+                    {rangeDays !== null && points.length < rangeDays
+                      ? ` of the ${rangeDays}-day window`
+                      : ''}
+                    {(priceLedger?.length ?? 0) > points.length
+                      ? ` · ${(priceLedger?.length ?? 0) - points.length} earlier not shown`
+                      : ''}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {/*
+                    THE PREMIUM, and it only appears for a single club.
+
+                    On the average it would be a real number and a useless one -- the mean of every
+                    club's deviation is not a statement about anything, and showing it would invite the
+                    reader to treat "the league is 2% rich" as a finding.
+
+                    Teal, not green or orange. A deviation from fair is not an outcome: being 8% above
+                    fair is neither good news nor bad news, it is expensive.
+                  */}
+                  {stray ? (
+                    <span className="t-caption text-[var(--color-neutral)]">
+                      {stray.fraction >= 0 ? '+' : ''}
+                      {(stray.fraction * 100).toFixed(1)}% vs fair on {stray.date}
+                    </span>
+                  ) : null}
+
+                  {/*
+                    THE SPREAD, last day, beside the premium rather than replacing it. Both are "how
+                    far from something" figures and they answer different questions -- one says whether
+                    this club is expensive, the other says which of two clubs the market likes more.
+                  */}
+                  {spread !== null && latestCompare ? (
+                    <span className="flex items-center gap-2">
+                      {activeCompare && teamById.has(activeCompare) ? (
+                        <TeamLogo team={teamById.get(activeCompare) as Team} sizeClass="w-5 h-5 shrink-0" />
+                      ) : null}
+                      <span className="t-caption text-[var(--color-ink-dim)]">
+                        {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
+                        {latest ? ` on ${latest.date}` : ''}
+                      </span>
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
 
@@ -667,8 +699,25 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               secondary={comparePoints}
               onHover={setHoverIndex}
               width={720}
-              height={140}
+              height={680}
               showBand
+              /*
+                680px, AND THE HEIGHT IS DOING REAL WORK RATHER THAN DECORATION.
+
+                Measured on a real ledger: the mean day-over-day move is 22.2 points and the largest
+                single-day move is 107.1, which are 2.2% and 10.7% of the fixed 0-1000 band. At the
+                old 140px that was about 3px and 15px of vertical movement -- a flat rule. At 680px it
+                is roughly 15px and 73px, so the same data reads as a market rather than a line.
+
+                The axis is deliberately NOT narrowed to get the same effect. Fitting the band to the
+                data would make a quiet week look like a crash, and `checkShareChart` check 2 exists to
+                stop exactly that. Height buys the same apparent variance while keeping every chart on
+                the same scale as every other, which is what makes two clubs comparable at all.
+
+                It is also tall enough to take the weight off the rail: at 460px the left column
+                ended some 670px above the bottom of the roster and the first screenful was mostly
+                empty panel.
+              */
               /*
                 FILLS THE PANEL RATHER THAN SITTING AT ITS 720px VIEWBOX.
 
@@ -788,6 +837,10 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
           </div>
         )}
       </Panel>
+      </div>
+
+      {/* The roster rail. Beside the chart on wide screens, below it on narrow ones. */}
+      <div className="flex flex-col gap-5 lg:col-span-1">
 
       {/*
         THE BOARD.
@@ -824,7 +877,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               />
             )}
           />
-<div className="grid grid-cols-1 gap-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
+<div className="grid grid-cols-4 gap-2 px-3 py-3">
             {board.map((row, index) => {
               const isPrimary = row.team.id === activeClub;
               const isCompare = row.team.id === activeCompare;
@@ -835,7 +888,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                   onClick={() => setSelectedClub(isPrimary ? null : row.team.id)}
                   aria-pressed={isPrimary}
                   className={[
-                    'group relative flex min-w-0 flex-col items-center gap-2 rounded p-3 text-center transition-colors',
+                    'group relative flex min-w-0 flex-col items-center gap-1 rounded p-1.5 text-center transition-colors',
                     'border',
                     isPrimary
                       ? 'border-[var(--color-neutral)] bg-[var(--color-panel-2)]'
@@ -845,18 +898,18 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                   ].join(' ')}
                 >
                   {/*
-                    THE RANK, because the board is sorted by price and nothing else on the card
-                    says so. A reader who wants "who is on top" should not have to infer it from
-                    reading order, and a number is quieter than a "1st" badge.
+                    THE RANK, because the board is sorted by price and nothing else on the tile says
+                    so. A reader who wants "who is on top" should not have to infer it from reading
+                    order, and a number is quieter than a "1st" badge.
 
                     Teal rather than gold: nothing here is a winner, it is a position in a price list.
                   */}
-                  <span className="absolute left-2 top-2 t-caption text-[var(--color-ink-faint)]">
+                  <span className="absolute left-1.5 top-1 t-caption text-[var(--color-ink-faint)]">
                     {index + 1}
                   </span>
                   {isCompare ? (
-                    <span className="absolute right-2 top-2 t-caption text-[var(--color-ink-dim)]">
-                      comparing
+                    <span className="absolute right-1.5 top-1 t-caption text-[var(--color-ink-dim)]">
+                      vs
                     </span>
                   ) : null}
 
@@ -870,65 +923,51 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                     the difference you see left over is the difference in the ART rather than in the
                     padding somebody happened to export.
                   */}
-                  <span className="flex w-full items-center justify-center rounded bg-[var(--color-base-2)] p-2"
+                  <span className="flex w-full items-center justify-center rounded bg-[var(--color-base-2)] p-1"
                     style={{ border: '1px solid var(--color-chrome-lo)' }}>
                     <TeamLogo
                       team={row.team}
-                      sizeClass="w-full h-[340px] overflow-hidden"
+                      sizeClass="w-full h-[72px] overflow-hidden"
                       lazy
                     />
                   </span>
 
-                  <span className="w-full min-w-0 truncate t-h3">
-                    {row.team.city} {row.team.name}
-                  </span>
-
                   {/*
-                    THE PRICE IS THE HEADLINE OF THE CARD, not the crest.
-
-                    This is an exchange. The crest is how you recognise the club; the number is what
-                    you came for, and at caption weight beside a 400px picture it was unreadable. So
-                    the price takes the stat size and the stray drops to a chip beneath it.
+                    NAME AND PRICE, STACKED AND TRUNCATED, because at four across there is about 88px
+                    of cell and a full "Alcondale Aerials" does not fit on one line at any readable
+                    size. The MASCOT alone is the distinctive part -- the city is shared vocabulary
+                    for anyone who knows the league -- so that is what leads, and the title attribute
+                    carries the full name for hover and for a screen reader.
                   */}
-                  <span className="t-stat text-[var(--color-ink)]">
+                  <span className="w-full min-w-0 truncate t-caption text-[var(--color-ink)]" title={`${row.team.city} ${row.team.name}`}>
+                    {row.team.name}
+                  </span>
+                  <span className="t-stat-sm text-[var(--color-ink)]">
                     {Math.round(row.price)}
                   </span>
 
+                  {/*
+                    THE PREMIUM, kept because it is the one number on this page that is not a price.
+                    Bare signed percentage rather than a bordered chip: at 88px wide a chip around
+                    "+36.8% vs fair" wraps, and thirty-two wrapping tiles is the busy layout this rail
+                    exists to avoid. The colour still carries the meaning -- teal, never green or
+                    orange, because a premium is an expense rather than an outcome.
+                  */}
                   {row.stray !== null ? (
-                    <span className="rounded px-2 py-0.5 t-caption text-[var(--color-neutral)]"
-                      style={{ border: '1px solid var(--color-neutral)' }}>
+                    <span className="t-caption text-[var(--color-neutral)]">
                       {row.stray >= 0 ? '+' : ''}
-                      {(row.stray * 100).toFixed(1)}% vs fair
+                      {(row.stray * 100).toFixed(0)}%
                     </span>
                   ) : (
-                    <span className="t-caption text-[var(--color-ink-faint)]">no fair value recorded</span>
+                    <span className="t-caption text-[var(--color-ink-faint)]">&mdash;</span>
                   )}
-
-                  {/*
-                    NO SPARKLINE, and the first attempt at one is the reason this note exists.
-
-                    A trend was tried here and it was worse than nothing. On the shared fixed 0-1000
-                    axis, a price moving a few points across eight days is roughly one pixel of
-                    movement, so all thirty-two rendered as the same flat red rule. Thirty-two
-                    identical rules under thirty-two crests read as a rendering fault, not as data.
-
-                    Fitting each sparkline to its own min and max would make the shapes readable and
-                    put thirty-two different scales on one screen, which is its own kind of lie: two
-                    clubs' trends side by side would look comparable and would not be. And the
-                    information is not lost -- clicking a card selects the club and the chart above
-                    shows its path at full size, which is the right place for a shape.
-
-                    So a card carries rank, crest, name, price, premium and date, and stops.
-                  */}
-                  <span className="t-caption text-[var(--color-ink-faint)]">
-                    {row.date} · {row.spark.length} {row.spark.length === 1 ? 'day' : 'days'} priced
-                  </span>
                 </button>
               );
             })}
           </div>
         </Panel>
       ) : null}
+      </div>
     </div>
   );
 };

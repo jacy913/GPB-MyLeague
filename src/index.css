@@ -321,6 +321,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * t-stat-xl - the Exchange's headline price.
+ *
+ * A step above t-stat-hero, and the only place in the app that needs one. The Exchange gives its
+ * price a 96px crest beside it and a 460px-tall chart under it, and at t-stat-hero's 44px ceiling
+ * the number stopped being the largest thing on the page -- which is the same failure
+ * t-stat-hero's own comment warns about for slate tiles, one step further down the same ladder.
+ *
+ * Fixed rather than a clamp because this is one call site on a page whose width is known: a
+ * viewport-scaled number would reflow on every resize for no benefit, and the wrap warning on
+ * t-stat-hero applies here too. If this ever wraps, the fix is a wider left column, not a smaller
+ * number.
+ */
+@utility t-stat-xl {
+  font-family: var(--font-num);
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
 @utility t-stat-lg {
   font-family: var(--font-num);
   font-size: 26px;
