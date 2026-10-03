@@ -42,6 +42,11 @@ import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { buildWorldSeriesMarkets } from '../src/lib/mediaMarkets';
 import { isPlayoffGame } from '../src/logic/playoffs';
+import {
+  seededRandomStream,
+  withSeededRandom,
+  withSeededRandomAsync,
+} from '../src/lib/analytics/playoffMonteCarlo';
 import { WORLD_SERIES_MARKET_KEY } from '../src/lib/markets';
 import {
   FUTURES_RISK_TIERS,
@@ -59,6 +64,8 @@ import {
 } from '../src/lib/wallet';
 import type { Game, LeaguePlayerState, Team } from '../src/types';
 
+/* THE SEED FOR THE WHOLE SEASON. Declared here so a failure is reproducible by changing one number. */
+const SEASON_SEED = 20260620;
 const YEAR = 2026;
 const WARMUP_DAYS = Number(process.argv[2] ?? 40);
 
@@ -118,12 +125,28 @@ const main = async (): Promise<void> => {
     YEAR,
   );
 
+  /*
+    THE SCHEDULE IS SEEDED TOO, and finding this was the second half of the flakiness fix.
+
+    Seeding only the 180-day loop was not enough. `generateSchedule` lives in `logic/simulation.ts`
+    and draws from the global `Math.random` -- Box-Muller normals for the breakers and a shuffle for
+    the ordering -- so every run built a DIFFERENT 180-game slate. A different slate is a different
+    season, and the leader's day-165 probability moved between 4.1% and 4.8% across identical runs.
+
+    That is why wrapping the loop alone changed nothing: the coin flip had already happened upstream.
+
+    Two seeded regions from the same `SEASON_SEED` rather than one continuous stream, because
+    `manager` is constructed with the schedule and cannot be reassigned inside the loop closure.
+    Each region is independently deterministic, which is all reproducibility requires.
+  */
+  const schedule = withSeededRandom(seededRandomStream(SEASON_SEED), () => generateSchedule(teams, {
+    seasonStartDate: getDefaultSeasonStartDate(YEAR),
+    seasonDays: 180,
+  }));
+
   const manager = new SimulationManager({
     teams,
-    games: generateSchedule(teams, {
-      seasonStartDate: getDefaultSeasonStartDate(YEAR),
-      seasonDays: 180,
-    }),
+    games: schedule,
     playerState: universe,
     settings: DEFAULT_SETTINGS,
     currentDate: getDefaultSeasonStartDate(YEAR),
@@ -169,73 +192,100 @@ const main = async (): Promise<void> => {
   let settlementDetail = '';
   let postSeasonSettled = false;
 
-  for (let day = 0; day < 180; day += 1) {
-    const result = await manager.run({ scope: 'day' });
-    state = result.playerState;
-    games = result.games;
-    teams = result.teams;
+  /*
+    THE SEASON RUNS UNDER A SEEDED STREAM, and this is not tidiness.
 
-    if (day % 15 === 0 || day === 5) {
-      const board = titleBoard();
-      if (board) {
-        samples.push({
-          day,
-          live: board.liveOutcomes,
-          leader: board.outcomes[0]?.consensusProbability ?? 0,
-          teams: board.outcomes.length,
+    `SimulationManager` drives `logic/simulation.ts`, which draws from the global `Math.random`.
+    Without this the whole 180-day season is a fresh coin flip every run, and check 5 -- "the favourite
+    strengthens as the season runs" -- passed on two runs out of four and failed on two, on identical code.
+    It was measuring the league the coin produced, not the claim. A check that flips half the time is not
+    evidence about anything, so the season has to be the SAME season every time.
+
+    `withSeededRandomAsync` and not the existing sync `withSeededRandom`, because the sync helper restores
+    the global when `fn` RETURNS -- and an async function returns a pending promise at its first `await`.
+    That would restore `Math.random` before this loop had simulated a single game.
+  */
+  await withSeededRandomAsync(seededRandomStream(SEASON_SEED), async () => {
+    for (let day = 0; day < 180; day += 1) {
+      const result = await manager.run({ scope: 'day' });
+      state = result.playerState;
+      games = result.games;
+      teams = result.teams;
+  
+      if (day % 15 === 0 || day === 5) {
+        const board = titleBoard();
+        if (board) {
+          samples.push({
+            day,
+            live: board.liveOutcomes,
+            leader: board.outcomes[0]?.consensusProbability ?? 0,
+            teams: board.outcomes.length,
+          });
+        }
+      }
+  
+      /*
+       * SETTLEMENT, at the end of the season and against the real archive.
+       *
+       * Placed through `placeBet` on the real wallet so the key travels the same path
+       * it would in the app, which is the whole point: the bug this catches is a key
+       * that is sliced on the way to the bet and then compared unsliced on the way
+       * back.
+       */
+      if (day === 150 && !lastSettledCheck) {
+        lastSettledCheck = true;
+        const board = titleBoard();
+        const longShot = [...board.outcomes].sort(
+          (a, b) => a.consensusProbability - b.consensusProbability,
+        )[0];
+  
+        const placed = placeBet(createWallet(), {
+          kind: 'world_series',
+          marketKey: WORLD_SERIES_MARKET_KEY,
+          marketTitle: board.title,
+          selection: longShot.key,
+          selectionLabel: longShot.label,
+          price: longShot.houseOdds,
+          stake: 10,
+          placedOn: getDefaultSeasonStartDate(YEAR),
+          backedMedia: null,
         });
-      }
-    }
-
-    /*
-     * SETTLEMENT, at the end of the season and against the real archive.
-     *
-     * Placed through `placeBet` on the real wallet so the key travels the same path
-     * it would in the app, which is the whole point: the bug this catches is a key
-     * that is sliced on the way to the bet and then compared unsliced on the way
-     * back.
-     */
-    if (day === 150 && !lastSettledCheck) {
-      lastSettledCheck = true;
-      const board = titleBoard();
-      const longShot = [...board.outcomes].sort(
-        (a, b) => a.consensusProbability - b.consensusProbability,
-      )[0];
-
-      const placed = placeBet(createWallet(), {
-        kind: 'world_series',
-        marketKey: WORLD_SERIES_MARKET_KEY,
-        marketTitle: board.title,
-        selection: longShot.key,
-        selectionLabel: longShot.label,
-        price: longShot.houseOdds,
-        stake: 10,
-        placedOn: getDefaultSeasonStartDate(YEAR),
-        backedMedia: null,
-      });
-      if ('error' in placed) {
-        settlementWorks = false;
-        settlementDetail = `placeBet refused the championship bet: ${placed.error}`;
-        throw new Error(settlementDetail);
-      }
-      const wallet = placed.wallet;
-
-      // A season that has not finished must leave the bet PENDING, not void it.
-      const midSeason = settleWallet(wallet, {
-        games,
-        teams,
-        currentDate: getDefaultSeasonStartDate(YEAR),
-        seasonComplete: false,
-        seasonWinners: null,
-        awardWinners: null,
-      });
-      const stillOpen = midSeason.bets.find((b) => b.id === placed.bet.id)?.status === 'open';
-
-      // And a bet whose key was sliced to "champion" must NOT settle, which is the
-      // exact defect the UI had.
-      const sliced = settleWallet(
-        { ...wallet, bets: [{ ...placed.bet, marketKey: 'champion' }] },
-        {
+        if ('error' in placed) {
+          settlementWorks = false;
+          settlementDetail = `placeBet refused the championship bet: ${placed.error}`;
+          throw new Error(settlementDetail);
+        }
+        const wallet = placed.wallet;
+  
+        // A season that has not finished must leave the bet PENDING, not void it.
+        const midSeason = settleWallet(wallet, {
+          games,
+          teams,
+          currentDate: getDefaultSeasonStartDate(YEAR),
+          seasonComplete: false,
+          seasonWinners: null,
+          awardWinners: null,
+        });
+        const stillOpen = midSeason.bets.find((b) => b.id === placed.bet.id)?.status === 'open';
+  
+        // And a bet whose key was sliced to "champion" must NOT settle, which is the
+        // exact defect the UI had.
+        const sliced = settleWallet(
+          { ...wallet, bets: [{ ...placed.bet, marketKey: 'champion' }] },
+          {
+            games, teams, currentDate: `${YEAR}-11-01`,
+            seasonComplete: true,
+            seasonWinners: {
+              seasonYear: YEAR,
+              divisions: new Map(), leagues: new Map(), champion: longShot.key,
+            },
+            awardWinners: null,
+          },
+        );
+        const slicedRefused = sliced.bets[0]?.status === 'void';
+  
+        // The real case: correct key, correct champion.
+        const decided = settleWallet(wallet, {
           games, teams, currentDate: `${YEAR}-11-01`,
           seasonComplete: true,
           seasonWinners: {
@@ -243,26 +293,14 @@ const main = async (): Promise<void> => {
             divisions: new Map(), leagues: new Map(), champion: longShot.key,
           },
           awardWinners: null,
-        },
-      );
-      const slicedRefused = sliced.bets[0]?.status === 'void';
-
-      // The real case: correct key, correct champion.
-      const decided = settleWallet(wallet, {
-        games, teams, currentDate: `${YEAR}-11-01`,
-        seasonComplete: true,
-        seasonWinners: {
-          seasonYear: YEAR,
-          divisions: new Map(), leagues: new Map(), champion: longShot.key,
-        },
-        awardWinners: null,
-      });
-      const verdict = decided.bets[0]?.status;
-      settlementWorks = stillOpen && slicedRefused && verdict === 'won';
-      settlementDetail = `pending before the season (${stillOpen}), sliced key refused (${slicedRefused}), correct key settled won (${verdict})`;
-      postSeasonSettled = verdict === 'won';
+        });
+        const verdict = decided.bets[0]?.status;
+        settlementWorks = stillOpen && slicedRefused && verdict === 'won';
+        settlementDetail = `pending before the season (${stillOpen}), sliced key refused (${slicedRefused}), correct key settled won (${verdict})`;
+        postSeasonSettled = verdict === 'won';
+      }
     }
-  }
+  });
 
   check(
     'a championship bet settles from the archived champion',

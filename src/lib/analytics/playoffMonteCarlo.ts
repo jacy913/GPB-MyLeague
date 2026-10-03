@@ -196,6 +196,41 @@ const seededRandom = (seed: number): (() => number) => {
  * "the global is put back even when the body raises" otherwise needs a test-only hook, and a
  * test-only hook is worse than an honest export of the thing whose safety matters.
  */
+/**
+ * Seed a stream from a number. Exported so a caller driving a whole season can be deterministic
+ * without re-implementing mulberry32 and getting the constants subtly wrong.
+ */
+export const seededRandomStream = seededRandom;
+
+/**
+ * Run an ASYNC `fn` with the global `Math.random` replaced by a seeded stream.
+ *
+ * THIS EXISTS BECAUSE `withSeededRandom` CANNOT BE USED ON AN AWAITING CALLER, and the failure is
+ * silent rather than loud. That helper restores the global in a `finally`, which runs as soon as
+ * `fn` RETURNS -- and an async function returns a pending promise at its first `await`. So
+ * `withSeededRandom(rng, async () => { ...await... })` restores `Math.random` before the body has
+ * done any work, and every simulated game draws from the real clock-seeded global. The swap appears
+ * to have happened and did not.
+ *
+ * That is not hypothetical. `tools/verifyFuturesRisk.ts` runs 180 days of simulation through this
+ * path, and its assertion that "the favourite strengthens as the season runs" passed on two runs out
+ * of four -- flipping on nothing but which league the coin produced. A check that passes half the
+ * time is not evidence about the thing it is about, so the fix has to be at the source.
+ *
+ * The `finally` restores the global only once the promise SETTLES, which is what makes the swap
+ * actually cover the awaited work. Same non-reentrancy caveat as the sync version: nothing else may
+ * draw from `Math.random` concurrently, which in this codebase means the simulation worker.
+ */
+export const withSeededRandomAsync = async <T>(rng: () => number, fn: () => Promise<T>): Promise<T> => {
+  const original = Math.random;
+  Math.random = rng;
+  try {
+    return await fn();
+  } finally {
+    Math.random = original;
+  }
+};
+
 export const withSeededRandom = <T>(rng: () => number, fn: () => T): T => {
   const original = Math.random;
   Math.random = rng;
