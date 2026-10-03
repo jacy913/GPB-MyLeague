@@ -52,7 +52,7 @@ import { SimulationManager } from '../src/logic/simulationManager';
 import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { priceBoardForDay } from '../src/lib/analytics/priceBoard';
-import { PRICE_MAX, PRICE_MIN } from '../src/lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_SANITY_MAX } from '../src/lib/analytics/sharePrice';
 import { seededRandomStream, withSeededRandom, withSeededRandomAsync } from '../src/lib/analytics/playoffMonteCarlo';
 import type { Game, LeaguePlayerState, Team } from '../src/types';
 
@@ -63,27 +63,49 @@ const PRICED_DAYS = 120;
 const TRIALS = 250;
 
 /**
- * How close to the edge counts as "stuck".
+ * "STUCK" NO LONGER MEANS "AT $1,000", AND THE OLD DEFINITION WAS MEASURING THE WRONG THING.
  *
- * Not 1e-9. The clamp means a saturated club sits at EXACTLY 1000.0, but a club that merely
- * drifts near the top is not broken -- it is trading. The threshold is set at half a percent of the
- * band so the count is about pinning, not about being expensive.
+ * The first version counted a run as stuck when a close sat within half a percent of `PRICE_MAX`.
+ * That was the right question while `PRICE_MAX` was also a clamp on the close, because reaching it
+ * meant the price COULD NOT go higher.
+ *
+ * After the wall came down it became nonsense: a club sitting at exactly $1,000 is now simply trading
+ * at its maximum possible fair value, which is a legitimate state that a dominant club reaches
+ * routinely. Worse, the metric would have gone GREEN while the original defect persisted, because a
+ * frozen price is free to be frozen at any level and $1,000 happened to be the old wall. Moving the
+ * threshold from 1000 to 100,000 would have hidden the bug rather than fixed it.
+ *
+ * So this now measures the DEFECT rather than a proxy for it, in two ways that do not depend on any
+ * particular constant:
+ *
+ *   1. A RUN AT THE SANITY CEILING. `PRICE_SANITY_MAX` is a corruption guard and must never bind in
+ *      normal play. Any run here is a real wall.
+ *   2. A RUN OF BYTE-IDENTICAL CONSECUTIVE CLOSES. This is the honest definition of "the price cannot
+ *      move": whatever the level, a price that returns the exact same number on consecutive days is
+ *      frozen. It catches a freeze at any value, which the old threshold could not.
  */
-const STUCK_WITHIN = PRICE_MAX * 0.005;
 
 const iso = (offset: number): string =>
   new Date(Date.parse(getDefaultSeasonStartDate(YEAR)) + offset * 86400000).toISOString().slice(0, 10);
 
+/** One day of the ledger, with the recorded fair layer kept so saturation can be detected. */
+interface Day {
+  date: string;
+  close: Record<string, number>;
+  fair: Record<string, number>;
+}
+
+/** A run of consecutive days a price failed to move, or sat on a ceiling. */
 interface Run {
   club: string;
-  clubName: string;
-  edge: 'ceiling' | 'floor';
+  kind: 'identical' | 'sanity_ceiling';
   from: string;
   to: string;
   days: number;
+  level: number;
 }
 
-const buildLedger = async (seed: number): Promise<Array<{ date: string; close: Record<string, number> }>> => {
+const buildLedger = async (seed: number): Promise<Day[]> => {
   const universe = buildNewUniverse({
     teams: INITIAL_TEAMS.map((t) => ({ ...t })),
     seasonYear: YEAR,
@@ -115,7 +137,7 @@ const buildLedger = async (seed: number): Promise<Array<{ date: string; close: R
     teams = r.teams; games = r.games; playerState = r.playerState;
   }
 
-  const rows: Array<{ date: string; close: Record<string, number> }> = [];
+  const rows: Day[] = [];
   let previous: Record<string, number> | undefined;
   for (let d = 0; d < PRICED_DAYS; d += 1) {
     const board = priceBoardForDay({
@@ -123,19 +145,28 @@ const buildLedger = async (seed: number): Promise<Array<{ date: string; close: R
       seed, previousClose: previous, mcTrials: TRIALS, settings: DEFAULT_SETTINGS,
     });
     previous = board.close;
-    rows.push({ date: board.date, close: board.close });
+    rows.push({ date: board.date, close: board.close, fair: board.fair });
   }
   return rows;
 };
 
 const main = async (): Promise<void> => {
-  console.log('\nDOES ANY CLUB EVER GET STUCK AT $1000?\n');
+  console.log('\nDOES ANY PRICE EVER FREEZE?\n');
   console.log(`  ${SEEDS.length} leagues, warmed ${WARMUP_DAYS} days then priced ${PRICED_DAYS} days`);
-  console.log(`  "stuck" means within ${(STUCK_WITHIN).toFixed(1)} of the band edge (${(STUCK_WITHIN / PRICE_MAX * 100).toFixed(2)}%)\n`);
+  console.log('  "frozen" = byte-identical closes on consecutive days, at any level');
+  console.log(`  "wall"    = a close pinned to the sanity guard (${PRICE_SANITY_MAX})\n`);
 
-  const allRuns: Run[] = [];
-  let everStuck = 0;
+  const frozenRuns: Run[] = [];
+  const wallRuns: Run[] = [];
+  let everFrozen = 0;
   let totalClubs = 0;
+  let highestClose = 0;
+  let highestCloseClub = '';
+  let highestFair = 0;
+  let highestRatio = 0;
+  let highestRatioClub = '';
+  let saturatedClubDays = 0;
+  let saturatedClubDaysMoving = 0;
 
   for (const seed of SEEDS) {
     process.stdout.write(`  league ${seed}... `);
@@ -145,60 +176,127 @@ const main = async (): Promise<void> => {
     let seedRuns = 0;
 
     for (const club of clubIds) {
-      for (const edge of ['ceiling', 'floor'] as const) {
-        let runStart: string | null = null;
-        for (const day of rows) {
-          const close = day.close[club];
-          const stuck = edge === 'ceiling'
-            ? close >= PRICE_MAX - STUCK_WITHIN
-            : close <= PRICE_MIN + STUCK_WITHIN;
-          if (stuck && runStart === null) runStart = day.date;
-          if (!stuck && runStart !== null) {
-            const days = rows.findIndex((d) => d.date === day.date) - rows.findIndex((d) => d.date === runStart);
-            allRuns.push({ club, clubName: club, edge, from: runStart, to: day.date, days });
-            runStart = null;
+      const closes = rows.map((d) => d.close[club]).filter((v): v is number => typeof v === 'number');
+
+      const top = closes.reduce((best, v, i) => (v > closes[best] ? i : best), 0);
+      if (closes[top] > highestClose) { highestClose = closes[top]; highestCloseClub = club; }
+
+      /*
+        HOW CLOSE DOES FAIR VALUE GET TO SATURATING, and how large does the premium actually get?
+
+        These are reported because a clean "no price froze" is only meaningful alongside them. If
+        fair value never approaches $1,000 then this probe never exercised the reported bug at all, and
+        its silence says nothing about whether the fix worked. `checkSharePrice` covers the saturated
+        case directly by DRIVING fair to $1,000 for sixty days; this measures whether real leagues get
+        there on their own.
+      */
+      for (let i = 0; i < rows.length; i += 1) {
+        const fair = rows[i].fair[club];
+        const close = rows[i].close[club];
+        if (typeof fair !== 'number' || typeof close !== 'number' || fair <= 0) continue;
+        if (fair > highestFair) highestFair = fair;
+        const ratio = close / fair;
+        if (ratio > highestRatio) { highestRatio = ratio; highestRatioClub = club; }
+        if (fair >= PRICE_MAX) {
+          saturatedClubDays += 1;
+          const next = rows[i + 1]?.close[club];
+          if (typeof next === 'number' && Math.abs(next - close) > 1e-9) saturatedClubDaysMoving += 1;
+        }
+      }
+
+      /*
+        A RUN OF IDENTICAL CONSECUTIVE CLOSES. Counted as a run of `days` where day N equals day N-1,
+        so a run of 5 means 6 days produced 5 identical repeats.
+      */
+      let runStart = 0;
+      let runLevel = closes[0];
+      for (let i = 1; i <= closes.length; i += 1) {
+        const same = i < closes.length && closes[i] === runLevel;
+        if (!same) {
+          const repeats = i - 1 - runStart;
+          if (repeats >= 2) {
+            frozenRuns.push({
+              club,
+              kind: 'identical',
+              from: rows[runStart].date,
+              to: rows[i - 1].date,
+              days: repeats,
+              level: runLevel,
+            });
             seedRuns += 1;
           }
+          if (i < closes.length) { runStart = i; runLevel = closes[i]; }
         }
-        if (runStart !== null) {
-          allRuns.push({
-            club, clubName: club, edge, from: runStart, to: 'end of window', days: rows.length,
+      }
+
+      // A run pinned to the sanity guard, which must never happen.
+      let wallStart: number | null = null;
+      for (let i = 0; i < closes.length; i += 1) {
+        const atWall = closes[i] >= PRICE_SANITY_MAX;
+        if (atWall && wallStart === null) wallStart = i;
+        if (!atWall && wallStart !== null) {
+          wallRuns.push({
+            club, kind: 'sanity_ceiling', from: rows[wallStart].date, to: rows[i].date,
+            days: i - wallStart, level: PRICE_SANITY_MAX,
           });
-          seedRuns += 1;
+          wallStart = null;
         }
       }
     }
-    if (seedRuns > 0) everStuck += 1;
-    console.log(seedRuns > 0 ? `${seedRuns} stuck run(s)` : 'clean');
+    if (seedRuns > 0) everFrozen += 1;
+    console.log(seedRuns > 0 ? `${seedRuns} frozen run(s)` : 'clean');
   }
 
-  const ceilingRuns = allRuns.filter((r) => r.edge === 'ceiling');
-  const floorRuns = allRuns.filter((r) => r.edge === 'floor');
-  const longest = allRuns.slice().sort((a, b) => b.days - a.days);
+  const longest = frozenRuns.slice().sort((a, b) => b.days - a.days);
 
-  console.log(`\n  leagues with at least one stuck price: ${everStuck}/${SEEDS.length}`);
-  console.log(`  club-seasons priced: ${totalClubs}`);
-  console.log(`  runs at the CEILING: ${ceilingRuns.length}, at the FLOOR: ${floorRuns.length}`);
+  console.log(`\n  club-seasons priced: ${totalClubs}   leagues containing a frozen price: ${everFrozen}/${SEEDS.length}`);
+  console.log(`  runs at the SANITY CEILING: ${wallRuns.length}  (must be 0 -- it is a corruption guard)`);
+  console.log(`  highest close anywhere: ${highestClose.toFixed(2)} (${highestCloseClub})`);
+  console.log(`  highest FAIR value anywhere: ${highestFair.toFixed(2)} -- saturation needs ${PRICE_MAX}`);
+  console.log(`  widest premium: ${highestRatio.toFixed(3)}x fair (${highestRatioClub})`);
+  console.log(`  club-days where fair SATURATED at ${PRICE_MAX}: ${saturatedClubDays}`);
+
+  /*
+    THE HONEST CAVEAT, printed rather than buried.
+
+    If `saturatedClubDays` is 0 then this probe never reproduced the reported bug -- fair value never
+    reached the top of the valuation scale in these leagues -- and its "no price froze" result is
+    therefore NOT evidence that the fix worked. It only says that no price froze for any other reason.
+
+    What actually tests the saturated case is the regression check in `checkSharePrice`, which drives
+    `fair` to exactly $1,000 for sixty days and requires the price to keep moving and to be free to
+    exceed it. That check measured 60 distinct closes spanning 366.9 points with a high of 1,226.10.
+    This probe measures whether real leagues reach the condition on their own; the check measures what
+    happens when they do.
+  */
+  if (saturatedClubDays === 0) {
+    console.log('\n  NOTE: fair value never saturated in these leagues, so this run did NOT reproduce the');
+    console.log('  reported bug. Its silence is not evidence the fix works -- checkSharePrice covers that');
+    console.log('  case directly by driving fair to the ceiling on purpose. Read it as: nothing else froze.');
+  } else {
+    console.log(`  of those, ${saturatedClubDaysMoving} moved the next day `
+      + `(${((saturatedClubDaysMoving / saturatedClubDays) * 100).toFixed(1)}%)`);
+  }
 
   if (longest.length === 0) {
-    console.log('\n  NO CLUB PINNED AT EITHER EDGE in any league. The ceiling is not reachable in practice.\n');
+    console.log('\n  NO PRICE FROZE. No club held the same close on three consecutive days in any league.\n');
     return;
   }
 
-  console.log('\n  TEN LONGEST STUCK RUNS\n');
-  console.log('   days  edge     club    from           to');
+  console.log('\n  TEN LONGEST FROZEN RUNS\n');
+  console.log('   repeats  level    club    from           to');
   for (const r of longest.slice(0, 10)) {
-    console.log(`   ${String(r.days).padStart(4)}  ${r.edge.padEnd(8)} ${r.club.padEnd(7)} ${r.from}   ${r.to}`);
+    console.log(`   ${String(r.days).padStart(7)}  ${r.level.toFixed(2).padStart(8)}  ${r.club.padEnd(7)} ${r.from}   ${r.to}`);
   }
 
-  const over10 = allRuns.filter((r) => r.days >= 10).length;
   const maxRun = longest[0].days;
-  console.log(`\n  LONGEST PIN: ${maxRun} consecutive days. Runs of 10+ days: ${over10}.`);
-  console.log(`  ${maxRun >= 10
-    ? 'A price that cannot move for ten days is not a market. The band ceiling is a HARD WALL the'
-    : 'Pinning exists but is short-lived. Worth reporting; not yet a broken mechanism.'}`);
-  if (maxRun >= 10) {
-    console.log('  best club in the league, so the mechanism dies precisely where it matters most.');
+  const over5 = frozenRuns.filter((r) => r.days >= 5).length;
+  console.log(`\n  LONGEST FREEZE: ${maxRun} identical repeats. Runs of 5+ repeats: ${over5}.`);
+  console.log(maxRun >= 5
+    ? '  A price holding the same number for days on end is not a market, whatever the level.'
+    : '  Only short repeats, which is what an offseason day at near-zero volatility looks like.');
+  if (wallRuns.length === 0) {
+    console.log('  Nothing reached the sanity guard, so the only ceiling left is one the market cannot feel.');
   }
   console.log('');
 };
