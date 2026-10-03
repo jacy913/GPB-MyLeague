@@ -158,6 +158,59 @@ const strayedFromFair = (
 };
 
 /**
+ * One club's row on the board: latest close, and how far it sits from its recorded fair value.
+ *
+ * Both come from the SLICED ledger, so a tile always describes the same window the chart above it
+ * does. A board reading a 30-day window beside a chart reading "All" would be two different claims
+ * about the same club on the same screen.
+ */
+interface BoardRow {
+  team: Team;
+  price: number;
+  date: string;
+  fair: number | null;
+  stray: number | null;
+  /** The club's own closes across the visible window, for the tile's sparkline. */
+  spark: PricePoint[];
+}
+
+const buildBoard = (
+  ledger: PriceSeries[] | undefined,
+  teams: Team[],
+  pricedIds: string[],
+): BoardRow[] => {
+  if (!ledger || ledger.length === 0) return [];
+  const rows: BoardRow[] = [];
+  for (const id of pricedIds) {
+    const team = teams.find((t) => t.id === id);
+    if (!team) continue;
+    // Walk backwards for this club's own LAST close rather than assuming the ledger's final day has
+    // one. A club absent from the last day would otherwise be dropped off the board entirely, which
+    // is a much worse lie than showing it a day stale with the date printed beside it.
+    for (let i = ledger.length - 1; i >= 0; i -= 1) {
+      const day = ledger[i];
+      const close = day.close[id];
+      if (typeof close !== 'number' || !Number.isFinite(close)) continue;
+      const fair = day.fair?.[id];
+      const fairOk = typeof fair === 'number' && Number.isFinite(fair) && fair !== 0 ? fair : null;
+      rows.push({
+        team,
+        price: close,
+        date: day.date,
+        fair: fairOk,
+        stray: fairOk === null ? null : close / fairOk - 1,
+        spark: (clubCloseSeries(ledger, id).filter((p) => p !== null) as PricePoint[]),
+      });
+      break;
+    }
+  }
+  // RANKED BY PRICE, because this is a market board and the order a reader wants is the order the
+  // market has put them in. A club that has climbed to the top of the league should be findable
+  // without reading thirty-two numbers.
+  return rows.sort((a, b) => b.price - a.price);
+};
+
+/**
  * The range windows, shortest first, with `All` last.
  *
  * `null` means "no window" rather than a large number, because a large number would have to be
@@ -326,6 +379,10 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
   */
   const fairDays = fairPoints.filter((p) => p !== null).length;
   const hasFair = fairDays >= 2;
+  const board = React.useMemo(
+    () => buildBoard(visibleLedger, teams, pricedClubIds),
+    [visibleLedger, teams, pricedClubIds],
+  );
 
   /*
     THE HOVER READOUT, and its index is into the SLICED series.
@@ -731,6 +788,147 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
           </div>
         )}
       </Panel>
+
+      {/*
+        THE BOARD.
+
+        Thirty-two crests at 400px is not a gallery of pictures, it is the league's price list, and
+        it is built as one: every tile carries the club's latest close, the day it was taken, and its
+        distance from its own recorded fair value, ranked by price. A grid of logos with no numbers
+        would be wallpaper; the numbers are the reason to look at it.
+
+        CLICKING A TILE SELECTS THAT CLUB, reusing the selection the chart already has. One selection
+        model for the whole page means the chart, the crest in the headline, the fair line and these
+        tiles can never disagree about which club is being looked at.
+
+        LAZY, and it is not optional at this size. The sources run from 500px to 5016px square; a
+        single 5016px PNG decodes to roughly 100 MB of bitmap, so thirty-two eagerly decoded is a tab
+        that dies rather than a page that is slow. `loading="lazy"` keeps only the tiles near the
+        viewport resident, which is what makes 400px affordable at all.
+
+        `min-w-0` on the tile so the price figures cannot force the grid wider than its columns, and
+        `overflow-hidden` on the crest box because several of these logos are square artwork with
+        detail that runs to the very edge.
+      */}
+      {board.length > 0 ? (
+        <Panel className="overflow-hidden">
+          <PanelHeader
+            title="All clubs"
+            tagline={`${board.length} listed, ranked by price`}
+            leading={(
+              <img
+                src={gpbMark}
+                alt=""
+                aria-hidden="true"
+                className="h-[26px] w-auto shrink-0 object-contain"
+              />
+            )}
+          />
+<div className="grid grid-cols-1 gap-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
+            {board.map((row, index) => {
+              const isPrimary = row.team.id === activeClub;
+              const isCompare = row.team.id === activeCompare;
+              return (
+                <button
+                  key={row.team.id}
+                  type="button"
+                  onClick={() => setSelectedClub(isPrimary ? null : row.team.id)}
+                  aria-pressed={isPrimary}
+                  className={[
+                    'group relative flex min-w-0 flex-col items-center gap-2 rounded p-3 text-center transition-colors',
+                    'border',
+                    isPrimary
+                      ? 'border-[var(--color-neutral)] bg-[var(--color-panel-2)]'
+                      : isCompare
+                        ? 'border-[var(--color-chrome-mid)] bg-[var(--color-panel-2)]'
+                        : 'border-[var(--color-chrome-lo)] bg-[var(--color-panel)] hover:border-[var(--color-chrome-mid)] hover:bg-[var(--color-panel-2)]',
+                  ].join(' ')}
+                >
+                  {/*
+                    THE RANK, because the board is sorted by price and nothing else on the card
+                    says so. A reader who wants "who is on top" should not have to infer it from
+                    reading order, and a number is quieter than a "1st" badge.
+
+                    Teal rather than gold: nothing here is a winner, it is a position in a price list.
+                  */}
+                  <span className="absolute left-2 top-2 t-caption text-[var(--color-ink-faint)]">
+                    {index + 1}
+                  </span>
+                  {isCompare ? (
+                    <span className="absolute right-2 top-2 t-caption text-[var(--color-ink-dim)]">
+                      comparing
+                    </span>
+                  ) : null}
+
+                  {/*
+                    THE CREST, IN AN INSET WELL.
+
+                    The wells exist because the source artwork is inconsistent: some crests are drawn to
+                    fill their square and some carry wide transparent margins, so at a fixed 400px box
+                    one club fills it and the next floats in the middle of a hole twice its size. A
+                    shared, slightly recessed well gives all thirty-two the same visual ground, and
+                    the difference you see left over is the difference in the ART rather than in the
+                    padding somebody happened to export.
+                  */}
+                  <span className="flex w-full items-center justify-center rounded bg-[var(--color-base-2)] p-2"
+                    style={{ border: '1px solid var(--color-chrome-lo)' }}>
+                    <TeamLogo
+                      team={row.team}
+                      sizeClass="w-full h-[340px] overflow-hidden"
+                      lazy
+                    />
+                  </span>
+
+                  <span className="w-full min-w-0 truncate t-h3">
+                    {row.team.city} {row.team.name}
+                  </span>
+
+                  {/*
+                    THE PRICE IS THE HEADLINE OF THE CARD, not the crest.
+
+                    This is an exchange. The crest is how you recognise the club; the number is what
+                    you came for, and at caption weight beside a 400px picture it was unreadable. So
+                    the price takes the stat size and the stray drops to a chip beneath it.
+                  */}
+                  <span className="t-stat text-[var(--color-ink)]">
+                    {Math.round(row.price)}
+                  </span>
+
+                  {row.stray !== null ? (
+                    <span className="rounded px-2 py-0.5 t-caption text-[var(--color-neutral)]"
+                      style={{ border: '1px solid var(--color-neutral)' }}>
+                      {row.stray >= 0 ? '+' : ''}
+                      {(row.stray * 100).toFixed(1)}% vs fair
+                    </span>
+                  ) : (
+                    <span className="t-caption text-[var(--color-ink-faint)]">no fair value recorded</span>
+                  )}
+
+                  {/*
+                    NO SPARKLINE, and the first attempt at one is the reason this note exists.
+
+                    A trend was tried here and it was worse than nothing. On the shared fixed 0-1000
+                    axis, a price moving a few points across eight days is roughly one pixel of
+                    movement, so all thirty-two rendered as the same flat red rule. Thirty-two
+                    identical rules under thirty-two crests read as a rendering fault, not as data.
+
+                    Fitting each sparkline to its own min and max would make the shapes readable and
+                    put thirty-two different scales on one screen, which is its own kind of lie: two
+                    clubs' trends side by side would look comparable and would not be. And the
+                    information is not lost -- clicking a card selects the club and the chart above
+                    shows its path at full size, which is the right place for a shape.
+
+                    So a card carries rank, crest, name, price, premium and date, and stops.
+                  */}
+                  <span className="t-caption text-[var(--color-ink-faint)]">
+                    {row.date} · {row.spark.length} {row.spark.length === 1 ? 'day' : 'days'} priced
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : null}
     </div>
   );
 };

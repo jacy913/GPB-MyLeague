@@ -15,6 +15,18 @@ export interface TeamLogoProps {
    * if a specific logo does fringe against a particular surface.
    */
   plate?: boolean;
+  /**
+   * Defer decoding until the image is near the viewport.
+   *
+   * NOT the default, and the reason is worth stating: `loading="lazy"` on a crest that is already
+   * on screen costs a visible pop-in for no saving, and most call sites here are above the fold.
+   *
+   * It exists for the one caller that renders THIRTY-TWO of these at once at 400px. The library is
+   * super-HD -- the sources run from 500px to 5016px square -- and a single 5016px PNG decodes to
+   * roughly 100 MB of bitmap. Thirty-two of them eagerly decoded is a tab that dies, not a page
+   * that is slow. Lazy keeps only the visible tiles resident.
+   */
+  lazy?: boolean;
 }
 
 /*
@@ -88,7 +100,7 @@ const getTeamLogoBaseUrl = (teamId: string): string | null => {
   return data.publicUrl;
 };
 
-const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10', plate = false }) => {
+const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-10', plate = false, lazy = false }) => {
   const [logoFailed, setLogoFailed] = useState(false);
   const [cacheVersion, setCacheVersion] = useState<number | null>(null);
   const localLogoUrl = useMemo(() => getLocalTeamLogoUrl(team), [team]);
@@ -151,6 +163,8 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
           src={logoUrl}
           alt={`${team.name} logo`}
           className="h-full w-full object-contain"
+          loading={lazy ? 'lazy' : undefined}
+          decoding={lazy ? 'async' : undefined}
           onError={() => setLogoFailed(true)}
         />
       ) : (
@@ -171,5 +185,8 @@ const TeamLogoComponent: React.FC<TeamLogoProps> = ({ team, sizeClass = 'w-10 h-
 
 export const TeamLogo = React.memo(
   TeamLogoComponent,
-  (prev, next) => prev.team.id === next.team.id && prev.sizeClass === next.sizeClass && prev.plate === next.plate,
+  (prev, next) => prev.team.id === next.team.id
+    && prev.sizeClass === next.sizeClass
+    && prev.plate === next.plate
+    && prev.lazy === next.lazy,
 );
