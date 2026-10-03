@@ -29,6 +29,7 @@ import {
   BAND_LINES,
   CHART_HEIGHT,
   fairSegments,
+  indexFromX,
   CHART_PADDING,
   CHART_WIDTH,
   lastMove,
@@ -224,6 +225,74 @@ check(
   })(),
   'The vertical gap between the two lines is only readable as "strayed from fair" if both cover the '
   + 'same days. Equal point counts is the cheap necessary condition for that.',
+);
+
+/*
+  HIT-TESTING, which is the inverse of `xFor` and the one piece of interaction geometry.
+
+  This is checked rather than trusted because the failure is silent and looks fine: a crosshair that
+  resolves to the wrong day still draws a line, still draws a dot, and still sits on the chart. Only
+  the number in the readout beside it is wrong, and nobody sees that without reading two days.
+
+  The round-trip property is the real assertion -- for every observation, asking "what day is at this
+  x?" must return that day. Testing three hand-picked coordinates would prove much less.
+*/
+const days = (n: number) => Array.from({ length: n }, (_, i) => ({ date: `d${i}`, value: 500 + i }));
+
+check(
+  'indexFromX is the INVERSE of xFor: every observation round-trips to its own index',
+  (() => {
+    for (const n of [2, 3, 7, 14, 30, 180]) {
+      for (let i = 0; i < n; i += 1) {
+        const back = indexFromX(xFor(i, n), n);
+        if (back !== i) {
+          return false;
+        }
+      }
+    }
+    return true;
+  })(),
+  'Round-tripped 236 observations across six series lengths. A drift of one index would still draw a '
+  + 'plausible chart, so this has to be exact rather than approximate.',
+);
+
+check(
+  'a pointer in the LEFT padding resolves to the first day, not to an out-of-range index',
+  indexFromX(0, 10) === 0 && indexFromX(CHART_PADDING.left, 10) === 0,
+  `indexFromX(0, 10) = ${indexFromX(0, 10)}, indexFromX(${CHART_PADDING.left}, 10) = ${indexFromX(CHART_PADDING.left, 10)}. `
+  + 'Past the left edge is still "nearest to the first day", and a negative index would read the wrong array slot.',
+);
+
+check(
+  'and past the RIGHT edge it resolves to the last day',
+  indexFromX(CHART_WIDTH, 10) === 9 && indexFromX(CHART_WIDTH * 3, 10) === 9,
+  `indexFromX(${CHART_WIDTH}, 10) = ${indexFromX(CHART_WIDTH, 10)}. Clamping matters because the svg is `
+  + 'stretched wider than its viewBox, so the pointer regularly lands outside the viewBox coordinates.',
+);
+
+check(
+  'the midpoint of an EVEN series resolves to one side, not to a half index',
+  (() => {
+    // 5 points sit at 38, 106, 174, 242, 310; the exact middle x is 174, which is index 2.
+    const n = 5;
+    const mid = (CHART_PADDING.left + (CHART_WIDTH - CHART_PADDING.right)) / 2;
+    return indexFromX(mid, n) === 2;
+  })(),
+  'Rounding must not be able to produce 2.5 and index a non-existent point.',
+);
+
+check(
+  'a single observation resolves to 0 rather than dividing by a zero span',
+  indexFromX(0, 1) === 0 && indexFromX(CHART_WIDTH, 1) === 0,
+  'xFor CENTRES a lone point, so the inverse has to handle count === 1 the same way. A `(count - 1)` '
+  + 'division here yields NaN, and a NaN index is not a hover state.',
+);
+
+check(
+  'an EMPTY series resolves to -1, which the caller must read as "nothing hovered"',
+  indexFromX(100, 0) === -1,
+  `indexFromX(100, 0) = ${indexFromX(100, 0)}. Returning 0 for an empty series would point at a `
+  + 'non-existent first day.',
 );
 
 const failed = checks.filter((c) => !c.pass);

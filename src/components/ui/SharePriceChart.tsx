@@ -83,6 +83,40 @@ export const xFor = (index: number, count: number, width: number = CHART_WIDTH):
 };
 
 /**
+ * Which observation a pointer is nearest, from a position in VIEWBOX units.
+ *
+ * THE INVERSE OF `xFor`, and exported and checked for the same reason `xFor` is: hit-testing that
+ * lives inline in a pointer handler is untestable and wrong in a way nobody notices, because the
+ * symptom is a crosshair that sits one day away from the dot it is labelling.
+ *
+ * Two details are load-bearing:
+ *
+ *  - It takes viewBox units, not client pixels. The caller must scale by the ratio between the
+ *    rendered width and `CHART_WIDTH`, because the chart is rendered stretched (`preserveAspectRatio
+ *    = "none"` plus a full-width class). Feeding client pixels straight in works only at exactly
+ *    720px and drifts everywhere else -- and by the right edge it would return the last index for
+ *    almost the whole plot.
+ *  - A single observation is CENTRED, matching `xFor`, so `indexFromX` at its own x returns 0 rather
+ *    than falling out of a `(count - 1)` division by zero.
+ *
+ * Clamped at both ends: a pointer dragged past the plot resolves to the first or last day rather
+ * than to `null` or an out-of-range index. Off-plot is still "nearest to an edge".
+ */
+export const indexFromX = (
+  x: number,
+  count: number,
+  width: number = CHART_WIDTH,
+): number => {
+  if (count <= 0) return -1;
+  if (count === 1) return 0;
+  const span = plotWidth(width);
+  if (span <= 0) return 0;
+  const ratio = (x - CHART_PADDING.left) / span;
+  const index = Math.round(ratio * (count - 1));
+  return Math.max(0, Math.min(count - 1, index));
+};
+
+/**
  * The polyline path.
  *
  * Returns an empty string for no points rather than a degenerate path, so a caller can test truthiness
@@ -180,6 +214,19 @@ export interface SharePriceChartProps {
    * y-axis". Re-matching by date inside the chart would silently realign them and destroy that.
    */
   fair?: readonly (PricePoint | null)[];
+  /**
+   * Reports which observation the pointer is over, or `null` when it has left.
+   *
+   * The READOUT IS THE CALLER'S, not the chart's, and that is deliberate rather than a limitation.
+   * This SVG is rendered stretched, so any text drawn inside it is horizontally distorted along with
+   * the geometry -- which is already true of the band labels and is a separate thing to fix. Putting
+   * the numbers in real HTML beside the chart keeps them selectable, translatable and readable by a
+   * screen reader at its natural size.
+   *
+   * What stays inside is the crosshair: a vertical line and two dots, which are not text and are not
+   * visibly harmed by the scale.
+   */
+  onHover?: (index: number | null) => void;
   className?: string;
 }
 
@@ -190,12 +237,68 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   'aria-label': ariaLabel,
   showBand = false,
   fair,
+  onHover,
   className = '',
 }) => {
   const path = linePath(points, width, height);
   // Teal, the neutral accent. This is a reference line and not a bet, so it takes neither the
   // positive nor the negative colour -- a dashed fair line in green would read as an outcome.
   const fairPaths = fair ? fairSegments(fair, width, height) : [];
+  const [hover, setHover] = React.useState<number | null>(null);
+
+  /*
+    REPORTING IS THE EFFECT, and the state is private, so a caller that passes `onHover` cannot be
+    left showing a day the pointer has already left. `onHover` is also deliberately NOT in the
+    dependency list: a caller passing an inline arrow would otherwise get a fresh callback every
+    render, and an effect keyed on it would fire on every render too. Using a ref for the latest
+    callback is what keeps the notification tied to the HOVER rather than to renders.
+  */
+  const onHoverRef = React.useRef(onHover);
+  onHoverRef.current = onHover;
+
+  const announce = React.useCallback((index: number | null) => {
+    setHover(index);
+    onHoverRef.current?.(index);
+  }, []);
+
+  /*
+    CLIENT PIXELS TO VIEWBOX UNITS.
+
+    The svg is stretched to its container, so `event.clientX` is in a coordinate system up to twice
+    the size of the one every geometry function here uses. Without this scale the crosshair drifts
+    progressively right and is pinned to the last day across the right-hand third of the plot.
+    `getBoundingClientRect` is read at event time rather than cached, because the panel resizes.
+  */
+  const handlePointer = (event: React.PointerEvent<SVGSVGElement>): void => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const x = ((event.clientX - rect.left) / rect.width) * width;
+    announce(indexFromX(x, points.length, width));
+  };
+
+  /*
+    KEYBOARD PARITY, because a pointer-only readout is not a feature for everyone.
+
+    Arrow keys step a day, Home and End jump to the ends, Escape clears. `preventDefault` on the
+    arrows so the page does not scroll while someone is walking the series.
+  */
+  const handleKey = (event: React.KeyboardEvent<SVGSVGElement>): void => {
+    if (points.length === 0) return;
+    const current = hover === null ? points.length - 1 : hover;
+    const step = (next: number): void => {
+      event.preventDefault();
+      announce(Math.max(0, Math.min(points.length - 1, next)));
+    };
+    if (event.key === 'ArrowRight') step(current + 1);
+    else if (event.key === 'ArrowLeft') step(current - 1);
+    else if (event.key === 'Home') step(0);
+    else if (event.key === 'End') step(points.length - 1);
+    else if (event.key === 'Escape') announce(null);
+    else return;
+  };
+
+  const hoveredPoint = hover !== null && hover >= 0 && hover < points.length ? points[hover] : null;
+  const hoveredFair = hover !== null && fair ? fair[hover] ?? null : null;
 
   return (
     <svg
@@ -206,6 +309,22 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       role="img"
       aria-label={ariaLabel ?? 'HXSE share price'}
       preserveAspectRatio="none"
+      onPointerMove={handlePointer}
+      onPointerLeave={() => announce(null)}
+      onKeyDown={handleKey}
+      onBlur={() => announce(null)}
+      /*
+        FOCUSABLE, and the reason is that the readout is only reachable another way.
+
+        The svg keeps `role="img"` rather than becoming a `slider` or `application`: the thing being
+        communicated is a picture of a series, and the arrow keys are a convenience for reaching the
+        numbers, not the only way to get them -- the caller's readout region is the accessible path
+        and is marked `aria-live` on its side. A `tabIndex` with no role change is the honest middle.
+
+        Not focusable when there is nothing to walk: an empty or single-point series would give the
+        keyboard focus to a chart with no second day to move to.
+      */
+      tabIndex={points.length > 1 ? 0 : undefined}
     >
       {showBand && BAND_LINES.map((line) => (
         <g key={line.value}>
@@ -242,6 +361,50 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           vectorEffect="non-scaling-stroke"
         />
       ))}
+
+      {/*
+        THE CROSSHAIR, drawn above both series so the dot on the close sits on top of the line it
+        belongs to.
+
+        The vertical rule is `--color-ink-faint` at low opacity rather than a series colour: it marks
+        a POSITION, and colouring it teal would make it read as fair value. `vectorEffect` keeps it
+        one pixel wide under the horizontal stretch.
+      */}
+      {hoveredPoint ? (
+        <g pointerEvents="none">
+          <line
+            x1={xFor(hover as number, points.length, width)}
+            x2={xFor(hover as number, points.length, width)}
+            y1={CHART_PADDING.top}
+            y2={height - CHART_PADDING.bottom}
+            stroke="var(--color-ink-faint)"
+            strokeWidth={1}
+            strokeOpacity={0.5}
+            vectorEffect="non-scaling-stroke"
+          />
+          {/* The fair dot is drawn only where a valuation was actually recorded. */}
+          {hoveredFair ? (
+            <circle
+              cx={xFor(hover as number, points.length, width)}
+              cy={yFor(hoveredFair.value, height)}
+              r={3}
+              fill="none"
+              stroke="var(--color-neutral)"
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : null}
+          <circle
+            cx={xFor(hover as number, points.length, width)}
+            cy={yFor(hoveredPoint.value, height)}
+            r={3.5}
+            fill="var(--color-media-glorest)"
+            stroke="var(--color-panel)"
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        </g>
+      ) : null}
 
       {/*
         The area under the line is the chart's only non-data ink. It is drawn from the line down to the

@@ -4,30 +4,45 @@ import { Panel, PanelHeader } from '../ui';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
 
 /**
- * THE EXCHANGE -- scaffolded, not finished.
+ * THE EXCHANGE -- where the HXSE price path is made visible.
  *
  * ============================================================================
- * WHY THIS IS A HOUSE WITHOUT FURNITURE
+ * WHAT THIS PAGE IS, AND WHY IT LOOKS THE WAY IT DOES
  * ============================================================================
  *
- * The price path has been complete and invisible since it was wired into the day loop: every
- * simulated day is priced, persisted, reloaded, and never drawn. This page exists so that gap is
- * visible in the product rather than only in a git log.
- *
- * It is deliberately thin. What is here is the one thing worth proving end-to-end -- that a season of
- * computed closes can be turned into a readable chart -- and nothing else. Every addition below this
- * line is a decision that should be made against something on screen, not in advance.
+ * The price path was complete and invisible for a long time: every simulated day was priced,
+ * persisted, reloaded and never drawn. This page is the whole of the surface that shows it.
  *
  * ============================================================================
- * WHAT IS DELIBERATELY NOT HERE YET
+ * THE FOUR RULES EVERYTHING HERE FOLLOWS
  * ============================================================================
  *
- *  - FAIR VALUE AS A SECOND LINE. `PriceSeries` persists closes only. Fair prices are an assessment
- *    made on the day, not a record of it, so drawing them means either recomputing the whole season
- *    on open or adding a second persisted field. That is a schema decision, not a layout one.
- *  - PER-CLUB DRILL-DOWN. Needs a selection model and a way to keep 32 series legible.
- *  - ANY INTERACTION. No hover readout, no range control. A chart you can only read whole is the
- *    honest first version.
+ *  1. SHOW A RECORD, NOT A RECOMPUTATION. The fair line is the valuation that was actually used on
+ *     the day. Recomputing it later runs different Monte Carlo trials against a different roster and
+ *     returns a different number, which would set a real trade against a hypothetical one.
+ *  2. SHOW A GAP WHERE THERE IS NO DATA. A day with a close and no valuation breaks the fair line.
+ *     A day with neither is absent. Nothing is interpolated, padded or repeated to fill a window.
+ *  3. LABEL THE AGGREGATE FOR WHAT IT IS. The default series is a MEAN OF CLOSES, labelled "average
+ *     club price". It is not the HXSE index and does not borrow that name; `hxseIndex.ts` has a
+ *     proper value-weighted composite computed from fair values.
+ *  4. A DEVIATION FROM FAIR IS NOT AN OUTCOME. It is printed in the neutral teal, never green or
+ *     orange, because being 8% above fair value is neither good news nor bad news -- it is expensive.
+ *
+ * ============================================================================
+ * WHAT IS STILL NOT HERE
+ * ============================================================================
+ *
+ *  - NO PER-CLUB COMPARISON. One club at a time by deliberate choice; see the note on the selection
+ *    below for why thirty-two overlays on a 0-1000 axis would be a grey rectangle.
+ *  - NO BETTING AGAINST THE STRAY. The gap between the two lines is the obvious thing to make
+ *    actionable and the whole `strayedFromFair` figure is already computed for it. That needs a
+ *    market, a settlement rule and a calibration check, and none of those exist yet.
+ *  - NO WORKING DAY CALENDAR. The x-axis is indexed by SIMULATED day, so the league's off-days do not
+ *    appear as gaps. True calendar spacing is a different chart and a different set of questions.
+ *  - TEXT INSIDE THE CHART IS STILL STRETCHED. The svg renders with `preserveAspectRatio="none"` to
+ *    fill the panel, which horizontally distorts anything drawn inside it -- including the 0/500/1000
+ *    band labels. The hover readout is deliberately HTML for this reason. Fixing the axis labels
+ *    properly means switching to a non-scaling text strategy, which is its own change.
  */
 
 export interface ExchangeViewProps {
@@ -129,6 +144,20 @@ const strayedFromFair = (
   return null;
 };
 
+/**
+ * The range windows, shortest first, with `All` last.
+ *
+ * `null` means "no window" rather than a large number, because a large number would have to be
+ * compared against the ledger length to decide whether to pad, and padding a price history is the one
+ * thing this page never does.
+ */
+const RANGES: Array<{ label: string; days: number | null }> = [
+  { label: '7d', days: 7 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: 'All', days: null },
+];
+
 export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds, teamNames }) => {
   /*
     ONE CLUB AT A TIME, and never all of them at once.
@@ -141,8 +170,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
     `null` means the league average, which is where the page starts.
   */
   const [selectedClub, setSelectedClub] = React.useState<string | null>(null);
-  const averagePoints = averageCloseSeries(priceLedger);
-  const averageFair = averageFairSeries(priceLedger);
+  const [rangeDays, setRangeDays] = React.useState<number | null>(30);
 
   // Only clubs with at least one recorded close can be selected; offering the rest would let a
   // player pick a chart that cannot be drawn.
@@ -159,19 +187,55 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
   // selection would otherwise draw someone else's price path.
   const activeClub = selectedClub && pricedClubIds.includes(selectedClub) ? selectedClub : null;
 
+  /*
+    THE RANGE SLICES THE LEDGER, NOT THE SERIES, and that ordering is the whole implementation.
+
+    Every derived array on this page -- the close series, the fair series, the stray figure -- is
+    built by mapping over the ledger in the same pass, because the chart depends on the close and the
+    fair value for a day sharing an INDEX. Slicing the ledger first preserves that by construction.
+    Slicing the two series separately would be one filter too many and could drop a day from one and
+    not the other, which slides every later point left and turns the gap between the lines into a
+    different number.
+
+    A window wider than the ledger yields everything there is. It does not pad, repeat, or
+    interpolate to fill -- a 30-day button on a 12-day market shows 12 days and the caption says 12,
+    because padding a price history with days nobody traded is precisely the invention this page
+    refuses everywhere else.
+  */
+  const visibleLedger = React.useMemo(
+    () => (rangeDays === null || !priceLedger ? priceLedger : priceLedger.slice(-rangeDays)),
+    [priceLedger, rangeDays],
+  );
+
+  /*
+    The league-average series, memoised on the SLICED ledger.
+
+    Both arrays come from the same `visibleLedger`, which is what keeps the close at index i and the
+    fair value at index i describing the same day. Deriving them from `priceLedger` and slicing
+    afterwards would put the two windows a different distance apart.
+  */
+  const averagePointsVisible = React.useMemo(
+    () => averageCloseSeries(visibleLedger),
+    [visibleLedger],
+  );
+  const averageFairVisible = React.useMemo(
+    () => averageFairSeries(visibleLedger),
+    [visibleLedger],
+  );
+
   const points = activeClub
-    ? (clubCloseSeries(priceLedger, activeClub).filter((p) => p !== null) as PricePoint[])
-    : averagePoints;
+    ? (clubCloseSeries(visibleLedger, activeClub).filter((p) => p !== null) as PricePoint[])
+    : averagePointsVisible;
   const fairPoints = activeClub
-    ? (priceLedger ?? []).map((day) => {
+    ? (visibleLedger ?? []).map((day) => {
       const value = day.fair?.[activeClub];
       return typeof value === 'number' && Number.isFinite(value) ? { date: day.date, value } : null;
     })
-    : averageFair;
+    : averageFairVisible;
   const latest = points[points.length - 1];
   const first = points[0];
   const clubName = activeClub ? (teamNames?.[activeClub] ?? activeClub) : null;
-  const stray = activeClub ? strayedFromFair(priceLedger, activeClub) : null;
+  const stray = activeClub ? strayedFromFair(visibleLedger, activeClub) : null;
   /*
     Whether to draw the second line at all, and how much of it survived.
 
@@ -183,6 +247,27 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
   */
   const fairDays = fairPoints.filter((p) => p !== null).length;
   const hasFair = fairDays >= 2;
+
+  /*
+    THE HOVER READOUT, and its index is into the SLICED series.
+
+    The chart reports an index and this page owns the numbers, so the two can never disagree about
+    which day is meant. `hovered` is read defensively: a pointer can still be over the chart when the
+    range changes underneath it, which leaves the old index pointing at a different day -- so an
+    out-of-range index reads as "nothing hovered" rather than as `undefined.value` throwing.
+
+    The readout is `aria-live="polite"` because it is also the keyboard path: tab to the chart, walk it
+    with the arrows, and the numbers are announced. Without the live region a screen-reader user
+    moving the crosshair would hear nothing at all.
+  */
+  const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
+  const hovered = hoverIndex !== null && hoverIndex >= 0 && hoverIndex < points.length
+    ? points[hoverIndex]
+    : null;
+  const hoveredFair = hoverIndex !== null && fairPoints[hoverIndex] ? fairPoints[hoverIndex] : null;
+  const hoveredStray = hovered && hoveredFair && hoveredFair.value !== 0
+    ? hovered.value / hoveredFair.value - 1
+    : null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -245,12 +330,17 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               ) : null}
             </div>
             {/*
-              SCAFFOLDING NOTE, deliberately visible.
+              THE HEADLINE STRIP, and it deliberately still reads the same in both modes.
 
-              One series, one chart, no controls. The numbers above it are the only derived values
-              here and both are trivially checkable against the ledger, which is the point: when the
-              per-club and fair-value work lands, this strip is the baseline it has to stay
-              consistent with.
+              This was written when the page was a scaffold and every number above the chart was
+              trivially checkable against the ledger. It still is: the big figure is the LAST close
+              in the visible range, the range label reports how many days that actually is, and the
+              teal figure is one close divided by one fair value from the SAME day.
+
+              The only change in meaning is which series it describes, and that is spelled out in the
+              caption rather than left to be inferred from the selector -- "average club price" and
+              "Agents share price" are different numbers and the reader should never have to guess
+              which one they are looking at.
             */}
             <div className="flex flex-wrap items-baseline gap-4">
               <span className="t-stat-lg text-[var(--color-ink)]">
@@ -264,6 +354,19 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               </span>
               <span className="t-caption text-[var(--color-ink-faint)]">
                 {points.length} {points.length === 1 ? 'day' : 'days'}
+                {/*
+                  WHY THE WINDOW IS SMALLER THAN THE BUTTON SAYS.
+
+                  `points.length` alone is true but leaves a question: the reader pressed "30d" and
+                  sees 14. Saying so costs one clause and pre-empts the reasonable suspicion that the
+                  page silently truncated something.
+                */}
+                {rangeDays !== null && points.length < rangeDays
+                  ? ` of the ${rangeDays}-day window`
+                  : ''}
+                {(priceLedger?.length ?? 0) > points.length
+                  ? ` · ${(priceLedger?.length ?? 0) - points.length} earlier not shown`
+                  : ''}
               </span>
               {/*
                 THE STRAY FIGURE, and it only appears for a single club.
@@ -283,9 +386,45 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               ) : null}
             </div>
 
+            {/*
+              THE RANGE, as a small button row rather than a second select.
+
+              Buttons here because the choices are a handful of mutually exclusive windows over the
+              same data -- the case a group of pressed/unpressed toggles is for. They use
+              `aria-pressed` rather than a `role="tablist"`, because these do not reveal different
+              panels; they re-draw the one already on screen, and calling that a tab would promise
+              something the markup does not do.
+
+              Every window is offered even when the ledger is shorter, because disabling 90d on a
+              12-day market implies the data is missing rather than not yet simulated. The caption
+              reports what is actually shown, which is the honest place for that.
+            */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="t-caption text-[var(--color-ink-faint)]">Range</span>
+              <div className="flex gap-1" role="group" aria-label="Date range">
+                {RANGES.map((range) => (
+                  <button
+                    key={range.label}
+                    type="button"
+                    aria-pressed={rangeDays === range.days}
+                    onClick={() => setRangeDays(range.days)}
+                    className={[
+                      'rounded px-2 py-1 t-caption transition-colors',
+                      rangeDays === range.days
+                        ? 'bg-[var(--color-chrome-mid)] text-[var(--color-ink)]'
+                        : 'text-[var(--color-ink-faint)] hover:text-[var(--color-ink)]',
+                    ].join(' ')}
+                  >
+                    {range.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <SharePriceChart
               points={points}
               fair={fairPoints}
+              onHover={setHoverIndex}
               width={720}
               height={140}
               showBand
@@ -309,6 +448,54 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                   : '')
               }
             />
+
+            {/*
+              THE READOUT. Real HTML rather than SVG text, because this chart is rendered stretched
+              and anything drawn inside it is horizontally distorted with the geometry. Out here it
+              stays selectable, translatable, and the right size.
+
+              Holds its height when nothing is hovered rather than collapsing, so the chart does not
+              jump the moment the pointer leaves. The resting text says what to do instead of showing
+              a blank.
+            */}
+            <div
+              className="flex min-h-[1.25rem] items-baseline gap-3"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {hovered ? (
+                <>
+                  <span className="t-caption text-[var(--color-ink-faint)]">{hovered.date}</span>
+                  <span className="t-stat-sm text-[var(--color-ink)]">
+                    {Math.round(hovered.value)}
+                  </span>
+                  <span className="t-caption text-[var(--color-ink-faint)]">
+                    {clubName ? `${clubName} close` : 'average close'}
+                  </span>
+                  {hoveredFair ? (
+                    <>
+                      <span className="t-caption text-[var(--color-neutral)]">
+                        fair {Math.round(hoveredFair.value)}
+                      </span>
+                      {hoveredStray !== null ? (
+                        <span className="t-caption text-[var(--color-ink-faint)]">
+                          {hoveredStray >= 0 ? '+' : ''}
+                          {(hoveredStray * 100).toFixed(1)}%
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="t-caption text-[var(--color-ink-faint)]">
+                      no fair value recorded
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  Hover or focus the chart and use the arrow keys to read a day.
+                </span>
+              )}
+            </div>
 
             {hasFair ? (
               <div className="mt-1 flex items-center gap-2">
