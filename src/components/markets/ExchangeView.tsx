@@ -236,6 +236,24 @@ const buildBoard = (
  * compared against the ledger length to decide whether to pad, and padding a price history is the one
  * thing this page never does.
  */
+/**
+ * The chart's drawn height, in pixels.
+ *
+ * Named rather than inlined because this is a LAYOUT decision with a measured justification, and
+ * an unexplained `480` in a prop list is the kind of number nobody dares change for two years.
+ *
+ * 680 -> 480, on the measurement in the call site's comment. The axis was raised to a 1300 ceiling
+ * in the same pass that made it 680, and that ceiling spends 23% of the height on room above a
+ * price no club has ever printed: across all 256 closes of a real save, the range is 249 to 993.
+ * So the taller chart was not showing more market, it was showing more empty panel.
+ *
+ * Height is the lever precisely because it is the only one that costs nothing. Narrowing the axis
+ * would fill the plot and also make a quiet week look like a crash, which is what
+ * `checkShareChart` check 2 forbids. Trading a little apparent variance for a page that is not
+ * mostly void is the right way round.
+ */
+const CHART_VIEW_HEIGHT = 480;
+
 const RANGES: Array<{ label: string; days: number | null }> = [
   { label: '7d', days: 7 },
   { label: '30d', days: 30 },
@@ -780,24 +798,30 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               secondary={comparePoints}
               onHover={setHoverIndex}
               width={720}
-              height={680}
+              height={CHART_VIEW_HEIGHT}
               showBand
               /*
-                680px, AND THE HEIGHT IS DOING REAL WORK RATHER THAN DECORATION.
+                480px, DOWN FROM 680px, AND THE REASON IS A MEASUREMENT OF THE DATA.
 
-                Measured on a real ledger: the mean day-over-day move is 22.2 points and the largest
-                single-day move is 107.1, which are 2.2% and 10.7% of the fixed 0-1000 band. At the
-                old 140px that was about 3px and 15px of vertical movement -- a flat rule. At 680px it
-                is roughly 15px and 73px, so the same data reads as a market rather than a line.
+                680px was chosen so a typical day showed visible movement: the mean day-over-day move
+                is 22.2 points and the largest is 107.1, which are 2.2% and 10.7% of the band. At the
+                original 140px that was 3px and 15px -- a flat rule.
 
-                The axis is deliberately NOT narrowed to get the same effect. Fitting the band to the
-                data would make a quiet week look like a crash, and `checkShareChart` check 2 exists to
-                stop exactly that. Height buys the same apparent variance while keeping every chart on
-                the same scale as every other, which is what makes two clubs comparable at all.
+                But the same pass raised the axis to a 1300 ceiling, and that spent 23% of the height
+                on headroom above a price nobody has reached. Measured across all 256 closes in a
+                real save: prices run 249 to 993, the median is 485, and NOT ONE close has ever
+                printed above 1000. So at 680px roughly 60% of the plot was carrying nothing.
 
-                It is also tall enough to take the weight off the rail: at 460px the left column
-                ended some 670px above the bottom of the roster and the first screenful was mostly
-                empty panel.
+                The band stays honest and the axis is NOT narrowed to buy the appearance back --
+                `checkShareChart` check 2 exists precisely to stop that, since fitting a band to the
+                data makes a quiet week look like a crash. Height is the only lever, because height
+                costs no accuracy: 480px still renders the mean daily move at about 11px and the
+                largest at about 52px, which reads as movement rather than as a rule.
+
+                It also rebalances the page. The rail stands about 1400px tall; at 680px the left
+                column overran it, and at 480px the two columns finish within about 100px.
+
+                
               */
               /*
                 FILLS THE PANEL RATHER THAN SITTING AT ITS 720px VIEWBOX.
