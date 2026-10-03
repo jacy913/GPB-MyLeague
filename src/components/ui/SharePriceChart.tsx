@@ -156,20 +156,25 @@ export const lastMove = (points: readonly PricePoint[]): number | null => {
 };
 
 /**
- * Paths for the recorded fair layer, one per CONTIGUOUS run of days that has one.
+ * Paths for a series that may be missing days, one per CONTIGUOUS run that has values.
  *
- * Returns an array rather than a single string, and that is the honest part. A day whose fair layer
- * was corrupt is dropped by the reader, leaving that day with a close and no valuation. Joining
- * straight across it would draw a line through a day the market was never priced against, which
- * reads as a measured path and is not one -- it would quietly assert a value the save cannot support.
+ * Returns an array rather than a single string, and that is the honest part. Two series on this
+ * chart can both have holes: the fair layer, where a day whose valuation was corrupt keeps its close
+ * and loses its valuation; and the comparison club's closes, where a club absent from a day leaves a
+ * `null`. Joining straight across either would draw a line through a day the data says nothing
+ * about, which reads as a measured path and is not one.
  *
- * So the gap is drawn as a gap. A fair line with a break in it is true; a continuous one through a
- * missing day is a fabrication with a stroke.
+ * So a gap is drawn as a gap. A line with a break in it is true; a continuous one through a missing
+ * day is a fabrication with a stroke.
+ *
+ * Named for what it does rather than for the first caller: both the fair layer and the comparison
+ * series use it, and a function called `fairSegments` that also drew comparison lines would be
+ * lying about its own contract.
  *
  * A run of one yields an `M` with nothing after it, which draws no visible mark -- correct, since a
- * lone valuation has no segment to it.
+ * lone value has no segment to it.
  */
-export const fairSegments = (
+export const gapSegments = (
   fair: readonly (PricePoint | null)[],
   width: number = CHART_WIDTH,
   height: number = CHART_HEIGHT,
@@ -216,6 +221,20 @@ export interface SharePriceChartProps {
    */
   fair?: readonly (PricePoint | null)[];
   /**
+   * A SECOND club's closes, drawn over the first for comparison.
+   *
+   * INDEX-ALIGNED with `points`, on the same fixed 0-1000 axis, and that is the whole design. Two
+   * clubs on one axis is readable; thirty-two is a grey rectangle, which is why this is a pair rather
+   * than a set. Because the axis is fixed rather than fitted to the pair, the vertical distance
+   * between the two lines IS the price difference -- auto-fitting would rescale on every selection
+   * and turn the comparison into a picture of nothing.
+   *
+   * Drawn in neutral ink rather than a second accent colour. Every accent in this app belongs to a
+   * named outlet or to a bet outcome, and a comparison line is neither; borrowing an accent would
+   * claim an identity the series does not have.
+   */
+  secondary?: readonly (PricePoint | null)[];
+  /**
    * Reports which observation the pointer is over, or `null` when it has left.
    *
    * The READOUT IS THE CALLER'S, not the chart's, and that is deliberate rather than a limitation.
@@ -238,6 +257,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   'aria-label': ariaLabel,
   showBand = false,
   fair,
+  secondary,
   onHover,
   className = '',
 }) => {
@@ -282,7 +302,21 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   const path = linePath(points, plotWidthUnits, height);
   // Teal, the neutral accent. This is a reference line and not a bet, so it takes neither the
   // positive nor the negative colour -- a dashed fair line in green would read as an outcome.
-  const fairPaths = fair ? fairSegments(fair, plotWidthUnits, height) : [];
+  const fairPaths = fair ? gapSegments(fair, plotWidthUnits, height) : [];
+  /*
+    THE COMPARISON LINE, drawn UNDER the primary so the primary stays the subject.
+
+    It is drawn with the same gap handling as the fair layer rather than as one solid stroke, because
+    a comparison club can be absent from a day for the same reasons fair value can be.
+
+    The length is checked first: a series of a different length than `points` would be positioned
+    against the wrong days, and `gapSegments` places by index, so a short array would silently
+    stretch. The page builds it from the same ledger in the same pass, so a mismatch means something
+    upstream has gone wrong and drawing nothing is the honest response.
+  */
+  const secondaryPaths = secondary && secondary.length === points.length
+    ? gapSegments(secondary, plotWidthUnits, height)
+    : [];
   const [hover, setHover] = React.useState<number | null>(null);
 
   /*
@@ -400,6 +434,24 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           strokeDasharray="4 3"
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
+        />
+      ))}
+
+      {/*
+        The comparison club, under everything. `--color-ink-faint` rather than a second accent: the
+        accents all belong to a named outlet or to a bet outcome, and a comparison series is neither.
+        It is the FAINTEST ink rather than the dim one because at 1px on a dark panel the dim ink was
+        reading brighter than the dashed fair line and pulling the eye off the club under study.
+      */}
+      {secondaryPaths.map((d, i) => (
+        <path
+          key={`secondary-${i}`}
+          d={d}
+          fill="none"
+          stroke="var(--color-ink-faint)"
+          strokeWidth={1}
+          strokeLinejoin="round"
+          strokeLinecap="round"
         />
       ))}
 

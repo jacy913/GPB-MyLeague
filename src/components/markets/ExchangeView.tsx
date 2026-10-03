@@ -175,6 +175,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
     `null` means the league average, which is where the page starts.
   */
   const [selectedClub, setSelectedClub] = React.useState<string | null>(null);
+  const [compareClub, setCompareClub] = React.useState<string | null>(null);
   const [rangeDays, setRangeDays] = React.useState<number | null>(30);
 
   // Only clubs with at least one recorded close can be selected; offering the rest would let a
@@ -191,6 +192,26 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
   // average rather than rendering an empty chart is the only honest option, since a stale
   // selection would otherwise draw someone else's price path.
   const activeClub = selectedClub && pricedClubIds.includes(selectedClub) ? selectedClub : null;
+
+  /*
+    THE COMPARISON CLUB, and it is EXCLUDED FROM ITS OWN DROPDOWN.
+
+    Two rules, both about not drawing a chart that means something other than what it says:
+
+      - It can never equal the primary. Comparing a club with itself produces two identical lines and
+        a spread of exactly zero, which reads as "these two clubs are the same" rather than "you
+        picked the same club twice". The option is removed rather than greyed so it cannot be chosen
+        at all.
+      - It must still be in the priced set, for the same staleness reason the primary is checked.
+
+    The primary keeps the close line and the fair line; the comparison gets a close line only. Two fair
+    lines would be three lines and two meanings, and the second fair line adds nothing -- what the
+    comparison is for is seeing two CLOSES diverge, and each club's own premium is already readable
+    from the primary's stray figure and from the comparison club's readout on any given day.
+  */
+  const activeCompare = compareClub && pricedClubIds.includes(compareClub) && compareClub !== activeClub
+    ? compareClub
+    : null;
 
   /*
     THE RANGE SLICES THE LEDGER, NOT THE SERIES, and that ordering is the whole implementation.
@@ -241,6 +262,42 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
   const first = points[0];
   const clubName = activeClub ? (teamNames?.[activeClub] ?? activeClub) : null;
   const stray = activeClub ? strayedFromFair(visibleLedger, activeClub) : null;
+
+  /*
+    THE COMPARISON SERIES, built with `null` padding rather than filtered.
+
+    `clubCloseSeries` returns a `null` for any day the club is absent from -- dropped by the strict
+    reader, or simply not in the league yet. Those days become gaps here, exactly as they do in the
+    fair layer. Filtering them out instead would slide every later point left against the primary
+    line, and two lines that appear to converge would only be misaligned.
+
+    The chart refuses to draw a secondary series whose length differs from the primary's, so this
+    array is the full ledger length by construction.
+  */
+  const comparePoints = activeCompare
+    ? clubCloseSeries(visibleLedger, activeCompare)
+    : null;
+  const compareName = activeCompare ? (teamNames?.[activeCompare] ?? activeCompare) : null;
+
+  /*
+    THE SPREAD ON THE LAST DAY, as a signed difference in price points rather than a percentage.
+
+    A percentage would be a claim about which club is "doing better", and over one day that is mostly
+    noise -- realised daily sigma is 0.83% on the mean close and about 4% on a single club, so a 1%
+    gap is not a story. Price points are what the chart is actually showing, and the vertical distance
+    between the two lines is already that number, so the readout says the same thing the eye does.
+
+    The two clubs' LAST closes are differenced even though they are read from index-aligned arrays,
+    and that is deliberate: the last close each of them actually traded at, rather than "the last day
+    both were present". When one club misses a day its own last close is older, and silently moving it
+    forward to match the other would invent a price it did not have. The caption names the date so the
+    reader can see which day the figure is from, and the hover readout always reads the SAME day for
+    both clubs or says which one is missing.
+  */
+  const latestCompare = comparePoints
+    ? [...comparePoints].reverse().find((p): p is PricePoint => p !== null) ?? null
+    : null;
+  const spread = latestCompare && latest ? latest.value - latestCompare.value : null;
   /*
     Whether to draw the second line at all, and how much of it survived.
 
@@ -270,6 +327,10 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
     ? points[hoverIndex]
     : null;
   const hoveredFair = hoverIndex !== null && fairPoints[hoverIndex] ? fairPoints[hoverIndex] : null;
+  const hoveredCompare = hoverIndex !== null && comparePoints && comparePoints[hoverIndex]
+    ? comparePoints[hoverIndex]
+    : null;
+  const hoveredSpread = hovered && hoveredCompare ? hovered.value - hoveredCompare.value : null;
   const hoveredStray = hovered && hoveredFair && hoveredFair.value !== 0
     ? hovered.value / hoveredFair.value - 1
     : null;
@@ -334,6 +395,36 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                 </span>
               ) : null}
             </div>
+
+            {/*
+              THE COMPARISON SELECT, hidden until a club is chosen.
+
+              With "All clubs (average)" as the primary there is nothing to compare against that means
+              anything -- an average against a single club is a different KIND of number, and the
+              spread between them would be read as a price gap between two things that are not two
+              things. So the control only appears once a real club is selected.
+
+              The primary is removed from the options rather than disabled, because a disabled option
+              that looks available on some browsers is a worse version of removing it.
+            */}
+            {activeClub ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="t-caption text-[var(--color-ink-faint)]" htmlFor="exchange-compare">
+                  Compare with
+                </label>
+                <select
+                  id="exchange-compare"
+                  className="rounded border border-[var(--color-chrome-mid)] bg-[var(--color-chrome-lo)] px-2 py-1 text-[var(--color-ink)]"
+                  value={activeCompare ?? ''}
+                  onChange={(event) => setCompareClub(event.target.value || null)}
+                >
+                  <option value="">None</option>
+                  {pricedClubIds.filter((id) => id !== activeClub).map((id) => (
+                    <option key={id} value={id}>{teamNames?.[id] ?? id}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             {/*
               THE HEADLINE STRIP, and it deliberately still reads the same in both modes.
 
@@ -389,6 +480,17 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                   {(stray.fraction * 100).toFixed(1)}% vs fair on {stray.date}
                 </span>
               ) : null}
+              {/*
+                THE SPREAD, last day, beside the stray rather than replacing it. Both are "how far
+                from something" figures and they answer different questions -- one says whether this
+                club is expensive, the other says which of two clubs the market likes more.
+              */}
+              {spread !== null && latestCompare ? (
+                <span className="t-caption text-[var(--color-ink-dim)]">
+                  {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
+                  {latest ? ` on ${latest.date}` : ''}
+                </span>
+              ) : null}
             </div>
 
             {/*
@@ -429,6 +531,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
             <SharePriceChart
               points={points}
               fair={fairPoints}
+              secondary={comparePoints}
               onHover={setHoverIndex}
               width={720}
               height={140}
@@ -494,6 +597,33 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                       no fair value recorded
                     </span>
                   )}
+                  {/*
+                    THE COMPARISON CLUB ON THE SAME DAY.
+
+                    Read from the hovered index rather than the last day, so it moves with the
+                    crosshair -- a readout showing today's spread under a cursor over 3 June would be
+                    two different claims in one line.
+
+                    The spread is `A - B`, signed, and named. Leaving it unsigned would make "Apes 40
+                    ahead" and "Apes 40 behind" print the same figure.
+                  */}
+                  {hoveredCompare ? (
+                    <>
+                      <span className="t-caption text-[var(--color-ink-dim)]">
+                        {compareName} {Math.round(hoveredCompare.value)}
+                      </span>
+                      {hoveredSpread !== null ? (
+                        <span className="t-caption text-[var(--color-ink-dim)]">
+                          {hoveredSpread >= 0 ? '+' : ''}
+                          {Math.round(hoveredSpread)} pts
+                        </span>
+                      ) : null}
+                    </>
+                  ) : compareName ? (
+                    <span className="t-caption text-[var(--color-ink-faint)]">
+                      {compareName} not priced on {hovered?.date}
+                    </span>
+                  ) : null}
                 </>
               ) : (
                 <span className="t-caption text-[var(--color-ink-faint)]">

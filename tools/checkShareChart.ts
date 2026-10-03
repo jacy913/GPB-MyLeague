@@ -25,10 +25,13 @@
  * Run: npx tsx tools/checkShareChart.ts
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import {
   BAND_LINES,
   CHART_HEIGHT,
-  fairSegments,
+  gapSegments,
   indexFromX,
   CHART_PADDING,
   CHART_WIDTH,
@@ -168,17 +171,17 @@ check(
   smooth join as a measurement the save does not contain. So the assertions are about discontinuity,
   not about the line existing.
 */
-const fairRun = (values: (number | null)[]) =>
-  fairSegments(values.map((v, i) => (v === null ? null : { date: `2026-06-0${i + 1}`, value: v })));
+const gapRun = (values: (number | null)[]) =>
+  gapSegments(values.map((v, i) => (v === null ? null : { date: `2026-06-0${i + 1}`, value: v })));
 
 check(
   'a fair layer with no gaps draws as ONE segment',
-  fairRun([500, 505, 498, 512]).length === 1,
-  `${fairRun([500, 505, 498, 512]).length} segments from an unbroken layer. If this ever returns more `
+  gapRun([500, 505, 498, 512]).length === 1,
+  `${gapRun([500, 505, 498, 512]).length} segments from an unbroken layer. If this ever returns more `
   + 'than one, an ordinary week of recorded valuations is being drawn as several pieces.',
 );
 
-const gapped = fairRun([500, 505, null, 512, 520]);
+const gapped = gapRun([500, 505, null, 512, 520]);
 check(
   'a day with NO recorded valuation SPLITS the fair line rather than bridging it',
   gapped.length === 2,
@@ -201,14 +204,14 @@ check(
 
 check(
   'a run of one draws no segment, because there is nothing to join it to',
-  fairRun([null, 500, null]).length === 0,
-  `${fairRun([null, 500, null]).length} segments from a lone valuation between two gaps. Drawing a `
+  gapRun([null, 500, null]).length === 0,
+  `${gapRun([null, 500, null]).length} segments from a lone valuation between two gaps. Drawing a `
   + 'mark for it would assert a trend to or from a day that has no neighbour.',
 );
 
 check(
   'an entirely absent fair layer draws nothing at all',
-  fairRun([null, null, null]).length === 0 && fairRun([]).length === 0,
+  gapRun([null, null, null]).length === 0 && gapRun([]).length === 0,
   'A ledger saved before the fair layer existed has none, and the chart must omit its second line '
   + 'rather than back-fill a valuation nobody recorded.',
 );
@@ -219,7 +222,7 @@ check(
     // Same series length means x positions line up with the close path; if the chart re-matched by
     // date it would silently produce a different number of points than the closes.
     const closes = linePath([500, 505, 512].map((v, i) => ({ date: `d${i}`, value: v })));
-    const fair = fairRun([500, 505, 512])[0] ?? '';
+    const fair = gapRun([500, 505, 512])[0] ?? '';
     const countX = (d: string) => (d.match(/[ML]/g) ?? []).length;
     return countX(closes) === countX(fair);
   })(),
@@ -293,6 +296,34 @@ check(
   indexFromX(100, 0) === -1,
   `indexFromX(100, 0) = ${indexFromX(100, 0)}. Returning 0 for an empty series would point at a `
   + 'non-existent first day.',
+);
+
+/*
+  THE COMPARISON SERIES IS LENGTH-GUARDED, and this is the one wiring claim in this file.
+
+  Everything else here is pure geometry. This one is not, and it is labelled as a wiring assertion
+  rather than dressed up as a measurement -- but the risk it guards is the worst on the page. The
+  comparison series is positioned by INDEX against the primary, so a length mismatch would not look
+  broken: it would draw a second club's line across the wrong days, and two lines that appear to
+  converge would only be misaligned.
+
+  A geometry check cannot see that, because the guard lives in the component rather than in a
+  function. So the source is read, comments stripped so the prose cannot satisfy it.
+*/
+const chartSource = readFileSync(resolve(process.cwd(), 'src', 'components', 'ui', 'SharePriceChart.tsx'), 'utf8');
+const chartBody = chartSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+check(
+  'the comparison series is dropped unless it matches the primary in length',
+  /secondary\s*&&\s*secondary\.length\s*===\s*points\.length/.test(chartBody),
+  'SCRIPPED THE MATCH IN SharePriceChart.tsx. The secondary is placed by index, so a shorter array '
+  + 'stretches across the wrong days and looks like two clubs converging when they are not.',
+);
+
+check(
+  'the comparison line uses a NEUTRAL ink, not an accent or an outcome colour',
+  /stroke="var\(--color-ink-faint\)"/.test(chartBody),
+  'Every accent in this app belongs to a named outlet or to a bet outcome. A comparison series is '
+  + 'neither, so borrowing an accent would claim an identity the line does not have.',
 );
 
 const failed = checks.filter((c) => !c.pass);
