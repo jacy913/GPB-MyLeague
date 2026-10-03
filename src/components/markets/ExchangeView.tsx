@@ -6,6 +6,7 @@ import { axisCeilingFor } from '../ui/SharePriceChart';
 import type { UsePortfolio } from '../../hooks/usePortfolio';
 import { ExchangeDesk } from './ExchangeDesk';
 import { latestClose } from '../../lib/analytics/priceBoard';
+import { dollars, signedDollars, STARTING_CASH_CENTS } from '../../lib/portfolio';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
 import gpbMark from '../../assets/gpb.png';
 import hxseMark from '../../assets/media/hxselogo.png';
@@ -580,29 +581,90 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
     */
     <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
       <div className="flex flex-col gap-5 lg:col-span-2">
+      {/*
+        THE HERO HEADER, and it is NOT MacroBet's height.
+
+        MacroBet's logo is a 2.18:1 landscape lockup at 1745x801, so `h-12 md:h-14` makes its
+        lettering legible. Measured, `hxselogo.png` is a 768x768 PORTRAIT composition -- shield
+        above, "HXSE" below -- with the wordmark occupying y 608..704, which is 12.5% of the canvas.
+        At 56px the letters render at 7px. Copying the height verbatim yields a handsome shield and
+        an unreadable name, which is the worst of both.
+
+        112px is the smallest round height that gives the wordmark 14px -- a caption. That is a much
+        taller header than MacroBet's and the height is load-bearing, not decoration.
+
+        The artwork is WHITE line-art on a transparent field, measured at 86.5% fully transparent
+        with visible pixels running to L=255 against a panel luminance near 29 -- roughly 8.9x
+        contrast, so it reads on the dark hero without inverting or recolouring it.
+      */}
+      <Panel variant="hero" className="p-4 md:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-4">
+              <img
+                src={hxseMark}
+                alt="HXSE"
+                className="h-24 w-auto shrink-0 select-none object-contain md:h-28"
+              />
+              <span className="hidden min-w-0 lg:block">
+                <span className="t-label block text-[var(--color-ink-faint)]">
+                  powered by the Hanax Stock Exchange
+                </span>
+                <span className="t-stat-sm mt-1 block text-[var(--color-ink-dim)]">
+                  Every club listed. Prices set by the crowd.
+                </span>
+              </span>
+            </h1>
+          </div>
+          {/*
+            THE RIGHT-HAND TILE IS THE BOOK, NOT A PRICE. MacroBet shows the betting balance here
+            because that is the money at stake on the page; the Exchange's equivalent is what the
+            player's holdings are worth, which is the same number the header drawer leads with.
+
+            It is the TOTAL, not the cash. Cash is what is left to spend and it never moves on its
+            own; total is the thing being grown, so it gets the hero size.
+          */}
+          <div className="border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-4 py-3 text-right">
+            <p className="t-caption text-[var(--color-ink-faint)]">Portfolio</p>
+            <p className="t-stat-lg text-[var(--color-gold-hi)]">{dollars(book.totalCents)}</p>
+            {/*
+              THE SEASON LINE, which is a WORD and not a signed number.
+
+              This was `{signedDollars(delta)} this season`, and `signedDollars(0)` returns "-" by
+              design -- it is meant to sit next to a figure that already gives the scale. Here it
+              rendered as "- this season", a dash that reports nothing next to a period of time.
+              A fresh book spends most of its first days flat, so the commonest state on this page
+              was the one that said least.
+
+              Zero reads as "level with the start", which is the true statement, and the direction
+              words ("up"/"down") are signed dollars rather than a plus or minus sign so the number
+              is legible without being decoded.
+
+              Colour: teal when level or up, red only when down. One colour, one meaning.
+            */}
+            <p className={`t-caption mt-0.5 ${book.totalCents < STARTING_CASH_CENTS ? 'text-[var(--color-media-glorest)]' : 'text-[var(--color-neutral)]'}`}>
+              {book.totalCents === STARTING_CASH_CENTS
+                ? 'level with the start this season'
+                : book.totalCents > STARTING_CASH_CENTS
+                  ? `up ${signedDollars(book.totalCents - STARTING_CASH_CENTS).slice(1)} this season`
+                  : `down ${dollars(STARTING_CASH_CENTS - book.totalCents)} this season`}
+            </p>
+          </div>
+        </div>
+      </Panel>
       <div className="lg:sticky lg:top-4">
       <Panel className="overflow-hidden">
-        <PanelHeader
-          title="The Exchange"
-          tagline="powered by the Hanax Stock Exchange"
-          leading={(
-            /*
-              THE HXSE WORDMARK, at 34px.
+        {/*
+          THE CHROME BAR IS GONE, and the hero above is why.
 
-              The artwork is a shield ABOVE an "HXSE" lockup, so it cannot be sized like a crest. At
-              26px -- the first guess -- the four letters were sub-pixel and the whole thing read as a
-              grey smudge beside the title, which is worse than no mark at all. 34px is the smallest
-              height at which the shield is unmistakably a shield AND the wordmark is still a
-              wordmark. Sized by its own proportions with `w-auto` so it is never squeezed.
-            */
-            <img
-              src={hxseMark}
-              alt=""
-              aria-hidden="true"
-              className="h-[34px] w-auto shrink-0 object-contain"
-            />
-          )}
-        />
+          It used to carry the HXSE mark at 34px, the title "The Exchange", and the tagline "powered by
+          the Hanax Stock Exchange". Adding the MacroBet-style hero put all three of those on screen a
+          second time, eight lines apart -- two logos and a repeated tagline on one page, which reads
+          as a mistake rather than as branding.
+
+          So the hero owns the identity and this panel owns the chart. MacroBet works the same way: a
+          hero panel, then content, with no second branded bar between them.
+        */}
 
         {points.length === 0 ? (
           /*
