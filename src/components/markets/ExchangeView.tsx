@@ -1,7 +1,10 @@
 import React from 'react';
 import type { PriceSeries } from '../../lib/analytics/sharePrice';
-import { Panel, PanelHeader } from '../ui';
+import type { Team } from '../../types';
+import { Panel, PanelHeader, TeamLogo } from '../ui';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
+import gpbMark from '../../assets/gpb.png';
+import hxseMark from '../../assets/media/hxselogo.png';
 
 /**
  * THE EXCHANGE -- where the HXSE price path is made visible.
@@ -53,10 +56,15 @@ import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
 export interface ExchangeViewProps {
   /** Every priced day so far, oldest first. Absent on a league that has never been simulated. */
   priceLedger?: PriceSeries[];
-  /** The team ids currently in the league, for labelling a club series later. */
-  teamIds: string[];
-  /** id -> display name. A ledger stores ids; a chart a player reads has to show names. */
-  teamNames?: Record<string, string>;
+  /**
+   * The clubs in the league, in full.
+   *
+   * Whole `Team` objects rather than ids and a separate name map, because this page draws the club
+   * crest and `TeamLogo` resolves a crest from the `Team` itself. Passing ids and names separately
+   * would mean this page could label a club it could not identify, which is the shape of bug where
+   * the fallback initials plate quietly appears next to a real team name.
+   */
+  teams: Team[];
 }
 
 /**
@@ -163,7 +171,16 @@ const RANGES: Array<{ label: string; days: number | null }> = [
   { label: 'All', days: null },
 ];
 
-export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds, teamNames }) => {
+export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }) => {
+  const teamIds = React.useMemo(() => teams.map((t) => t.id), [teams]);
+  const teamNames = React.useMemo(
+    () => Object.fromEntries(teams.map((t) => [t.id, `${t.city} ${t.name}`])),
+    [teams],
+  );
+  const teamById = React.useMemo(
+    () => new Map(teams.map((t) => [t.id, t] as const)),
+    [teams],
+  );
   /*
     ONE CLUB AT A TIME, and never all of them at once.
 
@@ -340,7 +357,24 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
       <Panel className="overflow-hidden">
         <PanelHeader
           title="The Exchange"
-          subtitle="Club shares, priced daily"
+          tagline="powered by the Hanax Stock Exchange"
+          leading={(
+            /*
+              THE HXSE WORDMARK, at 34px.
+
+              The artwork is a shield ABOVE an "HXSE" lockup, so it cannot be sized like a crest. At
+              26px -- the first guess -- the four letters were sub-pixel and the whole thing read as a
+              grey smudge beside the title, which is worse than no mark at all. 34px is the smallest
+              height at which the shield is unmistakably a shield AND the wordmark is still a
+              wordmark. Sized by its own proportions with `w-auto` so it is never squeezed.
+            */
+            <img
+              src={hxseMark}
+              alt=""
+              aria-hidden="true"
+              className="h-[34px] w-auto shrink-0 object-contain"
+            />
+          )}
         />
 
         {points.length === 0 ? (
@@ -438,7 +472,43 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               "Agents share price" are different numbers and the reader should never have to guess
               which one they are looking at.
             */}
-            <div className="flex flex-wrap items-baseline gap-4">
+            <div className="flex flex-wrap items-center gap-3">
+              {/*
+                THE CREST, and the league mark stands in for the league.
+
+                On "All clubs (average)" there is no club to draw, and drawing no crest would leave the
+                figure floating with nothing identifying what it is a price OF. The GPB mark is the
+                league's own and is the honest stand-in: it says "this is the league", which is what
+                the average is.
+
+                THE TWO MARKS ARE NOT THE SAME SHAPE, and the box has to admit that. A club crest is
+                square and fills a 48px box. `gpb.png` is 2560x1184 -- 2.16 wide -- so forced into a
+                square it letterboxed down to about 22px of visible artwork in a 48px hole and read as
+                a rendering fault rather than a logo. It is therefore sized by HEIGHT alone and given
+                its natural width, which is what actually matches the optical weight of the number
+                beside it.
+              */}
+              {activeClub && teamById.has(activeClub) ? (
+                <TeamLogo team={teamById.get(activeClub) as Team} sizeClass="w-12 h-12" />
+              ) : (
+                <img
+                  src={gpbMark}
+                  alt=""
+                  aria-hidden="true"
+                  className="h-9 w-auto shrink-0 object-contain"
+                />
+              )}
+              {/*
+                `flex-1 min-w-0` is load-bearing, not decoration. The stat row is long -- figure,
+                caption, date range, day count, stray, spread -- and without a min-width of 0 the row
+                reports its full intrinsic width to the parent, the parent's `flex-wrap` decides it
+                does not fit beside a 48px crest, and the WHOLE ROW drops to its own line. That is
+                what happened: the crest sat above the number like a section heading.
+
+                Letting the row shrink and wrap internally keeps the crest beside the figure it
+                belongs to and puts the overflow where it belongs, at the end of the line.
+              */}
+              <div className="flex flex-1 min-w-0 flex-wrap items-baseline gap-4">
               <span className="t-stat-lg text-[var(--color-ink)]">
                 {latest ? Math.round(latest.value) : '--'}
               </span>
@@ -486,11 +556,17 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                 club is expensive, the other says which of two clubs the market likes more.
               */}
               {spread !== null && latestCompare ? (
-                <span className="t-caption text-[var(--color-ink-dim)]">
-                  {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
-                  {latest ? ` on ${latest.date}` : ''}
+                <span className="flex items-center gap-2">
+                  {activeCompare && teamById.has(activeCompare) ? (
+                    <TeamLogo team={teamById.get(activeCompare) as Team} sizeClass="w-7 h-7" />
+                  ) : null}
+                  <span className="t-caption text-[var(--color-ink-dim)]">
+                    {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
+                    {latest ? ` on ${latest.date}` : ''}
+                  </span>
                 </span>
               ) : null}
+              </div>
             </div>
 
             {/*
