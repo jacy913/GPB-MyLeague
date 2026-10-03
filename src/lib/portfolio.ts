@@ -292,3 +292,120 @@ export const derivedCashCents = (portfolio: Portfolio): number =>
 /** Whether the stored cash agrees with the position history. False means the save is corrupt. */
 export const reconciles = (portfolio: Portfolio): boolean =>
   portfolio.cashCents === derivedCashCents(portfolio);
+
+/* ------------------------------------------------------------------ *
+ * Persistence
+ * ------------------------------------------------------------------ */
+
+/**
+ * localStorage only, deliberately, and the reason is a scar rather than a preference.
+ *
+ * `wallet.ts` keeps the betting wallet in localStorage with a comment saying it should not, because
+ * wiring it into the sync pipeline was out of scope for that phase. This module follows the same
+ * convention so the two money stores behave alike: a portfolio survives a refresh and survives
+ * closing the tab, and it does not follow the player to another machine.
+ *
+ * It is deliberately NOT added to the save bundle. The bundle is read by three separate boot paths,
+ * and the price ledger shipped three stacked restore defects precisely because restoring it correctly
+ * everywhere was harder than writing it in one place. Adding a second ledger to that pipeline
+ * before the UI exists would be repeating the mistake with less understanding of it. When the
+ * bundle path is wired up, it gets its own check covering every boot path -- not one.
+ */
+const PORTFOLIO_KEY = 'gpb_hxse_portfolio_v1';
+
+const isWholeCents = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value);
+
+/**
+ * Read a saved portfolio, DERIVING its cash.
+ *
+ * The stored `cashCents` is not used. It is read only to notice a disagreement, which
+ * `loadPortfolioLastWarning` records -- because silently correcting a tampered balance is safer
+ * than loading it but leaves nobody any the wiser.
+ *
+ * Malformed POSITIONS are dropped individually, the way `readSharePriceLedger` drops malformed
+ * clubs: one bad row should not cost a player the rest of their book. Malformed `realisedCents` is
+ * fatal to the whole save, because cash is derived from it and the positions alone cannot say how
+ * much money the account holds. There is no partial recovery from that one.
+ */
+export let loadPortfolioLastWarning: string | null = null;
+
+export const loadPortfolio = (): Portfolio => {
+  loadPortfolioLastWarning = null;
+  if (typeof localStorage === 'undefined') return createPortfolio();
+  try {
+    const raw = localStorage.getItem(PORTFOLIO_KEY);
+    if (!raw) return createPortfolio();
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      loadPortfolioLastWarning = 'save was not an object; started a fresh portfolio';
+      return createPortfolio();
+    }
+
+    const candidate = parsed as Partial<Portfolio>;
+    if (!isWholeCents(candidate.realisedCents)) {
+      loadPortfolioLastWarning = 'realised P&L was not a whole number of cents; the whole save was '
+        + 'refused, because cash is derived from it and positions alone cannot say how much money '
+        + 'the account holds';
+      return createPortfolio();
+    }
+
+    const offered = Array.isArray(candidate.positions) ? candidate.positions : [];
+    const positions = offered.filter((p): p is Position => {
+      if (!p || typeof p !== 'object') return false;
+      const row = p as Partial<Position>;
+      return typeof row.teamId === 'string'
+        && row.teamId.length > 0
+        && isWholeCents(row.shares)
+        && row.shares > 0
+        && isWholeCents(row.costCents)
+        && row.costCents >= 0
+        && typeof row.openedOn === 'string';
+    });
+
+    if (positions.length !== offered.length) {
+      loadPortfolioLastWarning = `dropped ${offered.length - positions.length} malformed position(s) `
+        + 'and kept the rest';
+    }
+
+    /*
+      Derived, not read. Everything above established that `realisedCents` is a whole number and
+      that every surviving position is well formed; the cash figure then follows from the invariant
+      alone. A duplicate club would double-count its cost basis, so the last one wins -- the same
+      collapse `readSharePriceLedger` applies when a day is saved twice.
+    */
+    const deduped = new Map<string, Position>();
+    for (const p of positions) deduped.set(p.teamId, p);
+    if (deduped.size !== positions.length) {
+      loadPortfolioLastWarning = 'collapsed duplicate positions in one club to the last one saved';
+    }
+
+    const cashCents = derivedCashCents({
+      cashCents: 0, positions: [...deduped.values()], realisedCents: candidate.realisedCents,
+    });
+
+    if (isWholeCents(candidate.cashCents) && candidate.cashCents !== cashCents) {
+      loadPortfolioLastWarning = `stored cash of ${dollars(candidate.cashCents)} disagreed with the `
+        + `position history, which says ${dollars(cashCents)}; used the derived figure`;
+    }
+
+    return { cashCents, positions: [...deduped.values()], realisedCents: candidate.realisedCents };
+  } catch {
+    loadPortfolioLastWarning = 'save would not parse; started a fresh portfolio';
+    return createPortfolio();
+  }
+};
+
+export const savePortfolio = (portfolio: Portfolio): void => {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(PORTFOLIO_KEY, JSON.stringify({
+      cashCents: derivedCashCents(portfolio),
+      positions: portfolio.positions,
+      realisedCents: portfolio.realisedCents,
+    }));
+  } catch {
+    // A full or blocked localStorage should not take the page down. The portfolio becomes
+    // session-only, which is the same degradation wallet.ts accepts.
+  }
+};

@@ -38,10 +38,13 @@ import {
   centsFor,
   derivedCashCents,
   dollars,
+  loadPortfolio,
+  loadPortfolioLastWarning,
   markValue,
   positionIn,
   maxSharesFor,
   reconciles,
+  savePortfolio,
   rejectionOf,
   sellShares,
   STARTING_CASH_CENTS,
@@ -376,6 +379,116 @@ check(
   virgin.cashCents === STARTING_CASH_CENTS && virgin.positions.length === 0
   && virgin.realisedCents === 0 && virginMark.totalCents === STARTING_CASH_CENTS,
   `${dollars(virgin.cashCents)}, no positions, no realised P&L, total value ${dollars(virginMark.totalCents)}.`,
+);
+
+// -- 13. A CLEAN SAVE ROUNDS-TRIPS, AND CASH IS RE-DERIVED ON THE WAY BACK ----------------------------
+/*
+  A FAKE localStorage, because the module reads and writes through the global. Assigning to
+  `globalThis` rather than importing a mock keeps the check honest about the one thing that
+  matters: that the stored cash is IGNORED, not merely overwritten.
+*/
+const store = new Map<string, string>();
+const fakeStorage = {
+  getItem: (k: string): string | null => (store.has(k) ? (store.get(k) as string) : null),
+  setItem: (k: string, v: string): void => { store.set(k, v); },
+  removeItem: (k: string): void => { store.delete(k); },
+};
+(globalThis as unknown as { localStorage: unknown }).localStorage = fakeStorage;
+
+const traded = unwrap(buyShares(createPortfolio(), {
+  teamId: 'alp', shares: 3, price: 120, date: '2026-05-01', marketSize: 60,
+}));
+const roundTripped = unwrap(sellShares(traded, { teamId: 'alp', shares: 1, price: 200 }));
+savePortfolio(roundTripped);
+const reloaded = loadPortfolio();
+check(
+  'a clean save round-trips with positions, cash and realised P&L intact',
+  loadPortfolioLastWarning === null
+  && reloaded.positions.length === 1
+  && reloaded.positions[0].shares === 2
+  && reloaded.realisedCents === roundTripped.realisedCents
+  && reloaded.cashCents === derivedCashCents(roundTripped)
+  && JSON.stringify(reloaded) === JSON.stringify(roundTripped),
+  `3 shares at $120, sold 1 at $200 -> 2 left, realised ${dollars(roundTripped.realisedCents)}, cash `
+  + `${dollars(roundTripped.cashCents)}. Reloaded byte-identical with no warning.`,
+);
+
+check(
+  'the RELOADED cash is derived, and a tampered stored figure is corrected and reported',
+  (() => {
+    const raw = JSON.parse(store.get('gpb_hxse_portfolio_v1') as string) as Record<string, unknown>;
+    raw.cashCents = 9_999_99;
+    store.set('gpb_hxse_portfolio_v1', JSON.stringify(raw));
+    const fixed = loadPortfolio();
+    return fixed.cashCents === derivedCashCents(roundTripped)
+      && loadPortfolioLastWarning !== null
+      && loadPortfolioLastWarning.includes('disagreed');
+  })(),
+  `stored cash was rewritten to $9,999.99; the load returned ${dollars(derivedCashCents(roundTripped))} `
+  + `and warned: "${loadPortfolioLastWarning}". The stored figure is never used, only disagreed with.`,
+);
+
+const corruptions: Array<[string, unknown, (p: Portfolio) => boolean]> = [
+  ['not an object', 'nonsense', (p) => p.positions.length === 0],
+  ['realised P&L as a float', { cashCents: 1, positions: [], realisedCents: 1.5 }, (p) => p.positions.length === 0],
+  ['realised P&L missing', { cashCents: 1, positions: [] }, (p) => p.positions.length === 0],
+  ['fractional shares', { realisedCents: 0, positions: [{ teamId: 'a', shares: 1.5, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['negative shares', { realisedCents: 0, positions: [{ teamId: 'a', shares: -2, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['negative cost basis', { realisedCents: 0, positions: [{ teamId: 'a', shares: 2, costCents: -10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['empty club id', { realisedCents: 0, positions: [{ teamId: '', shares: 2, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['no opening date', { realisedCents: 0, positions: [{ teamId: 'a', shares: 2, costCents: 10 }] }, (p) => p.positions.length === 0],
+  [
+    'one good position among bad ones',
+    {
+      realisedCents: 0,
+      positions: [
+        { teamId: 'keep', shares: 2, costCents: 500, openedOn: '2026-05-01' },
+        { teamId: 'drop', shares: -1, costCents: 500, openedOn: '2026-05-01' },
+      ],
+    },
+    (p) => p.positions.length === 1 && p.positions[0].teamId === 'keep',
+  ],
+  [
+    'the same club saved twice',
+    {
+      realisedCents: 0,
+      positions: [
+        { teamId: 'dup', shares: 2, costCents: 500, openedOn: '2026-05-01' },
+        { teamId: 'dup', shares: 9, costCents: 500, openedOn: '2026-05-02' },
+      ],
+    },
+    (p) => p.positions.length === 1 && p.positions[0].shares === 9,
+  ],
+];
+let corruptionFailures = 0;
+let warnedCount = 0;
+for (const [, payload, survives] of corruptions) {
+  store.set('gpb_hxse_portfolio_v1', JSON.stringify(payload));
+  const got = loadPortfolio();
+  if (!survives(got)) corruptionFailures += 1;
+  if (loadPortfolioLastWarning !== null) warnedCount += 1;
+  if (!reconciles(got)) corruptionFailures += 1;
+}
+store.set('gpb_hxse_portfolio_v1', '{ this is not json');
+const fromJunk = loadPortfolio();
+check(
+  'every malformed save is handled, and every loaded portfolio RECONCILES afterwards',
+  corruptionFailures === 0 && warnedCount === corruptions.length && fromJunk.positions.length === 0,
+  `${corruptions.length} corrupt shapes: all ${warnedCount} produced a warning rather than a silent `
+  + `pass, every surviving portfolio satisfies the invariant, and literal broken JSON falls back to a `
+  + `fresh one. The two rows above that are NOT refused outright are the deliberate cases: one good `
+  + 'position is kept when its neighbour is malformed, and a club saved twice collapses to the last.',
+);
+
+check(
+  'an ABSENT save reads as a fresh portfolio, not a failure',
+  (() => {
+    store.delete('gpb_hxse_portfolio_v1');
+    const p = loadPortfolio();
+    return p.cashCents === STARTING_CASH_CENTS && p.positions.length === 0 && loadPortfolioLastWarning === null;
+  })(),
+  'with no stored text at all the loader returns the opening balance and no warning, because nothing '
+  + 'went wrong and there is nothing to report.',
 );
 
 let failed = 0;
