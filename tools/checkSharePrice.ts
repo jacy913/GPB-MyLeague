@@ -45,6 +45,7 @@ import {
   noiseFor,
   PRICE_MAX,
   PRICE_MIN,
+  PRICE_SANITY_MAX,
   REGIME_VOLATILITY,
   shockFromGame,
   type PriceSeries,
@@ -273,10 +274,114 @@ const main = (): void => {
   );
 
   check(
-    'no price leaves the declared band across every seed tested',
+    'no price leaves the SANITY GUARD across every seed tested',
     [...series, ...longer, ...otherSeed, ...twice].every((day) =>
-      TEAM_IDS.every((id) => day.close[id] >= PRICE_MIN && day.close[id] <= PRICE_MAX)),
-    `every close in [${PRICE_MIN}, ${PRICE_MAX}]`,
+      TEAM_IDS.every((id) => day.close[id] >= PRICE_MIN && day.close[id] <= PRICE_SANITY_MAX)),
+    `every close in [${PRICE_MIN}, ${PRICE_SANITY_MAX}]. This used to assert [${PRICE_MIN}, ${PRICE_MAX}] `
+    + 'and passed only because `nextPrice` CLAMPED to that band -- so it was measuring the clamp rather '
+    + 'than the market. A check that cannot fail for the thing it is about is worse than no check.',
+  );
+
+  /*
+    THE REGRESSION TEST FOR THE PIN BUG, and it is the most important check in this file.
+
+    A player reported the Phantoms winning repeatedly while their price sat at exactly $1,000.
+    `tools/probePriceCeiling.ts` measured it: five leagues out of five contained a stuck price, 61 runs
+    reached the ceiling and none reached the floor, and one club was pinned for all 120 priced days.
+
+    The cause was that `PRICE_MAX` was BOTH the top of the valuation scale AND a clamp on the close, so
+    a saturated valuation produced a pinned fair value and therefore a pinned close. Mean reversion, the
+    crowd and game shocks all went inert for that club -- and it was always the best club that broke,
+    because the valuation is a z-score against the league.
+
+    So this drives `fair` at exactly `PRICE_MAX` -- the saturated case -- for sixty days and requires the
+    price to KEEP MOVING and to be free to exceed its own fair value. Under the old clamp all sixty days
+    returned exactly 1000, the distinct count was 1, and this fails immediately.
+  */
+  let saturatedPrice = PRICE_MAX;
+  const saturatedWalk = Array.from({ length: 60 }, (_, i) => {
+    saturatedPrice = nextPrice({
+      date: DATES[i],
+      teamId: TEAM_IDS[0],
+      seed: 4242,
+      previous: saturatedPrice,
+      fair: PRICE_MAX,
+      shock: 0,
+      regime: 'in_season',
+    });
+    return saturatedPrice;
+  });
+  const saturatedDistinct = new Set(saturatedWalk.map((p) => p.toFixed(4))).size;
+  const saturatedAboveFair = saturatedWalk.filter((p) => p > PRICE_MAX).length;
+  const saturatedSpread = Math.max(...saturatedWalk) - Math.min(...saturatedWalk);
+
+  /*
+    THE SAME WALK UNDER THE OLD CLAMP, so this check can prove it has teeth.
+
+    A regression test nobody has watched fail is a guess. This re-runs the identical walk with the
+    removed `Math.min(PRICE_MAX, next)` restored and asserts the result really was pinned -- which
+    both documents the bug in executable form and means this check can never silently degrade into
+    passing for a reason that has nothing to do with the fix.
+  */
+  let clampedPrice = PRICE_MAX;
+  const clampedWalk = Array.from({ length: 60 }, (_, i) => {
+    clampedPrice = Math.min(PRICE_MAX, nextPrice({
+      date: DATES[i],
+      teamId: TEAM_IDS[0],
+      seed: 4242,
+      previous: clampedPrice,
+      fair: PRICE_MAX,
+      shock: 0,
+      regime: 'in_season',
+    }));
+    return clampedPrice;
+  });
+  const clampedDistinct = new Set(clampedWalk.map((p) => p.toFixed(4))).size;
+  const clampedMax = Math.max(...clampedWalk);
+
+  check(
+    'a SATURATED fair value can be traded at a PREMIUM -- the bug a player actually hit',
+    saturatedDistinct > 40 && saturatedAboveFair > 5 && saturatedSpread > 50
+    && clampedMax <= PRICE_MAX && Math.max(...saturatedWalk) > PRICE_MAX + 100,
+    `fair held at ${PRICE_MAX} for 60 days: ${saturatedDistinct} distinct closes spanning `
+    + `${saturatedSpread.toFixed(1)} points, with ${saturatedAboveFair} of them ABOVE their own fair value `
+    + `and a high of ${Math.max(...saturatedWalk).toFixed(1)} -- a real premium. The SAME walk with the old `
+    + `clamp restored cannot exceed ${clampedMax.toFixed(1)}: it produced ${clampedDistinct} distinct closes `
+    + 'oscillating just BELOW the ceiling, because the clamp was one-sided -- it blocked upward moves '
+    + 'while downward ones still happened. So the defect was not that the price froze flat (which is '
+    + 'what I first wrote here, and the check caught). It was that a saturated club could never trade at '
+    + 'a premium at all, which is precisely the thing the Exchange now exists to let a player find. Both '
+    + 'halves are asserted so this cannot pass for a reason unrelated to the fix.',
+  );
+
+  /*
+    AND THE FLOOR IS NOT A WALL EITHER, in the same way and for the same reason.
+
+    `PRICE_MIN` is 0 and a fair value can floor at 0 when a club's valuation saturates at the bottom of
+    the z-score. probePriceCeiling measured no floor runs in practice, so this is asserting the
+    mechanism rather than a frequency -- but the mechanism has to hold in both directions or the
+    ceiling fix has only moved the problem to whichever end is currently unpopulated.
+  */
+  let flooredPrice = PRICE_MIN + 1;
+  const flooredWalk = Array.from({ length: 40 }, (_, i) => {
+    flooredPrice = nextPrice({
+      date: DATES[i],
+      teamId: TEAM_IDS[1],
+      seed: 4242,
+      previous: flooredPrice,
+      fair: 0,
+      shock: 0,
+      regime: 'in_season',
+    });
+    return flooredPrice;
+  });
+  check(
+    'a fair value floored at zero does not pin the price to zero either',
+    new Set(flooredWalk.map((p) => p.toFixed(4))).size > 20 && Math.max(...flooredWalk) > 1,
+    `fair held at 0 for 40 days: ${new Set(flooredWalk.map((p) => p.toFixed(4))).size} distinct closes, `
+    + `reaching ${Math.max(...flooredWalk).toFixed(2)} above a fair value of zero. probePriceCeiling found `
+    + 'no floor runs in five leagues, so this asserts the mechanism rather than a frequency -- but a '
+    + 'ceiling fixed only at one end is a wall moved, not a wall removed.',
   );
 
   check(

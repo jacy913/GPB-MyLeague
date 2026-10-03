@@ -6,7 +6,7 @@ import type {
   SimulationSettings,
   Team,
 } from '../types';
-import { PRICE_MAX, PRICE_MIN, type PriceSeries } from '../lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_MIN, PRICE_SANITY_MAX, type PriceSeries } from '../lib/analytics/sharePrice';
 import type { DraftClassState, DraftHistoryEntry } from './draftLogic';
 import { auditRosterInvariants } from './rosterManagement';
 
@@ -106,16 +106,19 @@ export type SharePriceLedger = PriceSeries[];
  * record of what the market did. Dropping it leaves a gap, which is honest, and the series simply
  * resumes from the last good day.
  *
- * Non-finite or out-of-band closes are dropped for the same reason -- a price outside
- * `[PRICE_MIN, PRICE_MAX]` means the save is corrupt, and coercing it would put a number on a chart
- * that no price path could have produced.
+ * Non-finite closes are dropped for the same reason -- a NaN would put a number on a chart that no
+ * price path could have produced. Out-of-band closes are tested against `PRICE_SANITY_MAX` rather
+ * than `PRICE_MAX`, because a price is allowed to exceed its own fair value and a reader that
+ * discarded those would be destroying real data invisibly.
  */
 /**
  * The recorded fair layer of one day, if it survived intact enough to draw.
  *
- * SAME RULE AS THE CLOSES, AND FOR THE SAME REASON: a fair value outside `[PRICE_MIN, PRICE_MAX]`
- * means the save is corrupt, and coercing it would put a valuation on the chart that no fair layer
- * could have produced. The difference is what happens to a day whose closes are fine.
+ * A fair value outside `[PRICE_MIN, PRICE_MAX]` means the save is corrupt, and coercing it would put
+ * a valuation on the chart that no fair layer could have produced. This is NOT the same rule as the
+ * closes, deliberately: fair value has a real ceiling at $1,000 because that is the top of the
+ * valuation scale, while a close may sit above it as a premium. The difference is what happens to a
+ * day whose closes are fine.
  *
  * The closes are the market's record and are kept. A bad fair layer is DROPPED on its own, leaving
  * that one day without a second line rather than dropping the day or inventing a valuation for it.
@@ -150,7 +153,19 @@ export const readSharePriceLedger = (value: unknown): SharePriceLedger => {
     let any = false;
     for (const [teamId, raw] of Object.entries(entry.close)) {
       if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
-      if (raw < PRICE_MIN || raw > PRICE_MAX) continue;
+      /*
+        CLOSES ARE TESTED AGAINST THE SANITY GUARD, NOT `PRICE_MAX`.
+
+        This test used to reject anything above $1,000, which was correct while the close was clamped
+        there -- and would have silently DESTROYED data the moment the clamp was lifted. A reader
+        that discards legitimate prices is worse than one that accepts a few impossible ones, because
+        the discard is invisible: the chart simply shows a shorter history and nothing says why.
+
+        The fair layer below is still tested against `PRICE_MAX`, and must stay so. Fair value has a
+        real ceiling at $1,000 because that is the top of the valuation scale; a stored fair value
+        above it means the save is genuinely corrupt rather than merely surprising.
+      */
+      if (raw < PRICE_MIN || raw > PRICE_SANITY_MAX) continue;
       close[teamId] = raw;
       any = true;
     }

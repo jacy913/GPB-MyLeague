@@ -78,11 +78,50 @@
 
 import type { Game, Team } from '../../types';
 
-/** The trading band. The plan's 0-1000, and NOT a valuation scale. */
+/**
+ * THE FAIR VALUE BAND, and it is a band on the ESTIMATE rather than on the market.
+ *
+ * `fairPriceFor` maps a 0-100 valuation onto 0-1000, so $1,000 is the most the valuation model is
+ * able to say a club is worth. That is a real ceiling and it stays: a z-score of 3 is as far as the
+ * model goes, and a model that cannot distinguish a z of 3 from a z of 4 has no business pricing the
+ * difference.
+ *
+ * IT IS NOT A CEILING ON PRICE, and treating it as one is a bug that shipped and was played on.
+ * `tools/probePriceCeiling.ts` measured it across five leagues: every league contained a club whose
+ * close sat at exactly $1,000, 61 runs reached the ceiling and none reached the floor, and one club
+ * was pinned for all 120 priced days of the window.
+ *
+ * The mechanism is two saturations stacked. `teamValue` returns
+ * `50 + clamp(z, +/-Z_CLAMP) * VALUE_SCALE`, so a dominant club's valuation saturates at 100;
+ * `fairPriceFor(100)` is exactly $1,000; and the close was clamped to `PRICE_MAX`. Once that
+ * happened the fair value was pinned, the close was pinned, and the entire price mechanism for that
+ * club -- mean reversion, the crowd, game shocks -- went inert. Further wins cost it nothing and
+ * gained it nothing. It hit the BEST club in the league, because the valuation is a z-score against
+ * the league, and that is exactly the club whose price a player most wants to read.
+ *
+ * A price above the estimate is not a malfunction. It is a PREMIUM, and a premium above 30% was
+ * structurally impossible to represent while the ceiling and the estimate were the same number.
+ */
 export const PRICE_MIN = 0;
 export const PRICE_MAX = 1000;
 
-/** Where a club sits at exactly fair value: the midpoint of the band. */
+/**
+ * The only ceiling on a PRICE, and it exists to catch a corrupt save rather than to bound a market.
+ *
+ * Measured from a real ledger, `close / fair` runs to 1.615 at the extreme with a p99 of 1.576, so a
+ * saturated $1,000 valuation implies prices naturally reaching about $1,600. Anything the model
+ * produces is therefore far below this, which is the point: a guard that can bind in normal play is
+ * not a guard, it is a second wall with a smaller number on it.
+ *
+ * What actually bounds a price is MEAN REVERSION. As price runs away from fair, the gap term
+ * approaches -1 and drift reaches its -`MEAN_REVERSION_K` floor of -6% a day, so a price 60% over
+ * fair is pulled back while noise of a similar size throws it around. The result is a price that
+ * oscillates around its estimate instead of pinning to it, and `checkSharePrice` measures the width
+ * of that oscillation (stray-from-fair sd 7.52%) rather than assuming it.
+ */
+export const PRICE_SANITY_MAX = 100_000;
+
+/** Where a club sits at exactly fair value: the midpoint of the fair value band. */
 export const PRICE_MID = 500;
 
 /**
@@ -214,7 +253,16 @@ export const nextPrice = (input: PriceDayInput): number => {
 
   const clampedMove = Math.max(-MAX_DAILY_MOVE, Math.min(MAX_DAILY_MOVE, total));
   const next = price * (1 + clampedMove);
-  return Math.max(PRICE_MIN, Math.min(PRICE_MAX, next));
+
+  /*
+    Clamped to the SANITY guard, not to `PRICE_MAX`.
+
+    `PRICE_MAX` is the top of the FAIR VALUE band and clamping the close to it is what pinned a
+    dominant club at $1,000 for a whole season -- see the note on `PRICE_MAX` above. Fair value is
+    still bounded there, which is correct; the price is the market's opinion of it and is allowed
+    to disagree, by an amount the reversion term then works to shrink.
+  */
+  return Math.max(PRICE_MIN, Math.min(PRICE_SANITY_MAX, next));
 };
 
 /** A daily close. One per date, covering every club. */

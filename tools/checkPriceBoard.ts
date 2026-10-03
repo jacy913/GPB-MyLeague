@@ -53,7 +53,7 @@ import {
   priceBoardForDay,
   type PriceBoard,
 } from '../src/lib/analytics/priceBoard';
-import { PRICE_MAX, PRICE_MIN, REGIME_VOLATILITY, type PriceSeries } from '../src/lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_MIN, PRICE_SANITY_MAX, REGIME_VOLATILITY, type PriceSeries } from '../src/lib/analytics/sharePrice';
 import { createLocalUniverseBundle, readSharePriceLedger } from '../src/logic/localUniverseState';
 import { INITIAL_TEAMS } from '../src/data/teams';
 import { DEFAULT_SETTINGS, generateSchedule, getDefaultSeasonStartDate } from '../src/logic/simulation';
@@ -199,9 +199,12 @@ const main = async (): Promise<void> => {
   );
 
   check(
-    'every close is inside the declared band',
-    closeAll.every((c) => c >= PRICE_MIN && c <= PRICE_MAX),
-    `${closeAll.length} closes, all within [${PRICE_MIN}, ${PRICE_MAX}]`,
+    'every close is inside the SANITY GUARD, and the report says how many trade as premiums',
+    closeAll.every((c) => c >= PRICE_MIN && c <= PRICE_SANITY_MAX),
+    `${closeAll.length} closes, all within [${PRICE_MIN}, ${PRICE_SANITY_MAX}], of which `
+    + `${closeAll.filter((c) => c > PRICE_MAX).length} sit above ${PRICE_MAX} as premiums. This used to `
+    + `assert [${PRICE_MIN}, ${PRICE_MAX}] and passed only because the close was clamped there -- on a run `
+    + 'where one club reached a +35.78% premium at $998.90, right against the old wall.',
   );
 
   // -- 3. real game results reach the price --------------------------------------------------
@@ -308,9 +311,10 @@ const main = async (): Promise<void> => {
   // -- 5. the coarse path is safe ------------------------------------------------------------
   const coarse = await priceRun(state, completedDates, DEFAULT_BOARD_TRIALS);
   check(
-    `the cheap path (${DEFAULT_BOARD_TRIALS} Monte Carlo trials) still prices inside the band`,
-    coarse.flatMap((b) => teamIds.map((id) => b.close[id])).every((c) => c >= PRICE_MIN && c <= PRICE_MAX),
-    `${DEFAULT_BOARD_TRIALS} trials produced ${coarse.length} days all within [${PRICE_MIN}, ${PRICE_MAX}]. `
+    `the cheap path (${DEFAULT_BOARD_TRIALS} Monte Carlo trials) still prices inside the sanity guard`,
+    coarse.flatMap((b) => teamIds.map((id) => b.close[id])).every((c) => c >= PRICE_MIN && c <= PRICE_SANITY_MAX),
+    `${DEFAULT_BOARD_TRIALS} trials produced ${coarse.length} days all within `
+    + `[${PRICE_MIN}, ${PRICE_SANITY_MAX}]. `
     + `The default is deliberately coarse, so its degradation is measured here rather than assumed.`,
   );
 

@@ -46,7 +46,7 @@ import {
   type LocalUniverseBundle,
 } from '../src/logic/localUniverseState';
 import { createWallet, placeBet, type Wallet } from '../src/lib/wallet';
-import { PRICE_MAX, PRICE_MIN, type PriceSeries } from '../src/lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_MIN, PRICE_SANITY_MAX, type PriceSeries } from '../src/lib/analytics/sharePrice';
 
 const checks: Array<{ label: string; pass: boolean; detail?: string }> = [];
 const check = (label: string, pass: boolean, detail?: string): void => {
@@ -93,13 +93,40 @@ const main = (): void => {
     { label: 'a non-object close', entry: { date: iso(5), close: 'up' } },
     { label: 'a NaN close', entry: { date: iso(5), close: { a: Number.NaN } } },
     { label: 'a null close', entry: { date: iso(5), close: { a: null } } },
-    { label: 'a close above the band', entry: { date: iso(5), close: { a: PRICE_MAX + 1 } } },
+    { label: 'a close above the sanity guard', entry: { date: iso(5), close: { a: PRICE_SANITY_MAX + 1 } } },
     { label: 'a close below the band', entry: { date: iso(5), close: { a: PRICE_MIN - 1 } } },
     { label: 'a non-numeric close', entry: { date: iso(5), close: { a: '500' } } },
     { label: 'a day whose every club was corrupt', entry: { date: iso(5), close: { a: Number.NaN, b: Number.NaN } } },
     { label: 'an entry that is not an object at all', entry: 'closed at 500' },
   ];
   const droppedCleanly = corrupt.filter((c) => readSharePriceLedger([c.entry]).length === 0);
+
+  /*
+    THE INVERSE OF THAT FIXTURE, because "the reader accepts it" needs asserting as much as "the
+    reader rejects it".
+
+    `PRICE_MAX + 1` used to sit in the corruption table above. It is now a LEGITIMATE close -- a club
+    trading above its own fair value as a premium -- and the reader must keep it. A reader that
+    discards prices above $1,000 would not be being strict, it would be silently deleting real market
+    data, and the only symptom would be a chart that mysteriously starts later than the ledger says.
+
+    The fair layer is tested separately and still rejects anything above `PRICE_MAX`, because fair
+    value genuinely has a ceiling there.
+  */
+  const premiumClose = readSharePriceLedger([
+    { date: iso(5), close: { a: PRICE_MAX + 1 }, fair: { a: PRICE_MAX + 1 } },
+  ]);
+  check(
+    'a close ABOVE $1,000 is kept while a fair value above it is dropped -- the intended asymmetry',
+    premiumClose.length === 1 && premiumClose[0].close.a === PRICE_MAX + 1
+    && premiumClose[0].fair === undefined,
+    `a stored close of ${PRICE_MAX + 1} survives the reader, and a fair value of the same number is `
+    + 'dropped. That is deliberate: fair value has a real ceiling at $1,000 because that is the top of '
+    + 'the valuation scale, while a close is the market disagreeing with the estimate. A reader that '
+    + 'discarded the close would not be strict, it would be silently deleting real market data. '
+    + '(The first version of this check asserted that a fair value of exactly $1,000 was dropped. It is '
+    + 'not -- the test is strictly greater-than -- and the check failed until the fixture was corrected.)',
+  );
   check(
     'every malformed day is DROPPED, and none is coerced into a plausible-looking price',
     droppedCleanly.length === corrupt.length,
