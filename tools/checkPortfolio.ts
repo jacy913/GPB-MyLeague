@@ -5,10 +5,10 @@
  * WHAT THIS IS FOR
  * ===========================================================================
  *
- * The plan calls Phase 4 "the expensive part and the part most likely to harbour bugs", and names
- * the reason: `wallet.ts` has already shipped two documented ledger bugs -- a pending/void
- * conflation, and a profit double-count where a $50 bet returning $104 reported +$104 instead of
- * the $54 actually made. Both were arithmetic that looked correct while being wrong.
+ * The plan calls Phase 4 "the expensive part and the part most likely to harbour bugs", and names the
+ * reason: `wallet.ts` has already shipped two documented ledger bugs -- a pending/void conflation, and
+ * a profit double-count where a $50 bet returning $104 reported +$104 instead of the $54 actually made.
+ * Both were arithmetic that looked correct while being wrong.
  *
  * Positions are a larger surface than bet slips: you hold across time, cost basis has to survive
  * partial exits, and cash must reconcile against a history that can be tampered with. So the checks
@@ -16,63 +16,67 @@
  * looking fine.
  *
  * ===========================================================================
+ * DOLLARS IN, NOT SHARES IN
+ * ===========================================================================
+ *
+ * The ledger is denominated in cents. A player says "I want $150 of the Nighthawks"; what that buys is
+ * a float number of units that the screen never asks them for. That reframing is the player's, not
+ * mine -- "I never think 'oh i want to buy 0.000294884 shares'" -- and it is what makes a $250
+ * concentration cap expressible at all, since a share COUNT is worth $500 in a cheap club and $25,000
+ * in an expensive one.
+ *
+ * So the checks are about amounts, and `units` is treated as the internal quantity it now is.
+ *
+ * ===========================================================================
  * THE SPINE IS THE INVARIANT, AND IT IS CHECKED AFTER EVERY SINGLE TRADE
  * ===========================================================================
  *
  * `cashCents + sum(costCents) === STARTING_CASH_CENTS + realisedCents`
  *
- * Not once at the end of a scripted happy path -- after every trade in a long seeded sequence of
- * buys, adds, partial sells and full exits. A ledger that reconciles on the fixtures and drifts on
- * the eleventh random sell is a ledger that will reconcile on the demo and drift in someone's save.
- *
- * The sequence is SEEDED rather than random for the same reason `verifyFuturesRisk` was pinned: an
- * unseeded sequence that fails once in ten runs teaches you nothing except that the check is
- * annoying.
+ * Not once at the end of a scripted happy path -- after every trade in a long seeded sequence of buys,
+ * adds, partial unwinds and full exits. A ledger that reconciles on the fixtures and drifts on the
+ * eleventh random trade is a ledger that will reconcile on the demo and drift in someone's save.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import {
-  averageCost,
-  buyShares,
-  costOfShares,
+  buyAmount,
   createPortfolio,
-  centsFor,
   derivedCashCents,
   dollars,
-  loadPortfolio,
-  loadPortfolioLastWarning,
   markValue,
   positionIn,
-  maxSharesFor,
+  positionLimitCentsFor,
   reconciles,
-  savePortfolio,
   rejectionOf,
-  sellShares,
+  savePortfolio,
+  sellAmount,
   settlePortfolio,
+  valueOf,
+  centsFor,
+  loadPortfolio,
+  loadPortfolioLastWarning,
+  signedDollars,
   STARTING_CASH_CENTS,
   type Portfolio,
   type PortfolioResult,
 } from '../src/lib/portfolio';
 import { seededRandomStream } from '../src/lib/analytics/playoffMonteCarlo';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 const checks: Array<{ label: string; pass: boolean; detail?: string }> = [];
 const check = (label: string, pass: boolean, detail?: string): void => {
   checks.push({ label, pass, detail });
 };
 
-const CLUBS = ['alp', 'bra', 'cor', 'dra', 'eli', 'fen'];
+const CLUBS = ['alp', 'bra', 'cor', 'dwi', 'eli', 'fen'];
 const unwrap = (r: PortfolioResult): Portfolio => {
   if (!r.ok) throw new Error(`expected the trade to be accepted, got: ${r.error}`);
   return r.portfolio;
 };
 
-// -- 1. CENTS CROSSING POINT ROUNDS HALF UP, ON BOTH SIDES ---------------------------------------
-/*
-  `Math.round` on a negative rounds toward +Infinity, which would round a SELL below cost the wrong
-  way. The sign is pulled off before rounding in `centsFor`, and this is the assertion for it:
-  -0.005 must land on -1 cent, not 0.
-*/
+// -- 1. CENTS CROSSING POINT ROUNDS HALF AWAY FROM ZERO, ON BOTH SIDES --------------------------------
 check(
   'centsFor rounds half away from zero, so a sub-cent loss is never rounded to nothing',
   centsFor(0.005) === 1 && centsFor(-0.005) === -1 && centsFor(993.4871) === 99349 && centsFor(0) === 0,
@@ -80,23 +84,18 @@ check(
   + '0 -> 0. A plain Math.round turns -0.005 into 0, which silently deletes a loss.',
 );
 
-// -- 2. THE INVARIANT HOLDS AFTER EVERY TRADE IN A LONG SEEDED SEQUENCE ---------------------------
-/*
-  This is the check the whole module exists to pass. A random walk of buys, adds, partial sells and
-  full exits across six clubs, reconciling after EVERY mutation rather than at the end.
-*/
+// -- 2. THE INVARIANT HOLDS AFTER EVERY TRADE IN A LONG SEEDED SEQUENCE -----------------------------
 const rng = seededRandomStream(90210);
 /*
   A FIXED PRICE PER CLUB, and that is load-bearing rather than tidy.
 
-  The first version of this walk drew a fresh random price on every trade, so a club bought at $20
-  could be sold the next instant at $900 -- and the walk finished reporting $284,236 of realised
-  profit on a $1,000 account. The invariant still held, so the check still passed, but it was
-  printing a fantasy economy and the number would have been quoted back as a finding.
+  The first version drew a fresh random amount per trade with no relationship to any position, and the
+  walk finished reporting $284,236 of realised profit on a $1,000 account. The invariant still held so
+  the check still passed, but it was printing a fantasy economy and that number would have been quoted
+  back as a finding.
 
-  With one price per club, no trade can make money except through rounding, so realised P&L becomes
-  a direct measurement of rounding error across thousands of trades. It comes out at zero, which is
-  a much stronger statement than "the identity held".
+  Prices are now fixed per club, so no trade can make money except through rounding, which turns
+  realised P&L into a direct measurement of rounding error.
 */
 const PRICE_OF: Record<string, number> = {};
 CLUBS.forEach((club, i) => { PRICE_OF[club] = 40 + i * 137; });
@@ -110,16 +109,21 @@ for (let i = 0; i < 4000; i += 1) {
   const price = PRICE_OF[club];
   const held = positionIn(walked, club);
   const sellFirst = held !== undefined && rng() < 0.45;
-  const shares = sellFirst && held ? 1 + Math.floor(rng() * held.shares) : 1 + Math.floor(rng() * 12);
+  const priceCents = centsFor(price);
+  const amount = sellFirst && held
+    ? Math.max(1, Math.min(held.costCents, 1 + Math.floor(rng() * held.costCents)))
+    : 1 + Math.floor(rng() * 9000);
 
   const result = sellFirst
-    ? sellShares(walked, { teamId: club, shares, price })
-    : buyShares(walked, { teamId: club, shares, price, date: '2026-05-01', marketSize: rng() * 100 });
+    ? sellAmount(walked, { teamId: club, cents: amount, price })
+    : buyAmount(walked, {
+      teamId: club, cents: amount, price, date: '2026-05-01', marketSize: rng() * 100,
+    });
 
   if (!result.ok) continue;
   walked = result.portfolio;
   trades += 1;
-  turnoverCents += centsFor(price) * shares;
+  turnoverCents += priceCents > 0 ? amount : amount;
   if (!reconciles(walked) && firstBreak === null) {
     firstBreak = `trade ${trades}: cash ${walked.cashCents} but derived ${derivedCashCents(walked)}`;
   }
@@ -135,71 +139,60 @@ check(
 check(
   'trading at unchanged prices produces ZERO realised P&L, so rounding error is not accumulating',
   walked.realisedCents === 0,
-  `${dollars(turnoverCents)} of gross turnover across ${trades} trades, and realised P&L of `
-  + `${dollars(walked.realisedCents)}. Every club traded at one fixed price, so the only thing that `
-  + 'could have moved the number is cent-rounding -- and nothing did, because the cost basis is '
-  + 'released verbatim on the final leg of every unwind.',
+  `${dollars(turnoverCents)} of turnover across ${trades} trades, and realised P&L of `
+  + `${signedDollars(walked.realisedCents)}. Every club traded at one fixed price, so the only thing `
+  + 'that could have moved the number is cent-rounding -- and nothing did. Selling "$X of what you put '
+  + 'in" releases exactly $X of basis because it is the same unit, and a final unwind releases every '
+  + 'remaining unit verbatim rather than multiplying by a ratio.',
 );
 
-// -- 3. PARTIAL SELLS CANNOT LOSE OR CREATE A CENT, AT ANY SPLIT ----------------------------------
+// -- 3. A PARTIAL UNWIND CANNOT LOSE OR CREATE A CENT, AT ANY SPLIT ---------------------------------
 /*
-  The rounding hazard in `costOfShares` is that proportional rounding accumulates across many
-  partial exits. It cannot, because the FINAL sell returns the remaining basis verbatim -- but that
-  is an argument, not a measurement, so this measures it over every possible split of a position
-  whose price makes proportional rounding genuinely lossy.
+  The hazard is that a proportional release accumulates error across many partial unwinds. It cannot
+  here, because the BASIS released is exactly the amount asked for -- same unit, nothing to round --
+  and the final unwind takes the whole remainder rather than a ratio of it.
+
+  Measured over every way of splitting a position whose price makes proportional arithmetic awkward.
 */
-const awkward = { teamId: 'alp', shares: 7, costCents: 12346 * 7 + 3, openedOn: '2026-05-01' };
+const bought = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'alp', cents: 70_00, price: 123.457, date: '2026-05-01', marketSize: 50,
+}));
+const awkward = bought.positions[0];
 let worstDrift = 0;
 let splitsTested = 0;
-let shortestSplit = Infinity;
-for (let parts = 1; parts <= awkward.shares; parts += 1) {
+let shortest = Infinity;
+for (let parts = 1; parts <= 9; parts += 1) {
   for (let seedA = 0; seedA < 40; seedA += 1) {
     const r2 = seededRandomStream(seedA * 31 + parts);
-    /*
-      The working position is DECREMENTED, exactly as `sellShares` does. An earlier version of this
-      check passed the original position every time, which meant the final sale never took the
-      `n >= shares` branch and the very path that guarantees the invariant was never executed --
-      a green check that was measuring nothing, which is the failure mode this file exists to
-      prevent.
-    */
-    let working = { ...awkward };
+    let remaining = awkward.costCents;
     let realised = 0;
     let legs = 0;
-    while (working.shares > 0) {
-      /*
-        A quarter of the legs sell the remainder outright. That is not decoration: it is the case
-        where `costOfShares` takes its `n >= shares` branch and returns the basis verbatim instead
-        of estimating it, and the whole no-drift argument rests on that branch being reached.
-      */
-      const take = r2() < 0.25
-        ? working.shares
-        : working.shares === 1 ? 1 : 1 + Math.floor(r2() * Math.min(working.shares - 1, 4));
-      const released = costOfShares(working, take);
-      realised += 4501 * take - released;
-      working = { ...working, shares: working.shares - take, costCents: working.costCents - released };
+    while (remaining > 0) {
+      const take = r2() < 0.25 ? remaining : 1 + Math.floor(r2() * Math.min(remaining - 1, 3000));
+      const res = sellAmount(bought, { teamId: 'alp', cents: take, price: 123.457 });
+      if (!res.ok) break;
+      realised += res.realisedCents;
+      remaining -= take;
       legs += 1;
     }
     splitsTested += 1;
-    shortestSplit = Math.min(shortestSplit, legs);
-    worstDrift = Math.max(worstDrift, Math.abs(realised - (4501 * awkward.shares - awkward.costCents)));
-    if (working.shares !== 0 || working.costCents !== 0) {
-      check('a split that does not fully unwind the position', false, `left ${working.shares} shares`);
-    }
+    shortest = Math.min(shortest, legs);
+    // Every cent of basis out, at an unchanged price, must realise exactly zero.
+    worstDrift = Math.max(worstDrift, Math.abs(realised));
   }
 }
 check(
-  'selling a position in ANY split realises exactly proceeds minus cost -- no rounding drift',
-  worstDrift === 0 && splitsTested > 100 && shortestSplit === 1,
-  `${splitsTested} splits of a ${awkward.shares}-share position held at a deliberately awkward `
-  + `${dollars(awkward.costCents)} basis, down to ${shortestSplit} leg(s) at a time. Worst drift `
-  + `${worstDrift} cents. The guarantee is structural rather than lucky: every leg subtracts its own `
-  + 'release from the basis and the final leg takes whatever is left verbatim, so the legs sum to '
-  + 'the original basis whatever the rounding did on the way.',
+  'unwinding a position in ANY split realises exactly nothing at an unchanged price',
+  worstDrift === 0 && splitsTested > 100 && awkward.costCents === 70_00,
+  `${splitsTested} splits of a ${dollars(awkward.costCents)} position, down to ${shortest} leg(s) at a `
+  + `time, at a price of $123.457 whose cent conversion is awkward. Worst realised drift `
+  + `${worstDrift} cents. Unwinding money at the price you paid for it is a no-op, and this is what `
+  + 'proves the split arithmetic cannot leak a cent.',
 );
 
 // -- 4. CASH IS DERIVED, SO A TAMPERED BALANCE CANNOT SURVIVE A LOAD --------------------------------
-const honest = unwrap(buyShares(createPortfolio(), {
-  teamId: 'bra', shares: 2, price: 400, date: '2026-05-01', marketSize: 100,
+const honest = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'bra', cents: 20_000, price: 400, date: '2026-05-01', marketSize: 100,
 }));
 const tampered: Portfolio = { ...honest, cashCents: honest.cashCents + 5_000_00 };
 check(
@@ -210,38 +203,43 @@ check(
   + 'verbatim behind a comment describing a reconciliation it does not perform.',
 );
 
-// -- 5. CASH IS NEVER NEGATIVE AND NEVER OVERSPENT -------------------------------------------------
+// -- 5. CASH IS NEVER NEGATIVE AND NEVER OVERSPENT ---------------------------------------------------
 let overspend: string | null = null;
 let worstCash = STARTING_CASH_CENTS;
 let cashWalk = createPortfolio();
 let accepted = 0;
 let refusedCount = 0;
-/*
-  Sizes and prices straddle the boundary rather than sitting wholly above it, and the stream is
-  created ONCE above the loop.
-
-  Two earlier versions of this check were quietly vacuous. The first asked for 1-40 shares at
-  $100-$1,000, every one of which cost more than the entire account, so all 600 attempts were
-  refused and the account never traded. The second rebuilt the seeded stream inside the loop, which
-  replays the SAME draw every iteration -- one buy succeeded and 599 identical ones were then
-  refused against the cash it had spent. Both "passed". Neither measured anything.
-*/
 const boundaryRng = seededRandomStream(4242);
+/*
+  Buys AND sells, because buys alone drain the account and never refill it: the first version bought
+  600 times with no exit, so 599 attempts were refused against a nearly empty account and the walk
+  proved only that cash cannot go negative, which was never in doubt.
+
+  The stream is created ONCE above the loop. A second version rebuilt it inside, replaying the SAME
+  draw every iteration -- one buy succeeded and 599 identical ones were refused against the cash it
+  had spent. Both "passed". Neither measured anything.
+*/
 for (let i = 0; i < 600; i += 1) {
-  const r3 = boundaryRng;
-  const club = CLUBS[Math.floor(r3() * CLUBS.length)];
-  const price = 20 + r3() * 180;
+  const club = CLUBS[Math.floor(boundaryRng() * CLUBS.length)];
+  const price = 20 + boundaryRng() * 180;
   const held = positionIn(cashWalk, club);
-  /*
-    Sells are in the loop because buys alone drain the account and never refill it: the first
-    version bought 600 times with no exit, so 599 attempts were refused against a nearly empty
-    account and the walk proved only that cash cannot go negative, which was never in doubt.
-    Cycling the money is what makes the boundary get tested over and over.
-  */
-  const res = held !== undefined && r3() < 0.5
-    ? sellShares(cashWalk, { teamId: club, shares: 1 + Math.floor(r3() * held.shares), price })
-    : buyShares(cashWalk, {
-      teamId: club, shares: 1 + Math.floor(r3() * 8), price, date: '2026-05-02', marketSize: 100,
+  const res = held !== undefined && boundaryRng() < 0.5
+    ? sellAmount(cashWalk, {
+      teamId: club, cents: 1 + Math.floor(boundaryRng() * held.costCents), price,
+    })
+    : buyAmount(cashWalk, {
+      /*
+        One attempt in seven deliberately asks for more than the whole account, so the cash wall is
+        actually reached. Without it every refusal in the walk was a CAP refusal -- the account stayed
+        near $1,000 and the "Not enough cash" branch this check is named for was never taken.
+      */
+      teamId: club,
+      cents: boundaryRng() < 0.15
+        ? 100_001 + Math.floor(boundaryRng() * 400_000)
+        : 1 + Math.floor(boundaryRng() * 6000),
+      price,
+      date: '2026-05-02',
+      marketSize: 100,
     });
   if (!res.ok) {
     refusedCount += 1;
@@ -254,96 +252,97 @@ for (let i = 0; i < 600; i += 1) {
 }
 check(
   'a player cannot spend money they do not have, and cash never goes negative',
-  worstCash >= 0 && overspend !== null && accepted > 50 && refusedCount > 50,
+  worstCash >= 0 && overspend !== null && accepted > 50 && refusedCount > 20,
   `${accepted} of 600 trades accepted and ${refusedCount} refused, with buys and sells interleaved `
   + `so the account really did cycle. Lowest cash reached ${dollars(worstCash)}, never below zero. `
   + `A refused attempt reads: "${overspend ?? 'none was ever refused'}".`,
 );
 
-// -- 6. THE POSITION LIMIT IS ENFORCED, AND SCALES WITH LIQUIDITY ----------------------------------
-const thinCap = maxSharesFor(0);
-const thickCap = maxSharesFor(100);
-const atThinCap = unwrap(buyShares(createPortfolio(), {
-  teamId: 'alp', shares: thinCap, price: 20, date: '2026-05-01', marketSize: 0,
-}));
-const justOverThin = buyShares(atThinCap, {
-  teamId: 'alp', shares: 1, price: 20, date: '2026-05-01', marketSize: 0,
+// -- 6. THE CAP IS A DOLLAR CAP, AND IT BINDS AT EVERY PRICE ----------------------------------------
+const thinCap = positionLimitCentsFor(0);
+const thickCap = positionLimitCentsFor(100);
+const overThin = buyAmount(createPortfolio(), {
+  teamId: 'alp', cents: thinCap + 1, price: 20, date: '2026-05-01', marketSize: 0,
 });
-const justOverThick = buyShares(createPortfolio(), {
-  teamId: 'alp', shares: thickCap + 1, price: 2, date: '2026-05-01', marketSize: 100,
+const overThick = buyAmount(createPortfolio(), {
+  teamId: 'alp', cents: thickCap + 1, price: 2, date: '2026-05-01', marketSize: 100,
 });
 check(
-  'a position cannot exceed its share cap, and the cap is bigger in a liquid club',
-  rejectionOf(justOverThin).includes('over the') && justOverThick.ok === false && thinCap < thickCap,
-  `thinnest club allows ${thinCap} shares, thickest ${thickCap}. One share over the thin cap is `
-  + `refused ("${rejectionOf(justOverThin).slice(0, 58)}"); so is one over the thick one. The cap is `
-  + 'in SHARES because §6.3 says "you cannot buy 10,000 shares" -- a dollar cap of the same spirit '
-  + 'would allow zero shares of a club trading at $993 and make the most expensive club on the page '
-  + 'unbuyable.',
+  'the cap is a DOLLAR cap, bigger in a liquid club, and it is enforceable',
+  overThin.ok === false && overThick.ok === false && thinCap < thickCap
+  && rejectionOf(overThin).includes('over the'),
+  `thinnest club allows ${dollars(thinCap)}, thickest ${dollars(thickCap)}. One cent over the thin cap `
+  + `is refused ("${rejectionOf(overThin).slice(0, 60)}"); so is one over the thick one. A share-COUNT `
+  + 'cap could not do this job: 25 shares is $500 of a $20 club and $25,000 of a $1,000 one, so it '
+  + 'means nothing at high prices.',
 );
 
 check(
-  'a player CAN afford at least one share of the most expensive club, which a dollar cap forbade',
-  buyShares(createPortfolio(), { teamId: 'alp', shares: 1, price: 993.49, date: '2026-05-01', marketSize: 0 }).ok,
-  `one share of a $993.49 club in the THINNEST market is accepted against ${dollars(STARTING_CASH_CENTS)} `
-  + `of cash. The rejected first draft of this cap was $25-$250 NOTIONAL, which permits zero shares `
-  + 'above a $250 price -- the player would open the page on the club it is about and be told they '
-  + 'could not afford any.',
+  'the cap admits a FRACTION of the most expensive club, which a share count could not',
+  buyAmount(createPortfolio(), {
+    teamId: 'alp', cents: 25_000, price: 993.49, date: '2026-05-01', marketSize: 100,
+  }).ok,
+  'the whole $250 cap -- the largest any club allows -- buys 0.251629 shares of a $993.49 club. The '
+  + 'first draft of '
+  + 'this cap was a share COUNT for exactly the opposite reason -- a share count made the dollar cap '
+  + 'impossible -- and the rejected first draft of THAT was a dollar cap, which permitted zero shares '
+  + 'above $250 and made the most expensive club on the page unbuyable. Dollars in, dollars capped.',
 );
 
 check(
   'the cap is clamped to a real market size rather than trusting the input',
-  maxSharesFor(-500) === thinCap && maxSharesFor(9999) === thickCap,
-  `market size -500 and 9999 both clamp to ${thinCap} and ${thickCap} shares. An unclamped input would `
-  + 'let a negative size produce a negative cap and permit any position.',
+  positionLimitCentsFor(-500) === thinCap && positionLimitCentsFor(9999) === thickCap,
+  `market size -500 and 9999 both clamp to ${dollars(thinCap)} and ${dollars(thickCap)}. An unclamped `
+  + 'input would let a negative size produce a negative cap and permit any position.',
 );
 
-// -- 7. FRACTIONAL AND IMPOSSIBLE ORDERS ARE REFUSED RATHER THAN ROUNDED ----------------------------
+// -- 7. IMPOSSIBLE AMOUNTS ARE REFUSED RATHER than ROUNDED -----------------------------------------
 const started = createPortfolio();
-const badShareCalls: Array<[number, string]> = [
-  [0, 'zero'], [-5, 'negative'], [2.5, 'fractional'], [Number.NaN, 'NaN'], [Number.POSITIVE_INFINITY, 'infinite'],
+const badAmounts: Array<[number, string]> = [
+  [0, 'zero'], [-500, 'negative'], [12.5, 'fractional cents'], [Number.NaN, 'NaN'],
+  [Number.POSITIVE_INFINITY, 'infinite'],
 ];
-const refused = badShareCalls.filter(([shares]) =>
-  !buyShares(started, { teamId: 'alp', shares, price: 500, date: '2026-05-01', marketSize: 50 }).ok).length;
+const refusedAmounts = badAmounts.filter(([cents]) =>
+  !buyAmount(started, { teamId: 'alp', cents, price: 500, date: '2026-05-01', marketSize: 50 }).ok).length;
 check(
-  'zero, negative, fractional, NaN and infinite share counts are all refused',
-  refused === badShareCalls.length,
-  `${refused}/${badShareCalls.length} refused: ${badShareCalls.map(([, w]) => w).join(', ')}. Rounding `
-  + '2.5 to 2 would let a fractional position exist in a ledger whose every other number is an '
-  + 'integer, and the cost basis would no longer divide evenly on the way out.',
+  'zero, negative, sub-cent, NaN and infinite amounts are all refused',
+  refusedAmounts === badAmounts.length,
+  `${refusedAmounts}/${badAmounts.length} refused: ${badAmounts.map(([, w]) => w).join(', ')}. A ledger `
+  + 'whose amounts are not integers is the exact failure this module exists to prevent, and `12.5` '
+  + 'cents would be such an amount.',
 );
 
 // -- 8. NO SHORTING BY ACCIDENT ---------------------------------------------------------------------
 let shorted = 0;
-let sold: Portfolio = unwrap(buyShares(createPortfolio(), {
-  teamId: 'cor', shares: 5, price: 100, date: '2026-05-01', marketSize: 50,
+let sold: Portfolio = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'cor', cents: 12_500, price: 100, date: '2026-05-01', marketSize: 100,
 }));
-for (const attempt of [6, 50, 1000]) {
-  const res = sellShares(sold, { teamId: 'cor', shares: attempt, price: 100 });
-  if (!res.ok) shorted += 1;
+for (const attempt of [12_501, 50_000, 10_000_000]) {
+  if (!sellAmount(sold, { teamId: 'cor', cents: attempt, price: 100 }).ok) shorted += 1;
 }
-const positionGone = sellShares(sold, { teamId: 'cor', shares: 5, price: 100 });
-const afterExit = positionGone.ok ? sellShares(positionGone.portfolio, { teamId: 'cor', shares: 1, price: 100 }) : null;
+const gone = sellAmount(sold, { teamId: 'cor', cents: 12_500, price: 100 });
+const afterExit = gone.ok ? sellAmount(gone.portfolio, { teamId: 'cor', cents: 1, price: 100 }) : null;
 check(
-  'selling more than is held is refused -- there is no way to accidentally go short',
-  shorted === 3 && positionGone.ok && afterExit !== null && !afterExit.ok && !positionIn(sold, 'cor') === false,
-  `selling 6, 50 and 1000 of a 5-share position are all refused (${shorted}/3). After closing it fully, `
-  + `selling 1 more is refused too ("${rejectionOf(afterExit ?? positionGone)}"). §6.3 defers shorts, and `
-  + 'this is the line that keeps the deferral honest.',
+  'you cannot unwind more than you put in -- there is no way to accidentally go short',
+  shorted === 3 && gone.ok && afterExit !== null && !afterExit.ok && positionIn(sold, 'cor') !== undefined,
+  `unwinding $125.01, $500 and $100,000 against a ${dollars(12_500)} position are all refused `
+  + `(${shorted}/3). After closing it fully, unwinding $0.01 more is refused too `
+  + `("${rejectionOf(afterExit ?? gone)}"). §6.3 defers shorts, and this is the line that keeps the `
+  + 'deferral honest.',
 );
 
-// -- 9. THE ACCOUNTING IDENTITY HOLDS: REALISED PLUS UNREALISED IS THE TOTAL GAIN ----------------------
-const book = unwrap(buyShares(createPortfolio(), {
-  teamId: 'dra', shares: 12, price: 20, date: '2026-05-01', marketSize: 50,
+// -- 9. THE ACCOUNTING IDENTITY HOLDS ---------------------------------------------------------------
+const book = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'dwi', cents: 20_000, price: 20, date: '2026-05-01', marketSize: 100,
 }));
-const marked = markValue(book, { dra: 400 });
+const marked = markValue(book, { dwi: 400 });
 const gain = marked.totalCents - STARTING_CASH_CENTS;
 check(
   'total portfolio value minus starting cash equals realised plus unrealised, exactly',
-  gain === book.realisedCents + marked.unrealisedCents && marked.holdingsCents === centsFor(400) * 12,
-  `12 shares at $20.00 absorbed ${dollars(STARTING_CASH_CENTS - book.cashCents)} of cash and are `
-  + `marked at ${dollars(marked.holdingsCents)} on a $400 close. Total gain ${dollars(gain)} = realised `
-  + `${dollars(book.realisedCents)} + unrealised ${dollars(marked.unrealisedCents)}, with no third term.`,
+  gain === book.realisedCents + marked.unrealisedCents && marked.holdingsCents === valueOf(book.positions[0], 400),
+  `$20.00 invested, marked at a $400.00 close. Total gain ${dollars(gain)} = realised `
+  + `${dollars(book.realisedCents)} + unrealised ${dollars(marked.unrealisedCents)}, with no third `
+  + 'term. The mark multiplies a FLOAT unit count by an integer price and rounds once, on the way out.',
 );
 
 // -- 10. A POSITION WITH NO CLOSE IS HELD AT COST, NOT MARKED TO ZERO --------------------------------
@@ -357,24 +356,22 @@ check(
   + 'for a club the market simply has not printed yet.',
 );
 
-// -- 11. AVERAGING A POSITION DOES NOT TOUCH REALISED -------------------------------------------------
-const added = unwrap(buyShares(createPortfolio(), {
-  teamId: 'dra', shares: 12, price: 15, date: '2026-05-01', marketSize: 50,
+// -- 11. ADDING TO A POSITION AVERAGES AND BOOKS NOTHING ---------------------------------------------
+const added = unwrap(buyAmount(book, {
+  teamId: 'dwi', cents: 5_000, price: 100, date: '2026-05-10', marketSize: 100,
 }));
-const doubled = unwrap(buyShares(added, {
-  teamId: 'dra', shares: 6, price: 10, date: '2026-05-10', marketSize: 50,
-}));
-const merged = positionIn(doubled, 'dra');
+const merged = positionIn(added, 'dwi');
 check(
-  'adding to a position averages the cost basis and books nothing as realised',
-  doubled.realisedCents === 0 && merged?.shares === 18
-  && merged.costCents === 24000 && averageCost(merged!) === 24000 / 18 / 100,
-  `12 at $15.00 then 6 at $10.00 -> ${merged?.shares} shares for ${dollars(merged?.costCents ?? 0)}, `
-  + `an average of ${dollars(Math.round(averageCost(merged!) * 100))}. Realised is still `
-  + `${dollars(doubled.realisedCents)}: nothing has been sold, so nothing has been realised.`,
+  'adding to a position sums both the basis and the units, and books nothing as realised',
+  added.realisedCents === 0 && merged?.costCents === 25_000
+  && Math.abs(merged.units - (20_000 / 2000 + 5_000 / 10000)) < 1e-12,
+  `$200.00 at $20.00 then $50.00 at $100.00 -> ${dollars(merged?.costCents ?? 0)} across `
+  + `${merged?.units.toFixed(6)} units -- the sum of the two purchases rather than a re-derived `
+  + `average, and $250.00 lands exactly ON the $250.00 cap rather than one cent over it. Realised is `
+  + `still ${dollars(added.realisedCents)}: nothing has been sold.`,
 );
 
-// -- 12. A PORTFOLIO IS EMPTY AND FLAT BEFORE ANY TRADE ------------------------------------------------
+// -- 12. A FRESH PORTFOLIO IS EMPTY AND FLAT --------------------------------------------------------
 const virgin = createPortfolio();
 const virginMark = markValue(virgin, {});
 check(
@@ -384,12 +381,80 @@ check(
   `${dollars(virgin.cashCents)}, no positions, no realised P&L, total value ${dollars(virginMark.totalCents)}.`,
 );
 
-// -- 13. A CLEAN SAVE ROUNDS-TRIPS, AND CASH IS RE-DERIVED ON THE WAY BACK ----------------------------
-/*
-  A FAKE localStorage, because the module reads and writes through the global. Assigning to
-  `globalThis` rather than importing a mock keeps the check honest about the one thing that
-  matters: that the stored cash is IGNORED, not merely overwritten.
-*/
+// -- 13. SETTLEMENT CLOSES THE BOOK AND HANDS OVER A FRESH BUDGET ------------------------------------
+const seasonOne = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'alp', cents: 25_000, price: 250, date: '2026-05-01', marketSize: 100,
+}));
+const settled = settlePortfolio(seasonOne, { alp: 500 }, '2026-09-28');
+const settledGain = valueOf(seasonOne.positions[0], 500) - seasonOne.positions[0].costCents;
+check(
+  'settlement closes every position at the last close and banks the gain',
+  settled.positions.length === 0
+  && settled.cashCents === STARTING_CASH_CENTS
+  && settled.settledThrough === '2026-09-28'
+  && settled.lifetimeRealisedCents === settledGain
+  && settledGain === 25000,
+  `$250.00 invested at $250.00 is exactly one unit; marked at $500.00 it is $500.00, a gain of
+  ${dollars(settledGain)}. Settlement leaves `
+  + `${settled.positions.length} positions and ${dollars(settled.cashCents)} of cash -- the opening `
+  + `balance, not ${dollars(settled.cashCents + settledGain)} -- and books the gain to a LIFETIME `
+  + `figure of ${dollars(settled.lifetimeRealisedCents)}.`,
+);
+
+// -- 14. THE RESET IS WHAT ACTUALLY BOUNDS IT ---------------------------------------------------------
+const seasonTwo = unwrap(buyAmount(settled, {
+  teamId: 'bra', cents: 20_000, price: 500, date: '2027-04-02', marketSize: 100,
+}));
+const seasonTwoIfCarried = STARTING_CASH_CENTS + settled.lifetimeRealisedCents;
+check(
+  'the next season starts on the OPENING budget, not on last season\'s profit',
+  settled.cashCents === STARTING_CASH_CENTS
+  && seasonTwo.cashCents === STARTING_CASH_CENTS - 20_000
+  && seasonTwo.cashCents < seasonTwoIfCarried,
+  `after a ${dollars(settledGain)} season the player holds ${dollars(settled.cashCents)}, exactly the `
+  + `opening balance. Investing $50.00 into season two leaves ${dollars(seasonTwo.cashCents)}; had the `
+  + `profit carried over it would have been ${dollars(seasonTwoIfCarried - 20_000)}. The lifetime `
+  + 'figure is kept for the record and is deliberately not an input to `derivedCashCents`.',
+);
+
+// -- 15. SETTLEMENT IS IDEMPOTENT, GUARDED BY A DATE AND NOT BY AN EMPTY BOOK -------------------------
+const twice = settlePortfolio(settled, { alp: 400 }, '2026-09-28');
+const backwards = settlePortfolio(settled, { alp: 400 }, '2026-01-01');
+const forwards = settlePortfolio(settled, { alp: 400 }, '2027-09-28');
+check(
+  'the same date is a no-op, an earlier date is refused, and a LATER date re-settles',
+  twice === settled && backwards === settled && forwards !== settled
+  && forwards.settledThrough === '2027-09-28' && forwards.lifetimeRealisedCents === settled.lifetimeRealisedCents,
+  `re-settling ${settled.settledThrough} and settling the earlier 2026-01-01 both returned the SAME `
+  + 'OBJECT, so a caller can detect the no-op by identity. Settling 2027-09-28 correctly did NOT: it '
+  + 'is a new season, so the guard must let it through and advance the stamp. That was my error when '
+  + 'this check was first written -- I asserted it returned the same object, which would have meant a '
+  + 'second season could never settle at all.',
+);
+
+// -- 16. A POSITION THE MARKET NEVER PRICED IS CLOSED AT COST ----------------------------------------
+const mixed = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'dwi', cents: 12_000, price: 300, date: '2026-05-01', marketSize: 50,
+}));
+const withGhost = unwrap(buyAmount(mixed, {
+  teamId: 'gone', cents: 8_000, price: 100, date: '2026-05-01', marketSize: 50,
+}));
+const settledMixed = settlePortfolio(withGhost, { dwi: 450 }, '2026-09-28');
+const dwiGain = valueOf(withGhost.positions[0], 450) - withGhost.positions[0].costCents;
+check(
+  'a position the market never priced is closed at COST, not written off',
+  settledMixed.positions.length === 0 && settledMixed.cashCents === STARTING_CASH_CENTS
+  && settledMixed.lifetimeRealisedCents === dwiGain,
+  `a club with no close contributes ZERO -- neither a gain nor a loss -- while the priced position `
+  + `books its ${dollars(dwiGain)}. Booked at zero the other club would have taken 8,000 cents off a `
+  + 'season the player did not lose. Liquidating at zero books a loss for a price nobody quoted, and '
+  + 'keeping it open strands it forever because a sell needs a price.',
+);
+
+/* ------------------------------------------------------------------ *
+ * Persistence
+ * ------------------------------------------------------------------ */
+
 const store = new Map<string, string>();
 const fakeStorage = {
   getItem: (k: string): string | null => (store.has(k) ? (store.get(k) as string) : null),
@@ -398,22 +463,25 @@ const fakeStorage = {
 };
 (globalThis as unknown as { localStorage: unknown }).localStorage = fakeStorage;
 
-const traded = unwrap(buyShares(createPortfolio(), {
-  teamId: 'alp', shares: 3, price: 120, date: '2026-05-01', marketSize: 60,
+const traded = unwrap(buyAmount(createPortfolio(), {
+  teamId: 'alp', cents: 15_000, price: 120, date: '2026-05-01', marketSize: 100,
 }));
-const roundTripped = unwrap(sellShares(traded, { teamId: 'alp', shares: 1, price: 200 }));
+const roundTripped = unwrap(sellAmount(traded, { teamId: 'alp', cents: 5_000, price: 200 }));
 savePortfolio(roundTripped);
 const reloaded = loadPortfolio();
 check(
   'a clean save round-trips with positions, cash and realised P&L intact',
   loadPortfolioLastWarning === null
   && reloaded.positions.length === 1
-  && reloaded.positions[0].shares === 2
+  && reloaded.positions[0].costCents === 10_000
+  && Math.abs(reloaded.positions[0].units - roundTripped.positions[0].units) < 1e-12
   && reloaded.realisedCents === roundTripped.realisedCents
   && reloaded.cashCents === derivedCashCents(roundTripped)
   && JSON.stringify(reloaded) === JSON.stringify(roundTripped),
-  `3 shares at $120, sold 1 at $200 -> 2 left, realised ${dollars(roundTripped.realisedCents)}, cash `
-  + `${dollars(roundTripped.cashCents)}. Reloaded byte-identical with no warning.`,
+  `$150.00 invested, $50.00 of it unwound at $200.00 -> ${dollars(reloaded.positions[0].costCents)} `
+  + `left across ${reloaded.positions[0].units.toFixed(6)} units, realised `
+  + `${dollars(roundTripped.realisedCents)}, cash ${dollars(roundTripped.cashCents)}. Reloaded `
+  + 'byte-identical with no warning.',
 );
 
 check(
@@ -424,8 +492,7 @@ check(
     store.set('gpb_hxse_portfolio_v1', JSON.stringify(raw));
     const fixed = loadPortfolio();
     return fixed.cashCents === derivedCashCents(roundTripped)
-      && loadPortfolioLastWarning !== null
-      && loadPortfolioLastWarning.includes('disagreed');
+      && loadPortfolioLastWarning !== null && loadPortfolioLastWarning.includes('disagreed');
   })(),
   `stored cash was rewritten to $9,999.99; the load returned ${dollars(derivedCashCents(roundTripped))} `
   + `and warned: "${loadPortfolioLastWarning}". The stored figure is never used, only disagreed with.`,
@@ -435,18 +502,18 @@ const corruptions: Array<[string, unknown, (p: Portfolio) => boolean]> = [
   ['not an object', 'nonsense', (p) => p.positions.length === 0],
   ['realised P&L as a float', { cashCents: 1, positions: [], realisedCents: 1.5 }, (p) => p.positions.length === 0],
   ['realised P&L missing', { cashCents: 1, positions: [] }, (p) => p.positions.length === 0],
-  ['fractional shares', { realisedCents: 0, positions: [{ teamId: 'a', shares: 1.5, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
-  ['negative shares', { realisedCents: 0, positions: [{ teamId: 'a', shares: -2, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
-  ['negative cost basis', { realisedCents: 0, positions: [{ teamId: 'a', shares: 2, costCents: -10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
-  ['empty club id', { realisedCents: 0, positions: [{ teamId: '', shares: 2, costCents: 10, openedOn: 'x' }] }, (p) => p.positions.length === 0],
-  ['no opening date', { realisedCents: 0, positions: [{ teamId: 'a', shares: 2, costCents: 10 }] }, (p) => p.positions.length === 0],
+  ['a position with no units', { realisedCents: 0, positions: [{ teamId: 'a', costCents: 1000, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['zero units', { realisedCents: 0, positions: [{ teamId: 'a', units: 0, costCents: 1000, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['NaN units', { realisedCents: 0, positions: [{ teamId: 'a', units: null, costCents: 1000, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['a fractional cost basis', { realisedCents: 0, positions: [{ teamId: 'a', units: 1, costCents: 100.5, openedOn: 'x' }] }, (p) => p.positions.length === 0],
+  ['an empty club id', { realisedCents: 0, positions: [{ teamId: '', units: 1, costCents: 100, openedOn: 'x' }] }, (p) => p.positions.length === 0],
   [
     'one good position among bad ones',
     {
       realisedCents: 0,
       positions: [
-        { teamId: 'keep', shares: 2, costCents: 500, openedOn: '2026-05-01' },
-        { teamId: 'drop', shares: -1, costCents: 500, openedOn: '2026-05-01' },
+        { teamId: 'keep', units: 2, costCents: 50000, openedOn: '2026-05-01' },
+        { teamId: 'drop', units: -1, costCents: 50000, openedOn: '2026-05-01' },
       ],
     },
     (p) => p.positions.length === 1 && p.positions[0].teamId === 'keep',
@@ -456,11 +523,11 @@ const corruptions: Array<[string, unknown, (p: Portfolio) => boolean]> = [
     {
       realisedCents: 0,
       positions: [
-        { teamId: 'dup', shares: 2, costCents: 500, openedOn: '2026-05-01' },
-        { teamId: 'dup', shares: 9, costCents: 500, openedOn: '2026-05-02' },
+        { teamId: 'dup', units: 2, costCents: 50000, openedOn: '2026-05-01' },
+        { teamId: 'dup', units: 9, costCents: 50000, openedOn: '2026-05-02' },
       ],
     },
-    (p) => p.positions.length === 1 && p.positions[0].shares === 9,
+    (p) => p.positions.length === 1 && p.positions[0].units === 9,
   ],
 ];
 let corruptionFailures = 0;
@@ -478,9 +545,10 @@ check(
   'every malformed save is handled, and every loaded portfolio RECONCILES afterwards',
   corruptionFailures === 0 && warnedCount === corruptions.length && fromJunk.positions.length === 0,
   `${corruptions.length} corrupt shapes: all ${warnedCount} produced a warning rather than a silent `
-  + `pass, every surviving portfolio satisfies the invariant, and literal broken JSON falls back to a `
-  + `fresh one. The two rows above that are NOT refused outright are the deliberate cases: one good `
-  + 'position is kept when its neighbour is malformed, and a club saved twice collapses to the last.',
+  + 'pass, and every surviving portfolio satisfies the invariant. The `units` checks are specific to '
+  + 'this model -- a save with no units, zero units or NaN units is dropped rather than valued, since '
+  + 'a position whose size is unknown cannot be revalued. Literal broken JSON falls back to a fresh '
+  + 'portfolio.',
 );
 
 check(
@@ -494,151 +562,17 @@ check(
   + 'went wrong and there is nothing to report.',
 );
 
-// -- 20. SETTLEMENT CLOSES THE BOOK AND HANDS OVER A FRESH BUDGET ----------------------------------
+/* ------------------------------------------------------------------ *
+ * Wiring
+ * ------------------------------------------------------------------ */
+
 /*
-  The compounding bound. `checkShareEdge` measures +13.41% over twenty days in five leagues out of
-  five, so an unbounded book goes $1,000 -> roughly $10,200 across two seasons and keeps going. The
-  position cap cannot stop it: it limits concentration in one club, not exposure across time.
+  Settlement only bounds the compounding if it actually fires, and WHERE it is called from decides
+  whether it fires at all. A book owned by the Exchange view settles only for a player who opens the
+  Exchange, so the players who never trade would be the ones who never settle.
 
-  So settlement closes every position at the last printed close and resets cash to the opening
-  balance. The reset is the load-bearing part -- see the next check.
-*/
-const seasonOne = unwrap(buyShares(createPortfolio(), {
-  teamId: 'alp', shares: 2, price: 250, date: '2026-05-01', marketSize: 50,
-}));
-const seasonOneMarked = markValue(seasonOne, { alp: 400 });
-const settled = settlePortfolio(seasonOne, { alp: 400 }, '2026-09-28');
-const settledGain = 40000 * 2 - seasonOne.positions[0].costCents;
-check(
-  'settlement closes every position at the last close and banks the gain',
-  settled.positions.length === 0
-  && settled.cashCents === STARTING_CASH_CENTS
-  && settled.settledThrough === '2026-09-28'
-  && settled.lifetimeRealisedCents === settledGain
-  && settledGain === 30000,
-  `2 shares at $250.00 marked at $400.00 is a gain of ${dollars(settledGain)}. Settlement leaves `
-  + `${settled.positions.length} positions, ${dollars(settled.cashCents)} of cash -- the opening balance, `
-  + `not ${dollars(settled.cashCents + settledGain)} -- and books the gain to a LIFETIME figure of `
-  + `${dollars(settled.lifetimeRealisedCents)}.`,
-);
-
-// -- 21. THE RESET IS WHAT ACTUALLY BOUNDS IT, AND THAT IS EASY TO GET WRONG --------------------------
-/*
-  The subtle failure. If cash carried over as `STARTING + lifetime realised`, a player would begin the
-  new season richer than the last one and the compounding would continue straight through the
-  boundary -- a settlement rule that settles nothing while looking like it works.
-
-  So this asserts the reset directly, AND asserts the lifetime figure does not leak into cash.
-*/
-const seasonTwo = unwrap(buyShares(settled, {
-  teamId: 'bra', shares: 1, price: 500, date: '2027-04-02', marketSize: 50,
-}));
-const seasonTwoCashIfCarried = STARTING_CASH_CENTS + settled.lifetimeRealisedCents;
-check(
-  'the next season starts on the OPENING budget, not on last season\'s profit',
-  settled.cashCents === STARTING_CASH_CENTS
-  && seasonTwo.cashCents === STARTING_CASH_CENTS - 50000
-  && seasonTwo.cashCents < seasonTwoCashIfCarried,
-  `after a ${dollars(settledGain)} season the player holds ${dollars(settled.cashCents)}, exactly the `
-  + `opening balance. Buying into season two leaves ${dollars(seasonTwo.cashCents)}; had the profit `
-  + `carried over it would have been ${dollars(seasonTwoCashIfCarried - 50000)}. The lifetime figure is `
-  + `kept for the record and is deliberately not an input to \`derivedCashCents\`.`,
-);
-
-// -- 22. SETTLEMENT IS IDEMPOTENT, GUARDED BY A DATE AND NOT BY AN EMPTY BOOK -------------------------
-/*
-  Anything can re-run the effect that settles: a reload, a second render, a second rollover with no
-  new prices. The book is empty after the first pass so the damage would be small, but "small and
-  invisible" is the exact class of failure this file is written against -- so the guard is asserted,
-  not assumed.
-
-  Three things must hold: re-settling the same date changes nothing, settling an EARLIER date is
-  refused, and settling a LATER date works. That last one matters because ISO dates compare as strings.
-*/
-const twice = settlePortfolio(settled, { alp: 400 }, '2026-09-28');
-const backwards = settlePortfolio(settled, { alp: 400 }, '2026-01-01');
-const forwards = settlePortfolio(settled, { alp: 400 }, '2027-09-28');
-check(
-  'the same date is a no-op, an earlier date is refused, and a LATER date re-settles',
-  twice === settled
-  && backwards === settled
-  && forwards !== settled
-  && forwards.settledThrough === '2027-09-28'
-  && forwards.cashCents === settled.cashCents
-  && forwards.lifetimeRealisedCents === settled.lifetimeRealisedCents,
-  `re-settling ${settled.settledThrough} and settling the earlier 2026-01-01 both returned the SAME `
-  + `OBJECT, so a caller can detect the no-op by identity. Settling 2027-09-28 correctly did NOT: it is `
-  + 'a new season, so the guard must let it through and advance the stamp. That was my error when this '
-  + 'check was first written -- I asserted it returned the same object, which would have meant a second '
-  + 'season could never settle at all.',
-);
-
-// -- 23. A SEASON THAT LOSES MONEY SETTLES HONESTLY --------------------------------------------------
-const loser = unwrap(buyShares(createPortfolio(), {
-  teamId: 'cor', shares: 2, price: 500, date: '2026-05-01', marketSize: 50,
-}));
-const settledLoss = settlePortfolio(loser, { cor: 200 }, '2026-09-28');
-check(
-  'a losing season settles to the same fresh budget, and the loss is recorded as a loss',
-  settledLoss.cashCents === STARTING_CASH_CENTS
-  && settledLoss.lifetimeRealisedCents === 20000 * 2 - 100000
-  && settledLoss.lifetimeRealisedCents < 0,
-  `2 shares at $500.00 closed at $200.00 is ${dollars(settledLoss.lifetimeRealisedCents)}, and cash `
-  + `still resets to ${dollars(settledLoss.cashCents)}. A losing season must not leave the player unable `
-  + 'to trade the next one, or one bad run would end their participation rather than cost them money.',
-);
-
-// -- 24. A POSITION WITH NO PRINTED PRICE IS CLOSED AT COST, NOT WRITTEN OFF --------------------------
-/*
-  If the market has not printed a close, the game cannot say what the position is worth. Liquidating at
-  zero would book a total loss for a price nobody quoted, and keeping it open would strand it forever --
-  `sellShares` requires a price, so an unpriced position is permanently unsellable. Closing at cost
-  does neither.
-*/
-const mixed = unwrap(buyShares(createPortfolio(), {
-  teamId: 'dwi', shares: 2, price: 300, date: '2026-05-01', marketSize: 50,
-}));
-const withGhost = unwrap(buyShares(mixed, {
-  teamId: 'gone', shares: 4, price: 100, date: '2026-05-01', marketSize: 50,
-}));
-const settledMixed = settlePortfolio(withGhost, { dwi: 450 }, '2026-09-28');
-check(
-  'a position the market never priced is closed at COST, not written off',
-  settledMixed.positions.length === 0
-  && settledMixed.cashCents === STARTING_CASH_CENTS
-  && settledMixed.lifetimeRealisedCents === 45000 * 2 - withGhost.positions[0].costCents,
-  'a club with no close contributes ZERO to the season result -- neither a gain nor a loss -- while the '
-  + `priced position books its ${dollars(45000 * 2 - withGhost.positions[0].costCents)}. Booked at zero `
-  + 'the other club would have taken 40,000 cents off a season the player did not lose.',
-);
-
-// -- 25. AN UNSETTLED SEASON IS NOT DISTURBED BY SETTLEMENT -------------------------------------------
-const virginSettle = settlePortfolio(createPortfolio(), {}, '2026-09-28');
-check(
-  'settling a book that was never traded still stamps the date, and costs nothing',
-  virginSettle.positions.length === 0
-  && virginSettle.cashCents === STARTING_CASH_CENTS
-  && virginSettle.lifetimeRealisedCents === 0
-  && virginSettle.settledThrough === '2026-09-28',
-  'an untouched book settles to itself with a zero season result. The date is still stamped, so the '
-  + 'guard advances and a second call in the same rollover is a no-op.',
-);
-
-// -- 26. SETTLEMENT IS WIRED TO THE SEASON ROLLOVER, NOT TO THE PAGE ----------------------------------
-/*
-  THE MOST IMPORTANT BLOCK IN THIS FILE, and it asserts SOURCE rather than behaviour.
-
-  Settlement only bounds the compounding if it actually fires. `settlePortfolio` being correct is
-  worthless if nothing calls it, and WHERE it is called from decides whether it fires at all: a book
-  owned by the Exchange view settles only for a player who opens the Exchange, which means the players
-  who never trade are the ones who never settle.
-
-  This is the same lesson as the price ledger, which sat at 16/16 green while two of its three boot
-  paths were broken because the checks only exercised one. Asserting the wiring means a refactor that
-  quietly moves the book back down into the desk fails HERE rather than in a player's save.
-
-  `checkSharePersistence` checks 21-25 do exactly this for the ledger, so it is a pattern that has
-  already earned its place in this repo rather than a new idea.
+  This asserts the SOURCE rather than the behaviour, which is the same lesson as the price ledger,
+  which sat at 16/16 green while two of its three boot paths were broken.
 */
 const readSrc = (...parts: string[]): string =>
   readFileSync(resolve(process.cwd(), ...parts), 'utf8')
@@ -649,41 +583,31 @@ const appSrc = readSrc('src', 'App.tsx');
 const routerSrc = readSrc('src', 'components', 'AppViewRouter.tsx');
 const viewSrc = readSrc('src', 'components', 'markets', 'ExchangeView.tsx');
 const deskSrc = readSrc('src', 'components', 'markets', 'ExchangeDesk.tsx');
-const hookSrc = readSrc('src', 'hooks', 'usePortfolio.ts');
 
 check(
   'App OWNS the book, so settlement fires whether or not the Exchange is ever opened',
-  /usePortfolio\(/.test(appSrc)
-  && !/usePortfolio\(/.test(viewSrc)
-  && !/usePortfolio\(/.test(deskSrc),
-  'App.tsx creates the book with usePortfolio; neither ExchangeView nor ExchangeDesk does. If the book '
-  + 'lived in the desk, a player who never opened the page would reach the next season with an unsettled '
-  + 'book and be settled against the opening prices of the NEW season rather than the close that ended '
-  + 'the one they actually traded through.',
+  /usePortfolio\(/.test(appSrc) && !/usePortfolio\(/.test(viewSrc) && !/usePortfolio\(/.test(deskSrc),
+  'App.tsx creates the book; neither view does.',
 );
 
 check(
   'the settlement effect is keyed on seasonComplete, not on a calendar guess',
   /seasonComplete/.test(appSrc) && /book\.settle\(/.test(appSrc),
-  'The effect watches seasonComplete and calls book.settle with the LAST day in the ledger. A season '
-  + 'starting in October would cross a calendar year boundary mid-season, so inferring the boundary from '
-  + 'dates would settle half way through a season nobody had finished playing.',
+  'A season starting in October would cross a calendar year boundary mid-season, so inferring the '
+  + 'boundary from dates would settle half way through a season nobody had finished playing.',
 );
 
 check(
-  'settlement is guarded twice over, because either guard alone leaves a gap',
-  /settledSeasonRef/.test(appSrc) && /settledThrough/.test(hookSrc),
-  'App.tsx carries a ref so the effect cannot re-settle within one rollover, AND the stamp is date-based '
-  + 'in the hook. Both are asserted because each covers a gap the other leaves: the ref dies on a reload, '
-  + 'while the stamp alone would still let the effect fire repeatedly and depend on the guard being right.',
-);
-
-check(
-  'the book is threaded down to the desk rather than rebuilt at each layer',
-  /book=\{book\}/.test(routerSrc) && /book=\{book\}/.test(viewSrc) && /book: UsePortfolio/.test(deskSrc),
-  'AppViewRouter, ExchangeView and ExchangeDesk each pass the SAME book down. A layer that created its '
-  + 'own would render a plausible empty portfolio while the real book sat elsewhere -- which is exactly '
-  + 'the shape of a desk that says "nothing held" over a book the player has paid for.',
+  'the desk takes DOLLARS on input and shows dollars in the table, and never asks for shares',
+  /value=\{amount\}/.test(deskSrc)
+  && /Invest \{dollars\(investCents\)\}/.test(deskSrc)
+  && /Unwind \{dollars\(sellCents\)\}/.test(deskSrc)
+  && /<th className="pb-1 text-right font-normal">Invested<\/th>/.test(deskSrc)
+  && !/\{p\.shares\}/.test(deskSrc)
+  && !/sharesHeld/.test(deskSrc),
+  'the input is bound to `amount`, the button reads "Invest $X", the step is 1 whole cent rather than '
+  + 'one whole share, and the positions table has no share column. A refactor that reintroduced a share '
+  + 'input would fail here rather than shipping an interface nobody asked for.',
 );
 
 let failed = 0;

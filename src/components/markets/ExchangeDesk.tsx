@@ -38,24 +38,14 @@
 
 import * as React from 'react';
 import { Panel, PanelHeader, TeamLogo } from '../ui';
-import { averageCost, dollars, STARTING_CASH_CENTS } from '../../lib/portfolio';
+import { dollars, signedDollars, valueOf, STARTING_CASH_CENTS } from '../../lib/portfolio';
 import { marketSizeFor } from '../../lib/analytics/fanbase';
 import type { UsePortfolio } from '../../hooks/usePortfolio';
 import { fmtPrice } from './ExchangeView';
 import type { Team } from '../../types';
 
-const signedDollars = (cents: number): string =>
-  `${cents < 0 ? '-' : '+'}${dollars(Math.abs(cents))}`;
-
-/**
- * A gain, a loss, or nothing at all.
- *
- * An em dash rather than `+$0.00`, and this is the third time this page has needed the same rule.
- * A flat book printed three zeroes -- total sub, open P/L, realised -- which reads as three small
- * achievements rather than as "nothing has happened yet". A number that is not a result should not
- * be dressed as one.
- */
-const pnlText = (cents: number): string => (cents === 0 ? '—' : signedDollars(cents));
+/** A gain, a loss, or nothing at all -- never a "$+0.00" dressed up as a result. */
+const pnlText = signedDollars;
 const pnlClass = (cents: number): string =>
   cents < 0 ? 'text-[var(--color-media-glorest)]' : cents > 0 ? 'text-[var(--color-neutral)]' : 'text-[var(--color-ink-faint)]';
 
@@ -69,12 +59,32 @@ export interface ExchangeDeskProps {
   selectedClub: string | null;
   /** The book, created by App rather than here, so settlement cannot be skipped by not opening this page. */
   book: UsePortfolio;
+  /**
+   * Point the chart and the trade box at a club.
+   *
+   * Exists so a position row can be the way you go and trade a position, rather than putting a second
+   * amount input on every row. It routes through ExchangeView's `chooseClub`, which is the only thing
+   * that sets the selection -- so a click from the desk marks the choice as deliberate and the
+   * rank-1 default can never reassert itself over it.
+   */
+  onSelect: (teamId: string) => void;
 }
 
 export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
-  teams, closes, markedOn, selectedClub, book,
+  teams, closes, markedOn, selectedClub, book, onSelect,
 }) => {
-  const [shares, setShares] = React.useState('1');
+  /*
+    THE INPUT IS AN AMOUNT OF MONEY, and this is the single most important line in the component.
+
+    The first version asked for a share count and refused anything fractional, which is a defensible
+    engineering choice and the wrong interface. With a price band to $1,000 against a $1,000 account,
+    whole shares leave the player committing 99% of everything or nothing at all -- there is no
+    middle move, so there is no decision.
+
+    The player says how much they want in. The share count is what that buys, and it is reported back
+    as a receipt rather than asked for.
+  */
+  const [amount, setAmount] = React.useState('50');
 
   const byId = React.useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);
   const selected = selectedClub ? byId.get(selectedClub) ?? null : null;
@@ -88,41 +98,53 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
     An unparseable field simply reads as 1, which is also the smallest legal order, so the buttons
     stay honest instead of going dead.
   */
-  const wanted = Number.parseInt(shares, 10);
-  const shareCount = Number.isFinite(wanted) && wanted > 0 ? wanted : 1;
-  const costCents = selectedClose === null ? 0 : Math.round(selectedClose * 100) * shareCount;
-  const affordable = costCents <= book.cashCents;
+  /*
+    THE AMOUNT IS PARSED TO WHOLE CENTS, never carried as a float.
 
-  const held = selected ? book.sharesHeld(selected.id) : 0;
-  const canSell = held > 0 && shareCount <= held;
+    `parseFloat("12.345")` would spend 1234.5 cents, and a ledger whose amounts are not integers is
+    the exact class of bug this module exists to avoid. Anything that is not a positive whole number
+    of cents reads as one cent -- the smallest legal trade -- so the buttons stay alive and honest
+    rather than going dead on a typo.
+  */
+  const parsedAmount = Number.parseFloat(amount);
+  const investCents = Number.isFinite(parsedAmount) && parsedAmount > 0 ? Math.round(parsedAmount * 100) : 1;
+
+  const heldCents = selected ? book.investedIn(selected.id) : 0;
 
   /*
-    WHETHER CASH IS THE BINDING CONSTRAINT, decided once so the label and the message agree.
-
-    Both are computed from the same two integers, which is why the cost preview and the refusal
-    cannot disagree by a cent: `buyShares` charges `centsFor(price) * shares` and this charges the
-    same expression. A player who sees a cost and then gets told a different cost has been told one
-    of them is a lie.
+    SELLING IS DENOMINATED IN WHAT YOU PUT IN, so the sell figure is capped by the position rather than
+    by anything about the current price. "`dollars(investCents)`" reads as unwinding that much of your
+    own money, which is the same unit the position row is displayed in. Selling a DOLLAR VALUE instead
+    would put two different units two inches apart on the same row.
   */
+  const sellCents = Math.min(investCents, heldCents);
+  const canSell = heldCents > 0;
+
+  /*
+    THE PREVIEW AND THE REFUSAL CANNOT DISAGREE, because they are the same integer.
+
+    `buyAmount` charges `cents` and this previews `cents`. Nothing in the UI re-derives an amount
+    from a price, so a player cannot be shown one figure and charged another.
+  */
+  const affordable = investCents <= book.cashCents;
   const capRoom = Math.max(0, cap.allowed - cap.held);
-  const cashRoom = selectedClose !== null && selectedClose > 0
-    ? Math.floor(book.cashCents / Math.round(selectedClose * 100))
-    : 0;
+  const capBinds = capRoom < investCents;
 
   const act = React.useCallback((direction: 'buy' | 'sell') => {
     if (!selected || selectedClose === null) return;
     if (direction === 'buy') {
       book.buy({
         teamId: selected.id,
-        shares: shareCount,
+        teamName: selected.name,
+        cents: investCents,
         price: selectedClose,
         date: markedOn ?? '',
         marketSize: selectedMarketSize,
       });
     } else {
-      book.sell({ teamId: selected.id, shares: shareCount, price: selectedClose });
+      book.sell({ teamId: selected.id, teamName: selected.name, cents: sellCents, price: selectedClose });
     }
-  }, [book, selected, selectedClose, shareCount, markedOn, selectedMarketSize]);
+  }, [book, selected, selectedClose, investCents, sellCents, markedOn, selectedMarketSize]);
 
   const gain = book.totalCents - STARTING_CASH_CENTS;
   const positions = book.portfolio.positions
@@ -166,29 +188,45 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div className="flex items-end gap-3">
                 <label className="flex flex-col gap-1">
-                  <span className="t-label text-[var(--color-ink-faint)]">Shares</span>
+                  <span className="t-label text-[var(--color-ink-faint)]">Invest</span>
                   <input
                     type="number"
-                    min={1}
+                    min={0.01}
                     step={1}
-                    value={shares}
-                    onChange={(e) => setShares(e.target.value)}
-                    className="t-stat w-24 rounded border border-[var(--color-chrome-mid)] bg-[var(--color-chrome-lo)] px-2 py-1 text-[var(--color-ink)]"
+                    inputMode="decimal"
+                    aria-label={`Amount to invest in ${selected ? selected.name : 'this club'}`}
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    className="t-stat w-28 rounded border border-[var(--color-chrome-mid)] bg-[var(--color-chrome-lo)] px-2 py-1 text-[var(--color-ink)]"
                   />
                 </label>
                 <div className="pb-1">
-                  <div className="t-label text-[var(--color-ink-faint)]">Cost</div>
+                  <div className="t-label text-[var(--color-ink-faint)]">Shares</div>
                   {/*
                     THE COST IS NOT COLOURED ON AFFORDABILITY, and that took a correction.
 
-                    The first version painted it red when the order exceeded cash. Red already means
-                    "a loss" in the P/L column two inches below, and one screen must not use one
-                    colour for two unrelated things -- a red COST next to a red LOSS reads as two
-                    losses when one of them is just a price. Affordability is carried by the button
-                    state and by an explicit shortfall, which are about the ORDER rather than about
-                    money being lost.
+                    THE SECOND TILE IS WHAT THE AMOUNT BUYS, PREVIEWED.
+
+                    It used to show the cost, which was a derived figure saying what the input beside
+                    it already said -- and after the switch to dollar-denominated trading it became
+                    literally redundant, because an amount bought at the current price is worth
+                    exactly that amount the instant after.
+
+                    What is genuinely NOT computable at a glance is how many shares the money turns
+                    into, because that is a division. So the receipt line sits here, shown BEFORE
+                    committing rather than only afterwards. It is a consequence of the input, never a
+                    second input, and never editable.
+
+                    It is not coloured on affordability either. Red already means "a loss" in the P/L
+                    table two inches below, and one screen must not use one colour for two unrelated
+                    things -- a red figure next to a red LOSS reads as two losses when one of them is
+                    just a share count.
                   */}
-                  <div className="t-stat text-[var(--color-ink)]">{dollars(costCents)}</div>
+                  <div className="t-stat text-[var(--color-ink-dim)]">
+                    {selectedClose !== null && selectedClose > 0
+                      ? (investCents / Math.round(selectedClose * 100)).toFixed(6)
+                      : '--'}
+                  </div>
                 </div>
               </div>
 
@@ -203,7 +241,7 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
                       : 'cursor-not-allowed border-[var(--color-chrome-mid)] text-[var(--color-ink-faint)] opacity-50'
                   }`}
                 >
-                  Buy {selected.name}
+                  Invest {dollars(investCents)}
                 </button>
                 <button
                   type="button"
@@ -215,7 +253,7 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
                       : 'cursor-not-allowed border-[var(--color-chrome-mid)] text-[var(--color-ink-faint)] opacity-50'
                   }`}
                 >
-                  Sell {shareCount}
+                  Unwind {dollars(sellCents)}
                 </button>
               </div>
             </div>
@@ -247,9 +285,7 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
                 cash is not binding there is nothing to say about it.
               */}
               <p className="t-caption text-[var(--color-ink-faint)]">
-                {`Holding ${cap.held} of a ${cap.allowed}-share cap · average cost ${held > 0
-                  ? fmtPrice(averageCost(book.portfolio.positions.find((p) => p.teamId === selected.id)!))
-                  : '—'} · ${selectedMarketSize < 33 ? 'thin market' : selectedMarketSize < 67 ? 'middling market' : 'thick market'}`}
+                {`Holding ${dollars(cap.held)} of a ${dollars(cap.allowed)} cap · ${selectedMarketSize < 33 ? 'thin market' : selectedMarketSize < 67 ? 'middling market' : 'thick market'} (size ${selectedMarketSize.toFixed(0)} of 100)`}
               </p>
               {/*
                 SHOWN ONLY WHEN THE ORDER IS GENUINELY UNAFFORDABLE, and the first version got that
@@ -265,16 +301,46 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
                 shortage of money in a situation with a surplus of it. The shortfall is now clamped
                 to the branch that can actually produce one.
               */}
-              {!affordable && costCents > book.cashCents ? (
+              {/*
+                SHOWN ONLY WHEN THE ORDER IS GENUINELY UNAFFORDABLE, and this took two corrections.
+
+                The first gate was "is cash the binding constraint", which stays true after a sell has
+                freed cash -- cash still limits how much you can add long after it stops preventing
+                THIS one. So the panel said "`this order is $-183.32 short`" on an order the player
+                could plainly afford, with a NEGATIVE shortfall. A negative shortfall is the worst
+                kind of wrong here: not a rounding artefact that looks like one, but a sentence
+                confidently reporting a shortage of money in a situation with a surplus of it.
+
+                The cap sentence is separate because it is a property of the club rather than of this
+                order, and a shortfall against it is a different message from a shortfall against cash.
+              */}
+              {!affordable && investCents > book.cashCents ? (
                 <p className="t-caption text-[var(--color-ink-faint)]">
-                  {`Cash allows ${cashRoom} more share${cashRoom === 1 ? '' : 's'} — this order is `
-                    + `${dollars(costCents - book.cashCents)} short.`}
+                  {`This is ${dollars(investCents - book.cashCents)} more than you have.`}
+                </p>
+              ) : null}
+              {capBinds && affordable ? (
+                <p className="t-caption text-[var(--color-ink-faint)]">
+                  {`This club takes ${dollars(cap.allowed)} at most, and you have ${dollars(capRoom)} of room.`}
                 </p>
               ) : null}
             </div>
 
-            {book.notice && !book.notice.ok ? (
-              <p className="t-caption mt-2 text-[var(--color-media-glorest)]">{book.notice.message}</p>
+            {/*
+              THE RECEIPT, OR THE REFUSAL.
+
+              A successful trade says what it bought in SHARE TERMS even though the player typed
+              dollars -- "`received 0.122445 shares`" -- because that is the one number they cannot
+              derive themselves and it closes the loop between the amount they typed and the thing
+              they now own. A refusal is red because it is a refusal and nothing else on this screen
+              uses red for anything but that.
+            */}
+            {book.notice ? (
+              <p className={`t-caption mt-2 ${book.notice.ok
+                ? 'text-[var(--color-neutral)]'
+                : 'text-[var(--color-media-glorest)]'}`}>
+                {book.notice.message}
+              </p>
             ) : null}
           </>
         ) : (
@@ -295,6 +361,20 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
           </span>
         </div>
 
+          {/*
+            THE TABLE SPEAKS ONLY IN DOLLARS, and that was the player's instruction rather than mine:
+            "i don't want the portfolio to say 4 shares of Team A. I simply want the screen to show
+            how much money I have invested in that team and how much it's worth."
+
+            Four columns, all of them money: what you put in, what it is worth, and what that is
+            worth as a gain. The share count is deliberately ABSENT -- it is what an amount buys, not
+            the thing being tracked, and putting it here would invite the reader to do arithmetic in
+            a unit the screen has already done for them.
+
+            The row is a BUTTON because the useful action on a position is to go trade it: clicking
+            selects the club, which moves the chart to it and points the Unwind control at it, rather
+            than putting a second amount input on every row.
+          */}
         {positions.length === 0 ? (
           <p className="t-caption text-[var(--color-ink-faint)]">
             Nothing held. Buy a club trading below its fair value and the gap is what you are paid to
@@ -305,9 +385,8 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
             <thead>
               <tr className="t-label text-[var(--color-ink-faint)]">
                 <th className="pb-1 text-left font-normal">Club</th>
-                <th className="pb-1 text-right font-normal">Shares</th>
-                <th className="pb-1 text-right font-normal">Avg cost</th>
-                <th className="pb-1 text-right font-normal">Last</th>
+                <th className="pb-1 text-right font-normal">Invested</th>
+                <th className="pb-1 text-right font-normal">Worth</th>
                 <th className="pb-1 text-right font-normal">Open P/L</th>
               </tr>
             </thead>
@@ -316,22 +395,36 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
                 const team = byId.get(p.teamId);
                 const last = closes[p.teamId];
                 const priced = typeof last === 'number' && Number.isFinite(last) && last > 0;
-                const pnl = priced ? Math.round(last * 100) * p.shares - p.costCents : 0;
+                const worth = priced ? valueOf(p, last) : p.costCents;
+                const pnl = worth - p.costCents;
+                const pct = p.costCents > 0 ? (pnl / p.costCents) * 100 : 0;
                 return (
-                  <tr key={p.teamId} className="border-t border-[var(--color-chrome-lo)]">
+                  <tr
+                    key={p.teamId}
+                    className={`border-t border-[var(--color-chrome-lo)] ${
+                      p.teamId === selectedClub ? 'bg-[var(--color-panel-3)]' : ''
+                    }`}
+                  >
                     <td className="py-1.5">
-                      <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSelect(p.teamId)}
+                        className="flex items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neutral)]"
+                      >
                         {team ? <TeamLogo team={team} sizeClass="h-5 w-5" lazy /> : null}
                         <span className="t-stat-sm text-[var(--color-ink)]">{team?.name ?? p.teamId}</span>
-                      </span>
+                      </button>
                     </td>
-                    <td className="t-stat-sm py-1.5 text-right text-[var(--color-ink-dim)]">{p.shares}</td>
-                    <td className="t-stat-sm py-1.5 text-right text-[var(--color-ink-dim)]">{fmtPrice(averageCost(p))}</td>
                     <td className="t-stat-sm py-1.5 text-right text-[var(--color-ink-dim)]">
-                      {priced ? fmtPrice(last) : '--'}
+                      {dollars(p.costCents)}
+                    </td>
+                    <td className="t-stat-sm py-1.5 text-right text-[var(--color-ink-dim)]">
+                      {priced ? dollars(worth) : dollars(p.costCents)}
                     </td>
                     <td className={`t-stat-sm py-1.5 text-right ${priced ? pnlClass(pnl) : 'text-[var(--color-ink-faint)]'}`}>
-                      {priced ? pnlText(pnl) : 'unpriced'}
+                      {priced
+                        ? `${pnlText(pnl)}${pct === 0 ? '' : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}`
+                        : 'unpriced'}
                     </td>
                   </tr>
                 );

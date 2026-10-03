@@ -31,23 +31,23 @@
 
 import * as React from 'react';
 import {
-  buyShares,
+  buyAmount,
   createPortfolio,
   loadPortfolio,
   loadPortfolioLastWarning,
   markValue,
-  maxSharesFor,
+  positionLimitCentsFor,
   positionIn,
   rejectionOf,
   savePortfolio,
-  sellShares,
+  sellAmount,
   settlePortfolio,
   type Portfolio,
 } from '../lib/portfolio';
 
 export interface TradeOutcome {
   ok: boolean;
-  /** Player-facing sentence. Empty on success. */
+  /** Player-facing sentence: the refusal on failure, the RECEIPT on success. */
   message: string;
   /** Cents realised by this trade. Always zero for a buy. */
   realisedCents: number;
@@ -77,7 +77,7 @@ export interface UsePortfolio {
   buy: (request: BuyRequest) => TradeOutcome;
   sell: (request: SellRequest) => TradeOutcome;
   /** Shares held in one club. */
-  sharesHeld: (teamId: string) => number;
+  investedIn: (teamId: string) => number;
   capFor: (teamId: string, marketSize: number) => { allowed: number; held: number };
   /**
    * Close the book at the end of a season.
@@ -91,7 +91,10 @@ export interface UsePortfolio {
 
 export interface BuyRequest {
   teamId: string;
-  shares: number;
+  /** Club name for the receipt. Falls back to the id if absent. */
+  teamName?: string;
+  /** Cents to invest. The player typed an amount of money, not a quantity of shares. */
+  cents: number;
   price: number;
   date: string;
   marketSize: number;
@@ -99,7 +102,10 @@ export interface BuyRequest {
 
 export interface SellRequest {
   teamId: string;
-  shares: number;
+  /** Club name for the receipt. Falls back to the id if absent. */
+  teamName?: string;
+  /** Cents of ORIGINAL INVESTMENT to unwind, which is the unit the position is displayed in. */
+  cents: number;
   price: number;
 }
 
@@ -133,39 +139,62 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
   const commit = React.useCallback((next: Portfolio, outcome: TradeOutcome): TradeOutcome => {
     setPortfolio(next);
     savePortfolio(next);
-    setNotice(outcome.ok ? null : outcome);
+    /*
+      THE NOTICE IS SET ON SUCCESS TOO, because on success it is the RECEIPT.
+
+      This used to be `outcome.ok ? null : outcome`, which cleared the message after a good trade --
+      correct when a success had nothing to say, and wrong now that the player typed an amount of
+      money rather than a number of shares. The share count they received is the one figure they
+      cannot derive themselves, and this is the only place it is ever shown. Clearing it meant a
+      successful purchase reported nothing at all.
+
+      The colour is the caller's business: the desk renders this teal on success and red on refusal,
+      so one field carries both and neither has to invent a second channel.
+    */
+    setNotice(outcome);
     return outcome;
   }, []);
 
   const buy = React.useCallback((request: BuyRequest): TradeOutcome => {
-    const result = buyShares(portfolio, request);
+    const result = buyAmount(portfolio, request);
     if (!result.ok) {
       setNotice({ ok: false, message: rejectionOf(result), realisedCents: 0 });
       return { ok: false, message: rejectionOf(result), realisedCents: 0 };
     }
-    return commit(result.portfolio, { ok: true, message: '', realisedCents: 0 });
+    /*
+      THE SUCCESS MESSAGE IS THE RECEIPT, and it is kept rather than discarded.
+
+      The player asked for an amount of money, not a quantity of shares, so the shares are the
+      CONSEQUENCE and belong in a confirmation rather than in the input. "Invested $50.00 at $408.34
+      -- received 0.122445 shares" is the sentence that closes the loop between what they typed and
+      what they now own. Discarding it would leave the trade silent.
+    */
+    return commit(result.portfolio, {
+      ok: true, message: result.message, realisedCents: 0,
+    });
   }, [portfolio, commit]);
 
   const sell = React.useCallback((request: SellRequest): TradeOutcome => {
-    const result = sellShares(portfolio, request);
+    const result = sellAmount(portfolio, request);
     if (!result.ok) {
       setNotice({ ok: false, message: rejectionOf(result), realisedCents: 0 });
       return { ok: false, message: rejectionOf(result), realisedCents: 0 };
     }
     return commit(result.portfolio, {
-      ok: true, message: '', realisedCents: result.realisedCents,
+      ok: true, message: result.message, realisedCents: result.realisedCents,
     });
   }, [portfolio, commit]);
 
-  const sharesHeld = React.useCallback(
-    (teamId: string): number => positionIn(portfolio, teamId)?.shares ?? 0,
+  /** Cents currently invested in a club -- the figure the player reads as their holding. */
+  const investedIn = React.useCallback(
+    (teamId: string): number => positionIn(portfolio, teamId)?.costCents ?? 0,
     [portfolio],
   );
 
   const capFor = React.useCallback(
     (teamId: string, marketSize: number): { allowed: number; held: number } => ({
-      allowed: maxSharesFor(marketSize),
-      held: positionIn(portfolio, teamId)?.shares ?? 0,
+      allowed: positionLimitCentsFor(marketSize),
+      held: positionIn(portfolio, teamId)?.costCents ?? 0,
     }),
     [portfolio],
   );
@@ -203,7 +232,7 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
     dismissNotice,
     buy,
     sell,
-    sharesHeld,
+    investedIn,
     capFor,
     settle,
   };
