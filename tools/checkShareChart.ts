@@ -266,8 +266,8 @@ check(
 check(
   'and past the RIGHT edge it resolves to the last day',
   indexFromX(CHART_WIDTH, 10) === 9 && indexFromX(CHART_WIDTH * 3, 10) === 9,
-  `indexFromX(${CHART_WIDTH}, 10) = ${indexFromX(CHART_WIDTH, 10)}. Clamping matters because the svg is `
-  + 'stretched wider than its viewBox, so the pointer regularly lands outside the viewBox coordinates.',
+  `indexFromX(${CHART_WIDTH}, 10) = ${indexFromX(CHART_WIDTH, 10)}. Clamping matters because a pointer `
+  + 'dragged past the plot should resolve to the nearest edge rather than to null or a negative index.',
 );
 
 check(

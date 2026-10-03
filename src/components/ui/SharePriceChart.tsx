@@ -91,11 +91,12 @@ export const xFor = (index: number, count: number, width: number = CHART_WIDTH):
  *
  * Two details are load-bearing:
  *
- *  - It takes viewBox units, not client pixels. The caller must scale by the ratio between the
- *    rendered width and `CHART_WIDTH`, because the chart is rendered stretched (`preserveAspectRatio
- *    = "none"` plus a full-width class). Feeding client pixels straight in works only at exactly
- *    720px and drifts everywhere else -- and by the right edge it would return the last index for
- *    almost the whole plot.
+ *  - It takes viewBox units, not raw client pixels. While the chart was rendered by stretching a
+ *    fixed 720-unit viewBox to fill its panel, the caller had to divide by the stretch factor or the
+ *    crosshair drifted right and pinned to the last day. The chart now sets its viewBox to the
+ *    measured pixel width, so the two are the same number -- but the caller still passes through a
+ *    ratio rather than assuming 1, because a rounding error during a resize should move the
+ *    crosshair slightly rather than throw.
  *  - A single observation is CENTRED, matching `xFor`, so `indexFromX` at its own x returns 0 rather
  *    than falling out of a `(count - 1)` division by zero.
  *
@@ -240,10 +241,48 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   onHover,
   className = '',
 }) => {
-  const path = linePath(points, width, height);
+  /*
+    THE VIEWBOX IS THE MEASURED WIDTH, so nothing is ever stretched.
+
+    This chart used to declare a fixed 720-unit viewBox and stretch it to fill its panel with
+    `preserveAspectRatio="none"`. That fills the space correctly and quietly corrupts everything in
+    it that is not a path: the 0 / 500 / 1000 band labels came out visibly wider than they are tall,
+    because a horizontal scale of 1254/720 = 1.74 was applied to glyphs and not to the line.
+
+    Rather than special-case the text, the viewBox is set to the element's ACTUAL pixel width and
+    every geometry call uses that same number. One user unit is one CSS pixel, so there is no scale
+    factor at all -- the labels are the right shape and the strokes need no `vectorEffect` to stay
+    hairlines. The fixed `width` prop is what the check suite asserts against and what is used
+    before the first measurement lands, so server-side and test rendering are unchanged.
+
+    `preserveAspectRatio="none"` is kept deliberately. With a matching viewBox it is a no-op, and if
+    the panel resizes between a frame's measure and its paint it degrades to "very slightly wrong"
+    instead of letterboxing and leaving a gap.
+  */
+  const svgRef = React.useRef<SVGSVGElement | null>(null);
+  const [measured, setMeasured] = React.useState<number | null>(null);
+
+  React.useLayoutEffect(() => {
+    const node = svgRef.current;
+    if (!node) return;
+    const measure = (): void => {
+      const next = Math.round(node.getBoundingClientRect().width);
+      // Ignore a zero-width reading, which happens while the panel is collapsed. Falling back to
+      // the declared width keeps the chart drawable rather than dividing by nothing.
+      if (next > 0) setMeasured(next);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const plotWidthUnits = measured ?? width;
+  const path = linePath(points, plotWidthUnits, height);
   // Teal, the neutral accent. This is a reference line and not a bet, so it takes neither the
   // positive nor the negative colour -- a dashed fair line in green would read as an outcome.
-  const fairPaths = fair ? fairSegments(fair, width, height) : [];
+  const fairPaths = fair ? fairSegments(fair, plotWidthUnits, height) : [];
   const [hover, setHover] = React.useState<number | null>(null);
 
   /*
@@ -262,18 +301,19 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   }, []);
 
   /*
-    CLIENT PIXELS TO VIEWBOX UNITS.
+    CLIENT PIXELS ARE ALREADY VIEWBOX UNITS.
 
-    The svg is stretched to its container, so `event.clientX` is in a coordinate system up to twice
-    the size of the one every geometry function here uses. Without this scale the crosshair drifts
-    progressively right and is pinned to the last day across the right-hand third of the plot.
-    `getBoundingClientRect` is read at event time rather than cached, because the panel resizes.
+    This used to scale `event.clientX` by `rect.width / width` because the svg was stretched. Now
+    that the viewBox IS the rendered width, one client pixel past the left edge is one viewBox unit,
+    and the scale factor is 1. The conversion is kept as a ratio anyway rather than deleted: if the
+    two ever disagree by a rounding error mid-resize, this is the line that absorbs it, and a
+    crosshair that is one day out is a much quieter failure than a division by a stale width.
   */
   const handlePointer = (event: React.PointerEvent<SVGSVGElement>): void => {
     const rect = event.currentTarget.getBoundingClientRect();
     if (rect.width === 0) return;
-    const x = ((event.clientX - rect.left) / rect.width) * width;
-    announce(indexFromX(x, points.length, width));
+    const x = ((event.clientX - rect.left) / rect.width) * plotWidthUnits;
+    announce(indexFromX(x, points.length, plotWidthUnits));
   };
 
   /*
@@ -302,8 +342,9 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
 
   return (
     <svg
-      viewBox={`0 0 ${width} ${height}`}
-      width={width}
+      ref={svgRef}
+      viewBox={`0 0 ${plotWidthUnits} ${height}`}
+      width="100%"
       height={height}
       className={className}
       role="img"
@@ -330,7 +371,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
         <g key={line.value}>
           <line
             x1={CHART_PADDING.left}
-            x2={width - CHART_PADDING.right}
+            x2={plotWidthUnits - CHART_PADDING.right}
             y1={yFor(line.value, height)}
             y2={yFor(line.value, height)}
             stroke={line.value === PRICE_MAX / 2 ? 'var(--color-chrome-mid)' : 'var(--color-chrome-lo)'}
@@ -373,8 +414,8 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       {hoveredPoint ? (
         <g pointerEvents="none">
           <line
-            x1={xFor(hover as number, points.length, width)}
-            x2={xFor(hover as number, points.length, width)}
+            x1={xFor(hover as number, points.length, plotWidthUnits)}
+            x2={xFor(hover as number, points.length, plotWidthUnits)}
             y1={CHART_PADDING.top}
             y2={height - CHART_PADDING.bottom}
             stroke="var(--color-ink-faint)"
@@ -385,7 +426,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           {/* The fair dot is drawn only where a valuation was actually recorded. */}
           {hoveredFair ? (
             <circle
-              cx={xFor(hover as number, points.length, width)}
+              cx={xFor(hover as number, points.length, plotWidthUnits)}
               cy={yFor(hoveredFair.value, height)}
               r={3}
               fill="none"
@@ -395,7 +436,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
             />
           ) : null}
           <circle
-            cx={xFor(hover as number, points.length, width)}
+            cx={xFor(hover as number, points.length, plotWidthUnits)}
             cy={yFor(hoveredPoint.value, height)}
             r={3.5}
             fill="var(--color-media-glorest)"
@@ -413,7 +454,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       */}
       {points.length > 1 && (
         <path
-          d={`${path} L${xFor(points.length - 1, points.length, width).toFixed(2)} ${yFor(0, height).toFixed(2)} L${xFor(0, points.length, width).toFixed(2)} ${yFor(0, height).toFixed(2)} Z`}
+          d={`${path} L${xFor(points.length - 1, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} L${xFor(0, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} Z`}
           fill="var(--color-media-glorest)"
           fillOpacity={0.10}
           stroke="none"
@@ -438,7 +479,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       */}
       {points.length > 0 && (
         <circle
-          cx={xFor(points.length - 1, points.length, width)}
+          cx={xFor(points.length - 1, points.length, plotWidthUnits)}
           cy={yFor(points[points.length - 1].value, height)}
           r={2}
           fill="var(--color-media-glorest)"

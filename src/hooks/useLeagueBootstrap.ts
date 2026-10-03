@@ -105,6 +105,34 @@ export const useLeagueBootstrap = ({
     const bootstrap = async () => {
       setIsBootstrapping(true);
 
+      /*
+    ONE RESTORE HELPER, CALLED FROM ALL THREE BOOT PATHS.
+
+    There are three ways this hook can finish: Supabase succeeds, plain local, and the catch that
+    falls back to local when Supabase throws. Only the middle one restored the HXSE ledger, which
+    is precisely how the Supabase path came to save a price history it never read back.
+
+    Factored rather than pasted three times because three copies is the thing that let the other
+    two drift in the first place. A future fourth path now has one obvious call to make, and
+    `checkSharePersistence` asserts all three are present.
+
+    It re-reads the local state rather than taking an argument, because the ledger is a LOCAL
+    artifact on every path -- `saveSharePriceLedger` writes to localStorage and IndexedDB
+    unconditionally, and `localUniverseState` is explicit that the price path is deliberately not
+    part of the per-row `Game`/`Team` schema. So a Supabase league's prices live locally too, and
+    the loader is asked for them whatever brought the league in.
+
+    Guarded on length rather than presence: the reader answers an absent key with an empty array,
+    and "never priced" is a state the Exchange already renders correctly.
+  */
+  const restorePriceLedger = async (): Promise<void> => {
+    if (!onRestorePriceLedger) return;
+    const state = await loadLocalLeagueStateAsync();
+    if (state.sharePriceLedger.length > 0) {
+      onRestorePriceLedger(state.sharePriceLedger);
+    }
+  };
+
       try {
         if (isSupabaseConfigured) {
           let [remoteState, remotePlayerState] = await withTimeout(
@@ -177,6 +205,7 @@ export const useLeagueBootstrap = ({
           }
 
           setDataSource('supabase');
+          await restorePriceLedger();
           return;
         }
 
@@ -216,9 +245,7 @@ export const useLeagueBootstrap = ({
           Guarded on length rather than presence: the reader answers an absent key with an empty
           array, and no-market-yet is a state the Exchange already renders correctly.
         */
-        if (onRestorePriceLedger && localState.sharePriceLedger.length > 0) {
-          onRestorePriceLedger(localState.sharePriceLedger);
-        }
+        await restorePriceLedger();
         setDataSource('local');
       } catch (error) {
         console.error('Failed to load Supabase state, falling back to local storage:', error);
@@ -244,6 +271,7 @@ export const useLeagueBootstrap = ({
           setProgress(typeof localState.progress === 'number' ? localState.progress : getProgressFromGames(validLocalGames));
           setSeasonComplete(typeof localState.seasonComplete === 'boolean' ? localState.seasonComplete : validLocalGames.every((game) => game.status === 'completed'));
         }
+        await restorePriceLedger();
         setDataSource('local');
         pushNotice(
           `Supabase bootstrap failed: ${bootstrapErrorMessage.slice(0, 180)}. Using local storage fallback.`,

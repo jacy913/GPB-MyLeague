@@ -347,6 +347,9 @@ const main = (): void => {
   const storageBody = storageSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const bootstrapSource = readFileSync(resolve(process.cwd(), 'src', 'hooks', 'useLeagueBootstrap.ts'), 'utf8');
   const bootstrapBody = bootstrapSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  // The bootstrap effect, narrowed so a stray mention elsewhere in the file cannot inflate the count.
+  const bootstrapFn = /const bootstrap = async[\s\S]*?\n {4}\};|const bootstrap = async[\s\S]*?\n {6}\};/.exec(bootstrapBody)?.[0]
+    ?? bootstrapBody;
   const appSource = readFileSync(resolve(process.cwd(), 'src', 'App.tsx'), 'utf8');
   const appBody = appSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
@@ -380,9 +383,11 @@ const main = (): void => {
   check(
     'the loader restores the ledger into the app',
     /onRestorePriceLedger\?\s*:\s*\(ledger: PriceSeries\[\]\)\s*=>\s*void/.test(bootstrapBody)
-    && /onRestorePriceLedger\(localState\.sharePriceLedger\)/.test(bootstrapBody),
+    && /onRestorePriceLedger\(state\.sharePriceLedger\)/.test(bootstrapBody),
     'SCRIPPED THE MATCH IN src/hooks/useLeagueBootstrap.ts. Without the restore leg the save is written '
-    + 'and read and then thrown away, which is precisely the bug this whole change exists to fix.',
+    + 'and read and then thrown away, which is precisely the bug this whole change exists to fix. '
+    + 'The restore lives in a named helper now, so the call is on the loaded `state` rather than on '
+    + 'a local variable named `localState`.',
   );
 
   check(
@@ -408,6 +413,38 @@ const main = (): void => {
   );
 
   // -- report ---------------------------------------------------------------------------------
+  /*
+    ALL THREE BOOT PATHS RESTORE THE LEDGER, not just the local one.
+
+    This is a wiring claim, not a behavioural one, and it is deliberately narrow about that. The
+    defect it guards is real and specific: `useLeagueBootstrap` can finish three ways -- Supabase
+    succeeds, plain local, and the catch that falls back to local when Supabase throws -- and only the
+    middle one restored the price ledger. A Supabase league therefore SAVED a season of closes and
+    never read them, so the Exchange printed "No prices yet" on every single load.
+
+    Supabase is not configured on this machine, so that path cannot be exercised end to end here. The
+    check therefore asserts the calls are PRESENT in the source, which is a weaker claim than a
+    running league and is labelled as such rather than dressed up as the stronger one.
+
+    The count is what gives it teeth: three call sites means all three paths, and dropping one back
+    to two fails. A single `> 0` would pass with the Supabase path broken again.
+  */
+  /*
+    Counted with a leading boundary so the DECLARATION is not mistaken for a call. `const
+    restorePriceLedger = async ()` has its parens after `async`, not after the name, so a bare
+    `/restorePriceLedger\(\)/` does not match it -- but an earlier version of this check subtracted one
+    "for the declaration" anyway and asserted 3, which silently capped the real count at 2 and made
+    the Supabase path pass while broken.
+  */
+  const restoreCalls = (bootstrapFn.match(/(?<![A-Za-z])restorePriceLedger\(\)/g) ?? []).length;
+  check(
+    'every bootstrap path restores the ledger, not only the local one',
+    restoreCalls === 3,
+    `${restoreCalls} of 3 call sites. `
+    + 'The Supabase branch and the Supabase-failure fallback both wrote a price history that was never '
+    + 'read back, which is the same defect this check file was extended for in the first place.',
+  );
+
   const failed = checks.filter((c) => !c.pass);
   console.log('\nSHARE PRICE PERSISTENCE AND BET IDS\n');
   console.log(`  ledger read back  ${roundTrip.length} days, ${Object.keys(roundTrip[0]?.close ?? {}).length} closes per day`);

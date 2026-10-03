@@ -37,12 +37,17 @@ import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
  *  - NO BETTING AGAINST THE STRAY. The gap between the two lines is the obvious thing to make
  *    actionable and the whole `strayedFromFair` figure is already computed for it. That needs a
  *    market, a settlement rule and a calibration check, and none of those exist yet.
- *  - NO WORKING DAY CALENDAR. The x-axis is indexed by SIMULATED day, so the league's off-days do not
- *    appear as gaps. True calendar spacing is a different chart and a different set of questions.
- *  - TEXT INSIDE THE CHART IS STILL STRETCHED. The svg renders with `preserveAspectRatio="none"` to
- *    fill the panel, which horizontally distorts anything drawn inside it -- including the 0/500/1000
- *    band labels. The hover readout is deliberately HTML for this reason. Fixing the axis labels
- *    properly means switching to a non-scaling text strategy, which is its own change.
+ *  - NO WORKING DAY CALENDAR, DELIBERATELY. The x-axis is indexed by SIMULATED day, so a run of
+ *    off-days occupies the same width as a run of games. That is the right call for this chart and
+ *    the wrong one for a different question: the ledger has real ISO dates and could be spaced by
+ *    calendar day instead. The reason to leave it is that the market does not trade on an off-day
+ *    either, so the absence is schedule information rather than price information, and the caption
+ *    prints the real date range so nobody has to infer the elapsed time from the spacing. `check-
+ *    ShareChart` check 4 asserts the indexed rule so a change to it is deliberate.
+ *  - NOTHING WITHIN THE CHART IS STRETCHED ANY MORE, and it used to be. The svg used to declare a
+ *    fixed viewBox and stretch it to fill the panel, which horizontally distorted the 0/500/1000 band
+ *    labels -- everything that was not a path came out 1.7x too wide. It now sets its viewBox to the
+ *    measured pixel width, so one user unit is one CSS pixel and the geometry is exact.
  */
 
 export interface ExchangeViewProps {
