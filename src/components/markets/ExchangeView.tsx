@@ -2,6 +2,8 @@ import React from 'react';
 import type { PriceSeries } from '../../lib/analytics/sharePrice';
 import type { Team } from '../../types';
 import { Panel, PanelHeader, TeamLogo } from '../ui';
+import { ExchangeDesk } from './ExchangeDesk';
+import { latestClose } from '../../lib/analytics/priceBoard';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
 import gpbMark from '../../assets/gpb.png';
 import hxseMark from '../../assets/media/hxselogo.png';
@@ -413,6 +415,22 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
   );
 
   /*
+    THE DESK'S PRICE SOURCE: the last day in the WHOLE ledger, not the last day of the visible range.
+
+    These are different things and using the visible one is a quiet lie. Narrow the range to 7 days
+    and a position opened last month would be marked to a close from three days ago, so the book
+    would appear to gain or lose money every time the range buttons were pressed. A mark has to be
+    against the most recent price the market actually printed.
+  */
+  const latestCloses = React.useMemo(
+    () => latestClose(priceLedger) ?? {},
+    [priceLedger],
+  );
+  const latestDate = priceLedger && priceLedger.length > 0
+    ? priceLedger[priceLedger.length - 1].date
+    : null;
+
+  /*
     THE PAGE OPENS ON A CLUB, not on the league average, and the measurement is why.
 
     The average of thirty-two clubs is a genuinely FLAT series, not a badly-drawn one: averaging
@@ -471,9 +489,18 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
       chart you can actually read. So the alternative is either a page you scroll half a season to
       get through, or a nested scrollbar on the roster. Pinning the chart means the price path stays
       on screen the whole way down the list, which is the thing you are reading the list FOR.
+
+      ONLY THE CHART STICKS, AND THE DESK SITS OUTSIDE IT.
+
+      The sticky wrapper used to be the whole left column. Adding the trading desk below the chart
+      made that column taller than the viewport, and a sticky element taller than the viewport does
+      not slide -- it simply sits there while its own overflow runs off the bottom. So the chart
+      panel alone is wrapped, and the desk is a sibling below it. The desk is the thing you scroll
+      TO, so pinning it would fight the reader.
     */
     <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-3">
-      <div className="flex flex-col gap-5 lg:col-span-2 lg:sticky lg:top-4">
+      <div className="flex flex-col gap-5 lg:col-span-2">
+      <div className="lg:sticky lg:top-4">
       <Panel className="overflow-hidden">
         <PanelHeader
           title="The Exchange"
@@ -931,6 +958,25 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
           </div>
         )}
       </Panel>
+      </div>
+
+      {/*
+        THE DESK, below the chart and inside the left column.
+
+        It takes the chart's width rather than spanning the page because every number in it is
+        about the club the chart is currently showing -- its price, its cap, whether you hold it.
+        A full-width strip would put the trade buttons a thousand pixels from the line they price.
+
+        `latestCloses` is the LAST day's closes, not the visible range's, because a mark has to be
+        against the most recent price the market actually printed. Marking against the last day of a
+        shortened window would revalue the book to a stale close the moment the range narrowed.
+      */}
+      <ExchangeDesk
+        teams={teams}
+        closes={latestCloses}
+        markedOn={latestDate}
+        selectedClub={activeClub}
+      />
       </div>
 
       {/* The roster rail. Beside the chart on wide screens, below it on narrow ones. */}
