@@ -610,6 +610,27 @@ check(
   + 'input would fail here rather than shipping an interface nobody asked for.',
 );
 
+check(
+  'the drawer is actually MOUNTED, with a header button and a badge',
+  /<HxsePortfolioDrawer/.test(appSrc)
+  && /aria-label="HXSE portfolio"/.test(appSrc)
+  && /book\.portfolio\.positions\.length/.test(appSrc),
+  'App renders the drawer and gives it a header button carrying the open-position count. A component '
+  + 'that exists and is never mounted is the quietest failure there is -- nothing errors, nothing '
+  + 'warns, and the book is simply unreachable outside the Exchange. Asserting the mount rather '
+  + 'trusting that a file was imported.',
+);
+
+check(
+  'a drawer row navigates to the Exchange, so the book can be acted on rather than only read',
+  /onOpenClub/.test(appSrc) && /pendingClub/.test(viewSrc) && /chooseClub/.test(viewSrc),
+  'App passes a pending club down and ExchangeView consumes it through chooseClub. It routes '
+  + 'through the deliberate-selection path rather than setting the selection directly, because the '
+  + 'rank-1 default fires on mount for anyone who has not touched a selector and would otherwise '
+  + 'overwrite a drawer click arriving in the same tick.',
+
+);
+
 let failed = 0;
 console.log('\nHXSE POSITIONS LEDGER\n');
 for (const c of checks) {

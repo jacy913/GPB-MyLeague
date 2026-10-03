@@ -35,7 +35,7 @@ import { AppViewRouter } from './components/AppViewRouter';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
-import { Activity, Bell, Clock3, Menu, Receipt } from 'lucide-react';
+import { Activity, Bell, ChartNoAxesColumn, Clock3, Menu, Receipt } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
 import { MobileFolderMenu } from './navigation/MobileFolderMenu';
 import gpbLogo from './assets/gpb.png';
@@ -68,6 +68,7 @@ import {
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { useBettingSlip } from './hooks/useBettingSlip';
 import { usePortfolio } from './hooks/usePortfolio';
+import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
 import { BettingSlip } from './components/betting/BettingSlip';
 import { useBroadcastFlair } from './hooks/useBroadcastFlair';
 import { useLeagueBootstrap } from './hooks/useLeagueBootstrap';
@@ -1265,7 +1266,22 @@ function App() {
     showing.
   */
   const latestLedgerClose = useMemo(() => latestClose(priceLedger ?? []) ?? {}, [priceLedger]);
+  const latestLedgerDate = priceLedger && priceLedger.length > 0
+    ? priceLedger[priceLedger.length - 1].date
+    : null;
+
+  /*
+    THE ONE PIECE OF EXCHANGE STATE THE DRAWER NEEDS, lifted rather than duplicated.
+
+    The club selection lives inside ExchangeView because that is where the chart is. The drawer's
+    rows are buttons, so it has to be able to send the reader to a specific club -- and duplicating
+    the selection here would give the chart and the drawer two truths. So this is a PENDING request
+    rather than a second source of truth: ExchangeView consumes it, selects the club, and clears it,
+    so the chart keeps sole ownership of what is on screen.
+  */
+  const [hxseClubSelection, setHxseClubSelection] = useState<string | null>(null);
   const book = usePortfolio(latestLedgerClose);
+  const [hxsePortfolioOpen, setHxsePortfolioOpen] = useState(false);
 
   /*
     SETTLEMENT, ONCE PER SEASON, AT THE LAST PRICE THE MARKET PRINTED.
@@ -3616,6 +3632,38 @@ function App() {
                   </span>
                 )}
               </button>
+              {/*
+                THE HXSE BOOK, beside the parlays and for the same reason.
+
+                Once shares are tradeable, "what am I holding and what is it worth" is not an Exchange
+                question -- it is a question you ask while looking at a box score, and answering it
+                meant navigating to a market and reading a table. The badge carries the number of open
+                positions, which is the same argument the parlays badge makes: the thing that changes
+                what you would do next belongs where you can see it without asking.
+
+                It wears the same gold chrome as its neighbour rather than an HXSE colour. Every accent
+                in this app belongs to a named outlet or to a bet outcome, and the HXSE's colour on the
+                Exchange page is red -- the close line -- which here would read as a loss.
+              */}
+              <button
+                type="button"
+                onClick={() => setHxsePortfolioOpen(true)}
+                aria-label="HXSE portfolio"
+                aria-expanded={hxsePortfolioOpen}
+                className={`gold-sweep gold-edge relative flex items-center gap-2 border-l-[3px] px-3 py-2 t-caption uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] ${
+                  hxsePortfolioOpen
+                    ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)] text-[var(--color-gold-hi)]'
+                    : 'border-l-transparent text-[var(--color-ink-dim)] hover:text-[var(--color-gold-hi)]'
+                }`}
+              >
+                <ChartNoAxesColumn className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Portfolio</span>
+                {book.portfolio.positions.length > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center bg-[var(--color-gold)] px-1 tabular-nums text-[var(--color-ink-invert)]">
+                    {book.portfolio.positions.length}
+                  </span>
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => setIsMobileNavOpen(true)}
@@ -3657,6 +3705,8 @@ function App() {
             seasonComplete={seasonComplete}
           priceLedger={priceLedger}
       book={book}
+      pendingClub={hxseClubSelection}
+      onPendingClubConsumed={() => setHxseClubSelection(null)}
             offseasonStage={offseasonStage}
             offseasonSeasonYear={offseasonEventSeasonYear}
             offseasonChampionLabel={seasonAwardsSelection?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}
@@ -3746,6 +3796,28 @@ function App() {
         summary={bettingSlip.summary}
         games={games}
         teams={teams}
+      />
+
+      {/*
+        THE HXSE BOOK DRAWER. Placed beside the betting slip in the tree because they are
+        siblings in every sense that matters: same chrome, same gesture, same Escape, and the
+        reader learns one behaviour and gets both.
+
+        `onOpenClub` sends the reader to the Exchange with that club already selected, which is
+        the whole point of making the rows buttons -- the drawer answers "what am I holding" and
+        its next useful act is "go trade it".
+      */}
+      <HxsePortfolioDrawer
+        isOpen={hxsePortfolioOpen}
+        onClose={() => setHxsePortfolioOpen(false)}
+        onOpenClub={(teamId) => {
+          setView('exchange');
+          setHxseClubSelection(teamId);
+        }}
+        teams={teams}
+        closes={latestLedgerClose}
+        portfolio={book.portfolio}
+        markedOn={latestLedgerDate}
       />
 
       <SeasonAwardsModal

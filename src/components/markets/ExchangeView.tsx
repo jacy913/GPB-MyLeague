@@ -78,6 +78,16 @@ export interface ExchangeViewProps {
    * prices rather than the close that ended the season they actually traded through.
    */
   book: UsePortfolio;
+  /**
+   * A club the header drawer asked us to select, or null.
+   *
+   * This is a PENDING REQUEST, not a second source of truth. The drawer can make a position row a
+   * button, and a button that does something has to be able to move the chart -- so App hands the
+   * request down, this view consumes it, and the request is cleared again. The selection state stays
+   * here, where the chart is, because two truths about what is on screen would be one too many.
+   */
+  pendingClub?: string | null;
+  onPendingClubConsumed?: () => void;
 }
 
 /**
@@ -272,7 +282,7 @@ const RANGES: Array<{ label: string; days: number | null }> = [
   { label: 'All', days: null },
 ];
 
-export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, book }) => {
+export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, book, pendingClub, onPendingClubConsumed }) => {
   const teamIds = React.useMemo(() => teams.map((t) => t.id), [teams]);
   const teamNames = React.useMemo(
     () => Object.fromEntries(teams.map((t) => [t.id, `${t.city} ${t.name}`])),
@@ -453,6 +463,22 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
     It is computed from `visibleLedger` rather than the whole ledger so changing the range to 7 days
     does not leave a ceiling set by a price from three months ago.
   */
+  /*
+    CONSUME THE DRAWER'S REQUEST, once, and only when it names a club we actually have.
+
+    Routed through `chooseClub` rather than `setSelectedClub` so it marks the choice as deliberate.
+    That matters: the rank-1 default fires on mount for anyone who has not touched a selector, and a
+    drawer click arriving in the same tick would otherwise be overwritten by the default.
+
+    Unknown ids are cleared without selecting, so a save referencing a club this league does not have
+    cannot leave a selection pointing at nothing.
+  */
+  React.useEffect(() => {
+    if (!pendingClub) return;
+    onPendingClubConsumed?.();
+    if (teamIds.includes(pendingClub)) chooseClub(pendingClub);
+  }, [pendingClub, teamIds, chooseClub, onPendingClubConsumed]);
+
   const axisCeiling = React.useMemo(() => {
     const everyClose: number[] = [];
     for (const day of visibleLedger ?? []) {
