@@ -110,6 +110,34 @@ export type SharePriceLedger = PriceSeries[];
  * `[PRICE_MIN, PRICE_MAX]` means the save is corrupt, and coercing it would put a number on a chart
  * that no price path could have produced.
  */
+/**
+ * The recorded fair layer of one day, if it survived intact enough to draw.
+ *
+ * SAME RULE AS THE CLOSES, AND FOR THE SAME REASON: a fair value outside `[PRICE_MIN, PRICE_MAX]`
+ * means the save is corrupt, and coercing it would put a valuation on the chart that no fair layer
+ * could have produced. The difference is what happens to a day whose closes are fine.
+ *
+ * The closes are the market's record and are kept. A bad fair layer is DROPPED on its own, leaving
+ * that one day without a second line rather than dropping the day or inventing a valuation for it.
+ * A chart with a gap in its fair line is honest; a chart with a flat fair line through a corrupt day
+ * is not.
+ *
+ * Returns `{}` rather than `undefined` when there is nothing usable, so the spread in the caller
+ * resolves to no `fair` key and the day simply has none.
+ */
+const readRecordedFair = (value: unknown): { fair?: Record<string, number> } => {
+  if (!isRecord(value)) return {};
+  const fair: Record<string, number> = {};
+  let any = false;
+  for (const [teamId, raw] of Object.entries(value)) {
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+    if (raw < PRICE_MIN || raw > PRICE_MAX) continue;
+    fair[teamId] = raw;
+    any = true;
+  }
+  return any ? { fair } : {};
+};
+
 export const readSharePriceLedger = (value: unknown): SharePriceLedger => {
   if (!Array.isArray(value)) return [];
   const out: PriceSeries[] = [];
@@ -128,7 +156,7 @@ export const readSharePriceLedger = (value: unknown): SharePriceLedger => {
     }
     // A day where every club was corrupt carries no information. Keeping it as an empty object
     // would read downstream as "the market was shut", which is a claim this save cannot support.
-    if (any) out.push({ date, close });
+    if (any) out.push({ date, close, ...readRecordedFair(entry.fair) });
   }
   // Ascending by date, so callers can treat the last entry as today without sorting. Duplicates are
   // collapsed to the LAST occurrence, because a re-saved day is more recent than the one it replaced.

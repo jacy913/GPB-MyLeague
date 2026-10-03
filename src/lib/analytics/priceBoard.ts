@@ -480,7 +480,23 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
  */
 export const appendPriceDay = (ledger: PriceSeries[], board: PriceBoard): PriceSeries[] => {
   const kept = ledger.filter((day) => day.date !== board.date);
-  return [...kept, { date: board.date, close: { ...board.close } }]
+  /*
+    THE FAIR LAYER IS RECORDED, NOT CACHED, and the distinction is the whole reason this is here.
+
+    `fairLayerCache` above is deliberately process-local: serving a persisted fair price to a caller
+    who is asking for a fresh valuation would hand back a number computed for different inputs.
+    This is the opposite case. The chart's second line is a HISTORICAL RECORD -- "what did this club
+    trade against on 3 June" -- and recomputing it later would not answer that question, because a
+    recomputation runs different Monte Carlo trials against whatever the roster has become and
+    returns a different number. Drawing a recorded close next to a freshly recomputed valuation
+    would compare a real trade against a hypothetical one and the gap between the lines would be an
+    artefact of the recomputation rather than a fact about the market.
+
+    So the day carries the fair value that was actually used, and the chart labels it as recorded at
+    the time. It is optional on the type: a ledger written before this field existed has none, and
+    the chart omits the line rather than inventing a back-filled one.
+  */
+  return [...kept, { date: board.date, close: { ...board.close }, fair: { ...board.fair } }]
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 };
 

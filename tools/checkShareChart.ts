@@ -28,6 +28,7 @@
 import {
   BAND_LINES,
   CHART_HEIGHT,
+  fairSegments,
   CHART_PADDING,
   CHART_WIDTH,
   lastMove,
@@ -156,6 +157,73 @@ check(
   `${BAND_LINES.map((l) => `${l.label}@y${yFor(l.value).toFixed(0)}`).join(', ')}. 500 is where a club sits `
   + 'at exactly fair value, so the line is a fixed rule rather than a computed one -- "above fair" has '
   + 'to be visible without reading a number.',
+);
+
+/*
+  THE FAIR LAYER, AND SPECIFICALLY THAT IT BREAKS AT GAPS.
+
+  This is the check that matters for the second line, because the failure is invisible: a single
+  continuous path across a day with no valuation still LOOKS like a chart, and the eye reads the
+  smooth join as a measurement the save does not contain. So the assertions are about discontinuity,
+  not about the line existing.
+*/
+const fairRun = (values: (number | null)[]) =>
+  fairSegments(values.map((v, i) => (v === null ? null : { date: `2026-06-0${i + 1}`, value: v })));
+
+check(
+  'a fair layer with no gaps draws as ONE segment',
+  fairRun([500, 505, 498, 512]).length === 1,
+  `${fairRun([500, 505, 498, 512]).length} segments from an unbroken layer. If this ever returns more `
+  + 'than one, an ordinary week of recorded valuations is being drawn as several pieces.',
+);
+
+const gapped = fairRun([500, 505, null, 512, 520]);
+check(
+  'a day with NO recorded valuation SPLITS the fair line rather than bridging it',
+  gapped.length === 2,
+  `${gapped.length} segments around one missing day. A single segment here would draw a stroke across `
+  + 'a day the market was never priced against, and the join would look like a measurement.',
+);
+
+check(
+  'the two segments either side of a gap DO NOT share a coordinate',
+  (() => {
+    if (gapped.length !== 2) return false;
+    // The last command of run 1 and the first of run 2 must not be a continuation of each other,
+    // which is what a bridged path would produce. Compare the x each side lands on.
+    const xs = gapped.map((d) => (d.match(/[ML]([\d.]+)/g) ?? []).map((m) => Number(m.slice(1))));
+    return xs[0][xs[0].length - 1] !== xs[1][0];
+  })(),
+  'The run before a gap and the run after it land on different days, so the path cannot be a single '
+  + 'stroke. Equal coordinates would mean the gap is being bridged.',
+);
+
+check(
+  'a run of one draws no segment, because there is nothing to join it to',
+  fairRun([null, 500, null]).length === 0,
+  `${fairRun([null, 500, null]).length} segments from a lone valuation between two gaps. Drawing a `
+  + 'mark for it would assert a trend to or from a day that has no neighbour.',
+);
+
+check(
+  'an entirely absent fair layer draws nothing at all',
+  fairRun([null, null, null]).length === 0 && fairRun([]).length === 0,
+  'A ledger saved before the fair layer existed has none, and the chart must omit its second line '
+  + 'rather than back-fill a valuation nobody recorded.',
+);
+
+check(
+  'the fair line is INDEX-ALIGNED with the closes, not re-matched by date',
+  (() => {
+    // Same series length means x positions line up with the close path; if the chart re-matched by
+    // date it would silently produce a different number of points than the closes.
+    const closes = linePath([500, 505, 512].map((v, i) => ({ date: `d${i}`, value: v })));
+    const fair = fairRun([500, 505, 512])[0] ?? '';
+    const countX = (d: string) => (d.match(/[ML]/g) ?? []).length;
+    return countX(closes) === countX(fair);
+  })(),
+  'The vertical gap between the two lines is only readable as "strayed from fair" if both cover the '
+  + 'same days. Equal point counts is the cheap necessary condition for that.',
 );
 
 const failed = checks.filter((c) => !c.pass);

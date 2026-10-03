@@ -223,6 +223,20 @@ export interface PriceSeries {
   date: string;
   /** teamId -> close. */
   close: Record<string, number>;
+  /*
+   * teamId -> the fair value this day's close was priced against, as it stood at the time.
+   *
+   * OPTIONAL, and a ledger written before this field existed simply has none. That is the honest
+   * reading: the fair value was computed and discarded, and there is no way to recover what it was.
+   * The chart omits its second line in that case rather than back-filling one, because a back-filled
+   * valuation recomputed months later from a different roster is not the number the market saw.
+   *
+   * This is a RECORD, deliberately not a cache. `fairLayerCache` in `priceBoard.ts` is
+   * process-local for the opposite reason -- a persisted fair price must not be served to a caller
+   * asking for a fresh valuation. Here the question is historical, so what was actually used is the
+   * only correct answer.
+   */
+  fair?: Record<string, number>;
 }
 
 export interface PriceSeriesInput {

@@ -120,6 +120,48 @@ export const lastMove = (points: readonly PricePoint[]): number | null => {
   return points[points.length - 1].value / prev - 1;
 };
 
+/**
+ * Paths for the recorded fair layer, one per CONTIGUOUS run of days that has one.
+ *
+ * Returns an array rather than a single string, and that is the honest part. A day whose fair layer
+ * was corrupt is dropped by the reader, leaving that day with a close and no valuation. Joining
+ * straight across it would draw a line through a day the market was never priced against, which
+ * reads as a measured path and is not one -- it would quietly assert a value the save cannot support.
+ *
+ * So the gap is drawn as a gap. A fair line with a break in it is true; a continuous one through a
+ * missing day is a fabrication with a stroke.
+ *
+ * A run of one yields an `M` with nothing after it, which draws no visible mark -- correct, since a
+ * lone valuation has no segment to it.
+ */
+export const fairSegments = (
+  fair: readonly (PricePoint | null)[],
+  width: number = CHART_WIDTH,
+  height: number = CHART_HEIGHT,
+): string[] => {
+  const segments: string[] = [];
+  let current: string[] = [];
+  fair.forEach((point, i) => {
+    if (!point) {
+      if (current.length > 0) segments.push(current.join(' '));
+      current = [];
+      return;
+    }
+    current.push(`${current.length === 0 ? 'M' : 'L'}${xFor(i, fair.length, width).toFixed(2)} ${yFor(point.value, height).toFixed(2)}`);
+  });
+  if (current.length > 0) segments.push(current.join(' '));
+  /*
+    Runs of ONE are dropped, rather than returned as a bare `M`.
+
+    `linePath` deliberately returns a lone `M` for a single point -- it is a different contract,
+    because that path still describes the whole series. Here the array is a list of THINGS TO DRAW,
+    and an `M` with nothing after it draws nothing. Returning it would put an empty `<path>` in the
+    DOM and make `fairPaths.length` count runs rather than visible strokes, which is the number a
+    reader would use to ask "is there a fair line?". It should answer that.
+  */
+  return segments.filter((d) => (d.match(/[ML]/g) ?? []).length > 1);
+};
+
 export interface SharePriceChartProps {
   points: readonly PricePoint[];
   /** Rendered width in px. Height is fixed by CHART_HEIGHT. */
@@ -129,6 +171,15 @@ export interface SharePriceChartProps {
   'aria-label'?: string;
   /** Draws the 500 midpoint and band edges. Off for a sparkline. */
   showBand?: boolean;
+  /**
+   * The recorded fair layer, INDEX-ALIGNED with `points`. A `null` is a day with no valuation.
+   *
+   * Aligned by index rather than by date on purpose: the two series come from the same ledger and
+   * cover the same days, so index alignment is what keeps the vertical gap between the lines
+   * meaning "how far this club has strayed from fair" instead of "these two series happen to share a
+   * y-axis". Re-matching by date inside the chart would silently realign them and destroy that.
+   */
+  fair?: readonly (PricePoint | null)[];
   className?: string;
 }
 
@@ -138,9 +189,13 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   height = CHART_HEIGHT,
   'aria-label': ariaLabel,
   showBand = false,
+  fair,
   className = '',
 }) => {
   const path = linePath(points, width, height);
+  // Teal, the neutral accent. This is a reference line and not a bet, so it takes neither the
+  // positive nor the negative colour -- a dashed fair line in green would read as an outcome.
+  const fairPaths = fair ? fairSegments(fair, width, height) : [];
 
   return (
     <svg
@@ -172,6 +227,19 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
             {line.label}
           </text>
         </g>
+      ))}
+
+      {/* The recorded fair layer, drawn UNDER the close so the close stays the subject. */}
+      {fairPaths.map((d, i) => (
+        <path
+          key={`fair-${i}`}
+          d={d}
+          fill="none"
+          stroke="var(--color-neutral)"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+          strokeLinecap="round"
+        />
       ))}
 
       {/*

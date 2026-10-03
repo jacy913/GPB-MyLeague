@@ -58,10 +58,48 @@ const averageCloseSeries = (ledger: PriceSeries[] | undefined): PricePoint[] => 
   });
 };
 
+/**
+ * The recorded fair layer, averaged the same way the closes are and INDEX-ALIGNED with them.
+ *
+ * A `null` for a day whose fair layer was dropped, which is what makes the chart break its second
+ * line there instead of drawing through a day nobody recorded a valuation for. The alignment is
+ * computed in the same `map` over `ledger` as the closes precisely so the two cannot drift: a
+ * separate filter that dropped a bad close day but kept its fair day would silently offset every
+ * later point and turn the gap between the lines into nonsense.
+ *
+ * `null` for a day that HAS fair values is not possible -- `readRecordedFair` only returns a `fair`
+ * key when at least one value survived -- but it is handled anyway rather than assumed, because a
+ * 0 plotted as a valuation would draw the fair line along the floor of the band.
+ */
+const averageFairSeries = (ledger: PriceSeries[] | undefined): (PricePoint | null)[] => {
+  if (!ledger || ledger.length === 0) return [];
+  return ledger.map((day) => {
+    if (!day.fair) return null;
+    const values = Object.values(day.fair).filter((v) => typeof v === 'number' && Number.isFinite(v));
+    if (values.length === 0) return null;
+    return {
+      date: day.date,
+      value: values.reduce((sum, v) => sum + v, 0) / values.length,
+    };
+  });
+};
+
 export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds }) => {
   const points = averageCloseSeries(priceLedger);
+  const fairPoints = averageFairSeries(priceLedger);
   const latest = points[points.length - 1];
   const first = points[0];
+  /*
+    Whether to draw the second line at all, and how much of it survived.
+
+    Keyed on the number of days that actually have a valuation rather than on the field being
+    present, because a ledger can carry `fair` on every day and still have nothing worth drawing if
+    every value in it failed validation. And the count is surfaced in the caption, because a fair
+    line that silently covers only part of the range is a chart making a partial claim without saying
+    so.
+  */
+  const fairDays = fairPoints.filter((p) => p !== null).length;
+  const hasFair = fairDays >= 2;
 
   return (
     <div className="flex flex-col gap-5">
@@ -116,14 +154,34 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
 
             <SharePriceChart
               points={points}
+              fair={fairPoints}
               width={720}
               height={140}
               showBand
               aria-label={
                 `Average club share price over ${points.length} simulated days, `
                 + `${Math.round(points[0].value)} to ${Math.round(latest?.value ?? 0)} on a 0 to 1000 scale.`
+                + (hasFair
+                  ? ` Dashed teal is the fair value recorded on each of those days.`
+                  : '')
               }
             />
+
+            {hasFair ? (
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-0 w-4 border-t border-dashed"
+                  style={{ borderColor: 'var(--color-neutral)' }}
+                />
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  fair value, as recorded on the day
+                  {fairDays < points.length
+                    ? ` · ${points.length - fairDays} ${points.length - fairDays === 1 ? 'day' : 'days'} unrecorded, drawn as a break`
+                    : ''}
+                </span>
+              </div>
+            ) : null}
           </div>
         )}
       </Panel>
