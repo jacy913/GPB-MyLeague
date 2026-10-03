@@ -158,6 +158,23 @@ const strayedFromFair = (
 };
 
 /**
+ * Prices are FLOATS, and this page used to throw that away.
+ *
+ * `priceBoardForDay` returns unrounded values -- a club closes at 499.3712, not 499 -- and every
+ * figure on this page was passed through `Math.round` for display. That is a rounding of a REAL
+ * number to a value the market never quoted, on the one screen whose entire subject is what things
+ * are worth to two decimals.
+ *
+ * So: currency symbol, two decimal places, and a thousands separator to match the axis labels in
+ * `SharePriceChart`. Signed variants for the premium and the spread, which are differences and so
+ * need to say which way round they are.
+ */
+const groupThousands = (digits: string): string => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+export const fmtPrice = (value: number): string => `$${groupThousands(value.toFixed(2))}`;
+export const fmtSignedPrice = (value: number): string =>
+  `${value >= 0 ? '+' : '-'}$${groupThousands(Math.abs(value).toFixed(2))}`;
+
+/**
  * One club's row on the board: latest close, and how far it sits from its recorded fair value.
  *
  * Both come from the SLICED ledger, so a tile always describes the same window the chart above it
@@ -245,8 +262,19 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
     `null` means the league average, which is where the page starts.
   */
   const [selectedClub, setSelectedClub] = React.useState<string | null>(null);
+  const [selectionTouched, setSelectionTouched] = React.useState(false);
   const [compareClub, setCompareClub] = React.useState<string | null>(null);
   const [rangeDays, setRangeDays] = React.useState<number | null>(30);
+
+  /*
+    EVERY SELECTION GOES THROUGH ONE HELPER, because "has the reader chosen yet" is a real piece of
+    state and three bare `setSelectedClub` calls in three handlers would each have to remember to set
+    it. Missing one would let the default silently re-assert itself over the reader's choice.
+  */
+  const chooseClub = React.useCallback((id: string | null): void => {
+    setSelectedClub(id);
+    setSelectionTouched(true);
+  }, []);
 
   // Only clubs with at least one recorded close can be selected; offering the rest would let a
   // player pick a chart that cannot be drawn.
@@ -385,6 +413,27 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
   );
 
   /*
+    THE PAGE OPENS ON A CLUB, not on the league average, and the measurement is why.
+
+    The average of thirty-two clubs is a genuinely FLAT series, not a badly-drawn one: averaging
+    cancels the idiosyncratic moves, and the realised daily sigma of the mean close is 0.83% against
+    roughly 4% for a single club. Measured on the same ledger at the same chart height, the average
+    moves 6.8px vertically and a club moves 154.9px.
+
+    So the default view was the one chart on this page that could not show a price doing anything,
+    and it was what loaded first. Rank 1 is the default now: the most expensive club in the league,
+    which is also the most interesting one to open a market on.
+
+    The effect waits for the board because the ledger is loaded asynchronously -- there is nothing to
+    rank on the first render -- and it stops the moment the reader touches a selector, so the default
+    never reasserts itself over a deliberate choice.
+  */
+  React.useEffect(() => {
+    if (selectionTouched || board.length === 0) return;
+    setSelectedClub(board[0].team.id);
+  }, [board, selectionTouched]);
+
+  /*
     THE HOVER READOUT, and its index is into the SLICED series.
 
     The chart reports an index and this page owns the numbers, so the two can never disagree about
@@ -487,7 +536,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                 id="exchange-club"
                 className="rounded border border-[var(--color-chrome-mid)] bg-[var(--color-chrome-lo)] px-2 py-1 text-[var(--color-ink)]"
                 value={activeClub ?? ''}
-                onChange={(event) => setSelectedClub(event.target.value || null)}
+                onChange={(event) => chooseClub(event.target.value || null)}
               >
                 <option value="">All clubs (average)</option>
                 {pricedClubIds.map((id) => (
@@ -591,7 +640,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
                   <span className="t-stat-xl text-[var(--color-ink)]">
-                    {latest ? Math.round(latest.value) : '--'}
+                    {latest ? fmtPrice(latest.value) : '--'}
                   </span>
                   <span className="t-caption text-[var(--color-ink-dim)]">
                     {clubName ? `${clubName} share price` : 'average club price'}
@@ -649,7 +698,12 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                         <TeamLogo team={teamById.get(activeCompare) as Team} sizeClass="w-5 h-5 shrink-0" />
                       ) : null}
                       <span className="t-caption text-[var(--color-ink-dim)]">
-                        {Math.abs(Math.round(spread))} pts {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
+                        {/*
+                      The direction is already in the words, so the figure is unsigned -- printing
+                      "+$203.14 ahead of" states the sign twice and "$203.14 behind" would read as a
+                      contradiction. `fmtPrice` on the absolute value keeps it to dollars and cents.
+                    */}
+                    {fmtPrice(Math.abs(spread))} {spread >= 0 ? 'ahead of' : 'behind'} {compareName}
                         {latest ? ` on ${latest.date}` : ''}
                       </span>
                     </span>
@@ -757,7 +811,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                 <>
                   <span className="t-caption text-[var(--color-ink-faint)]">{hovered.date}</span>
                   <span className="t-stat-sm text-[var(--color-ink)]">
-                    {Math.round(hovered.value)}
+                    {fmtPrice(hovered.value)}
                   </span>
                   <span className="t-caption text-[var(--color-ink-faint)]">
                     {clubName ? `${clubName} close` : 'average close'}
@@ -765,7 +819,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                   {hoveredFair ? (
                     <>
                       <span className="t-caption text-[var(--color-neutral)]">
-                        fair {Math.round(hoveredFair.value)}
+                        fair {fmtPrice(hoveredFair.value)}
                       </span>
                       {hoveredStray !== null ? (
                         <span className="t-caption text-[var(--color-ink-faint)]">
@@ -792,12 +846,11 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                   {hoveredCompare ? (
                     <>
                       <span className="t-caption text-[var(--color-ink-dim)]">
-                        {compareName} {Math.round(hoveredCompare.value)}
+                        {compareName} {fmtPrice(hoveredCompare.value)}
                       </span>
                       {hoveredSpread !== null ? (
                         <span className="t-caption text-[var(--color-ink-dim)]">
-                          {hoveredSpread >= 0 ? '+' : ''}
-                          {Math.round(hoveredSpread)} pts
+                          {fmtPrice(Math.abs(hoveredSpread))} gap
                         </span>
                       ) : null}
                     </>
@@ -814,26 +867,67 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               )}
             </div>
 
-            {hasFair ? (
-              <div className="mt-1 flex items-center gap-2">
+            {/*
+              THE LEGEND, and it replaces the one-line caption rather than joining it.
+
+              Three series can be on this chart and none of them was labelled: the close, the recorded
+              fair layer, and the comparison club. "Which line is which" was genuinely answerable only
+              by matching colours, and the fair line's teal is also the colour every premium figure on
+              the page uses, so the swatch was doing double duty.
+
+              Each entry is built from what is ACTUALLY DRAWN, so a legend can never list a series
+              that is not there: no fair row without `hasFair`, no comparison row without
+              `activeCompare`. The dashed swatches are drawn with the same dash pattern as the stroke
+              they stand for, because a solid swatch next to a dashed line is a legend that lies about
+              its own chart.
+            */}
+            <div className="mt-1 flex flex-wrap items-center gap-x-5 gap-y-1">
+              <span className="flex items-center gap-2">
                 <span
                   aria-hidden="true"
-                  className="inline-block h-0 w-4 border-t border-dashed"
-                  style={{ borderColor: 'var(--color-neutral)' }}
+                  className="inline-block h-[3px] w-5"
+                  style={{ background: 'var(--color-media-glorest)' }}
                 />
-                <span className="t-caption text-[var(--color-ink-faint)]">
-                  fair value, as recorded on the day
-                  {fairDays < points.length
-                    ? ` · ${points.length - fairDays} ${points.length - fairDays === 1 ? 'day' : 'days'} unrecorded, drawn as a break`
-                    : ''}
+                <span className="t-caption text-[var(--color-ink-dim)]">
+                  {clubName ? `${clubName} close` : 'average club close'}
                 </span>
-                {clubName ? (
-                  <span className="t-caption text-[var(--color-ink-faint)]">
-                    the gap between the two lines is this club&apos;s premium or discount
+              </span>
+
+              {hasFair ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-0 w-5 border-t-2 border-dashed"
+                    style={{ borderColor: 'var(--color-neutral)' }}
+                  />
+                  <span className="t-caption text-[var(--color-ink-dim)]">
+                    fair value, as recorded on the day
+                    {fairDays < points.length
+                      ? ` · ${points.length - fairDays} ${points.length - fairDays === 1 ? 'day' : 'days'} unrecorded, drawn as a break`
+                      : ''}
                   </span>
-                ) : null}
-              </div>
-            ) : null}
+                </span>
+              ) : null}
+
+              {activeCompare ? (
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-[2px] w-5"
+                    style={{ background: 'var(--color-ink-faint)' }}
+                  />
+                  <span className="t-caption text-[var(--color-ink-dim)]">
+                    {compareName} close
+                  </span>
+                </span>
+              ) : null}
+
+              {clubName && hasFair ? (
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  the gap between the two lines is this club&apos;s premium or discount
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
       </Panel>
@@ -885,7 +979,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                 <button
                   key={row.team.id}
                   type="button"
-                  onClick={() => setSelectedClub(isPrimary ? null : row.team.id)}
+                  onClick={() => chooseClub(isPrimary ? null : row.team.id)}
                   aria-pressed={isPrimary}
                   className={[
                     'group relative flex min-w-0 flex-col items-center gap-1 rounded p-1.5 text-center transition-colors',
@@ -943,7 +1037,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                     {row.team.name}
                   </span>
                   <span className="t-stat-sm text-[var(--color-ink)]">
-                    {Math.round(row.price)}
+                    {fmtPrice(row.price)}
                   </span>
 
                   {/*
@@ -954,7 +1048,21 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
                     orange, because a premium is an expense rather than an outcome.
                   */}
                   {row.stray !== null ? (
-                    <span className="t-caption text-[var(--color-neutral)]">
+                    /*
+                      RED FOR A DISCOUNT, TEAL FOR A PREMIUM.
+
+                      This is the one place on the page where a signed figure is coloured by its sign,
+                      and it is the trading convention rather than the app's: a club priced below its
+                      own fair value is the losing side of the trade and reads as such at a glance
+                      across thirty-two tiles. Teal is the neutral and stays on the positive side --
+                      which also keeps the premium's colour meaning the same thing here as it does in
+                      the headline and the hover readout.
+
+                      It is deliberately NOT green. Green plus teal plus red across one screen is three
+                      colours carrying two meanings, and green would read as "good" on a figure whose
+                      whole content is that the club is expensive.
+                    */
+                    <span className={`t-caption ${row.stray < 0 ? 'text-[var(--color-media-glorest)]' : 'text-[var(--color-neutral)]'}`}>
                       {row.stray >= 0 ? '+' : ''}
                       {(row.stray * 100).toFixed(0)}%
                     </span>

@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  AXIS_CEILING,
   BAND_LINES,
   CHART_HEIGHT,
   gapSegments,
@@ -54,35 +55,57 @@ const series = (values: number[]): PricePoint[] =>
 const rising = series([400, 450, 520, 610, 700]);
 
 // -- 1. THE AXIS IS NOT INVERTED -------------------------------------------------------------
-const topY = yFor(PRICE_MAX);
+const topY = yFor(AXIS_CEILING);
+const bandTopY = yFor(PRICE_MAX);
 const midY = yFor(PRICE_MAX / 2);
 const bottomY = yFor(0);
 check(
   'a higher price draws HIGHER on the chart -- the axis is not inverted',
-  topY < midY && midY < bottomY,
-  `${PRICE_MAX} -> y=${topY.toFixed(1)}, 500 -> y=${midY.toFixed(1)}, 0 -> y=${bottomY.toFixed(1)}. `
-  + 'A path with these three in the other order is a chart that still looks like a chart.',
+  topY < bandTopY && bandTopY < midY && midY < bottomY,
+  `${AXIS_CEILING} -> y=${topY.toFixed(1)}, ${PRICE_MAX} -> y=${bandTopY.toFixed(1)}, 500 -> `
+  + `y=${midY.toFixed(1)}, 0 -> y=${bottomY.toFixed(1)}. A path with these in the other order is a `
+  + 'chart that still looks like a chart.',
 );
 
-// -- 2. THE BAND IS THE FULL TRADING BAND, ALWAYS ----------------------------------------------
+// -- 2. THE AXIS IS FIXED, AND IT LEAVES HEADROOM ABOVE THE BAND ------------------------------
 check(
-  'the axis spans the whole 0-1000 band regardless of the data',
+  'the axis is fixed at 0 to AXIS_CEILING regardless of the data',
   Math.abs(bottomY - (CHART_HEIGHT - CHART_PADDING.bottom)) < 1e-9
   && Math.abs(topY - CHART_PADDING.top) < 1e-9,
-  `y(0) sits exactly on the bottom padding line and y(${PRICE_MAX}) exactly on the top one, whatever `
+  `y(0) sits exactly on the bottom padding line and y(${AXIS_CEILING}) exactly on the top one, whatever `
   + 'the series contains. An auto-fitted axis would still render and would make a quiet week look like '
   + 'a crash, so this is asserted rather than trusted.',
 );
 
 // -- 3. VALUES ARE CLAMPED, NOT PROJECTED ------------------------------------------------------
-const over = yFor(PRICE_MAX * 3);
+const over = yFor(AXIS_CEILING * 3);
 const under = yFor(-500);
 check(
-  'a close outside the band is clamped to the edge rather than drawn off the chart',
+  'a close outside the drawn axis is clamped to the edge rather than drawn off the chart',
   Math.abs(over - topY) < 1e-9 && Math.abs(under - bottomY) < 1e-9,
-  `y(${PRICE_MAX * 3}) equals y(${PRICE_MAX}) and y(-500) equals y(0). The band is load-bearing in `
+  `y(${AXIS_CEILING * 3}) equals y(${AXIS_CEILING}) and y(-500) equals y(0). The band is load-bearing in `
   + 'sharePrice.ts -- a price that leaves it is no longer comparable -- so the view cannot invent room '
   + 'for one that has.',
+);
+
+/*
+  THE HEADROOM IS THE POINT, and this is the assertion the old axis could not make.
+
+  `AXIS_CEILING` exists so a club trading at `PRICE_MAX` -- the most it can possibly be worth -- does
+  not draw ON the top edge, where it is indistinguishable from a club that has left the scale. The
+  most expensive club in the league is the one a reader can least afford to misread.
+
+  If the ceiling is ever set back to `PRICE_MAX`, `yFor(PRICE_MAX)` returns the top padding again and
+  this fails. That is deliberate: the headroom has to be a checked property rather than a constant
+  somebody tidies away in a later pass.
+*/
+check(
+  'a club at the top of its PRICE BAND is drawn BELOW the top of the axis',
+  bandTopY > CHART_PADDING.top + 1e-9,
+  `y(${PRICE_MAX}) = ${bandTopY.toFixed(1)} against a top padding line at ${CHART_PADDING.top} -- `
+  + `${(bandTopY - CHART_PADDING.top).toFixed(1)}px of headroom, with the axis ceiling at ${AXIS_CEILING}. `
+  + 'Equal means the ceiling has been collapsed onto the band and the most expensive club in the league '
+  + 'draws on the edge of the plot.',
 );
 
 // -- 4. X IS EVENLY SPACED AND MONOTONIC -----------------------------------------------------
@@ -153,14 +176,29 @@ check(
   + 'happened yet.',
 );
 
-// -- 8. THE BAND REFERENCE LINES ARE THE CONTRACT'S, NOT INVENTED --------------------------------
-const expected = [PRICE_MAX, PRICE_MAX / 2, 0];
+// -- 8. THE REFERENCE LINES, AND THE CEILING IS DISTINGUISHED FROM THE BAND ---------------------
+const expectedLines = [
+  { value: AXIS_CEILING, kind: 'ceiling' },
+  { value: PRICE_MAX, kind: 'band' },
+  { value: PRICE_MAX / 2, kind: 'band' },
+  { value: 0, kind: 'band' },
+];
 check(
-  'the reference lines are exactly the band edges and the fair midpoint',
-  BAND_LINES.length === 3 && BAND_LINES.every((l, i) => l.value === expected[i]),
-  `${BAND_LINES.map((l) => `${l.label}@y${yFor(l.value).toFixed(0)}`).join(', ')}. 500 is where a club sits `
-  + 'at exactly fair value, so the line is a fixed rule rather than a computed one -- "above fair" has '
-  + 'to be visible without reading a number.',
+  'the reference lines are the band edges, the fair midpoint, and the axis ceiling',
+  BAND_LINES.length === expectedLines.length
+  && expectedLines.every((e, i) => BAND_LINES[i].value === e.value && BAND_LINES[i].kind === e.kind),
+  `${BAND_LINES.map((l) => `${l.label}(${l.kind})@y${yFor(l.value).toFixed(0)}`).join(', ')}. 500 is where `
+  + `a club sits at exactly fair value and ${PRICE_MAX} is the most a club can be worth, so those two are `
+  + `fixed rules rather than computed ones. ${AXIS_CEILING} is the drawn ceiling above the band, tagged `
+  + "'ceiling' so it is stroked and weighted differently and cannot be mistaken for a price.",
+);
+
+check(
+  'every axis label carries the currency, and the ceiling label names the ceiling',
+  BAND_LINES.every((l) => l.label.startsWith('$'))
+  && BAND_LINES.filter((l) => l.kind === 'ceiling').length === 1,
+  `labels: ${BAND_LINES.map((l) => l.label).join(', ')}. Every other number on the page is in dollars, so `
+  + 'an axis reading 0/500/1000 beside a headline of $499.37 asks the reader to do a unit conversion.',
 );
 
 /*

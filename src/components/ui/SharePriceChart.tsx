@@ -60,14 +60,34 @@ const plotWidth = (width: number): number => width - CHART_PADDING.left - CHART_
 const plotHeight = (height: number): number => height - CHART_PADDING.top - CHART_PADDING.bottom;
 
 /**
- * Vertical position for a price. Fixed band, so this is total and cannot be data-driven.
+ * THE TOP OF THE DRAWN AXIS, WHICH IS NOT THE TOP OF THE PRICE BAND.
+ *
+ * `PRICE_MAX` is 1000 and it is the PRICING band: `fairPriceFor` maps a 0-100 valuation onto it,
+ * `readSharePriceLedger` refuses a close outside it as corrupt, and `checkSharePrice` asserts a whole
+ * season stays inside. Changing it would reprice every club in the league, so it is not touched.
+ *
+ * This is the CHART's ceiling, and it sits above the band on purpose. With the axis ending exactly
+ * at 1000, a club trading at its maximum possible value draws ON the top edge, where it is
+ * indistinguishable from a club that has left the scale -- and the single most expensive club in the
+ * league is the one you can least afford to misread. Headroom above the band means the ceiling is
+ * visible as a line the line has not reached.
+ *
+ * The consequence to keep in mind: 1300 units of axis for a 1000-unit band means every price
+ * occupies about 77% of the vertical space it did before, which is a real reduction in apparent
+ * variance. It buys an honest ceiling at that price, and it is the right trade -- a jagged chart that
+ * cannot show a club at its maximum is worse than a calmer one that can.
+ */
+export const AXIS_CEILING = 1300;
+
+/**
+ * Vertical position for a price. Fixed axis, so this is total and cannot be data-driven.
  *
  * Exported and separately checked because an inverted axis is the failure this cannot be eyeballed
  * out of: a chart that draws a rising price as a falling line still looks like a chart.
  */
 export const yFor = (value: number, height: number = CHART_HEIGHT): number => {
-  const clamped = Math.max(0, Math.min(PRICE_MAX, value));
-  const ratio = clamped / PRICE_MAX;
+  const clamped = Math.max(0, Math.min(AXIS_CEILING, value));
+  const ratio = clamped / AXIS_CEILING;
   return CHART_PADDING.top + (1 - ratio) * plotHeight(height);
 };
 
@@ -135,11 +155,22 @@ export const linePath = (
     .join(' ');
 };
 
-/** The band edges and midpoint, for the reference lines. */
+/**
+ * The reference lines: the price band's edges and midpoint, plus the drawn ceiling above them.
+ *
+ * `PRICE_MAX` is drawn differently from the rest on purpose. It is not just another gridline --
+ * it is the most a club can be worth, and a line that reaches it is a club that cannot go higher.
+ * Labelled and stroked as its own thing so "at the ceiling" is a state you can see rather than
+ * infer from a line touching the top of the plot.
+ *
+ * Labels carry the currency because every other number on this page does, and an axis that reads
+ * 0/500/1000 next to a headline reading $499.37 is asking the reader to do a unit conversion.
+ */
 export const BAND_LINES = [
-  { value: PRICE_MAX, label: '1000' },
-  { value: PRICE_MAX / 2, label: '500' },
-  { value: 0, label: '0' },
+  { value: AXIS_CEILING, label: '$1,300', kind: 'ceiling' as const },
+  { value: PRICE_MAX, label: '$1,000', kind: 'band' as const },
+  { value: PRICE_MAX / 2, label: '$500', kind: 'band' as const },
+  { value: 0, label: '$0', kind: 'band' as const },
 ] as const;
 
 /**
@@ -401,27 +432,46 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       */
       tabIndex={points.length > 1 ? 0 : undefined}
     >
-      {showBand && BAND_LINES.map((line) => (
+      {showBand && BAND_LINES.map((line) => {
+        const isCeiling = line.kind === 'ceiling';
+        const isBandEdge = line.kind === 'band' && line.value === PRICE_MAX;
+        const isMid = line.kind === 'band' && line.value === PRICE_MAX / 2;
+        return (
         <g key={line.value}>
           <line
             x1={CHART_PADDING.left}
             x2={plotWidthUnits - CHART_PADDING.right}
             y1={yFor(line.value, height)}
             y2={yFor(line.value, height)}
-            stroke={line.value === PRICE_MAX / 2 ? 'var(--color-chrome-mid)' : 'var(--color-chrome-lo)'}
-            strokeWidth={line.value === PRICE_MAX / 2 ? 1 : 0.5}
-            strokeDasharray={line.value === PRICE_MAX / 2 ? '3 3' : undefined}
+            stroke={isMid
+              ? 'var(--color-chrome-mid)'
+              : isCeiling
+                ? 'var(--color-chrome-mid)'
+                : 'var(--color-chrome-lo)'}
+            strokeWidth={isCeiling || isBandEdge ? 1 : isMid ? 1 : 0.5}
+            strokeDasharray={isMid ? '3 3' : isCeiling ? '2 4' : undefined}
+            strokeOpacity={isCeiling ? 0.7 : 1}
           />
           <text
             x={2}
-            y={yFor(line.value, height) + 3}
-            fill="var(--color-ink-faint)"
-            fontSize={8}
+            /*
+              11px, not 8. The old size was legible only because the axis was 140px tall and the
+              labels were a footnote; at 680px the same 8px type is unreadable from a normal
+              viewing distance, and an axis you cannot read is decoration. Anchored with a
+              dominant-baseline middle rather than a +3 nudge so the label sits ON its line at any
+              size instead of drifting below it.
+            */
+            y={yFor(line.value, height)}
+            dominantBaseline="middle"
+            fill={isCeiling ? 'var(--color-ink-dim)' : 'var(--color-ink-faint)'}
+            fontSize={11}
+            fontWeight={isCeiling || isBandEdge ? 600 : 400}
           >
             {line.label}
           </text>
         </g>
-      ))}
+        );
+      })}
 
       {/* The recorded fair layer, drawn UNDER the close so the close stays the subject. */}
       {fairPaths.map((d, i) => (
@@ -508,7 +558,16 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
         <path
           d={`${path} L${xFor(points.length - 1, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} L${xFor(0, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} Z`}
           fill="var(--color-media-glorest)"
-          fillOpacity={0.10}
+          /*
+            0.06, down from 0.10, and the height is why.
+
+            The fill is drawn from the line down to zero, so its AREA grows with the square of the
+            chart height while the line's thickness stays constant. At 140px it was a hint of colour
+            under the line. At 680px the same 0.10 is a solid block covering most of the plot, and it
+            was the heaviest object on the page -- heavier than the series it was supposed to be
+            supporting.
+          */
+          fillOpacity={0.06}
           stroke="none"
         />
       )}
