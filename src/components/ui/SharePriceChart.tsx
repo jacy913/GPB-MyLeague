@@ -80,14 +80,58 @@ const plotHeight = (height: number): number => height - CHART_PADDING.top - CHAR
 export const AXIS_CEILING = 1300;
 
 /**
- * Vertical position for a price. Fixed axis, so this is total and cannot be data-driven.
+ * THE STEPS THE DRAWN AXIS MAY TAKE, and the ceiling is now computed from the data rather than fixed.
+ *
+ * The axis was hard-pinned at $1,300 because nothing had ever traded above $1,000. Then two things
+ * changed and the pin became a bug:
+ *
+ *   1. `nextPrice` stopped clamping the close to `PRICE_MAX`, so a price can exceed its own fair value
+ *      as a premium. Measured across five leagues, the widest premium was 2.400x fair and the highest
+ *      close was $1,963.04.
+ *   2. So a real club in a real league now sits ABOVE the top of the plot, where it is indistinguishable
+ *      from a club that has left the scale. That is the same defect the pin was introduced to prevent,
+ *      moved up a level.
+ *
+ * WHY STEPS RATHER THAN A FITTED CEILING. A continuous fit to the visible data would make a quiet week
+ * rescale the axis, so a flat fortnight looks like a crash -- which is precisely what the fixed axis
+ * existed to stop, and what `checkShareChart` check 2 exists to catch. Stepping at round numbers keeps
+ * that property: the axis only ever moves when a price GENUINELY crosses a step, and a week that is
+ * merely boring cannot reach the next one.
+ *
+ * WHY THE CEILING IS COMPUTED BY THE CALLER. Every chart on the page must share one scale or two clubs
+ * are not comparable, so the ceiling is derived from the whole visible ledger in `ExchangeView` and
+ * passed in. A per-chart ceiling would be the fitted axis this is avoiding.
+ */
+export const AXIS_STEPS = [1300, 2000, 3000, 5000, 10_000, 25_000, 50_000, 100_000] as const;
+
+/** The smallest step that contains every one of these closes. */
+export const axisCeilingFor = (closes: Iterable<number>): number => {
+  let max = 0;
+  for (const c of closes) {
+    if (typeof c === 'number' && Number.isFinite(c) && c > max) max = c;
+  }
+  for (const step of AXIS_STEPS) if (max <= step) return step;
+  return AXIS_STEPS[AXIS_STEPS.length - 1];
+};
+
+/**
+ * Vertical position for a price.
+ *
+ * `ceiling` defaults to `AXIS_CEILING` so every existing call keeps working and so a caller that
+ * forgets to pass one gets the old behaviour rather than a broken scale. It is NOT data-driven by
+ * default -- the caller decides, from the whole ledger, and that decision is what keeps two clubs on
+ * one scale.
  *
  * Exported and separately checked because an inverted axis is the failure this cannot be eyeballed
  * out of: a chart that draws a rising price as a falling line still looks like a chart.
  */
-export const yFor = (value: number, height: number = CHART_HEIGHT): number => {
-  const clamped = Math.max(0, Math.min(AXIS_CEILING, value));
-  const ratio = clamped / AXIS_CEILING;
+export const yFor = (
+  value: number,
+  height: number = CHART_HEIGHT,
+  ceiling: number = AXIS_CEILING,
+): number => {
+  const clamped = Math.max(0, Math.min(ceiling, value));
+  const ratio = clamped / ceiling;
   return CHART_PADDING.top + (1 - ratio) * plotHeight(height);
 };
 
@@ -148,10 +192,11 @@ export const linePath = (
   points: readonly PricePoint[],
   width: number = CHART_WIDTH,
   height: number = CHART_HEIGHT,
+  ceiling: number = AXIS_CEILING,
 ): string => {
   if (points.length === 0) return '';
   return points
-    .map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i, points.length, width).toFixed(2)} ${yFor(p.value, height).toFixed(2)}`)
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(i, points.length, width).toFixed(2)} ${yFor(p.value, height, ceiling).toFixed(2)}`)
     .join(' ');
 };
 
@@ -166,12 +211,48 @@ export const linePath = (
  * Labels carry the currency because every other number on this page does, and an axis that reads
  * 0/500/1000 next to a headline reading $499.37 is asking the reader to do a unit conversion.
  */
-export const BAND_LINES = [
-  { value: AXIS_CEILING, label: '$1,300', kind: 'ceiling' as const },
-  { value: PRICE_MAX, label: '$1,000', kind: 'band' as const },
-  { value: PRICE_MAX / 2, label: '$500', kind: 'band' as const },
-  { value: 0, label: '$0', kind: 'band' as const },
-] as const;
+const groupThousands = (digits: string): string => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const label = (value: number): string => `$${groupThousands(value.toFixed(0))}`;
+
+/**
+ * The reference lines for a given axis ceiling.
+ *
+ * `0`, `$500` and `$1,000` are ECONOMIC markers and are always drawn, because they are fixed facts
+ * rather than positions on a scale: $500 is where a club sits at exactly fair value, and $1,000 is the
+ * most the valuation model can say a club is worth. Neither moves when the axis does.
+ *
+ * The ceiling is the drawn top of the plot and is stroked and weighted separately so it cannot be
+ * mistaken for a price -- above $1,000 it is emphatically not a price, since nothing can be WORTH
+ * more than that. It is only where the picture stops.
+ *
+ * ONE extra midpoint is added above $1,000 when the gap is wide enough to need it, because at a
+ * $5,000 ceiling a reader looking at a line between $1,000 and $5,000 has nothing to judge it against.
+ * The rule is stated rather than tuned: a midpoint is drawn when the gap exceeds one and a half times
+ * the $500 spacing used below it, so the reference lines never bunch together.
+ */
+export function bandLinesFor(ceiling: number): Array<{ value: number; label: string; kind: 'ceiling' | 'band' | 'mid' }> {
+  const lines: Array<{ value: number; label: string; kind: 'ceiling' | 'band' | 'mid' }> = [
+    { value: ceiling, label: label(ceiling), kind: 'ceiling' },
+    { value: PRICE_MAX, label: label(PRICE_MAX), kind: 'band' },
+    { value: PRICE_MAX / 2, label: label(PRICE_MAX / 2), kind: 'band' },
+    { value: 0, label: label(0), kind: 'band' },
+  ];
+  const gap = ceiling - PRICE_MAX;
+  if (gap > (PRICE_MAX / 2) * 1.5) {
+    lines.splice(1, 0, { value: Math.round((ceiling + PRICE_MAX) / 2), label: label(Math.round((ceiling + PRICE_MAX) / 2)), kind: 'mid' });
+  }
+  return lines;
+}
+
+/**
+ * The reference lines for the DEFAULT axis, kept as a named export because the check suite asserts
+ * against them directly.
+ *
+ * Declared after `bandLinesFor` and its label helpers on purpose: a module-level `const` calling a
+ * helper declared further down throws a temporal-dead-zone error at import time, which is exactly the
+ * kind of failure that only appears when something else happens to import the module first.
+ */
+export const BAND_LINES = bandLinesFor(AXIS_CEILING);
 
 /**
  * Day-over-day change on the last observation, as a fraction. Null unless there are two points.
@@ -209,6 +290,7 @@ export const gapSegments = (
   fair: readonly (PricePoint | null)[],
   width: number = CHART_WIDTH,
   height: number = CHART_HEIGHT,
+  ceiling: number = AXIS_CEILING,
 ): string[] => {
   const segments: string[] = [];
   let current: string[] = [];
@@ -218,7 +300,7 @@ export const gapSegments = (
       current = [];
       return;
     }
-    current.push(`${current.length === 0 ? 'M' : 'L'}${xFor(i, fair.length, width).toFixed(2)} ${yFor(point.value, height).toFixed(2)}`);
+    current.push(`${current.length === 0 ? 'M' : 'L'}${xFor(i, fair.length, width).toFixed(2)} ${yFor(point.value, height, ceiling).toFixed(2)}`);
   });
   if (current.length > 0) segments.push(current.join(' '));
   /*
@@ -278,6 +360,14 @@ export interface SharePriceChartProps {
    * visibly harmed by the scale.
    */
   onHover?: (index: number | null) => void;
+  /**
+   * The top of the drawn axis. Must be the SAME number for every chart on the page.
+   *
+   * The caller computes it from the whole visible ledger via `axisCeilingFor`, not per chart. That is
+   * the whole point: two clubs are only comparable if they share a scale, and a per-chart ceiling
+   * would be the fitted axis this prop exists to avoid. `ExchangeView` owns it.
+   */
+  ceiling?: number;
   className?: string;
 }
 
@@ -290,6 +380,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   fair,
   secondary,
   onHover,
+  ceiling = AXIS_CEILING,
   className = '',
 }) => {
   /*
@@ -330,10 +421,10 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
   }, []);
 
   const plotWidthUnits = measured ?? width;
-  const path = linePath(points, plotWidthUnits, height);
+  const path = linePath(points, plotWidthUnits, height, ceiling);
   // Teal, the neutral accent. This is a reference line and not a bet, so it takes neither the
   // positive nor the negative colour -- a dashed fair line in green would read as an outcome.
-  const fairPaths = fair ? gapSegments(fair, plotWidthUnits, height) : [];
+  const fairPaths = fair ? gapSegments(fair, plotWidthUnits, height, ceiling) : [];
   /*
     THE COMPARISON LINE, drawn UNDER the primary so the primary stays the subject.
 
@@ -346,7 +437,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
     upstream has gone wrong and drawing nothing is the honest response.
   */
   const secondaryPaths = secondary && secondary.length === points.length
-    ? gapSegments(secondary, plotWidthUnits, height)
+    ? gapSegments(secondary, plotWidthUnits, height, ceiling)
     : [];
   const [hover, setHover] = React.useState<number | null>(null);
 
@@ -432,7 +523,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       */
       tabIndex={points.length > 1 ? 0 : undefined}
     >
-      {showBand && BAND_LINES.map((line) => {
+      {showBand && bandLinesFor(ceiling).map((line) => {
         const isCeiling = line.kind === 'ceiling';
         const isBandEdge = line.kind === 'band' && line.value === PRICE_MAX;
         const isMid = line.kind === 'band' && line.value === PRICE_MAX / 2;
@@ -441,8 +532,8 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           <line
             x1={CHART_PADDING.left}
             x2={plotWidthUnits - CHART_PADDING.right}
-            y1={yFor(line.value, height)}
-            y2={yFor(line.value, height)}
+            y1={yFor(line.value, height, ceiling)}
+            y2={yFor(line.value, height, ceiling)}
             stroke={isMid
               ? 'var(--color-chrome-mid)'
               : isCeiling
@@ -461,7 +552,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
               dominant-baseline middle rather than a +3 nudge so the label sits ON its line at any
               size instead of drifting below it.
             */
-            y={yFor(line.value, height)}
+            y={yFor(line.value, height, ceiling)}
             dominantBaseline="middle"
             fill={isCeiling ? 'var(--color-ink-dim)' : 'var(--color-ink-faint)'}
             fontSize={11}
@@ -529,7 +620,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           {hoveredFair ? (
             <circle
               cx={xFor(hover as number, points.length, plotWidthUnits)}
-              cy={yFor(hoveredFair.value, height)}
+              cy={yFor(hoveredFair.value, height, ceiling)}
               r={3}
               fill="none"
               stroke="var(--color-neutral)"
@@ -539,7 +630,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           ) : null}
           <circle
             cx={xFor(hover as number, points.length, plotWidthUnits)}
-            cy={yFor(hoveredPoint.value, height)}
+            cy={yFor(hoveredPoint.value, height, ceiling)}
             r={3.5}
             fill="var(--color-media-glorest)"
             stroke="var(--color-panel)"
@@ -556,7 +647,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       */}
       {points.length > 1 && (
         <path
-          d={`${path} L${xFor(points.length - 1, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} L${xFor(0, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height).toFixed(2)} Z`}
+          d={`${path} L${xFor(points.length - 1, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height, ceiling).toFixed(2)} L${xFor(0, points.length, plotWidthUnits).toFixed(2)} ${yFor(0, height, ceiling).toFixed(2)} Z`}
           fill="var(--color-media-glorest)"
           /*
             0.06, down from 0.10, and the height is why.
@@ -591,7 +682,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
       {points.length > 0 && (
         <circle
           cx={xFor(points.length - 1, points.length, plotWidthUnits)}
-          cy={yFor(points[points.length - 1].value, height)}
+          cy={yFor(points[points.length - 1].value, height, ceiling)}
           r={2}
           fill="var(--color-media-glorest)"
         />

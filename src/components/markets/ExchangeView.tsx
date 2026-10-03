@@ -2,6 +2,7 @@ import React from 'react';
 import type { PriceSeries } from '../../lib/analytics/sharePrice';
 import type { Team } from '../../types';
 import { Panel, PanelHeader, TeamLogo } from '../ui';
+import { axisCeilingFor } from '../ui/SharePriceChart';
 import { ExchangeDesk } from './ExchangeDesk';
 import { latestClose } from '../../lib/analytics/priceBoard';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
@@ -427,6 +428,31 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
   */
   const fairDays = fairPoints.filter((p) => p !== null).length;
   const hasFair = fairDays >= 2;
+  /*
+    ONE AXIS CEILING FOR THE WHOLE PAGE, computed from every close in the visible ledger.
+
+    Not per chart. Two clubs are only comparable if they are drawn on the same scale, so this is
+    derived from all thirty-two clubs rather than from the selected one -- otherwise the Leopards at
+    $993 and a $400 club would be drawn on different axes and the gap between them would be an artefact
+    of the drawing rather than a fact about the prices.
+
+    It moves only when a price crosses one of `AXIS_STEPS`, so a quiet week cannot rescale the chart
+    and make itself look dramatic. That property is the reason the axis steps rather than fitting the
+    data, and it is what `checkShareChart` check 2 now guards.
+
+    It is computed from `visibleLedger` rather than the whole ledger so changing the range to 7 days
+    does not leave a ceiling set by a price from three months ago.
+  */
+  const axisCeiling = React.useMemo(() => {
+    const everyClose: number[] = [];
+    for (const day of visibleLedger ?? []) {
+      for (const value of Object.values(day.close)) {
+        if (typeof value === 'number' && Number.isFinite(value)) everyClose.push(value);
+      }
+    }
+    return axisCeilingFor(everyClose);
+  }, [visibleLedger]);
+
   const board = React.useMemo(
     () => buildBoard(visibleLedger, teams, pricedClubIds),
     [visibleLedger, teams, pricedClubIds],
@@ -799,6 +825,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
               onHover={setHoverIndex}
               width={720}
               height={CHART_VIEW_HEIGHT}
+              ceiling={axisCeiling}
               showBand
               /*
                 480px, DOWN FROM 680px, AND THE REASON IS A MEASUREMENT OF THE DATA.

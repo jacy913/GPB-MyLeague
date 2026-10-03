@@ -30,6 +30,9 @@ import { resolve } from 'node:path';
 
 import {
   AXIS_CEILING,
+  AXIS_STEPS,
+  axisCeilingFor,
+  bandLinesFor,
   BAND_LINES,
   CHART_HEIGHT,
   gapSegments,
@@ -364,7 +367,102 @@ check(
   + 'neither, so borrowing an accent would claim an identity the line does not have.',
 );
 
-const failed = checks.filter((c) => !c.pass);
+/*
+    ===========================================================================
+    THE STEPPED AXIS, AND THE BUG IT EXISTS TO FIX
+    ===========================================================================
+
+    Everything above this block passed unchanged when the axis became data-driven, which is the point
+    worth pausing on: those checks call `yFor` and `BAND_LINES` with their defaults, so they kept
+    testing the old fixed ceiling and would have stayed green if the new code were completely broken.
+    A refactor that leaves every existing check passing has proved nothing about itself.
+
+    The bug: `nextPrice` stopped clamping the close to `PRICE_MAX`, and measured across five leagues the
+    widest premium reached 2.400x fair with a high close of $1,963.04. A fixed $1,300 axis therefore
+    clips a real club's price off the top of the plot -- the same defect the fixed axis was introduced to
+    prevent, moved up one level.
+  */
+
+  // -- THE CEILING IS THE SMALLEST STEP THAT CONTAINS THE DATA ---------------------------------------
+  const typicalCeiling = axisCeilingFor([249, 485, 993]);
+  const premiumCeiling = axisCeilingFor([249, 485, 993, 1963.04]);
+  check(
+    'the ceiling is the smallest DECLARED STEP that contains every close',
+    typicalCeiling === 1300 && premiumCeiling === 2000
+    && AXIS_STEPS.every((s, i) => i === 0 || s > AXIS_STEPS[i - 1]),
+    `a league topping out at $993 still gets $${typicalCeiling} -- the common case is untouched. A league `
+    + `reaching $1,963.04 gets $${premiumCeiling}. Steps are ${AXIS_STEPS.join(', ')}, strictly `
+    + 'increasing, so there is always a next one and never an arbitrary fitted value.',
+  );
+
+  // -- A PRICE ABOVE THE OLD CEILING IS DRAWN, NOT CLIPPED -------------------------------------------
+  /*
+    This is the regression test for the visual bug. Under the old fixed axis, `yFor(1963)` returned
+    exactly `yFor(1300)` -- the top padding -- so a real club in a real league drew ON the edge and was
+    indistinguishable from one that had left the scale. Two things must hold now: the price is not
+    clamped, and it is drawn BELOW the top edge so the ceiling stays visible as a line it has not reached.
+  */
+  const tooTallDefault = yFor(1963.04);
+  const tooTallStepped = yFor(1963.04, CHART_HEIGHT, premiumCeiling);
+  const topOfStepped = yFor(premiumCeiling, CHART_HEIGHT, premiumCeiling);
+  check(
+    'a price above the old $1,300 ceiling is DRAWN rather than clipped to the top edge',
+    tooTallDefault < bandTopY
+    && tooTallStepped > topOfStepped + 1
+    && tooTallStepped < bandTopY,
+    `y($1,963.04) on the default axis is ${tooTallDefault.toFixed(1)}, clamped onto the ceiling as before. `
+    + `On the $${premiumCeiling} axis it is ${tooTallStepped.toFixed(1)}, which sits `
+    + `${(tooTallStepped - topOfStepped).toFixed(1)}px BELOW the ceiling line (y grows downward, so `
+    + `larger is lower) and ${(bandTopY - tooTallStepped).toFixed(1)}px above the $1,000 line. So it is `
+    + 'on the plot, clear of the top edge, and $1,000 still has visible headroom above it.',
+  );
+
+  // -- STEPPING IS NOT FITTING ---------------------------------------------------------------------
+  /*
+    The reason for steps rather than a fitted ceiling. A fitted axis would rescale on a quiet week and
+    make a flat fortnight look like a crash -- the failure `checkShareChart` check 2 has always guarded.
+    These two sets differ by a factor of three in their high and land on the SAME step, which is the
+    property that keeps a dull week looking dull.
+  */
+  const dull = axisCeilingFor([480, 502, 495, 510, 488]);
+  const livelier = axisCeilingFor([300, 700, 900, 1100, 1250]);
+  check(
+    'a quiet stretch and a volatile one inside the same step share a ceiling -- steps are not a fit',
+    dull === livelier && dull === 1300,
+    `a dull stretch topping out at $510 and a volatile one at $1,250 both draw on a $${dull} axis. A `
+    + 'fitted ceiling would have given them different scales, so the same absolute move would have '
+    + 'looked several times larger on the volatile one. `checkShareChart` check 2 exists for exactly '
+    + 'this and still holds: the axis is not fitted to the data.',
+  );
+
+  // -- AND A GENUINE CROSSING DOES MOVE IT -----------------------------------------------------------
+  check(
+    'a price that genuinely CROSSES a step moves the axis, rather than being clipped',
+    axisCeilingFor([1300]) === 1300 && axisCeilingFor([1300.01]) === 2000
+    && yFor(1300.01, CHART_HEIGHT, axisCeilingFor([1300.01])) > topOfStepped - 1e-9,
+    `exactly $1,300 keeps the $1,300 axis and draws on its top line; $1,300.01 steps to $2,000 and is `
+    + 'drawn just below that new top. The step is therefore reachable only by a real price, never by a '
+    + 'noisy week.',
+  );
+
+  // -- THE REFERENCE LINES COVER A TALL CEILING ------------------------------------------------------
+  const tallLines = bandLinesFor(2000);
+  check(
+    'a tall ceiling gets a midpoint reference line, and every line sits inside the axis',
+    tallLines.every((l) => l.value >= 0 && l.value <= 2000)
+    && tallLines.some((l) => l.kind === 'mid')
+    && tallLines.some((l) => l.kind === 'ceiling' && l.value === 2000)
+    && tallLines.some((l) => l.kind === 'band' && l.value === PRICE_MAX)
+    && BAND_LINES.every((l) => l.value <= AXIS_CEILING),
+    `on a $2,000 axis: ${tallLines.map((l) => `${l.label}(${l.kind})`).join(', ')}. $0, $500 and $1,000 `
+    + `are ALWAYS drawn because they are economic facts rather than positions on a scale -- $500 is exact `
+    + `fair value and $1,000 is the most a club can be WORTH, which is why a line above it is a premium `
+    + 'and not a valuation. A midpoint appears only when the gap above $1,000 exceeds one and a half '
+    + `times the $500 spacing. On the default $${AXIS_CEILING} axis no midpoint is added, so that chart `
+    + 'is unchanged.',
+  );
+
+  const failed = checks.filter((c) => !c.pass);
 console.log('\nHXSE PRICE CHART GEOMETRY\n');
 checks.forEach((c, i) => {
   console.log('  ' + (c.pass ? 'PASS' : 'FAIL') + '  ' + String(i + 1).padStart(2) + '. ' + c.label);
