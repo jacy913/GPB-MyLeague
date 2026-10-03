@@ -47,11 +47,14 @@ import {
   savePortfolio,
   rejectionOf,
   sellShares,
+  settlePortfolio,
   STARTING_CASH_CENTS,
   type Portfolio,
   type PortfolioResult,
 } from '../src/lib/portfolio';
 import { seededRandomStream } from '../src/lib/analytics/playoffMonteCarlo';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const checks: Array<{ label: string; pass: boolean; detail?: string }> = [];
 const check = (label: string, pass: boolean, detail?: string): void => {
@@ -489,6 +492,198 @@ check(
   })(),
   'with no stored text at all the loader returns the opening balance and no warning, because nothing '
   + 'went wrong and there is nothing to report.',
+);
+
+// -- 20. SETTLEMENT CLOSES THE BOOK AND HANDS OVER A FRESH BUDGET ----------------------------------
+/*
+  The compounding bound. `checkShareEdge` measures +13.41% over twenty days in five leagues out of
+  five, so an unbounded book goes $1,000 -> roughly $10,200 across two seasons and keeps going. The
+  position cap cannot stop it: it limits concentration in one club, not exposure across time.
+
+  So settlement closes every position at the last printed close and resets cash to the opening
+  balance. The reset is the load-bearing part -- see the next check.
+*/
+const seasonOne = unwrap(buyShares(createPortfolio(), {
+  teamId: 'alp', shares: 2, price: 250, date: '2026-05-01', marketSize: 50,
+}));
+const seasonOneMarked = markValue(seasonOne, { alp: 400 });
+const settled = settlePortfolio(seasonOne, { alp: 400 }, '2026-09-28');
+const settledGain = 40000 * 2 - seasonOne.positions[0].costCents;
+check(
+  'settlement closes every position at the last close and banks the gain',
+  settled.positions.length === 0
+  && settled.cashCents === STARTING_CASH_CENTS
+  && settled.settledThrough === '2026-09-28'
+  && settled.lifetimeRealisedCents === settledGain
+  && settledGain === 30000,
+  `2 shares at $250.00 marked at $400.00 is a gain of ${dollars(settledGain)}. Settlement leaves `
+  + `${settled.positions.length} positions, ${dollars(settled.cashCents)} of cash -- the opening balance, `
+  + `not ${dollars(settled.cashCents + settledGain)} -- and books the gain to a LIFETIME figure of `
+  + `${dollars(settled.lifetimeRealisedCents)}.`,
+);
+
+// -- 21. THE RESET IS WHAT ACTUALLY BOUNDS IT, AND THAT IS EASY TO GET WRONG --------------------------
+/*
+  The subtle failure. If cash carried over as `STARTING + lifetime realised`, a player would begin the
+  new season richer than the last one and the compounding would continue straight through the
+  boundary -- a settlement rule that settles nothing while looking like it works.
+
+  So this asserts the reset directly, AND asserts the lifetime figure does not leak into cash.
+*/
+const seasonTwo = unwrap(buyShares(settled, {
+  teamId: 'bra', shares: 1, price: 500, date: '2027-04-02', marketSize: 50,
+}));
+const seasonTwoCashIfCarried = STARTING_CASH_CENTS + settled.lifetimeRealisedCents;
+check(
+  'the next season starts on the OPENING budget, not on last season\'s profit',
+  settled.cashCents === STARTING_CASH_CENTS
+  && seasonTwo.cashCents === STARTING_CASH_CENTS - 50000
+  && seasonTwo.cashCents < seasonTwoCashIfCarried,
+  `after a ${dollars(settledGain)} season the player holds ${dollars(settled.cashCents)}, exactly the `
+  + `opening balance. Buying into season two leaves ${dollars(seasonTwo.cashCents)}; had the profit `
+  + `carried over it would have been ${dollars(seasonTwoCashIfCarried - 50000)}. The lifetime figure is `
+  + `kept for the record and is deliberately not an input to \`derivedCashCents\`.`,
+);
+
+// -- 22. SETTLEMENT IS IDEMPOTENT, GUARDED BY A DATE AND NOT BY AN EMPTY BOOK -------------------------
+/*
+  Anything can re-run the effect that settles: a reload, a second render, a second rollover with no
+  new prices. The book is empty after the first pass so the damage would be small, but "small and
+  invisible" is the exact class of failure this file is written against -- so the guard is asserted,
+  not assumed.
+
+  Three things must hold: re-settling the same date changes nothing, settling an EARLIER date is
+  refused, and settling a LATER date works. That last one matters because ISO dates compare as strings.
+*/
+const twice = settlePortfolio(settled, { alp: 400 }, '2026-09-28');
+const backwards = settlePortfolio(settled, { alp: 400 }, '2026-01-01');
+const forwards = settlePortfolio(settled, { alp: 400 }, '2027-09-28');
+check(
+  'the same date is a no-op, an earlier date is refused, and a LATER date re-settles',
+  twice === settled
+  && backwards === settled
+  && forwards !== settled
+  && forwards.settledThrough === '2027-09-28'
+  && forwards.cashCents === settled.cashCents
+  && forwards.lifetimeRealisedCents === settled.lifetimeRealisedCents,
+  `re-settling ${settled.settledThrough} and settling the earlier 2026-01-01 both returned the SAME `
+  + `OBJECT, so a caller can detect the no-op by identity. Settling 2027-09-28 correctly did NOT: it is `
+  + 'a new season, so the guard must let it through and advance the stamp. That was my error when this '
+  + 'check was first written -- I asserted it returned the same object, which would have meant a second '
+  + 'season could never settle at all.',
+);
+
+// -- 23. A SEASON THAT LOSES MONEY SETTLES HONESTLY --------------------------------------------------
+const loser = unwrap(buyShares(createPortfolio(), {
+  teamId: 'cor', shares: 2, price: 500, date: '2026-05-01', marketSize: 50,
+}));
+const settledLoss = settlePortfolio(loser, { cor: 200 }, '2026-09-28');
+check(
+  'a losing season settles to the same fresh budget, and the loss is recorded as a loss',
+  settledLoss.cashCents === STARTING_CASH_CENTS
+  && settledLoss.lifetimeRealisedCents === 20000 * 2 - 100000
+  && settledLoss.lifetimeRealisedCents < 0,
+  `2 shares at $500.00 closed at $200.00 is ${dollars(settledLoss.lifetimeRealisedCents)}, and cash `
+  + `still resets to ${dollars(settledLoss.cashCents)}. A losing season must not leave the player unable `
+  + 'to trade the next one, or one bad run would end their participation rather than cost them money.',
+);
+
+// -- 24. A POSITION WITH NO PRINTED PRICE IS CLOSED AT COST, NOT WRITTEN OFF --------------------------
+/*
+  If the market has not printed a close, the game cannot say what the position is worth. Liquidating at
+  zero would book a total loss for a price nobody quoted, and keeping it open would strand it forever --
+  `sellShares` requires a price, so an unpriced position is permanently unsellable. Closing at cost
+  does neither.
+*/
+const mixed = unwrap(buyShares(createPortfolio(), {
+  teamId: 'dwi', shares: 2, price: 300, date: '2026-05-01', marketSize: 50,
+}));
+const withGhost = unwrap(buyShares(mixed, {
+  teamId: 'gone', shares: 4, price: 100, date: '2026-05-01', marketSize: 50,
+}));
+const settledMixed = settlePortfolio(withGhost, { dwi: 450 }, '2026-09-28');
+check(
+  'a position the market never priced is closed at COST, not written off',
+  settledMixed.positions.length === 0
+  && settledMixed.cashCents === STARTING_CASH_CENTS
+  && settledMixed.lifetimeRealisedCents === 45000 * 2 - withGhost.positions[0].costCents,
+  'a club with no close contributes ZERO to the season result -- neither a gain nor a loss -- while the '
+  + `priced position books its ${dollars(45000 * 2 - withGhost.positions[0].costCents)}. Booked at zero `
+  + 'the other club would have taken 40,000 cents off a season the player did not lose.',
+);
+
+// -- 25. AN UNSETTLED SEASON IS NOT DISTURBED BY SETTLEMENT -------------------------------------------
+const virginSettle = settlePortfolio(createPortfolio(), {}, '2026-09-28');
+check(
+  'settling a book that was never traded still stamps the date, and costs nothing',
+  virginSettle.positions.length === 0
+  && virginSettle.cashCents === STARTING_CASH_CENTS
+  && virginSettle.lifetimeRealisedCents === 0
+  && virginSettle.settledThrough === '2026-09-28',
+  'an untouched book settles to itself with a zero season result. The date is still stamped, so the '
+  + 'guard advances and a second call in the same rollover is a no-op.',
+);
+
+// -- 26. SETTLEMENT IS WIRED TO THE SEASON ROLLOVER, NOT TO THE PAGE ----------------------------------
+/*
+  THE MOST IMPORTANT BLOCK IN THIS FILE, and it asserts SOURCE rather than behaviour.
+
+  Settlement only bounds the compounding if it actually fires. `settlePortfolio` being correct is
+  worthless if nothing calls it, and WHERE it is called from decides whether it fires at all: a book
+  owned by the Exchange view settles only for a player who opens the Exchange, which means the players
+  who never trade are the ones who never settle.
+
+  This is the same lesson as the price ledger, which sat at 16/16 green while two of its three boot
+  paths were broken because the checks only exercised one. Asserting the wiring means a refactor that
+  quietly moves the book back down into the desk fails HERE rather than in a player's save.
+
+  `checkSharePersistence` checks 21-25 do exactly this for the ledger, so it is a pattern that has
+  already earned its place in this repo rather than a new idea.
+*/
+const readSrc = (...parts: string[]): string =>
+  readFileSync(resolve(process.cwd(), ...parts), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
+
+const appSrc = readSrc('src', 'App.tsx');
+const routerSrc = readSrc('src', 'components', 'AppViewRouter.tsx');
+const viewSrc = readSrc('src', 'components', 'markets', 'ExchangeView.tsx');
+const deskSrc = readSrc('src', 'components', 'markets', 'ExchangeDesk.tsx');
+const hookSrc = readSrc('src', 'hooks', 'usePortfolio.ts');
+
+check(
+  'App OWNS the book, so settlement fires whether or not the Exchange is ever opened',
+  /usePortfolio\(/.test(appSrc)
+  && !/usePortfolio\(/.test(viewSrc)
+  && !/usePortfolio\(/.test(deskSrc),
+  'App.tsx creates the book with usePortfolio; neither ExchangeView nor ExchangeDesk does. If the book '
+  + 'lived in the desk, a player who never opened the page would reach the next season with an unsettled '
+  + 'book and be settled against the opening prices of the NEW season rather than the close that ended '
+  + 'the one they actually traded through.',
+);
+
+check(
+  'the settlement effect is keyed on seasonComplete, not on a calendar guess',
+  /seasonComplete/.test(appSrc) && /book\.settle\(/.test(appSrc),
+  'The effect watches seasonComplete and calls book.settle with the LAST day in the ledger. A season '
+  + 'starting in October would cross a calendar year boundary mid-season, so inferring the boundary from '
+  + 'dates would settle half way through a season nobody had finished playing.',
+);
+
+check(
+  'settlement is guarded twice over, because either guard alone leaves a gap',
+  /settledSeasonRef/.test(appSrc) && /settledThrough/.test(hookSrc),
+  'App.tsx carries a ref so the effect cannot re-settle within one rollover, AND the stamp is date-based '
+  + 'in the hook. Both are asserted because each covers a gap the other leaves: the ref dies on a reload, '
+  + 'while the stamp alone would still let the effect fire repeatedly and depend on the guard being right.',
+);
+
+check(
+  'the book is threaded down to the desk rather than rebuilt at each layer',
+  /book=\{book\}/.test(routerSrc) && /book=\{book\}/.test(viewSrc) && /book: UsePortfolio/.test(deskSrc),
+  'AppViewRouter, ExchangeView and ExchangeDesk each pass the SAME book down. A layer that created its '
+  + 'own would render a plausible empty portfolio while the real book sat elsewhere -- which is exactly '
+  + 'the shape of a desk that says "nothing held" over a book the player has paid for.',
 );
 
 let failed = 0;

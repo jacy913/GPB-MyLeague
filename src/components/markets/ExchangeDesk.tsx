@@ -40,7 +40,7 @@ import * as React from 'react';
 import { Panel, PanelHeader, TeamLogo } from '../ui';
 import { averageCost, dollars, STARTING_CASH_CENTS } from '../../lib/portfolio';
 import { marketSizeFor } from '../../lib/analytics/fanbase';
-import { usePortfolio } from '../../hooks/usePortfolio';
+import type { UsePortfolio } from '../../hooks/usePortfolio';
 import { fmtPrice } from './ExchangeView';
 import type { Team } from '../../types';
 
@@ -67,12 +67,13 @@ export interface ExchangeDeskProps {
   markedOn: string | null;
   /** The club the chart is showing, which is also the club these buttons trade. */
   selectedClub: string | null;
+  /** The book, created by App rather than here, so settlement cannot be skipped by not opening this page. */
+  book: UsePortfolio;
 }
 
 export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
-  teams, closes, markedOn, selectedClub,
+  teams, closes, markedOn, selectedClub, book,
 }) => {
-  const book = usePortfolio(closes);
   const [shares, setShares] = React.useState('1');
 
   const byId = React.useMemo(() => new Map(teams.map((t) => [t.id, t])), [teams]);

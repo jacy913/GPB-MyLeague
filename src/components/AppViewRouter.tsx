@@ -1,4 +1,5 @@
 import React from 'react';
+import type { UsePortfolio } from '../hooks/usePortfolio';
 import { AnimatePresence, motion } from 'motion/react';
 import { DraftHistoryEntry, DraftClassState } from '../logic/draftLogic';
 import type { LocalUniverseBundle } from '../logic/localUniverseState';
@@ -103,6 +104,15 @@ interface AppViewRouterProps {
   seasonComplete: boolean;
   /** HXSE closes, one entry per simulated day. Undefined before anything is priced. */
   priceLedger?: PriceSeries[];
+  /**
+   * The player's HXSE book, owned by App rather than by the Exchange view.
+   *
+   * Passed in rather than created here because settlement has to fire at a season rollover whether
+   * or not this component is mounted. A book living inside the Exchange would sit unsettled for a
+   * player who never once opened the page, and would then settle against the NEW season's opening
+   * prices instead of the close that ended the season they traded through.
+   */
+  book: UsePortfolio;
   offseasonStage: OffseasonStage;
   hasPendingSeasonAwards: boolean;
   awardsUnlockDate: string;
@@ -216,6 +226,7 @@ export const AppViewRouter = ({
   selectedTeamId,
   seasonComplete,
   priceLedger,
+  book,
   offseasonStage,
   hasPendingSeasonAwards,
   awardsUnlockDate,
@@ -618,6 +629,7 @@ export const AppViewRouter = ({
         <ExchangeView
           priceLedger={priceLedger}
           teams={teams}
+          book={book}
         />
       )}
 

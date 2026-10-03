@@ -3,6 +3,7 @@ import type { PriceSeries } from '../../lib/analytics/sharePrice';
 import type { Team } from '../../types';
 import { Panel, PanelHeader, TeamLogo } from '../ui';
 import { axisCeilingFor } from '../ui/SharePriceChart';
+import type { UsePortfolio } from '../../hooks/usePortfolio';
 import { ExchangeDesk } from './ExchangeDesk';
 import { latestClose } from '../../lib/analytics/priceBoard';
 import { SharePriceChart, type PricePoint } from '../ui/SharePriceChart';
@@ -68,6 +69,15 @@ export interface ExchangeViewProps {
    * the fallback initials plate quietly appears next to a real team name.
    */
   teams: Team[];
+  /**
+   * The player's book, owned by App rather than created here.
+   *
+   * Taken as a prop for one specific reason: season settlement has to fire at a rollover whether or
+   * not anybody is looking at this page. A book held inside the Exchange would sit unsettled for a
+   * player who never once opened it, and would then be settled against the NEW season's opening
+   * prices rather than the close that ended the season they actually traded through.
+   */
+  book: UsePortfolio;
 }
 
 /**
@@ -262,7 +272,7 @@ const RANGES: Array<{ label: string; days: number | null }> = [
   { label: 'All', days: null },
 ];
 
-export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }) => {
+export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, book }) => {
   const teamIds = React.useMemo(() => teams.map((t) => t.id), [teams]);
   const teamNames = React.useMemo(
     () => Object.fromEntries(teams.map((t) => [t.id, `${t.city} ${t.name}`])),
@@ -1027,6 +1037,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams }
         closes={latestCloses}
         markedOn={latestDate}
         selectedClub={activeClub}
+        book={book}
       />
       </div>
 

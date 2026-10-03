@@ -41,6 +41,7 @@ import {
   rejectionOf,
   savePortfolio,
   sellShares,
+  settlePortfolio,
   type Portfolio,
 } from '../lib/portfolio';
 
@@ -54,8 +55,10 @@ export interface TradeOutcome {
 
 export interface UsePortfolio {
   portfolio: Portfolio;
-  /** Cents realised across the whole book, lifetime. */
+  /** Cents realised THIS season. Reset by settlement. */
   realisedCents: number;
+  /** Cents realised across every season played. Display only. */
+  lifetimeRealisedCents: number;
   /** Cents not invested. */
   cashCents: number;
   /** Cents in shares at the latest close. */
@@ -73,8 +76,17 @@ export interface UsePortfolio {
   dismissNotice: () => void;
   buy: (request: BuyRequest) => TradeOutcome;
   sell: (request: SellRequest) => TradeOutcome;
+  /** Shares held in one club. */
   sharesHeld: (teamId: string) => number;
   capFor: (teamId: string, marketSize: number) => { allowed: number; held: number };
+  /**
+   * Close the book at the end of a season.
+   *
+   * Idempotent and safe to call from an effect: the same `through` date twice is a no-op, so a
+   * re-render, a reload or a second rollover cannot liquidate the book again. Returns true when it
+   * actually settled, so the caller can tell a real settlement from a skipped one.
+   */
+  settle: (closes: Record<string, number>, through: string) => boolean;
 }
 
 export interface BuyRequest {
@@ -160,9 +172,27 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
 
   const dismissNotice = React.useCallback(() => setNotice(null), []);
 
+  /*
+    SETTLEMENT. Writes through `commit` like a trade does, so persistence is in exactly one place and
+    a settled book is saved by the same path that saved a bought one.
+
+    It returns the boolean rather than nothing because the caller needs to distinguish "settled" from
+    "already settled" -- an effect that fires on every render would otherwise look identical either
+    way, which is the same invisibility problem the `settledThrough` stamp exists to prevent.
+  */
+  const settle = React.useCallback((closes: Record<string, number>, through: string): boolean => {
+    if (portfolio.settledThrough !== null && portfolio.settledThrough >= through) return false;
+    const next = settlePortfolio(portfolio, closes, through);
+    setPortfolio(next);
+    savePortfolio(next);
+    setNotice(null);
+    return true;
+  }, [portfolio]);
+
   return {
     portfolio,
     realisedCents: portfolio.realisedCents,
+    lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     cashCents: portfolio.cashCents,
     holdingsCents: mark.holdingsCents,
     unrealisedCents: mark.unrealisedCents,
@@ -175,5 +205,6 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
     sell,
     sharesHeld,
     capFor,
+    settle,
   };
 };

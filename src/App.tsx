@@ -67,6 +67,7 @@ import {
 } from './lib/storage';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { useBettingSlip } from './hooks/useBettingSlip';
+import { usePortfolio } from './hooks/usePortfolio';
 import { BettingSlip } from './components/betting/BettingSlip';
 import { useBroadcastFlair } from './hooks/useBroadcastFlair';
 import { useLeagueBootstrap } from './hooks/useLeagueBootstrap';
@@ -1248,6 +1249,51 @@ function App() {
     saveSharePriceLedger(priceLedger);
   }, [priceLedger]);
   const [lastPriceBoard, setLastPriceBoard] = useState<PriceBoard | null>(null);
+
+  /*
+    THE HXSE BOOK LIVES HERE, NOT IN THE EXCHANGE VIEW.
+
+    Settlement has to fire at a season rollover whether or not the player has the Exchange open. If the
+    book were component state, a player who never once visited the page would reach the next season
+    with an unsettled position book -- and would then be settled against the NEW season's opening
+    prices rather than the close that ended the one they traded through. Owning it here makes the
+    rollover event unconditional, which is the only arrangement where "settled at the last printed
+    price" is actually true.
+
+    `latestLedgerClose` is the marking source for the same reason it is for the desk: a mark belongs
+    against the most recent printed close, not the last day of whatever range the view happens to be
+    showing.
+  */
+  const latestLedgerClose = useMemo(() => latestClose(priceLedger ?? []) ?? {}, [priceLedger]);
+  const book = usePortfolio(latestLedgerClose);
+
+  /*
+    SETTLEMENT, ONCE PER SEASON, AT THE LAST PRICE THE MARKET PRINTED.
+
+    The trigger is `seasonComplete` rather than a calendar guess. A season starting in October would
+    cross a year boundary mid-season, so inferring the boundary from dates would settle half way
+    through a season nobody had finished playing.
+
+    The effect watches `priceLedger` as well as the flag, because the close a position settles at has
+    to be the LAST one printed before the rollover -- and at the moment the flag flips that is the most
+    recent day in the ledger, which may be an offseason day. That is deliberate and is what the desk
+    will show as the settlement price, so the two cannot disagree.
+
+    `settle` is idempotent on `settledThrough`, so this firing twice -- a re-render, a second rollover
+    with no new prices -- cannot liquidate the book again.
+  */
+  const settledSeasonRef = useRef(false);
+  useEffect(() => {
+    if (!seasonComplete) {
+      // A new season has begun, so the next rollover is allowed to settle again.
+      settledSeasonRef.current = false;
+      return;
+    }
+    if (settledSeasonRef.current) return;
+    const last = priceLedger && priceLedger.length > 0 ? priceLedger[priceLedger.length - 1] : undefined;
+    if (!last) return;
+    if (book.settle(last.close, last.date)) settledSeasonRef.current = true;
+  }, [seasonComplete, priceLedger, book.settle]);
   const [view, setView] = useState<AppView>('dashboard');
 
   /*
@@ -3610,6 +3656,7 @@ function App() {
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
           priceLedger={priceLedger}
+      book={book}
             offseasonStage={offseasonStage}
             offseasonSeasonYear={offseasonEventSeasonYear}
             offseasonChampionLabel={seasonAwardsSelection?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}

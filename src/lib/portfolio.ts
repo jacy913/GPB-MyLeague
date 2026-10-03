@@ -59,8 +59,30 @@ export interface Position {
 export interface Portfolio {
   cashCents: number;
   positions: Position[];
-  /** Realised profit or loss, in cents. Negative is a loss and is expected. */
+  /**
+   * Realised profit or loss for the CURRENT SEASON, in cents. Negative is a loss and is expected.
+   *
+   * Reset to zero by settlement, which is the whole point of settlement -- see below.
+   */
   realisedCents: number;
+  /**
+   * The date through which settlement has run, or null if it never has.
+   *
+   * THIS IS WHAT MAKES SETTLEMENT IDEMPOTENT. Without it, anything that re-runs the settlement
+   * effect -- a reload, a second render, a second rollover with no new prices -- would liquidate the
+   * book again. The book is empty after the first pass so the damage would be small, but "small and
+   * invisible" is exactly the failure mode this file exists to avoid, so the guard is explicit and
+   * checked rather than implied by the state happening to be empty.
+   */
+  settledThrough: string | null;
+  /**
+   * Realised profit or loss across every season played, in cents.
+   *
+   * DISPLAY ONLY, and deliberately NOT part of `derivedCashCents`. It is the season record; cash is
+   * the season budget. Conflating them is how "start fresh with $1,000" quietly becomes "start fresh
+   * with whatever you made last year", which is the same exploit the settlement rule exists to bound.
+   */
+  lifetimeRealisedCents: number;
 }
 
 /**
@@ -149,6 +171,8 @@ export const createPortfolio = (): Portfolio => ({
   cashCents: STARTING_CASH_CENTS,
   positions: [],
   realisedCents: 0,
+  settledThrough: null,
+  lifetimeRealisedCents: 0,
 });
 
 export const positionIn = (portfolio: Portfolio, teamId: string): Position | undefined =>
@@ -207,7 +231,13 @@ export const buyShares = (
   return {
     ok: true,
     realisedCents: 0,
-    portfolio: { cashCents: portfolio.cashCents - cost, positions, realisedCents: portfolio.realisedCents },
+    portfolio: {
+      cashCents: portfolio.cashCents - cost,
+      positions,
+      realisedCents: portfolio.realisedCents,
+      settledThrough: portfolio.settledThrough,
+      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
+    },
   };
 };
 
@@ -246,6 +276,8 @@ export const sellShares = (
       cashCents: portfolio.cashCents + proceeds,
       positions,
       realisedCents: portfolio.realisedCents + realised,
+      settledThrough: portfolio.settledThrough,
+      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     },
   };
 };
@@ -292,6 +324,70 @@ export const derivedCashCents = (portfolio: Portfolio): number =>
 /** Whether the stored cash agrees with the position history. False means the save is corrupt. */
 export const reconciles = (portfolio: Portfolio): boolean =>
   portfolio.cashCents === derivedCashCents(portfolio);
+
+/**
+ * SETTLEMENT: close the book at the end of a season and hand the player a fresh budget.
+ *
+ * ===========================================================================
+ * WHAT THIS BOUNDS, AND WHY IT HAS TO RESET THE CASH
+ * ===========================================================================
+ *
+ * `checkShareEdge` measures a fade-the-dislocation edge at +13.41% over twenty days, in five leagues
+ * out of five. Left alone that compounds without limit: $1,000 becomes roughly $10,200 across two
+ * seasons at nine twenty-day holds each, and there is no horizon after that.
+ *
+ * The position cap does NOT stop it, because the cap limits concentration within one club rather than
+ * exposure across time. Nothing else bounds it either. So the horizon is imposed directly: positions
+ * are closed at the last price the market printed, and the next season starts on the opening balance.
+ *
+ * The reset is the load-bearing part. If cash were carried over as `STARTING + lifetime realised`, a
+ * player would begin the new season richer than the last one and the compounding would simply
+ * continue across the boundary -- a settlement rule that settles nothing. `lifetimeRealisedCents`
+ * exists so the season record survives WITHOUT feeding the next season's budget.
+ *
+ * ===========================================================================
+ * SETTLEMENT IS IDEMPOTENT, GUARDED BY `settledThrough`
+ * ===========================================================================
+ *
+ * Anything can re-run the effect that calls this: a reload, a second render, a second rollover with no
+ * new prices printed. The book is empty after the first pass so the damage would be small, but small
+ * and invisible is exactly the class of failure this module is written against, so the guard is an
+ * explicit date comparison rather than an assumption that the state happens to be empty.
+ *
+ * ===========================================================================
+ * A POSITION WITH NO PRICE IS CLOSED AT COST, NOT WRITTEN OFF
+ * ===========================================================================
+ *
+ * If the market has not printed a close for a club, the game cannot say what it is worth. Liquidating
+ * at zero would book a total loss for a price nobody quoted, and keeping the position would leave it
+ * open forever with no way to sell it -- `sellShares` requires a price, so an unpriced position is
+ * permanently frozen. Closing at cost does neither: the player gets their money back and the season
+ * ends cleanly. It is the same reasoning as `markValue` holding an unpriced position at cost.
+ */
+export const settlePortfolio = (
+  portfolio: Portfolio,
+  closes: Record<string, number>,
+  through: string,
+): Portfolio => {
+  // Already settled this far. Returning the SAME OBJECT so a caller can use identity to detect a no-op.
+  if (portfolio.settledThrough !== null && portfolio.settledThrough >= through) return portfolio;
+
+  let gainCents = 0;
+  for (const p of portfolio.positions) {
+    const close = closes[p.teamId];
+    gainCents += typeof close === 'number' && Number.isFinite(close) && close > 0
+      ? centsFor(close) * p.shares - p.costCents
+      : 0;
+  }
+
+  return {
+    cashCents: STARTING_CASH_CENTS,
+    positions: [],
+    realisedCents: 0,
+    settledThrough: through,
+    lifetimeRealisedCents: portfolio.lifetimeRealisedCents + gainCents,
+  };
+};
 
 /* ------------------------------------------------------------------ *
  * Persistence
@@ -381,7 +477,11 @@ export const loadPortfolio = (): Portfolio => {
     }
 
     const cashCents = derivedCashCents({
-      cashCents: 0, positions: [...deduped.values()], realisedCents: candidate.realisedCents,
+      cashCents: 0,
+      positions: [...deduped.values()],
+      realisedCents: candidate.realisedCents,
+      settledThrough: null,
+      lifetimeRealisedCents: 0,
     });
 
     if (isWholeCents(candidate.cashCents) && candidate.cashCents !== cashCents) {
@@ -389,7 +489,33 @@ export const loadPortfolio = (): Portfolio => {
         + `position history, which says ${dollars(cashCents)}; used the derived figure`;
     }
 
-    return { cashCents, positions: [...deduped.values()], realisedCents: candidate.realisedCents };
+    /*
+      THE TWO SETTLEMENT FIELDS ARE OPTIONAL, because a save written before settlement existed has
+      neither.
+
+      `settledThrough` defaults to null, which is the SAFE direction: it means "never settled", so the
+      next rollover will settle rather than skip. Defaulting it to a far-future date would make an old
+      book silently un-settleable.
+
+      `lifetimeRealisedCents` defaults to this season's realised figure rather than to zero. A pre-
+      settlement save had no separate lifetime column, and its realised figure is the whole of what had
+      been earned up to that point, so carrying it forward loses no history. Starting it at zero would
+      quietly erase a player's record the first time they rolled over.
+    */
+    const settledThrough = typeof candidate.settledThrough === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(candidate.settledThrough)
+      ? candidate.settledThrough
+      : null;
+    const lifetimeRealisedCents = isWholeCents(candidate.lifetimeRealisedCents)
+      ? candidate.lifetimeRealisedCents
+      : candidate.realisedCents;
+
+    return {
+      cashCents,
+      positions: [...deduped.values()],
+      realisedCents: candidate.realisedCents,
+      settledThrough,
+      lifetimeRealisedCents,
+    };
   } catch {
     loadPortfolioLastWarning = 'save would not parse; started a fresh portfolio';
     return createPortfolio();
@@ -403,6 +529,8 @@ export const savePortfolio = (portfolio: Portfolio): void => {
       cashCents: derivedCashCents(portfolio),
       positions: portfolio.positions,
       realisedCents: portfolio.realisedCents,
+      settledThrough: portfolio.settledThrough,
+      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     }));
   } catch {
     // A full or blocked localStorage should not take the page down. The portfolio becomes
