@@ -35,6 +35,8 @@ export interface ExchangeViewProps {
   priceLedger?: PriceSeries[];
   /** The team ids currently in the league, for labelling a club series later. */
   teamIds: string[];
+  /** id -> display name. A ledger stores ids; a chart a player reads has to show names. */
+  teamNames?: Record<string, string>;
 }
 
 /**
@@ -84,11 +86,92 @@ const averageFairSeries = (ledger: PriceSeries[] | undefined): (PricePoint | nul
   });
 };
 
-export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds }) => {
-  const points = averageCloseSeries(priceLedger);
-  const fairPoints = averageFairSeries(priceLedger);
+/**
+ * One club's close series, INDEX-ALIGNED with the fair series and `null` where the ledger has no
+ * close for it.
+ *
+ * The alignment is the whole reason this is a `map` over `ledger` rather than a filter over the
+ * days that happen to carry the club. A club can be missing from a day -- dropped by the strict
+ * reader, or absent because it was not in the league yet -- and filtering would slide every later
+ * point left against the fair line and the gap between them would mean nothing.
+ */
+const clubCloseSeries = (ledger: PriceSeries[] | undefined, clubId: string): (PricePoint | null)[] => {
+  if (!ledger || ledger.length === 0) return [];
+  return ledger.map((day) => {
+    const value = day.close[clubId];
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return { date: day.date, value };
+  });
+};
+
+/**
+ * How far a club has strayed from its recorded fair value, as a fraction.
+ *
+ * Null unless both numbers exist for the SAME day. Comparing a close against a fair value from a
+ * different day is the tempting shortcut and it is meaningless: it would report a club as overvalued
+ * by the amount the league itself moved that day, which says nothing about the club.
+ *
+ * The sign is a deviation, not an outcome, so it is not coloured as one.
+ */
+const strayedFromFair = (
+  ledger: PriceSeries[] | undefined,
+  clubId: string,
+): { date: string; fraction: number } | null => {
+  if (!ledger) return null;
+  for (let i = ledger.length - 1; i >= 0; i -= 1) {
+    const day = ledger[i];
+    const close = day.close[clubId];
+    const fair = day.fair?.[clubId];
+    if (typeof close !== 'number' || typeof fair !== 'number') continue;
+    if (!Number.isFinite(close) || !Number.isFinite(fair) || fair === 0) continue;
+    return { date: day.date, fraction: close / fair - 1 };
+  }
+  return null;
+};
+
+export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds, teamNames }) => {
+  /*
+    ONE CLUB AT A TIME, and never all of them at once.
+
+    Thirty-two overlays on one 0-1000 axis is not a drill-down, it is a grey rectangle: the lines
+    land within a few tens of points of each other because the market prices them all near 500, and
+    a chart nobody can read is not a feature. Selecting a single club keeps the axis doing real work
+    and makes the fair gap legible, which is the thing worth looking at.
+
+    `null` means the league average, which is where the page starts.
+  */
+  const [selectedClub, setSelectedClub] = React.useState<string | null>(null);
+  const averagePoints = averageCloseSeries(priceLedger);
+  const averageFair = averageFairSeries(priceLedger);
+
+  // Only clubs with at least one recorded close can be selected; offering the rest would let a
+  // player pick a chart that cannot be drawn.
+  const pricedClubIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    priceLedger?.forEach((day) => Object.keys(day.close).forEach((id) => ids.add(id)));
+    return teamIds.filter((id) => ids.has(id)).sort(
+      (a, b) => (teamNames?.[a] ?? a).localeCompare(teamNames?.[b] ?? b),
+    );
+  }, [priceLedger, teamIds, teamNames]);
+
+  // A club can disappear between renders -- a trade, a reset, a new league. Falling back to the
+  // average rather than rendering an empty chart is the only honest option, since a stale
+  // selection would otherwise draw someone else's price path.
+  const activeClub = selectedClub && pricedClubIds.includes(selectedClub) ? selectedClub : null;
+
+  const points = activeClub
+    ? (clubCloseSeries(priceLedger, activeClub).filter((p) => p !== null) as PricePoint[])
+    : averagePoints;
+  const fairPoints = activeClub
+    ? (priceLedger ?? []).map((day) => {
+      const value = day.fair?.[activeClub];
+      return typeof value === 'number' && Number.isFinite(value) ? { date: day.date, value } : null;
+    })
+    : averageFair;
   const latest = points[points.length - 1];
   const first = points[0];
+  const clubName = activeClub ? (teamNames?.[activeClub] ?? activeClub) : null;
+  const stray = activeClub ? strayedFromFair(priceLedger, activeClub) : null;
   /*
     Whether to draw the second line at all, and how much of it survived.
 
@@ -130,6 +213,38 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
         ) : (
           <div className="flex flex-col gap-4 px-5 py-4">
             {/*
+              THE SELECTOR, and why it is a native select rather than 32 chips.
+
+              A chip row is the thing you build when there are five options. At thirty-two it is a
+              wall of buttons that pushes the chart off the panel, and the eye has to read all of them
+              to find one. A native select collapses to the current selection and is keyboard- and
+              screen-reader-correct for free, which a div-and-onclick list is not.
+
+              The average is the first option and the default, because it is what the page was showing
+              before drill-down existed and it is the series the fair line was written against.
+            */}
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="t-caption text-[var(--color-ink-faint)]" htmlFor="exchange-club">
+                Club
+              </label>
+              <select
+                id="exchange-club"
+                className="rounded border border-[var(--color-chrome-mid)] bg-[var(--color-chrome-lo)] px-2 py-1 text-[var(--color-ink)]"
+                value={activeClub ?? ''}
+                onChange={(event) => setSelectedClub(event.target.value || null)}
+              >
+                <option value="">All clubs (average)</option>
+                {pricedClubIds.map((id) => (
+                  <option key={id} value={id}>{teamNames?.[id] ?? id}</option>
+                ))}
+              </select>
+              {pricedClubIds.length < teamIds.length ? (
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  {teamIds.length - pricedClubIds.length} clubs not yet priced
+                </span>
+              ) : null}
+            </div>
+            {/*
               SCAFFOLDING NOTE, deliberately visible.
 
               One series, one chart, no controls. The numbers above it are the only derived values
@@ -137,12 +252,12 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               per-club and fair-value work lands, this strip is the baseline it has to stay
               consistent with.
             */}
-            <div className="flex items-baseline gap-4">
+            <div className="flex flex-wrap items-baseline gap-4">
               <span className="t-stat-lg text-[var(--color-ink)]">
                 {latest ? Math.round(latest.value) : '--'}
               </span>
               <span className="t-caption text-[var(--color-ink-faint)]">
-                average club price
+                {clubName ? `${clubName} share price` : 'average club price'}
                 {first && latest && first.date !== latest.date
                   ? ` · ${first.date} to ${latest.date}`
                   : ''}
@@ -150,6 +265,22 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               <span className="t-caption text-[var(--color-ink-faint)]">
                 {points.length} {points.length === 1 ? 'day' : 'days'}
               </span>
+              {/*
+                THE STRAY FIGURE, and it only appears for a single club.
+
+                On the average it would be a real number and a useless one -- the mean of every club's
+                deviation is not a statement about anything, and showing it would invite the reader to
+                treat "the league is 2% rich" as a finding.
+
+                Teal, not green or orange. A deviation from fair is not an outcome: being 8% above fair
+                is neither good news nor bad news, it is expensive.
+              */}
+              {stray ? (
+                <span className="t-caption text-[var(--color-neutral)]">
+                  {stray.fraction >= 0 ? '+' : ''}
+                  {(stray.fraction * 100).toFixed(1)}% vs fair on {stray.date}
+                </span>
+              ) : null}
             </div>
 
             <SharePriceChart
@@ -158,8 +289,20 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
               width={720}
               height={140}
               showBand
+              /*
+                FILLS THE PANEL RATHER THAN SITTING AT ITS 720px VIEWBOX.
+
+                The viewBox stays 720x140 -- that is the coordinate system every geometry function
+                computes in, and `checkShareChart` asserts against it. `preserveAspectRatio="none"`
+                plus a full-width class stretches the X axis only, and `vectorEffect="non-scaling-
+                stroke"` on both strokes is what keeps the lines one pixel wide afterwards. Without it
+                a stretched fair line comes out visibly thicker than the close line, which reads as a
+                difference in the data.
+              */
+              className="w-full"
               aria-label={
-                `Average club share price over ${points.length} simulated days, `
+                `${clubName ? `${clubName} share price` : 'Average club share price'} over `
+                + `${points.length} simulated days, `
                 + `${Math.round(points[0].value)} to ${Math.round(latest?.value ?? 0)} on a 0 to 1000 scale.`
                 + (hasFair
                   ? ` Dashed teal is the fair value recorded on each of those days.`
@@ -180,6 +323,11 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teamIds
                     ? ` · ${points.length - fairDays} ${points.length - fairDays === 1 ? 'day' : 'days'} unrecorded, drawn as a break`
                     : ''}
                 </span>
+                {clubName ? (
+                  <span className="t-caption text-[var(--color-ink-faint)]">
+                    the gap between the two lines is this club&apos;s premium or discount
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </div>

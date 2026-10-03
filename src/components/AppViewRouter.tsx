@@ -618,6 +618,7 @@ export const AppViewRouter = ({
         <ExchangeView
           priceLedger={priceLedger}
           teamIds={teams.map((t) => t.id)}
+          teamNames={Object.fromEntries(teams.map((t) => [t.id, t.name]))}
         />
       )}
 

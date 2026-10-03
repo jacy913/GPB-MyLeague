@@ -239,6 +239,7 @@ export const SharePriceChart: React.FC<SharePriceChartProps> = ({
           strokeWidth={1}
           strokeDasharray="4 3"
           strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
         />
       ))}
 
