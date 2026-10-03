@@ -1,4 +1,5 @@
 import { Dispatch, SetStateAction, useEffect } from 'react';
+import type { PriceSeries } from '../lib/analytics/sharePrice';
 import { INITIAL_TEAMS } from '../data/teams';
 import { DEFAULT_SETTINGS } from '../logic/simulation';
 import {
@@ -61,6 +62,11 @@ interface UseLeagueBootstrapArgs {
     nextProgress: number,
     nextSeasonComplete: boolean,
   ) => boolean;
+    /**
+     * Restores the HXSE closes from the save. Optional because a save written before the
+     * market existed has none, and absence is a state the reader already understands.
+     */
+    onRestorePriceLedger?: (ledger: PriceSeries[]) => void;
   pushNotice: (message: string, level?: NoticeLevel) => void;
   setIsBootstrapping: Dispatch<SetStateAction<boolean>>;
   setPlayerState: Dispatch<SetStateAction<LeaguePlayerState>>;
@@ -82,6 +88,7 @@ export const useLeagueBootstrap = ({
   getProgressFromGames,
   saveLocalPlayerStateSafely,
   saveLocalLeagueStateSafely,
+    onRestorePriceLedger,
   pushNotice,
   setIsBootstrapping,
   setPlayerState,
@@ -193,6 +200,24 @@ export const useLeagueBootstrap = ({
           setSelectedDate(localCurrentDate);
           setProgress(typeof localState.progress === 'number' ? localState.progress : getProgressFromGames(validLocalGames));
           setSeasonComplete(typeof localState.seasonComplete === 'boolean' ? localState.seasonComplete : validLocalGames.every((game) => game.status === 'completed'));
+        }
+        /*
+          THE HXSE LEDGER, restored from the save.
+
+          Without this the market lived only as long as a page session: every reload threw away a
+          price path that had been computed, written to disk, and then never read back. That is the
+          bug this whole change exists to fix, and it is why `checkSharePersistence` was 16/16 green
+          throughout -- it tests the BUNDLE path while the product uses these flat keys.
+
+          Placed OUTSIDE the validLocalGames branch deliberately. A league whose games fail to
+          sanitise still has a price history, and a ledger is not contingent on the schedule being
+          loadable.
+
+          Guarded on length rather than presence: the reader answers an absent key with an empty
+          array, and no-market-yet is a state the Exchange already renders correctly.
+        */
+        if (onRestorePriceLedger && localState.sharePriceLedger.length > 0) {
+          onRestorePriceLedger(localState.sharePriceLedger);
         }
         setDataSource('local');
       } catch (error) {

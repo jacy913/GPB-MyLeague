@@ -11,6 +11,7 @@ import {
   Team,
   TeamRosterSlot,
 } from '../types';
+import { readSharePriceLedger, type SharePriceLedger } from '../logic/localUniverseState';
 import { getFallbackPlayerBio } from '../logic/playerBio';
 import {
   LOCAL_GAMES_STORAGE_KEY,
@@ -34,6 +35,18 @@ const STORAGE_KEYS = {
   pitchingRatings: 'glb_pitching_ratings',
   rosterSlots: 'glb_roster_slots',
   playerTransactions: 'glb_player_transactions',
+  /*
+    THE HXSE PRICE LEDGER. This key did not exist until the Exchange page did.
+
+    The ledger was in `LocalUniverseBundle`, so a manual BACKUP carried it -- and the runtime save did
+    not, because the runtime save is these flat keys and there was no ledger among them. Dumping every
+    localStorage key on a league with 45 simulated days behind it returned fifteen keys and not one
+    mention of the price path, so every reload threw the market away.
+
+    `checkSharePersistence` passed 16/16 the whole time, because it proves a ledger round-trips
+    through the SAVE BUNDLE. Different path; the product uses this one.
+  */
+  sharePriceLedger: 'glb_share_price_ledger',
   currentDate: 'glb_current_date',
   progress: 'glb_progress',
   seasonComplete: 'glb_season_complete',
@@ -45,6 +58,15 @@ const LOCAL_LEAGUE_STATE_KEYS = [
   STORAGE_KEYS.currentDate,
   STORAGE_KEYS.progress,
   STORAGE_KEYS.seasonComplete,
+  /*
+    THE LEDGER IS IN THIS LIST OR IT IS NEVER READ.
+
+    This array is the read manifest for BOTH stores: `loadLocalLeagueStateAsync` reads these keys
+    from IndexedDB first and falls back to localStorage. Declaring the storage key without adding it
+    here would have produced a key that is written every save and read never -- the quietest possible
+    version of the same bug, because the write succeeds and nothing ever checks the read.
+  */
+  STORAGE_KEYS.sharePriceLedger,
 ] as const;
 const LOCAL_PLAYER_STATE_KEYS = [
   STORAGE_KEYS.players,
@@ -913,6 +935,27 @@ const readIndexedDbValues = async (keys: readonly string[]): Promise<Record<stri
   return values;
 };
 
+const deleteIndexedDbValue = async (key: string): Promise<void> => {
+  if (!supportsIndexedDb()) {
+    return;
+  }
+
+  try {
+    const db = await openLocalStateDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(LOCAL_INDEXED_DB_STORE, 'readwrite');
+      const store = tx.objectStore(LOCAL_INDEXED_DB_STORE);
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Failed deleting a local IndexedDB value.'));
+
+      store.delete(key);
+    });
+  } catch (error) {
+    console.warn('Failed to delete a local IndexedDB value.', error);
+  }
+};
+
 const writeIndexedDbValues = async (entries: Array<[string, string]>): Promise<void> => {
   if (!supportsIndexedDb() || entries.length === 0) {
     return;
@@ -966,6 +1009,18 @@ const parseLocalLeagueStateFromRaw = (raw: Record<string, string | null>): {
   currentDate: string | null;
   progress: number | null;
   seasonComplete: boolean | null;
+  /**
+   * The HXSE closes.
+   *
+   * Lives on the LEAGUE state rather than the player state beside it, because that is where
+   * `currentDate` and `progress` live and because it is where the save actually keeps it. The first
+   * attempt at this read went into `parseLocalPlayerStateFromRaw`, which returns `LeaguePlayerState`
+   * and knows nothing about markets -- the type caught it immediately, which is the argument for
+   * typing the read rather than casting it.
+   *
+   * `[]` for an absent key, which is the correct reading of "this save predates the market".
+   */
+  sharePriceLedger: SharePriceLedger;
 } => {
   const parseJson = <T,>(value: string | null): T | null => {
     if (!value) {
@@ -989,6 +1044,17 @@ const parseLocalLeagueStateFromRaw = (raw: Record<string, string | null>): {
     currentDate: raw[STORAGE_KEYS.currentDate],
     progress: rawProgress !== null ? Number(rawProgress) : null,
     seasonComplete: rawSeasonComplete === null ? null : rawSeasonComplete === 'true',
+    /*
+      Through `readSharePriceLedger` rather than the local `parseJson` alone, because it drops a
+      malformed DAY and keeps the rest. A single bad row in a 180-day ledger should cost one day, not
+      the market -- `parseJson` here would return the whole thing as `null` on any error at all.
+
+      It still needs `parseJson` FIRST. `raw` holds unparsed strings, and `readSharePriceLedger`
+      takes `unknown` and answers `Array.isArray(value) ? ... : []` -- so handing it the raw text
+      returned an empty ledger for every save, silently. That is why the key could be present, and
+      correct, and 7 days long in both stores, and still reach the page as "No prices yet".
+    */
+    sharePriceLedger: readSharePriceLedger(parseJson<unknown>(raw[STORAGE_KEYS.sharePriceLedger])),
   };
 };
 
@@ -1035,6 +1101,8 @@ export const loadLocalLeagueStateAsync = async (): Promise<{
   currentDate: string | null;
   progress: number | null;
   seasonComplete: boolean | null;
+  /** HXSE closes, `[]` on a save written before the market existed. */
+  sharePriceLedger: SharePriceLedger;
 }> => {
   const indexedDbRaw = await readIndexedDbValues(LOCAL_LEAGUE_STATE_KEYS);
   if (hasAnyStoredValue(indexedDbRaw, LOCAL_LEAGUE_STATE_KEYS)) {
@@ -1067,6 +1135,54 @@ export const loadLocalPlayerStateAsync = async (): Promise<LeaguePlayerState> =>
   return parseLocalPlayerStateFromRaw(localRaw);
 };
 
+/**
+ * The HXSE closes, written on their own rather than through `saveLocalLeagueState`.
+ *
+ * THE FIRST ATTEMPT threaded the ledger through the league save as a seventh argument, and it
+ * silently never wrote anything. The league save is called from five places and the simulation path
+ * sets the ledger in `applySimulationFullState`, which does not itself save -- so the ledger was
+ * always read before it existed. Adding a ref to carry it fixed the timing and still left the
+ * ordering dependent on which of the five call sites ran.
+ *
+ * A ledger is a few kilobytes and changes on its own schedule. Coupling it to a multi-megabyte save
+ * that is called from five places, one of which runs before the data it would carry exists, is the
+ * wrong shape. This writes it directly and returns whether it landed, so a quota failure is visible
+ * instead of silent.
+ */
+export const saveSharePriceLedger = (ledger: SharePriceLedger): boolean => {
+  const isEmpty = !ledger || ledger.length === 0;
+
+  try {
+    if (isEmpty) {
+      // An absent key is the honest representation of "never priced" and the loader treats it so.
+      localStorage.removeItem(STORAGE_KEYS.sharePriceLedger);
+    } else {
+      localStorage.setItem(STORAGE_KEYS.sharePriceLedger, JSON.stringify(ledger));
+    }
+  } catch (error) {
+    console.warn('Failed to save the HXSE price ledger. The market will not survive a reload.', error);
+    return false;
+  }
+
+  /*
+    BOTH STORES, AND THIS IS NOT REDUNDANT.
+
+    `loadLocalLeagueStateAsync` reads IndexedDB first and returns early if it holds anything. It
+    consults localStorage only when IndexedDB is completely empty. So a ledger written to
+    localStorage alone is invisible to any league whose IndexedDB is populated -- which is every
+    league that has ever been played. The key was demonstrably present in localStorage, 7 days and
+    5.6 kB, and the Exchange still said "No prices yet" after a reload.
+
+    Writing localStorage only would be a check-shaped lie: the storage dump would look right and the
+    product would not be.
+  */
+  void (isEmpty
+    ? deleteIndexedDbValue(STORAGE_KEYS.sharePriceLedger)
+    : writeIndexedDbValues([[STORAGE_KEYS.sharePriceLedger, JSON.stringify(ledger)]]));
+
+  return true;
+};
+
 export const loadLocalLeagueState = (): {
   teams: Team[] | null;
   settings: SimulationSettings | null;
@@ -1074,6 +1190,7 @@ export const loadLocalLeagueState = (): {
   currentDate: string | null;
   progress: number | null;
   seasonComplete: boolean | null;
+  sharePriceLedger: SharePriceLedger;
 } => parseLocalLeagueStateFromRaw(readLocalStorageValues(LOCAL_LEAGUE_STATE_KEYS));
 
 export const loadLocalPlayerState = (): LeaguePlayerState =>

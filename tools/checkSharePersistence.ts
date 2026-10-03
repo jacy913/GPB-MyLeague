@@ -314,6 +314,99 @@ const main = (): void => {
     + 'bet reuses the voided number and removeBet -- which looks bets up by id -- refunds the wrong stake.',
   );
 
+  /*
+    ===========================================================================
+    THE FLAT-KEY PATH, WHICH WAS UNTESTED AND IS WHY ALL OF THE ABOVE SHIPPED GREEN
+    ===========================================================================
+
+    Every check above exercises `LocalUniverseBundle` -- the MANUAL backup/restore path. The product
+    does not use it. At runtime the league is saved as flat `glb_*` keys and read back by
+    `loadLocalLeagueStateAsync`, and the ledger was not in that set at all.
+
+    So the suite was 16/16 green, in CI, while the feature it was written to protect did not work.
+    A check that cannot fail for the thing it is about is worse than no check, so these are the ones
+    that matter.
+
+    Two distinct defects lived in this path, and both were invisible to every behavioural check above:
+
+      1. The loader reads IndexedDB FIRST and returns early if it holds anything; localStorage is
+         consulted only when IndexedDB is completely empty. A ledger written to localStorage alone
+         is therefore invisible to every league that has ever been played.
+
+      2. `raw` holds UNPARSED strings. `readSharePriceLedger` takes `unknown` and answers
+         `Array.isArray(value) ? ... : []`, so handing it the raw text returned an empty ledger for
+         every save. The key could be present, correct, and 7 days long in both stores and still
+         reach the page as "No prices yet".
+
+    These are SOURCE-WIRING assertions, and they are labelled as such. They measure that the wiring
+    exists; they do not measure that the market works. The browser round-trip is what measures that,
+    and it is not reproducible in Node.
+  */
+
+  const storageSource = readFileSync(resolve(process.cwd(), 'src', 'lib', 'storage.ts'), 'utf8');
+  const storageBody = storageSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const bootstrapSource = readFileSync(resolve(process.cwd(), 'src', 'hooks', 'useLeagueBootstrap.ts'), 'utf8');
+  const bootstrapBody = bootstrapSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const appSource = readFileSync(resolve(process.cwd(), 'src', 'App.tsx'), 'utf8');
+  const appBody = appSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+
+  check(
+    'the ledger key is in the flat-key READ MANIFEST, not only the bundle',
+    /LOCAL_LEAGUE_STATE_KEYS[\s\S]{0,400}?STORAGE_KEYS\.sharePriceLedger/.test(storageBody),
+    'If the key is not in LOCAL_LEAGUE_STATE_KEYS the loader never even asks for it, and the ledger is '
+    + 'written and never read. This is the original defect: the key existed and was never loaded.',
+  );
+
+  check(
+    'the ledger text is PARSED before the reader sees it',
+    /sharePriceLedger:\s*readSharePriceLedger\(\s*parseJson/.test(storageBody),
+    'SCRIPPED THE MATCH IN src/lib/storage.ts. `raw` holds strings and readSharePriceLedger answers '
+    + 'Array.isArray(value) ? ... : [], so unparsed text silently becomes an empty ledger for every save.',
+  );
+
+  check(
+    'the ledger is written to IndexedDB as well as localStorage',
+    /writeIndexedDbValues\(\[\[STORAGE_KEYS\.sharePriceLedger/.test(storageBody),
+    'SCRIPPED THE MATCH IN src/lib/storage.ts. loadLocalLeagueStateAsync reads IndexedDB first and '
+    + 'returns early, so a localStorage-only write is invisible to any league that has been played.',
+  );
+
+  check(
+    'the loader hands the parsed ledger to the strict reader',
+    /readSharePriceLedger\(\s*parseJson<unknown>\(raw\[STORAGE_KEYS\.sharePriceLedger\]\)\s*\)/.test(storageBody),
+    'The parse and the strict reader must be composed at the call site; either alone loses the ledger.',
+  );
+
+  check(
+    'the loader restores the ledger into the app',
+    /onRestorePriceLedger\?\s*:\s*\(ledger: PriceSeries\[\]\)\s*=>\s*void/.test(bootstrapBody)
+    && /onRestorePriceLedger\(localState\.sharePriceLedger\)/.test(bootstrapBody),
+    'SCRIPPED THE MATCH IN src/hooks/useLeagueBootstrap.ts. Without the restore leg the save is written '
+    + 'and read and then thrown away, which is precisely the bug this whole change exists to fix.',
+  );
+
+  check(
+    'App.tsx passes the restorer',
+    /onRestorePriceLedger:\s*setPriceLedger/.test(appBody),
+    'SCRIPPED THE MATCH IN src/App.tsx. The hook accepts the restorer but nothing supplies it.',
+  );
+
+  check(
+    'the saver effect does NOT treat undefined as empty',
+    /if\s*\(\s*!priceLedger\s*\)\s*\{[\s\S]{0,200}?return[\s\S]{0,120}?saveSharePriceLedger\(priceLedger\)/.test(appBody),
+    'SCRIPPED THE MATCH IN src/App.tsx. The effect runs once on mount BEFORE the async loader has '
+    + 'restored anything, so writing `?? []` there deletes the saved key on every reload and the market '
+    + 'can never survive one. undefined means "not yet known"; only [] may clear it.',
+  );
+
+  // The reader's contract, asserted directly rather than inferred from its caller.
+  check(
+    'the strict reader refuses raw JSON TEXT, which is why the caller must parse',
+    readSharePriceLedger(JSON.stringify(sampleLedger())).length === 0,
+    'If readSharePriceLedger ever starts accepting strings, the parseJson at the call site becomes dead '
+    + 'code and the composition above can no longer be trusted to be doing anything.',
+  );
+
   // -- report ---------------------------------------------------------------------------------
   const failed = checks.filter((c) => !c.pass);
   console.log('\nSHARE PRICE PERSISTENCE AND BET IDS\n');

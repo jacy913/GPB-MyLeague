@@ -63,6 +63,7 @@ import {
   saveLocalPlayerState,
   saveSupabaseLeagueState,
   saveSupabasePlayerState,
+  saveSharePriceLedger,
 } from './lib/storage';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { useBettingSlip } from './hooks/useBettingSlip';
@@ -1222,6 +1223,30 @@ function App() {
    * coercing the first into the second would claim a league that never traded never traded.
    */
   const [priceLedger, setPriceLedger] = useState<PriceSeries[] | undefined>(undefined);
+  /*
+    THE LEDGER IS SAVED BY ITS OWN EFFECT, not through `persistLeagueState`.
+
+    The first attempt added it as a seventh argument to the league save, and it silently wrote
+    nothing. The league save has five call sites and the simulation path sets the ledger inside
+    `applySimulationFullState`, which does not itself save -- so the ledger was read before it existed.
+    A ref carrying it fixed the timing and still left the result dependent on which call site ran.
+
+    A ledger is a few kilobytes and changes on its own schedule. Coupling it to a multi-megabyte save
+    invoked from five places, one of which runs before the data exists, is the wrong shape. This
+    effect fires whenever the ledger changes and writes it on its own, which is also why a quota
+    failure here costs a chart rather than a season.
+  */
+  useEffect(() => {
+    /*
+      `undefined` means NOT YET KNOWN, not "empty". This effect runs once on mount, before the async
+      loader has restored anything -- writing `?? []` here would delete the saved key on every single
+      reload and the market would never survive one. An empty array is the only thing that clears it.
+    */
+    if (!priceLedger) {
+      return;
+    }
+    saveSharePriceLedger(priceLedger);
+  }, [priceLedger]);
   const [lastPriceBoard, setLastPriceBoard] = useState<PriceBoard | null>(null);
   const [view, setView] = useState<AppView>('dashboard');
 
@@ -1608,6 +1633,12 @@ function App() {
 
   useLeagueBootstrap({
     isSupabaseConfigured,
+    /*
+      The HXSE closes come back from the save through this. It is the last link in the chain that makes
+      the market survive a reload: computed in the worker, carried on the snapshot, saved to
+      `glb_share_price_ledger`, read back by the loader, handed to the page here.
+    */
+    onRestorePriceLedger: setPriceLedger,
     sanitizeTeams,
     sanitizeGames,
     isValidSettingsShape,
