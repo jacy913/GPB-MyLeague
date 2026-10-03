@@ -23,6 +23,9 @@ import glorestWallpaper from '../../assets/media/glorestsportswallpaper.jpg';
 import boyleWallpaper from '../../assets/media/landonboylewallpaper.jpg';
 import mussadWallpaper from '../../assets/media/tariqmussadwallpaper.jpg';
 import wardleyWallpaper from '../../assets/media/vancewardleyjrwallpaper.jpg';
+import scintillaMark from '../../assets/media/scintilla-trim-square.webp';
+import scintillaPortrait from '../../assets/media/scintilla-portrait.png';
+import scintillaWallpaper from '../../assets/media/scintilla2wallpaper.jpg';
 import sharplyMasthead from '../../assets/media/linedsharply-masthead.jpg';
 import sharplyMark from '../../assets/media/linedsharplylogo-trim.png';
 import sharplySquare from '../../assets/media/linedsharplylogo-trim-square.png';
@@ -73,6 +76,7 @@ export const MEDIA_IMAGES: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, Calibrated Sports' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, Calibrated Sports' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, Glorest Sports' },
+  scintilla: { src: scintillaWallpaper, alt: 'The Scintilla channel, which is a man and a spreadsheet' },
 };
 
 /**
@@ -130,6 +134,7 @@ export const MEDIA_PORTRAITS: Record<MediaId, MediaImage> = {
   boyle: { src: boylePortrait, alt: 'Landon Boyle, who covers one division closely' },
   mussad: { src: mussadPortrait, alt: 'Tariq Mussad, who covers the league rather than the clubs' },
   wardley: { src: wardleyPortrait, alt: 'Vance Wardley Jr, who reads farm systems' },
+  scintilla: { src: scintillaPortrait, alt: 'Scintilla, at a desk covered in printed spreadsheets' },
 };
 
 /**
@@ -185,6 +190,7 @@ export const MEDIA_MARKS: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
+  scintilla: scintillaMark,
 };
 
 /**
@@ -214,6 +220,7 @@ export const MEDIA_MARKS_SQUARE: Record<MediaId, string> = {
   boyle: boyleMark,
   mussad: mussadMark,
   wardley: wardleyMark,
+  scintilla: scintillaMark,
 };
 
 /**

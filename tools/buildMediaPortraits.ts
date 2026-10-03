@@ -90,6 +90,13 @@ const SOURCES: Array<{ id: string; file: string; out: string }> = [
    * reports whether it had to fall back.
    */
   { id: 'shinonome', file: 'fuyukashinonome.png', out: 'shinonome-portrait.png' },
+  /*
+   * SCINTILLA. Supplied as `scintilla2.png`, and he is the first forecaster whose name matches no
+   * logo -- he is a man with a channel, not an institution, so his mark is his face rather than a
+   * crest. That means the square mark is a crop of a person, like the five before him, and the same
+   * framing rule and the same caveat apply.
+   */
+  { id: 'scintilla', file: 'scintilla2.png', out: 'scintilla-portrait.png' },
 ];
 
 /** 4:5. A portrait of a person is not a square, and a square face crop is a passport photo. */

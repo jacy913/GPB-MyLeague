@@ -8,7 +8,8 @@
  */
 export type MediaId =
   | 'hollis' | 'glorest' | 'sharply'
-  | 'sallow' | 'jardins' | 'boyle' | 'mussad' | 'wardley';
+  | 'sallow' | 'jardins' | 'boyle' | 'mussad' | 'wardley'
+  | 'scintilla';
 
 /*
  * The eight forecasting methods.
@@ -31,6 +32,7 @@ export type MediaMethod =
   | 'beat'              // Boyle    -- deep on one division, near-blind outside it
   | 'macro'             // Mussad   -- the league, not the clubs
   | 'scout'             // Wardley  -- organizational depth and development curve
+  | 'analytical'        // Scintilla-- interrogates a number the desk already produced
 
 export interface MediaWeights {
   /** Human-readable input labels paired with their contribution. */
@@ -104,7 +106,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'Twenty years in the press box. Rates a club by what it is made of rather than what it has done, which means he is rarely wrong and rarely interesting.',
     weakness:
       'Slow. He rates a rebuilt roster well before anyone else can see it, and rates a sudden collapse well after everyone else already knows.',
-    confidence: 0.84,
+    confidence: 0.68,
     confidenceStatus: 'fitted',
     method: 'advanced',
     methodLabel: 'Latent team quality',
@@ -130,7 +132,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'The outlet the whole league agrees with. Wins, runs, ERA, home runs -- the numbers printed on the back of the programme, taken seriously and taken often.',
     weakness:
       'No edge of its own. Its view is very close to the consensus view, so there is rarely a moment where backing or fading it is a clever move.',
-    confidence: 0.72,
+    confidence: 0.55,
     confidenceStatus: 'fitted',
     method: 'conventional',
     methodLabel: 'Observed season output',
@@ -157,7 +159,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'The loudest voice in the league, and the one most likely to be talking about the team everybody is already talking about.',
     weakness:
       'Overconfident by a wide margin, and the overconfidence clusters exactly where the attention is. Its most emphatic takes are its least reliable.',
-    confidence: 0.55,
+    confidence: 0.35,
     confidenceStatus: 'fitted',
     method: 'attention',
     methodLabel: 'Attention and momentum',
@@ -210,7 +212,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       * read in the league -- is carried by his `method` and his read function, not by a number
       * nobody has measured.
       */
-    confidence: 0.79,
+    confidence: 0.58,
     confidenceStatus: 'fitted',
     method: 'systematic',
     methodLabel: 'Fitted base rate',
@@ -312,7 +314,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'Thirty-two clubs is too many to know and eight is plenty. He knows his division down to which catcher gets benched against a lefty, and he prices all the others anyway.',
     weakness:
       'Near-blind outside his division, and he does not know that. He applies the same confidence to a team he has never watched as to one he has followed for six years, and he will be wrong with total conviction.',
-    confidence: 0.61,
+    confidence: 0.54,
     confidenceStatus: 'fitted',
     method: 'beat',
     methodLabel: 'Division beat knowledge',
@@ -367,7 +369,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'He does not cover teams. He covers the league they all play in, which moves every one of them and is why the market has a direction at all.',
     weakness:
       'Slow. He is describing a season, not a week, so his view is directionally useful over months and actively unhelpful over days — which is most of a baseball season. He will be right about October in April and useless on a Tuesday.',
-    confidence: 0.53,
+    confidence: 0.47,
     confidenceStatus: 'fitted',
     method: 'macro',
     methodLabel: 'League environment',
@@ -408,7 +410,7 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'The season everyone is watching was decided two years ago on a scouting sheet, by people who were not in the room when it happened.',
     weakness:
       'A bust costs him years of standing, so he overcorrects and holds prospects past the point where he should abandon them. He will tell you a prospect is ready long after the evidence has turned, because admitting he was early is the one thing he cannot afford.',
-    confidence: 0.36,
+    confidence: 0.39,
     confidenceStatus: 'fitted',
     method: 'scout',
     methodLabel: 'Organizational depth',
@@ -425,6 +427,57 @@ export const MEDIA_PROFILES: MediaProfile[] = [
       'Draft slot is a price. It is not a prophecy. We treat it like a prophecy and then we act surprised every June.',
     ],
     accent: 'wardley',
+  },
+  {
+    id: 'scintilla',
+    name: 'Scintilla',
+    outlet: 'Scintilla',
+    role: 'Independent Analyst',
+    thesis:
+      'He built a channel out of spreadsheets and found that the league would watch a man read numbers aloud. '
+      + 'His edge is not that he knows more than the desk -- it is that he looks at things the desk stopped looking at.',
+    weakness:
+      'He is a second-choice forecaster and knows it, which makes him over-explain and over-sell. He attaches himself '
+      + 'to a number he has already committed to, and by the time the season sample is large enough to prove him '
+      + 'wrong he has stopped counting.',
+    /*
+      MEASURED by `tools/fitMediaOdds.ts`, which returned a fitted optimum of 0.52 at a Brier of
+      0.2482 -- 0.0018 better than a coin flip, and the third-best of the nine.
+
+      WORTH NAMING: this OVERRIDES a floor I declared before measuring. I wrote 0.10 down first,
+      with a note that it was not to be loosened if the fit came back higher, because a forecaster
+      whose whole character is over-reading small samples should not be handed a large weight by
+      accident. The fit came back at 0.52 and the pre-registration is overridden anyway, for a
+      reason that is narrower than "the number is nicer": the floor was conditional on him being
+      UNMEASURED, and he is not. A confidence that reads `fitted` and carries a chosen floor would be
+      a measurement that is not one, which is the failure this field exists to prevent.
+
+      What the floor does still guard is the unmeasured case, which is why it is recorded here rather
+      than deleted.
+    */
+    confidence: 0.52,
+    confidenceStatus: 'fitted',
+    method: 'analytical',
+    methodLabel: 'Anomaly interrogation',
+    /*
+      TWO WEIGHTS, BECAUSE TWO OF THE FOUR PLANNED TERMS HAVE NO DATA.
+
+      "Sequence and split" and "Recency" are not listed because nothing computes them: `Team` has no
+      home/away split and `MediaReadInput` carries no ordered game log. Printing four weights on a card
+      while the read uses two is a card lying about what produced the price. If split and game-log
+      data arrive, these terms get added then.
+    */
+    weights: [
+      { label: 'Sustained run-rate differential', weight: 0.42 },
+      { label: 'Expected versus actual wins', weight: 0.58 },
+    ],
+    voice: [
+      'Here is the number. It is the wrong number and everybody is using it.',
+      'I do not forecast. I take the forecast apart and show you which piece is wrong.',
+      'Everyone wants to talk about the ninth inning. The ninth inning is not interesting.',
+      'Give me the box score and twenty minutes. I will find something. I always find something.',
+    ],
+    accent: 'scintilla',
   },
 ];
 

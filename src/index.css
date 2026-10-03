@@ -131,6 +131,23 @@
   --color-media-wardley-hi:#b8b52e;
   --color-media-wardley-dim: rgba(120, 118, 0, 0.18);
 
+  /*
+    SCINTILLA -- MEASURED, NOT PICKED.
+
+    `tools/pickAccent.ts scintilla 0 360 0.55 0.74` searched OKLab lightness 0.55-0.74 against all
+    eight existing forecaster hues and returned this one. The floor is 0.10 and was declared before
+    the search; the result clears it by 2.1x, with its nearest neighbours (Boyle 0.210, Glorest 0.210,
+    Sharply 0.211) all at the same distance because they bracket the gap he fills.
+
+    The lightness band is narrower than the tool's default on purpose. Unconstrained it returns
+    L 0.810, which clears the same floor more easily but is a washed-out pink no other forecaster
+    sits at -- 0.73 puts him among the vivid accents instead. The band is the judgement; the hue
+    inside it is the measurement.
+  */
+  --color-media-scintilla:  #ef77c2;
+  --color-media-scintilla-hi:#e8a3fa;
+  --color-media-scintilla-dim: rgba(239, 119, 194, 0.18);
+
   /* Text ramp */
   --color-ink:         #f2f5ff;
   --color-ink-dim:     #96a1b8;

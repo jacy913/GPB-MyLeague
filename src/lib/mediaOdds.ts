@@ -93,8 +93,8 @@ const logistic = (value: number): number => 1 / (1 + Math.exp(-value));
  * fade him, and this is the number that makes that true rather than a claim.
  */
 const SLOPE: Record<MediaId, number> = {
-  hollis: 0.30,
-  glorest: 0.25,
+  hollis: 0.25,
+  glorest: 0.20,
   sharply: 0.80,
   /*
    * THE FIVE NEW SLOPES ARE PROVISIONAL AND THIS IS NOT AN OVERSIGHT.
@@ -118,11 +118,20 @@ const SLOPE: Record<MediaId, number> = {
    * and only the second is expensive. A recalibration pass that "corrects" him to his optimum
    * destroys the best play in the game.
    */
-  sallow: 0.25,
+  sallow: 0.20,
   jardins: 0.05,
   boyle: 0.20,
   mussad: 0.20,
-  wardley: 0.05,
+  wardley: 0.10,
+  /*
+   * SCINTILLA IS FITTED AT 0.20, measured by `tools/fitMediaOdds.ts` at a Brier of 0.2482.
+   *
+   * He arrived on a pre-declared floor of 0.05 for the same reason his confidence arrived on one:
+   * an unmeasured forecaster should read close to the middle of the pack rather than look emphatic.
+   * The fit moved him to 0.20 and the floor is overridden, because he is no longer unmeasured. The
+   * block above's reasoning about conservative slopes still stands for whoever is next.
+   */
+  scintilla: 0.20,
 };
 
 export interface OddsInput {

@@ -97,6 +97,17 @@ export const PROP_TILT: Record<MediaId, number> = {
   boyle: 0.12,
   mussad: 0.06,
   wardley: 0.14,
+  /*
+   * Scintilla is the highest of the six on props, at 0.16, and that is a CHARACTER claim rather than
+   * a derived one so it is worth being explicit about.
+   *
+   * A prop is a single-player statistic attached to one club. His read is a comparison between a
+   * club's actual wins and its historical expectation -- the most team-specific thing any of these
+   * six reads offers -- so unlike Mussad's league-wide view, his has something to say about an
+   * individual. What he does not have is a game log, which is why this is 0.16 and not the 0.26 that
+   * "single-player statistic" might suggest. Provisional; step 5 replaces it with a fitted value.
+   */
+  scintilla: 0.16,
 };
 
 /**

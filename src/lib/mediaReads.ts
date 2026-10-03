@@ -163,6 +163,18 @@ interface DerivedInputs {
   meanAgeByTeam: Map<string, number>;
   youngUpsideByTeam: Map<string, number>;
   leagueRunEnvironment: number;
+  /*
+   * ADDED FOR SCINTILLA.
+   *
+   * `leagueMeanWinPct` is the league's win rate, computed once for the same reason
+   * `leagueRunEnvironment` is: Scintilla's read is a comparison AGAINST the league, so the reference
+   * value belongs here rather than being recomputed per club.
+   *
+   * It exists because Scintilla is the first forecaster whose subject is the GAP between expectation
+   * and outcome. Every other read asks "how good is this club"; his asks "is the league expecting
+   * the right thing of this club", and that is a different question needing a league-wide constant.
+   */
+  leagueMeanWinPct: number;
 }
 
 /**
@@ -246,6 +258,19 @@ const buildDerivedInputs = (input: MediaReadInput): DerivedInputs => {
   const runsPerGame = totalGames > 20 ? totalRuns / totalGames : 3.5;
   const leagueRunEnvironment = scale(runsPerGame, 3.5, 5);
 
+  /*
+    THE LEAGUE MEAN WIN PERCENTAGE, for Scintilla's expectation gap.
+
+    Scintilla's read is a DEVIATION, so it needs a reference point rather than an absolute. Taken over
+    teams that have actually played; in a league that has not started there is nothing to deviate
+    from and the midpoint is the honest answer rather than a zero that would call every club an
+    outlier.
+  */
+  const playedTeams = teams.filter((team) => team.wins + team.losses > 0);
+  const leagueMeanWinPct = playedTeams.length > 0
+    ? playedTeams.reduce((sum, team) => sum + team.wins / (team.wins + team.losses), 0) / playedTeams.length
+    : 0.5;
+
   return {
     rosterStrength,
     bestOverallByTeam,
@@ -255,6 +280,7 @@ const buildDerivedInputs = (input: MediaReadInput): DerivedInputs => {
     meanAgeByTeam,
     youngUpsideByTeam: youngByTeam,
     leagueRunEnvironment,
+    leagueMeanWinPct,
   };
 };
 
@@ -520,6 +546,58 @@ const wardleyScore = (team: Team, derived: DerivedInputs, rosterMean: number): n
  */
 const OVERCONFIDENCE = 1.35;
 
+/**
+ * SCINTILLA -- anomaly interrogation.
+ *
+ * A NEW METHOD, and the reason is worth stating because `systematic` was the tempting home for it.
+ * Sallow's `systematic` is a fitted base rate: he PRODUCES the number. Scintilla does not produce
+ * anything, he takes a number the rest of the desk has already agreed on and asks whether the
+ * arithmetic behind it survives contact with the season. Same subject matter, opposite verbs, and the
+ * two reads disagree in a way a bettor can see.
+ *
+ * ONLY TWO TERMS, AND THAT IS NOT A GAP TO BE FILLED LATER.
+ *
+ * The design called for four: sustained rate, expected versus actual, sequence and split, recency.
+ * Two of those have no source in `MediaReadInput`.
+ *
+ *   - SEQUENCE AND SPLIT does not exist. `Team` carries no home/away split and `MediaReadInput`
+ *     carries no game log, so there is nothing to compute a split from. Inventing one would mean
+ *     modelling it, and a modelled split is a number that looks measured on a card that says
+ *     "Sustained rate, Expected versus actual, Sequence and split".
+ *   - RECENCY does not exist either, for the same reason: `recentForm` is built from the team's
+ *     record, which is cumulative, and `winStreakByTeam` is returned EMPTY. Recency needs the last
+ *     N games in order and there is no ordered log to read.
+ *
+ * So his `weights` list carries two entries, not four. A card showing a weight the read does not use
+ * is a card lying about what produced the price, which is the one thing this layer is not allowed to
+ * do. If split and game-log data arrive, the terms get added and the profile grows with them.
+ *
+ * What IS measurable, and is what he trades on:
+ *
+ *   - RUN-RATE DIFFERENTIAL, per game, scored against allowed. This is the sustained rate term.
+ *   - EXPECTATION GAP, and this is the genuinely Scintilla one: `Team.previousBaselineWins` is the
+ *     club's historical expectation, so actual wins minus expected wins is a measured deviation
+ *     between what the league thought and what the club did. It is the only place in the media layer
+ *     where a club's own record is compared against its own history rather than against the league.
+ *
+ * The early-season guard is not cosmetic. With three games played, both terms are noise, and a
+ * forecaster whose whole character is over-reading small samples would be exactly the wrong person
+ * left to over-read them. He sits at the midpoint until there is enough season to deviate from.
+ */
+const SCINTILLA_MIN_GAMES = 20;
+const SCINTILLA_RUN_TILT = 0.10;
+const SCINTILLA_GAP_TILT = 0.14;
+const scintillaScore = (team: Team, derived: DerivedInputs): number => {
+  const played = team.wins + team.losses;
+  if (played < SCINTILLA_MIN_GAMES) return 0.5;
+
+  const runDiff = scale((team.runsScored - team.runsAllowed) / played, -1.5, 1.5);
+  const actualWinPct = team.wins / played;
+  const gap = actualWinPct - derived.leagueMeanWinPct;
+
+  return 0.5 + (runDiff - 0.5) * SCINTILLA_RUN_TILT + gap * SCINTILLA_GAP_TILT;
+};
+
 const SCORERS: Record<MediaMethod, (team: Team, derived: DerivedInputs, rosterMean: number) => number> = {
   advanced: hollisScore,
   conventional: (team, derived) => glorestScore(team, derived),
@@ -532,6 +610,7 @@ const SCORERS: Record<MediaMethod, (team: Team, derived: DerivedInputs, rosterMe
   beat: (team, derived, rosterMean) => boyleScore(team, derived, rosterMean),
   macro: (team, derived) => mussadScore(team, derived),
   scout: (team, derived, rosterMean) => wardleyScore(team, derived, rosterMean),
+  analytical: (team, derived) => scintillaScore(team, derived),
 };
 
 /* ------------------------------------------------------------------ *

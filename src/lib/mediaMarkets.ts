@@ -131,6 +131,8 @@ const FUTURES_TEMPERATURE: Record<MediaId, number> = {
   boyle: 8.0,
   mussad: 8.0,
   wardley: 8.0,
+  // Scintilla gets 8.0 too. Nobody moves a temperature, and his score spread is his own to earn.
+  scintilla: 8.0,
 };
 
 /**
@@ -360,6 +362,13 @@ const AWARD_REGRESSION: Record<MediaId, number> = {
   boyle: 0.25,
   mussad: 0.30,
   wardley: 0.35,
+  /*
+   * Scintilla regresses HARD, and this is a measurement of his stated weakness rather than a shrug.
+   * He commits to a number and stops counting, so he is the forecaster in this layer most likely to
+   * be carried by a hot season. 0.42 is above every fitted forecaster here and above Sallow's 0.40,
+   * which is the encoding. Provisional like the five above it; step 5 fits it.
+   */
+  scintilla: 0.42,
 };
 
 export const buildAwardMarket = (
@@ -587,6 +596,20 @@ const wardleyFactors = (team: Team, opponent: Team, input: RunEnvironmentInput):
   return { off: 1 + z, def: 1 - z };
 };
 
+/**
+ * SCINTILLA'S RUN FACTORS, and the run weight is deliberately the smallest in the league.
+ *
+ * He interrogates a number rather than producing one, so on a single game's run total he has less
+ * to say than anybody -- and his stated weakness is over-reading a small sample, which is exactly
+ * the failure a single game invites. `0.18` is a floor chosen BEFORE measuring, consistent with his
+ * 0.10 moneyline confidence, and `tools/fitMediaOdds.ts` is what decides whether it stands.
+ */
+const SCINTILLA_RUN_WEIGHT = 0.18;
+const scintillaFactors = (team: Team, opponent: Team, input: RunEnvironmentInput): RunFactors => {
+  const z = 0.34 * SCINTILLA_RUN_WEIGHT * strengthZ(team.id, input);
+  return { off: 1 + z, def: 1 - z };
+};
+
 const FACTORS: Record<MediaId, (team: Team, opponent: Team, input: RunEnvironmentInput) => RunFactors> = {
   hollis: hollisFactors,
   glorest: glorestFactors,
@@ -596,6 +619,7 @@ const FACTORS: Record<MediaId, (team: Team, opponent: Team, input: RunEnvironmen
   boyle: boyleFactors,
   mussad: mussadFactors,
   wardley: wardleyFactors,
+    scintilla: scintillaFactors,
 };
 
 /**
@@ -621,6 +645,13 @@ const TOTAL_SLOPE: Record<MediaId, number> = {
   boyle: 0.50,
   mussad: 0.35,
   wardley: 0.45,
+  /*
+   * Scintilla is the flattest on a run total, and for the same reason Mussad is: he has almost
+   * nothing to say about one game. His entire read is a comparison between expectation and outcome
+   * across a season, and a single game has no expectation to deviate from. 0.38 encodes "little
+   * opinion" instead of manufacturing one. Provisional; step 5 fits it.
+   */
+  scintilla: 0.38,
 };
 
 const expectedTotal = (away: Team, home: Team, mediaId: MediaId, input: RunEnvironmentInput): number => {
@@ -702,6 +733,6 @@ export const buildFirstHalfMarkets = (totalMarkets: LineMarket[]): LineMarket[] 
       title: market.title,
       subtitle: market.subtitle,
       fair,
-      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1, sallow: 0.7, jardins: 0.7, boyle: 0.65, mussad: 0.5, wardley: 0.65 },
+      slope: { hollis: 0.7, glorest: 0.65, sharply: 1.1, sallow: 0.7, jardins: 0.7, boyle: 0.65, mussad: 0.5, wardley: 0.65, scintilla: 0.6 },
     });
   });

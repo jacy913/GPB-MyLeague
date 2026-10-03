@@ -57,7 +57,7 @@ const main = (): void => {
     takes it back to nine. When that happens this number changes again, and that is the point of
     writing the roster size down rather than inferring it.
   */
-  const EXPECTED_FORECASTERS = 8;
+  const EXPECTED_FORECASTERS = 9;
   check(
     `there are ${EXPECTED_FORECASTERS} forecasters`,
     MEDIA_PROFILES.length === EXPECTED_FORECASTERS,
@@ -183,19 +183,58 @@ const main = (): void => {
   const factorsBlock = /const FACTORS[^\n]*=\s*\{\r?\n([\s\S]*?)\r?\n\};/.exec(mediaMarkets)?.[1] ?? '';
   const targetFor = (outlet: string): string | undefined =>
     new RegExp('\\b' + outlet + ':\\s*(\\w+)').exec(factorsBlock)?.[1];
-  const NEW_OUTLETS = ['sallow', 'jardins', 'boyle', 'mussad', 'wardley'];
+  const NEW_OUTLETS = ['sallow', 'jardins', 'boyle', 'mussad', 'wardley', 'scintilla'];
+  const ORIGINAL_OUTLETS_FOR_FACTORS = ['hollis', 'glorest', 'sharply'];
   const newFactors = NEW_OUTLETS.filter((o) => targetFor(o) !== undefined);
   const distinctTargets = new Set(newFactors.map(targetFor));
   check(
-    'the five new outlets each name a run-factor function',
-    newFactors.length === 5,
+    `the ${NEW_OUTLETS.length} newer outlets each name a run-factor function`,
+    newFactors.length === NEW_OUTLETS.length,
     `found ${newFactors.length}: ${newFactors.join(', ')}`,
   );
   check(
-    'the five new run-factor functions are DISTINCT from each other',
-    distinctTargets.size === 5,
-    `${distinctTargets.size} distinct targets: ${[...distinctTargets].join(', ')}. Fewer than five `
-    + 'means two methods share an implementation, which is a stub wearing a name.',
+    `the ${NEW_OUTLETS.length} newer run-factor functions are DISTINCT from each other`,
+    distinctTargets.size === NEW_OUTLETS.length,
+    `${distinctTargets.size} distinct targets: ${[...distinctTargets].join(', ')}. Fewer than `
+    + `${NEW_OUTLETS.length} means two methods share an implementation, which is a stub wearing a name.`,
+  );
+
+  /*
+    AND EVERY RUN-FACTOR BODY IS DISTINCT -- including from the three ORIGINALS.
+
+    The check above compares function NAMES. Names are cheap: a forecaster wired to `hollisFactors`
+    with one constant changed is distinct by name and identical in behaviour, which is the stub this
+    whole block exists to catch. So the bodies are compared instead.
+
+    The first attempt at this compared the numeric multiplier in front of `strengthZ`, which sounded
+    more meaningful and was worse: it only matched two of the nine functions, reported
+    `original multipliers []`, and would have passed had every other seven been byte-identical. A
+    check that measures two things and says nine is worse than no check. Bodies are what "distinct
+    implementation" means, and comparing all nine is what the label claims.
+  */
+  const bodyOf = (fn: string | undefined): string => {
+    if (!fn) return '';
+    const m = new RegExp('const\\s+' + fn + '\\s*=\\s*([\\s\\S]*?)\\n\\};').exec(mediaMarkets);
+    return m ? m[1].replace(/\s+/g, ' ') : '';
+  };
+  const ALL_OUTLETS = [...ORIGINAL_OUTLETS_FOR_FACTORS, ...NEW_OUTLETS];
+  const bodies = ALL_OUTLETS.map((o) => ({ outlet: o, fn: targetFor(o), body: bodyOf(targetFor(o)) }));
+  const missingBody = bodies.filter((b) => b.body === '');
+  const seenBodies = new Map<string, string[]>();
+  for (const b of bodies) {
+    if (!b.body) continue;
+    const prior = seenBodies.get(b.body) ?? [];
+    prior.push(b.outlet);
+    seenBodies.set(b.body, prior);
+  }
+  const sharedBodies = [...seenBodies.entries()].filter(([, outlets]) => outlets.length > 1);
+  check(
+    `all ${ALL_OUTLETS.length} run-factor bodies are found and pairwise distinct`,
+    missingBody.length === 0 && sharedBodies.length === 0,
+    (missingBody.length ? `no body found for: ${missingBody.map((b) => b.outlet).join(', ')}. ` : '')
+    + (sharedBodies.length
+      ? `identical bodies: ${sharedBodies.map(([, o]) => o.join(' == ')).join('; ')}`
+      : ''),
   );
 
   // -- 3. every accent family present ------------------------------------------------
