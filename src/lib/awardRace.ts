@@ -81,24 +81,50 @@ const buildAwards = (
   candidates: AwardCandidate[],
   take: number,
 ): AwardEntry[] => {
+  /*
+   * Sorted ONCE, here, for every caller.
+   *
+   * The tie-break is alphabetical by name, and that is not a cosmetic choice. This ranking decides
+   * who the board names as the winner of a CLOSED award market, and settlement reads a second
+   * ranking. When the two sorted ties differently -- and they did, because this one had no
+   * tie-break at all and fell back to roster order -- the board could name one player and pay
+   * another. A single sort is what makes that impossible rather than unlikely.
+   *
+   * The board takes eight and the archive takes ten, so `take` is honoured directly rather than
+   * being applied after a slice to AWARD_FIELD_SIZE, which silently capped every caller at eight.
+   * Odds are then computed over exactly the set being returned, so a ten-wide field prices over
+   * ten clubs rather than over a hidden eight.
+   */
+  const limit = Math.max(1, take);
   const ranked = candidates
     .map((candidate) => ({
       ...candidate,
       total: candidate.components.reduce((sum, component) => sum + component.contribution, 0),
     }))
-    .sort((left, right) => right.total - left.total)
-    .slice(0, AWARD_FIELD_SIZE);
+    .sort((left, right) => (
+      left.total === right.total
+        ? left.name.localeCompare(right.name)
+        : right.total - left.total
+    ))
+    .slice(0, limit);
 
   const floored = ranked.map((entry) => Math.max(0.1, entry.total));
   const sum = floored.reduce((acc, value) => acc + value, 0);
 
-  return ranked.slice(0, take).map((entry, index) => ({
+  return ranked.map((entry, index) => ({
     ...entry,
     odds: sum > 0 ? Number(((floored[index] / sum) * 100).toFixed(1)) : 0,
   }));
 };
 
-interface AwardInputs {
+/**
+ * EXPORTED, because every caller has to assemble one and App.tsx now assembles two.
+ *
+ * It was module-private while "buildAwardsForBoard" was reachable but the shape was not, which meant
+ * a caller inferred the type instead of declaring it -- and an inferred type is one more thing that
+ * can drift from what the function actually reads.
+ */
+export interface AwardInputs {
   players: Player[];
   teamsById: Map<string, Team>;
   battingStats: Map<string, PlayerSeasonBatting>;

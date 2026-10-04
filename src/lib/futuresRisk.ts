@@ -161,33 +161,61 @@ export const LIVE_OUTCOME_FLOOR = 0.001;
  * it has lost a series it is still playing in -- the same "cannot catch up" test the
  * division arithmetic uses, applied to a best-of series rather than a season record.
  */
-export const leagueSeriesLosers = (games: ReadonlyArray<{
-  homeTeam: string;
-  awayTeam: string;
-  status: string;
-  score: { home: number; away: number };
-  playoff?: { round?: string; league?: string; seriesId?: string } | null;
-}>): Set<string> => {
-  const series = new Map<string, { home: string; away: string; homeWins: number; awayWins: number }>();
-  for (const game of games) {
-    if (game.status !== 'completed') continue;
-    if (game.playoff?.round !== 'league_series') continue;
-    const id = game.playoff.seriesId ?? `${game.homeTeam}-${game.awayTeam}`;
-    const row = series.get(id) ?? {
-      home: game.homeTeam, away: game.awayTeam, homeWins: 0, awayWins: 0,
-    };
-    if (game.score.home > game.score.away) row.homeWins += 1;
-    else if (game.score.away > game.score.home) row.awayWins += 1;
-    series.set(id, row);
-  }
-
+/**
+ * Clubs that have LOST a decided league championship series.
+ *
+ * ============================================================================
+ * WHAT WAS WRONG, AND WHY IT NEVER FIRED
+ * ============================================================================
+ *
+ * The previous version tallied `homeWins` / `awayWins` and then eliminated `row.away` when the
+ * home counter led. But `row.home` is whichever club hosted game 1, while `homeWins` counts
+ * whoever was home in each game -- and a best-of-seven alternates venues. A club's wins were
+ * split across the two counters, so:
+ *
+ *   a 2-0 sweep read 1-1, and a 4-2 read 2-2.
+ *
+ * Level on wins is "undecided" here, so the function returned an EMPTY set for almost every
+ * real series. `eliminatedFromLeague` was therefore empty in practice, which is why a club that
+ * had lost its league championship series was still being offered prices on its league board and
+ * on the championship board.
+ *
+ * It is now a filter over the shared tally rather than a tally of its own, so there is one place
+ * in this file that knows how to count a series.
+ */
+export const leagueSeriesLosers = (games: ReadonlyArray<LockedRaceGame>): Set<string> => {
   const eliminated = new Set<string>();
-  series.forEach((row) => {
-    // A tie on wins is undecided rather than eliminated -- a series that is level
-    // with games to come keeps both clubs alive, and guessing would be inventing a
-    // result the schedule has not produced.
-    if (row.homeWins > row.awayWins) eliminated.add(row.away);
-    else if (row.awayWins > row.homeWins) eliminated.add(row.home);
+  decidedFrom(seriesTallies(games, ['league_series'])).forEach((row) => {
+    const outcome = seriesOutcome(row);
+    if (outcome) eliminated.add(outcome.loserKey);
+  });
+  return eliminated;
+};
+
+/**
+ * Clubs knocked out of the postseason by PLAYED GAMES, across every round.
+ *
+ * ============================================================================
+ * WHY THIS IS SEPARATE FROM `lockedRaces`
+ * ============================================================================
+ *
+ * `lockedRaces` answers "does this MARKET have a winner". This answers "is this CLUB still in
+ * it". They are different questions on the same schedule, and only the second one is about an
+ * individual row on a board that is still open.
+ *
+ * Single elimination is what makes this simple. Once the postseason begins, a club that has not
+ * lost a decided series can still win the whole thing, whatever the standings say. So the live
+ * field for the league and championship boards is exactly the set of clubs that are still alive,
+ * intersected with the standings set that already handles the regular season.
+ *
+ * Before any playoff game, nothing is eliminated and the intersection is a no-op -- which is why
+ * this needs no "has the postseason started" flag of its own.
+ */
+export const playoffEliminations = (games: ReadonlyArray<LockedRaceGame>): Set<string> => {
+  const eliminated = new Set<string>();
+  decidedFrom(seriesTallies(games, ALL_PLAYOFF_ROUNDS)).forEach((row) => {
+    const outcome = seriesOutcome(row);
+    if (outcome) eliminated.add(outcome.loserKey);
   });
   return eliminated;
 };
@@ -201,8 +229,15 @@ export const titleContenders = (input: {
    * season keeps the board looking open for a month after the last game.
    */
   gamesRemainingByTeamId: ReadonlyMap<string, number>;
-  /** Clubs whose league championship is already decided against them. */
-  eliminatedFromLeague?: ReadonlySet<string>;
+  /*
+   * Clubs knocked out of the postseason, however that happened.
+   *
+   * `knockedOut` rather than the old `eliminatedFromLeague`, because the set that arrives depends on
+   * the board: the division boards pass league-series losers, while the league and championship boards
+   * pass EVERY decided series including the wild card and the divisional round. One name for two
+   * different sets is a name that will eventually be read as the wrong one.
+   */
+  knockedOut?: ReadonlySet<string>;
 }): Set<string> => {
   const leadersByDivision = new Map<string, number>();
   input.teams.forEach((team) => {
@@ -212,7 +247,7 @@ export const titleContenders = (input: {
 
   const contenders = new Set<string>();
   input.teams.forEach((team) => {
-    if (input.eliminatedFromLeague?.has(team.id)) return;
+    if (input.knockedOut?.has(team.id)) return;
     const leaderWins = leadersByDivision.get(`${team.league} ${team.division}`) ?? team.wins;
     const remaining = input.gamesRemainingByTeamId.get(team.id) ?? 0;
     // Can still catch the leader on the games that are left. A tie does not
@@ -319,14 +354,39 @@ const winsNeededFor = (round: string): number => {
  * the night of the fifth win, and treating it as open until game seven would leave the market
  * sellable for two games after it was already over.
  */
-const decidedSeries = (games: ReadonlyArray<LockedRaceGame>): Map<string, SeriesScore> => {
+const ALL_PLAYOFF_ROUNDS: PlayoffRoundKey[] = ['wild_card', 'divisional', 'league_series', 'world_series'];
+
+/**
+ * Series win tallies, by CLUB, for the rounds asked for.
+ *
+ * ============================================================================
+ * WHY THE ROUNDS ARE A PARAMETER AND NOT A CONSTANT
+ * ============================================================================
+ *
+ * Two callers need two different scopes, and they are not the same scope:
+ *
+ *   MARKET CLOSURES want the two championship rounds only. A wild-card series decides who reaches
+ *   a league series; it does not win anything the board is selling, so it closes nothing.
+ *
+ *   PER-CLUB ELIMINATION wants every round. A club that loses the wild card is out of its league
+ *   race and out of the championship race, and the board was still selling both to it.
+ *
+ * The crediting below is the part that must never be duplicated, so it is written once and scoped
+ * by the caller. Credited to the team that actually won, which is not the one at home -- a
+ * best-of-seven alternates venues, and the earlier second tally that counted home/away sides read a
+ * real 4-2 as 2-2, so it eliminated nobody at all.
+ */
+const seriesTallies = (
+  games: ReadonlyArray<LockedRaceGame>,
+  rounds: readonly PlayoffRoundKey[],
+): Map<string, SeriesScore> => {
   const series = new Map<string, SeriesScore>();
   for (const game of games) {
     if (game.status !== 'completed') continue;
     const round = game.playoff?.round;
-    // Only the two championship rounds decide a futures race. A wild-card or divisional series
-    // decides who reaches a league series, not who wins anything the board is selling.
-    if (round !== 'league_series' && round !== 'world_series') continue;
+    // The narrow type is `PlayoffRoundKey`; `LockedRaceGame` declares it as `string` because
+    // the schedule is read defensively off persisted saves. `winsNeededFor` casts for the same reason.
+    if (!round || !rounds.includes(round as PlayoffRoundKey)) continue;
 
     const key = `${round}:${game.playoff?.league ?? ''}:${game.playoff?.seriesId ?? `${game.homeTeam}-${game.awayTeam}`}`;
     const row = series.get(key) ?? {
@@ -348,6 +408,11 @@ const decidedSeries = (games: ReadonlyArray<LockedRaceGame>): Map<string, Series
     series.set(key, row);
   }
 
+  return series;
+};
+
+/** The subset of `seriesTallies` somebody has already won. */
+const decidedFrom = (series: Map<string, SeriesScore>): Map<string, SeriesScore> => {
   const decided = new Map<string, SeriesScore>();
   series.forEach((row, key) => {
     const reached = [...row.participants].some((team) => (row.wins.get(team) ?? 0) >= row.winsNeeded);
@@ -356,8 +421,12 @@ const decidedSeries = (games: ReadonlyArray<LockedRaceGame>): Map<string, Series
   return decided;
 };
 
+/** Decided CHAMPIONSHIP series, which is what a futures race can be decided by. */
+const decidedSeries = (games: ReadonlyArray<LockedRaceGame>): Map<string, SeriesScore> =>
+  decidedFrom(seriesTallies(games, ['league_series', 'world_series']));
+
 /** The winner of a decided series, and how many games clear they took it by. */
-const seriesOutcome = (series: SeriesScore): { winnerKey: string; margin: number } | null => {
+const seriesOutcome = (series: SeriesScore): { winnerKey: string; loserKey: string; margin: number } | null => {
   let winnerKey: string | null = null;
   let winnerWins = 0;
   series.participants.forEach((team) => {
@@ -368,11 +437,33 @@ const seriesOutcome = (series: SeriesScore): { winnerKey: string; margin: number
     }
   });
   if (!winnerKey) return null;
-  let loserWins = 0;
+
+  /*
+   * The loser, and how far behind they finished.
+   *
+   * The loser is named rather than inferred as "the only other participant", because the two are
+   * the same thing for a two-club series and this is also the field per-club elimination reads. A
+   * best-of-seven is always two clubs, but naming it explicitly means a malformed series with three
+   * participants cannot silently eliminate whichever one happened to come last in the Set.
+   */
+  // Seeded at -1, NOT 0.
+  //
+  // A sweep puts the loser on zero wins, so a `>` against a 0 seed never records them: a clean 4-0
+  // closed no market, and a 2-0 wild card eliminated nobody. Same shape as the home/away bug above,
+  // and the pre-existing "four wins closes the series immediately" fixture is what caught it.
+  let loserKey: string | null = null;
+  let loserWins = -1;
   series.participants.forEach((team) => {
-    if (team !== winnerKey) loserWins = Math.max(loserWins, series.wins.get(team) ?? 0);
+    if (team === winnerKey) return;
+    const wins = series.wins.get(team) ?? 0;
+    if (wins > loserWins) {
+      loserKey = team;
+      loserWins = wins;
+    }
   });
-  return { winnerKey, margin: winnerWins - loserWins };
+  if (!loserKey) return null;
+
+  return { winnerKey, loserKey, margin: winnerWins - loserWins };
 };
 
 /**

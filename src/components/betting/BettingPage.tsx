@@ -10,7 +10,7 @@ import {
   buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildWorldSeriesMarkets, buildAwardMarket,
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
-import { leagueSeriesLosers, lockedRaces, remainingRegularSeasonGames } from '../../lib/futuresRisk';
+import { leagueSeriesLosers, playoffEliminations, lockedRaces, remainingRegularSeasonGames } from '../../lib/futuresRisk';
 import { projectSeasonCalendar } from '../../lib/marketDates';
 import { isPlayoffGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
@@ -62,19 +62,16 @@ interface BettingPageProps extends MediaReadInput {
   currentDate: string;
   /** The shell's slip, so the page and the panel cannot disagree. */
   slip: BettingSlipState;
-  /**
-   * True once every scheduled game is played.
+  /*
+   * NOTE: this used to take a `seasonComplete` prop, threaded down from the shell, and closed the
+   * award races on it. That was five weeks late -- the award is decided by regular-season numbers,
+   * none of which move once September is out -- and the prop is now gone rather than left in place.
+   * A prop that is passed through two files and never read reads as the mechanism, and the mechanism
+   * it named is not the one that runs.
    *
-   * Present for ONE purpose: closing the award races. `useSeasonLifecycle` writes the season
-   * archive on this same transition, and the archive is what settles award bets, so this is the
-   * exact instant an MVP becomes decided -- not the awards date on the calendar, which is a
-   * projection and can disagree with when the money actually moves.
-   *
-   * Passed in rather than derived from `games` here because the shell already owns the real
-   * definition, including the offseason cases. A second derivation would be a second answer to
-   * "is the season over", and the two would disagree exactly when it matters.
+   * The award races key off `regularSeasonOver`, derived here from the same
+   * `gamesRemainingByTeamId` that closes the division races.
    */
-  seasonComplete: boolean;
 }
 
 /**
@@ -246,6 +243,26 @@ const BettingPage: React.FC<BettingPageProps> = ({
   );
 
   /*
+   * HAS THE REGULAR SEASON BEEN PLAYED OUT?
+   *
+   * Every club on zero, which is the same signal that closes the division races -- deliberately one
+   * signal rather than two, so the futures board cannot decide "the season is over" differently
+   * depending on which tab you are looking at.
+   *
+   * Guarded on a NON-EMPTY map, because `[].every(...)` is true. An empty schedule means nothing is
+   * known about the season, not that the season is finished, and reading it the other way would close
+   * both MVP races on a universe that had not played a game.
+   *
+   * This is what the AWARD races key their closure on. It is not `seasonComplete`, which is five
+   * weeks later.
+   */
+  const regularSeasonOver = useMemo(
+    () => gamesRemainingByTeamId.size > 0
+      && [...gamesRemainingByTeamId.values()].every((left) => left <= 0),
+    [gamesRemainingByTeamId],
+  );
+
+  /*
    * THE SEASON CALENDAR, derived once and passed down.
    *
    * Every market on the board says when it resolves, and every one of those dates comes
@@ -275,6 +292,20 @@ const BettingPage: React.FC<BettingPageProps> = ({
   const eliminatedFromLeague = useMemo(() => leagueSeriesLosers(games), [games]);
 
   /*
+   * EVERY club knocked out by a decided series, in any round.
+   *
+   * `eliminatedFromLeague` above is league-series losers only, and it feeds the DIVISION boards,
+   * where it is the right question. This feeds the league and championship boards, where it is the
+   * right question too -- and it is a superset, because a club can lose the wild card and never
+   * reach a league series at all, which is precisely the club that was still being offered prices.
+   *
+   * Both are computed here rather than inside the builders for the same reason `lockedRaces` is:
+   * three separate call sites would be three implementations that agree today and drift the first
+   * time one of them is edited.
+   */
+  const eliminatedFromPlayoff = useMemo(() => playoffEliminations(games), [games]);
+
+  /*
    * RACES THAT ALREADY HAVE A WINNER, computed once for all three builders.
    *
    * Built here rather than inside each of `buildWorldSeriesMarkets`, `buildLeagueMarkets` and
@@ -295,7 +326,8 @@ const BettingPage: React.FC<BettingPageProps> = ({
     // The title FIRST, because it is the one season-long bet a manager actually
     // wants and it was missing entirely. Everything below it is a narrower race.
     ...buildWorldSeriesMarkets({
-      teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked,
+      teams: input.teams, scoreBy, gamesRemainingByTeamId,
+      eliminatedFromLeague, eliminatedFromPlayoff, lockedRaces: locked,
     }),
     /*
      * BOTH CALLS NEED THE STANDINGS.
@@ -309,9 +341,9 @@ const BettingPage: React.FC<BettingPageProps> = ({
      *
      * Passing them here is what makes the three kinds agree with each other.
      */
-    ...buildLeagueMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked }),
+    ...buildLeagueMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, eliminatedFromPlayoff, lockedRaces: locked }),
     ...buildDivisionMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked }),
-  ], [input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, locked]);
+  ], [input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, eliminatedFromPlayoff, locked]);
 
   const awards = useMemo<FieldMarket[]>(() => {
     const awardInputs = {
@@ -327,17 +359,24 @@ const BettingPage: React.FC<BettingPageProps> = ({
       ['pitching_mvp', 'Pitching MVP', buildAwardsForBoard('pitching', awardInputs, 8)],
     ];
     /*
-     * `decided` is the whole point of passing `seasonComplete` down here.
+     * `decided` is the whole point of computing `regularSeasonOver` above.
      *
-     * Before this the award board carried no closure at all, so the race stayed open after the MVP
-     * had been named and archived -- which is the same exploit as the ballot, arriving by the back
-     * door. Backing the player who had just been announced is not a bet; it is a read of the
-     * settlement record.
+     * Two closures ago this board carried none at all, so the race stayed open after the MVP had been
+     * named and archived -- the same exploit as the ballot, arriving by the back door.
+     *
+     * It then closed on `seasonComplete`, which was five weeks late for the same reason: an award is
+     * decided by regular-season numbers, and none of them move once the regular season is over. So it
+     * closes on `regularSeasonOver` instead.
+     *
+     * The CLOSE and the PAYMENT are deliberately different moments and the board only advertises the
+     * second. The race shuts in September; the archive that settles it is written when the season
+     * ends, because the archive is the single record both the summary and settlement read, and a
+     * second copy of the ranking is what this file already had to be rescued from once today.
      */
     return built
       .filter(([, , entries]) => entries.length > 0)
-      .map(([key, title, entries]) => buildAwardMarket(key, title, entries, { decided: input.seasonComplete }));
-  }, [input.playerState, input.seasonComplete, teamById]);
+      .map(([key, title, entries]) => buildAwardMarket(key, title, entries, { decided: regularSeasonOver }));
+  }, [input.playerState, regularSeasonOver, teamById]);
 
   return (
     <section className="space-y-5">

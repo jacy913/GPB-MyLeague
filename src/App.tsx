@@ -36,6 +36,7 @@ import { AppViewRouter } from './components/AppViewRouter';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
 import { leagueChampionsFromSeries } from './lib/futuresRisk';
+import { buildAwardsForBoard } from './lib/awardRace';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
 import { Activity, Bell, ChartNoAxesColumn, Clock3, Menu, Receipt } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
@@ -408,6 +409,27 @@ const resolveWorldSeriesChampion = (games: Game[], teamsById: Map<string, Team>)
   return toSeasonHistoryTeamRecord(championTeam);
 };
 
+/*
+ * THE AWARD RANKING LIVES IN `awardRace.ts`, ONCE.
+ *
+ * ============================================================================
+ * WHY THIS USED TO BE A SECOND COPY
+ * ============================================================================
+ *
+ * These two functions and `buildAwardsForBoard` all computed the same MVP from the same weights.
+ * They had to: the board PRICES from one ranking and the archive SETTLES from the other, so any
+ * divergence means the board names an MVP and then refuses to pay that bet. That is the league
+ * champion bug again -- a settlement reading a different answer from the board -- one layer up.
+ *
+ * They agreed on every weight and on the qualifying threshold, and still disagreed where it
+ * counted: the archive broke ties alphabetically by player name, the board had no tie-break and
+ * inherited roster order. Two copies that agree by convention are not one copy.
+ *
+ * So they are delegations now. `buildAwardsForBoard` owns the weights, the qualifiers, the sort
+ * and the tie-break; this only reshapes the result into the archive record. The summary line is
+ * rebuilt from the same filtered stats the ranking used, rather than being carried on the entry,
+ * because the board has no reason to carry archive formatting.
+ */
 const computeBattingMvpCandidates = (
   teams: Team[],
   playerState: LeaguePlayerState,
@@ -415,58 +437,37 @@ const computeBattingMvpCandidates = (
   limit = 8,
 ): SeasonHistoryAwardWinner[] => {
   const teamsById = new Map<string, Team>(teams.map((team) => [team.id, team] as const));
-  const battingStatsByPlayerId = new Map(
+  const battingStats = new Map(
     playerState.battingStats
       .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
       .map((stat) => [stat.playerId, stat] as const),
   );
-  const battingRatingsByPlayerId = new Map(
+  const battingRatings = new Map(
     playerState.battingRatings
       .filter((rating) => rating.seasonYear === seasonYear)
       .map((rating) => [rating.playerId, rating] as const),
   );
 
-  const ranked = playerState.players.reduce<Array<{
-    score: number;
-    winner: SeasonHistoryAwardWinner;
-  }>>((current, player) => {
-    const stat = battingStatsByPlayerId.get(player.playerId);
-    const rating = battingRatingsByPlayerId.get(player.playerId);
-    if (!stat || !rating || stat.atBats < 120) {
-      return current;
-    }
-
-    const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
-    const winPctBonus = team ? getTeamWinPct(team) * 60 : 0;
-    const score =
-      stat.avg * 700 +
-      stat.ops * 260 +
-      stat.homeRuns * 4 +
-      stat.rbi * 1.75 +
-      stat.hits * 0.5 +
-      stat.runsScored * 0.7 +
-      rating.overall * 0.45 +
-      winPctBonus;
-
-    const winner: SeasonHistoryAwardWinner = {
-      playerId: player.playerId,
-      playerName: `${player.firstName} ${player.lastName}`,
-      teamId: player.teamId,
-      teamCity: team?.city ?? null,
-      teamName: team?.name ?? null,
-      summary: `${stat.avg.toFixed(3)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI`,
+  return buildAwardsForBoard(
+    'batting',
+    { players: playerState.players, teamsById, battingStats, pitchingStats: new Map(), pitchingRatings: new Map(), battingRatings },
+    limit,
+  ).map((entry) => {
+    const stat = battingStats.get(entry.playerId);
+    return {
+      playerId: entry.playerId,
+      playerName: entry.name,
+      teamId: entry.team?.id ?? null,
+      teamCity: entry.team?.city ?? null,
+      teamName: entry.team?.name ?? null,
+      summary: stat
+        ? `${stat.avg.toFixed(3)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI`
+        : `${entry.total.toFixed(1)} RATING`,
     };
-
-    current.push({ score, winner });
-    return current;
-  }, []);
-
-  return ranked
-    .sort((left, right) => (left.score === right.score ? left.winner.playerName.localeCompare(right.winner.playerName) : right.score - left.score))
-    .slice(0, limit)
-    .map((entry) => entry.winner);
+  });
 };
 
+/** The pitching mirror of the above. Same single ranking, same tie-break, same reshuffle. */
 const computePitchingMvpCandidates = (
   teams: Team[],
   playerState: LeaguePlayerState,
@@ -474,56 +475,34 @@ const computePitchingMvpCandidates = (
   limit = 8,
 ): SeasonHistoryAwardWinner[] => {
   const teamsById = new Map<string, Team>(teams.map((team) => [team.id, team] as const));
-  const pitchingStatsByPlayerId = new Map(
+  const pitchingStats = new Map(
     playerState.pitchingStats
       .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
       .map((stat) => [stat.playerId, stat] as const),
   );
-  const pitchingRatingsByPlayerId = new Map(
+  const pitchingRatings = new Map(
     playerState.pitchingRatings
       .filter((rating) => rating.seasonYear === seasonYear)
       .map((rating) => [rating.playerId, rating] as const),
   );
 
-  const ranked = playerState.players.reduce<Array<{
-    score: number;
-    winner: SeasonHistoryAwardWinner;
-  }>>((current, player) => {
-    const stat = pitchingStatsByPlayerId.get(player.playerId);
-    const rating = pitchingRatingsByPlayerId.get(player.playerId);
-    if (!stat || !rating || (stat.inningsPitched < 50 && stat.saves < 12)) {
-      return current;
-    }
-
-    const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
-    const winPctBonus = team ? getTeamWinPct(team) * 55 : 0;
-    const score =
-      clamp(6 - stat.era, 0, 6) * 40 +
-      clamp(2 - stat.whip, 0, 2) * 70 +
-      stat.strikeouts * 0.9 +
-      stat.wins * 4.5 +
-      stat.saves * 2.25 +
-      stat.inningsPitched * 1.1 +
-      rating.overall * 0.45 +
-      winPctBonus;
-
-    const winner: SeasonHistoryAwardWinner = {
-      playerId: player.playerId,
-      playerName: `${player.firstName} ${player.lastName}`,
-      teamId: player.teamId,
-      teamCity: team?.city ?? null,
-      teamName: team?.name ?? null,
-      summary: `${stat.era.toFixed(2)} ERA | ${stat.strikeouts} K | ${stat.inningsPitched.toFixed(1)} IP`,
+  return buildAwardsForBoard(
+    'pitching',
+    { players: playerState.players, teamsById, pitchingStats, pitchingRatings, battingStats: new Map(), battingRatings: new Map() },
+    limit,
+  ).map((entry) => {
+    const stat = pitchingStats.get(entry.playerId);
+    return {
+      playerId: entry.playerId,
+      playerName: entry.name,
+      teamId: entry.team?.id ?? null,
+      teamCity: entry.team?.city ?? null,
+      teamName: entry.team?.name ?? null,
+      summary: stat
+        ? `${stat.era.toFixed(2)} ERA | ${stat.strikeouts} K | ${stat.inningsPitched.toFixed(1)} IP`
+        : `${entry.total.toFixed(1)} RATING`,
     };
-
-    current.push({ score, winner });
-    return current;
-  }, []);
-
-  return ranked
-    .sort((left, right) => (left.score === right.score ? left.winner.playerName.localeCompare(right.winner.playerName) : right.score - left.score))
-    .slice(0, limit)
-    .map((entry) => entry.winner);
+  });
 };
 
 const parseStoredPlayLog = (game: Game): PlayLogEvent[] => {

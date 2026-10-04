@@ -91,6 +91,23 @@ export interface FuturesInput {
   /** Clubs whose league championship is already decided against them. */
   eliminatedFromLeague?: ReadonlySet<string>;
   /**
+   * Clubs knocked out of the postseason by a decided series, in ANY round.
+   *
+   * `eliminatedFromLeague` is only league-series losers, which is the right answer for a division
+   * board and the wrong answer for every other one. During the playoffs a club that won its division
+   * and lost the wild card is out of its league race and out of the championship race, while the
+   * standings arithmetic -- which is frozen once the regular season ends, because playoff games never
+   * touch `team.wins` -- still calls it a contender. That is what left a club eliminated in the
+   * first round sellable throughout the league championship series.
+   *
+   * Single elimination is why this needs nothing else: before any playoff game nothing is in the set
+   * and the board behaves exactly as it did, so there is no "has the postseason started" flag.
+   *
+   * NOT applied to the division boards. A wild-card loser is still its division champion, and saying
+   * otherwise there would be a false claim on the one market where the club genuinely did win.
+   */
+  eliminatedFromPlayoff?: ReadonlySet<string>;
+  /**
    * Races that already have a winner, keyed by MARKET KEY, from `lockedRaces`.
    *
    * Passed in rather than recomputed per builder, because the three builders are called separately
@@ -220,11 +237,30 @@ const groupMarkets = (
    *
    * Computed once per board rather than per group, because the answer is per-CLUB, not per-group.
    */
+  /*
+   * `eliminatedFromLeague` for a DIVISION, `eliminatedFromPlayoff` for a LEAGUE.
+   *
+   * Not a stylistic split. A division is won in September and a league championship in October, so
+   * the question each board asks is a different question:
+   *
+   *   DIVISION  can this club still win its division?  Standings, plus nothing else. A club knocked
+   *             out of the wild card is still the division champion.
+   *   LEAGUE    can this club still be league champion? It has to survive the playoffs to get there,
+   *             so a decided wild-card or divisional loss ends it -- which the standings cannot
+   *             know, because the standings stopped moving when the regular season did.
+   *
+   * Passing the postseason set to a division board was the alternative, and it would have been
+   * wrong in the loud direction: the division champion greyed out with "can no longer win".
+   */
+  const knockedOut = kind === 'league'
+    ? input.eliminatedFromPlayoff ?? input.eliminatedFromLeague
+    : input.eliminatedFromLeague;
+
   const contenders = input.gamesRemainingByTeamId
     ? titleContenders({
       teams: input.teams,
       gamesRemainingByTeamId: input.gamesRemainingByTeamId,
-      eliminatedFromLeague: input.eliminatedFromLeague,
+      knockedOut,
     })
     : null;
 
@@ -361,11 +397,17 @@ export const buildWorldSeriesMarkets = (input: FuturesInput): FieldMarket[] => {
    * what the schedule permits. Overwriting one with the other would be inventing a
    * forecast to match a fact, which is the thing this layer is built not to do.
    */
+  /*
+   * The championship race is a bracket, so the postseason eliminations are the whole answer once
+   * the postseason starts: in a single-elimination bracket a club that has not lost a decided series
+   * can still win it, whatever the standings say. Before the first playoff game the set is empty and
+   * this is the standings arithmetic exactly as before.
+   */
   const contenders = input.gamesRemainingByTeamId
     ? titleContenders({
         teams: input.teams,
         gamesRemainingByTeamId: input.gamesRemainingByTeamId,
-        eliminatedFromLeague: input.eliminatedFromLeague,
+        knockedOut: input.eliminatedFromPlayoff ?? input.eliminatedFromLeague,
       })
     : null;
   const liveOutcomes = contenders ? contenders.size : undefined;
