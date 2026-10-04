@@ -14,7 +14,12 @@
  * is IN the markup -- one disclosure row per publisher, the widest gap first, a fade button only
  * where a fade is warranted, and no orphan outlet.
  *
- * Run: npx tsx tools/checkPropCard.tsx
+ * Run: npm run propcard
+ *
+ * The `--import ./tools/assetStub.mjs` in that script is not optional. This file imports real
+ * components, and three things in that import graph do not exist under Node: image assets,
+ * `import.meta.env`, and `import.meta.glob`. Without the loader the file dies on the imports and runs
+ * zero assertions -- which is worse than having no check, because it looks like coverage.
  */
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

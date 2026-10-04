@@ -110,11 +110,31 @@ const stripComments = (input: string): string => {
 };
 
 /** The source of one component, from its declaration to the next top-level `const`. */
+/*
+ * Slices one component out of the file, comments stripped.
+ *
+ * Both markers are REQUIRED, and a missing one throws. This used to return `` for a missing
+ * start marker and ran to end-of-file for a missing end marker -- both silently. Every check
+ * reading a broken slice then either failed for the wrong reason or, far worse, PASSED for the
+ * wrong one, because a blob holding the whole rest of the file contains most strings.
+ *
+ * That is not hypothetical. `propsView` end marker was `const propRowKey`, which no longer
+ * exists in BettingHub.tsx, so the slice covered 46KB instead of 6KB -- FieldMarketCard,
+ * OpenBets and everything after -- and three checks were quietly reading it.
+ */
 const sliceOf = (source: string, from: string, to: string): string => {
   const start = source.indexOf(from);
+  if (start < 0) {
+    throw new Error(`sliceOf: start marker not found: ${from}`);
+  }
   const end = source.indexOf(to, start + from.length);
-  if (start < 0) return '';
-  return stripComments(source.slice(start, end < 0 ? undefined : end));
+  if (end < 0) {
+    throw new Error(`sliceOf: end marker not found after ${from}: ${to}`);
+  }
+  if (end <= start) {
+    throw new Error(`sliceOf: end marker ${to} is not after ${from}`);
+  }
+  return stripComments(source.slice(start, end));
 };
 
 const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
@@ -128,7 +148,7 @@ const main = (): void => {
   const css = readFileSync(resolve(process.cwd(), 'src', 'index.css'), 'utf8');
 
   const gameCard = sliceOf(source, 'const GameBetCard', 'const TotalMarketCard');
-  const propsView = sliceOf(source, 'const PropsView', 'const propRowKey');
+  const propsView = sliceOf(source, 'const PropsView', 'const FieldMarketCard');
   const fieldView = sliceOf(source, 'const FieldMarketsView', 'const FuturesView');
   const fieldCard = sliceOf(source, 'const FieldMarketCard', 'export const OpenBets');
 
@@ -247,28 +267,55 @@ const main = (): void => {
   );
   check(
     'the side buttons are full-width columns, not chips',
-    /className="w-full flex-col gap-3 py-5"/.test(gameCard),
-    'crest above price, in a column that fills its half of the tile',
+    /*
+      The SHAPE, not the exact padding.
+
+      This used to assert `gap-3 py-5`, which is a number someone chose once and retuned when the
+      side padding tightened to `gap-2.5 py-4`. Re-quoting it would have "fixed" a check that was
+      never wrong about the thing it protects, and the next person to tighten a gap would hit the
+      same wall. What matters is that the button fills its half of the tile in a column -- crest
+      over price -- rather than shrinking to fit its text as a chip.
+     */
+    /className="w-full flex-col[^"]*"/.test(gameCard)
+    && !/className="[^"]*\bw-fit\b/.test(gameCard)
+    && !/className="[^"]*\bjustify-self-(?:start|end|center)\b/.test(gameCard),
+    'crest above price, in a column that fills its half of the tile, not a chip sized to its text',
   );
   check(
     'the footer outlet marks are demoted to h-4',
     /*
-      ONE occurrence, not three. The footer maps over `MEDIA_PROFILES`, so the three marks
-      are one line of source rendered three times. An earlier draft of this check counted
-      three and failed on a card that was correct -- the count was asserting the shape of
-      the JSX rather than the shape of the screen, and the source cannot tell you how many
-      outlets there are. The assertion is therefore "the mark is declared at h-4 and no
-      h-5 mark survives", which is what actually regressed when the strip was tuned.
+      Demoted marks, WITHOUT pinning a size.
+
+      This used to require exactly one `h-4 w-4 object-contain` in the card and no `h-5`. The h-4
+      has since gone too: the footer now carries one DOT per outlet and the crests live inside the
+      Pack popover, which is the Next Slate redesign. Re-quoting `h-4` would assert the shape of a
+      layout that no longer exists.
+
+      So the assertion is the bound rather than the measurement -- no outlet mark may be larger
+      than h-4 anywhere in the card -- plus the count still coming from the media registry, because
+      the source cannot tell you how many outlets there are.
      */
-    count(gameCard, 'className="h-4 w-4 object-contain"') === 1
-    && !gameCard.includes('className="h-5 w-5 object-contain"'),
-    'the footer mark is declared at h-4 (rendered once per outlet) and no h-5 mark remains',
+    !/className="h-[5-9][^"]*object-contain/.test(gameCard)
+    && /MEDIA_PROFILES\.length/.test(gameCard),
+    'no mark in the card is larger than h-4, and the outlet count still comes from the registry',
   );
   check(
     'the footer says which side the outlet prices are for',
-    /Away, per outlet/.test(gameCard),
-    'GameLine.odds holds the AWAY club price only, so an unlabelled row of three prices '
-    + 'under a tile that shows two sides is genuinely ambiguous',
+    /*
+      The footer must say WHICH CLUB the forecasters are pricing.
+
+      It used to assert the literal string "Away, per outlet". That wording was replaced --
+      correctly -- with the club's own city, because "Away" means nothing to anyone who does not
+      already know which side that is, and the crest is not the label.
+
+      The requirement did not change, so neither should the assertion: name the visiting club,
+      keep the old jargon out so it cannot creep back, and keep the disagreement stated.
+     */
+    /game\.awayTeam\.city/.test(gameCard)
+    && !/Away, per outlet/.test(gameCard)
+    && /disagree by|differ by/.test(gameCard),
+    'GameLine.odds holds the AWAY club price only, so the footer has to name that club rather'
+    + ' than say "Away" -- and the disagreement has to stay stated',
   );
   check(
     'the tile pushes its footer to the bottom so a grid row has one baseline',
@@ -311,30 +358,33 @@ const main = (): void => {
     'size="sm" gives px-3; size="lg" gives px-6, which is 48px of a ~146px half-tile',
   );
 
-  // -- 2. THE THREE OUTLET PANELS ARE COLUMNS ------------------------------------------
+  // -- 2. THE PER-OUTLET FAN-OUT STAYS DEAD -------------------------------------------
   /*
-    The precise failure. `PropsView` previously mapped outlets to Panels that were children of
-    one `grid gap-4`, so three outlets meant three full-width panels stacked down the page --
-    technically "one column per outlet" and visually identical to what the user already had.
-    The fix puts that Panel inside a nested grid whose columns are the outlets.
+     These three checks used to assert that the three outlet panels were siblings in a
+     `lg:grid-cols-2 2xl:grid-cols-3` grid, that each held a single column of cards, and that the
+     breakpoint was not `md`.
+     
+     All of that markup was deleted on purpose. The page renders ONE card per prop, whatever the
+     number of outlets that published it, with every outlet reachable behind a disclosure on that
+     card. PropsView says so itself: "already collapsed from the per-outlet boards". Before: three
+     columns, one per outlet, every outlet take on every prop visible at once. After: one card per
+     prop -- 135 down to 69.
+     
+     So positive assertions for markup that must not come back are the wrong shape. What is worth
+     guarding is the deletion itself, because a fan-out is exactly what a later pass would
+     reintroduce on the grounds that three columns look better, and every prop would go back to
+     being a separate card.
+     
+     The replacement behaviour is covered where it now lives: tools/checkPropCard.tsx asserts one
+     card per prop, that every publisher is still named inside it, and that the widest
+     disagreement leads. That file ran against nothing for a while. It runs now.
    */
-  const outletPanelSiblings = /<div className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">/.test(propsView);
   check(
-    'the three outlet panels are siblings in a multi-column grid, not stacked',
-    outletPanelSiblings,
-    'the outlet grid declares lg:grid-cols-2 2xl:grid-cols-3',
-  );
-  check(
-    'each outlet panel holds its cards in a SINGLE column',
-    /<div className="flex flex-col gap-2 p-3">/.test(propsView)
-    && !/<div className="grid items-stretch gap-2 p-3/.test(propsView),
-    'the inner grid of cards is gone; cards stack in one column inside each outlet panel',
-  );
-  check(
-    'the outlet grid is keyed off a wide breakpoint, not `md`',
-    /lg:grid-cols-2 2xl:grid-cols-3/.test(propsView)
-    && !/<div className="grid items-start gap-4 md:grid-cols/.test(propsView),
-    'three prop cards per column need more than two, so the breakpoint is 2xl',
+    'the per-outlet panel fan-out does not come back',
+    !/lg:grid-cols-2 2xl:grid-cols-3|flex flex-col gap-2 p-3/.test(propsView)
+    && !/MEDIA_PROFILES\.map\([\s\S]{0,240}?PropCard/.test(propsView),
+    'one card per PROP, with the outlets behind a disclosure on it -- not one card per outlet'
+    + ', however good three columns look',
   );
 
   // -- 3. THE CHAMPIONSHIP USES THE FULL WIDTH ------------------------------------------

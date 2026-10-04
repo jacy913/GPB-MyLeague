@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lab": "tsx tools/leagueLab.ts",
+    "propcard": "tsx --import ./tools/assetStub.mjs tools/checkPropCard.tsx",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
