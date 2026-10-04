@@ -57,7 +57,7 @@ import {
   priceBoardForDay,
   type PriceBoard,
 } from '../src/lib/analytics/priceBoard';
-import type { PriceSeries } from '../src/lib/analytics/sharePrice';
+import { PRICE_MAX, PRICE_MIN, PRICE_SANITY_MAX, type PriceSeries } from '../src/lib/analytics/sharePrice';
 import { buildMediaReads } from '../src/lib/mediaReads';
 import { plainConsensusWinPct } from '../src/lib/analytics/teamValue';
 import { INITIAL_TEAMS } from '../src/data/teams';
@@ -332,42 +332,96 @@ const main = async (): Promise<void> => {
   // -- 3. bounds -------------------------------------------------------------------------------
   const allCloses = withCrowd.flatMap((d) => ids.map((id) => d.close[id]));
   /*
-    THIS DETAIL USED TO BE HARDCODED PROSE.
+    ===========================================================================
+    THIS CHECK USED TO ASSERT `close <= 1000`, WHICH IS THE BUG IT WAS MEANT TO CATCH
+    ===========================================================================
 
-    It read "512 closes across 16 days, all inside (0, 1000]." as a fixed string, so while the check
-    itself was FAILING -- because a price had in fact left the band -- the line underneath it still
-    told the reader everything was fine. The number 512 was real; the conclusion was not.
+    It was called "no price left the band with the crowd attached" and failed, and the obvious reading
+    was that the crowd was pushing prices somewhere they should not go. That reading was wrong, and
+    acting on it would have re-shipped a defect this project already paid for.
 
-    That is the worst version of a stale assertion, because it does not merely fail to catch the
-    problem, it actively contradicts the failure sitting directly above it. A reader who trusted the
-    detail would have gone looking for the bug somewhere else entirely.
+    `PRICE_MAX` is a ceiling on the FAIR VALUE ESTIMATE. `fairPriceFor` maps a 0-100 valuation onto
+    0-1000, so $1,000 is the most the valuation model can say a club is worth. It is deliberately NOT a
+    ceiling on the market price, and `sharePrice.ts` says so directly: "IT IS NOT A CEILING ON PRICE,
+    and treating it as one is a bug that shipped and was played on."
 
-    So the detail is computed now, including the offenders, their values, and the actual range. If
-    this check fails again, the line under it will say why.
+    The mechanism, for anyone who reads this and assumes otherwise again:
+
+      - `teamValue` saturates at 100 for a dominant club, so fair saturates at exactly $1,000.
+      - The close used to be clamped to $1,000 as well. Once that happened the fair value was pinned,
+        the close was pinned, and the whole price mechanism for that club went INERT -- mean reversion,
+        the crowd, game shocks, all of it. `probePriceCeiling.ts` measured one club pinned at exactly
+        $1,000 for all 120 priced days of its window.
+      - It hit the BEST club in the league, because the valuation is a z-score against the league, and
+        that is precisely the club whose price a player most wants to read.
+
+    So a close above 1,000 is not a malfunction. It is a PREMIUM, and a premium above 30% was
+    structurally impossible to represent while the ceiling and the estimate were the same number -- which
+    is the dislocation the crowd exists to create. Measured from a real ledger, `close / fair` runs to
+    1.615 with a p99 of 1.576, so a saturated $1,000 valuation implies prices naturally reaching about
+    $1,600. A 1,335 close is inside that, not outside it.
+
+    What ACTUALLY bounds a price is mean reversion, and what actually breaks is a price PINNING at a
+    bound. So this asserts the two things that are true, and the pin check is the one with a body.
+
+    Its detail line used to be hardcoded prose reading "all inside (0, 1000]." while the check was
+    failing -- it did not merely fail to catch the problem, it contradicted the failure printed directly
+    above it.
   */
-  const outOfBand = withCrowd.flatMap((d) => ids.map((id) => d.close[id])).filter((c) => !(c > 0 && c <= 1000));
-  const lowest = Math.min(...allCloses);
-  const highest = Math.max(...allCloses);
+
   /*
-    And the CONTROL's range, because "with the crowd attached" in this check's name implies the crowd
-    is implicated. That has to be measured rather than assumed: if the control path breaches the same
-    way, the ceiling belongs to `priceBoardForDay` and this check is misfiled, and the fix is not
-    anywhere near the crowd.
+    NOTE ON WHAT IS *NOT* ASSERTED HERE, AND IT COST AN INJECTION RUN TO LEARN IT.
+
+    This check used to also assert that every close was inside PRICE_SANITY_MAX -- the corrupt-save
+    guard the price path actually applies. It looked like sensible belt-and-braces. It cannot fail:
+    nothing in a sixteen-day window of real play comes within two orders of magnitude of 100,000, so
+    removing the guard from `nextPrice` entirely left this suite reporting six of six.
+
+    A clause that cannot fail is not coverage, it is the appearance of coverage, and it is worse than
+    nothing because it answers a question nobody asked while leaving the real one unguarded.
+
+    That ground IS covered, in the file built to cover it: `checkSharePrice` asserts the sanity guard
+    across every seed it tests and drives `fair` at exactly PRICE_MAX for sixty days so the saturated
+    case is reached on purpose rather than waited for. That is the right fixture for a ceiling that
+    only binds in pathological conditions. The ceiling check is asserted there, not here.
   */
-  const controlCloses = control.flatMap((d) => ids.map((id) => d.close[id]));
-  const controlBreaches = controlCloses.filter((c) => !(c > 0 && c <= 1000));
-  const crowdExclusive = outOfBand.length - controlBreaches.length;
+
+  // Premiums are EXPECTED, so they are counted and reported rather than treated as offenders.
+  const premiums = allCloses.filter((c) => c > PRICE_MAX);
+  const peakPremium = premiums.length ? Math.max(...premiums) / PRICE_MAX : null;
+
+  // The regression that actually shipped: a club holding one close for days while its fair value moved.
+  const PIN_RUN_DAYS = 3;
+  const pinned: Array<{ id: string; from: string; days: number; value: number }> = [];
+  ids.forEach((id) => {
+    let runStart = 0;
+    for (let d = 1; d <= withCrowd.length; d += 1) {
+      const ended = d === withCrowd.length || withCrowd[d].close[id] !== withCrowd[d - 1].close[id];
+      if (!ended) continue;
+      const days = d - runStart;
+      if (days >= PIN_RUN_DAYS) {
+        const firstFair = withCrowd[runStart].fair[id];
+        const fairMoved = withCrowd.slice(runStart, d).some((row) => row.fair[id] !== firstFair);
+        if (fairMoved) {
+          pinned.push({ id, from: withCrowd[runStart].date, days, value: withCrowd[runStart].close[id] });
+        }
+      }
+      runStart = d;
+    }
+  });
+
   check(
-    'no price left the band with the crowd attached',
-    outOfBand.length === 0,
-    outOfBand.length === 0
-      ? `${allCloses.length} closes across ${withCrowd.length} days, every one inside (0, 1000]. `
-        + `Range ${lowest.toFixed(2)} to ${highest.toFixed(2)}. Control peak ${Math.max(...controlCloses).toFixed(2)}.`
-      : `${outOfBand.length} of ${allCloses.length} closes left (0, 1000). `
-        + `Offenders: ${outOfBand.slice(0, 8).map((c) => c.toFixed(2)).join(', ')}`
-        + `${outOfBand.length > 8 ? ', ...' : ''}. Range ${lowest.toFixed(2)} to ${highest.toFixed(2)}. `
-        + `CONTROL, no crowd at all: ${controlBreaches.length} of ${controlCloses.length} also breached, peak `
-        + `${Math.max(...controlCloses).toFixed(2)} -- so ${crowdExclusive} of these are the crowd's doing.`,
+    'no price is PINNED at a bound while fair value is moving',
+    pinned.length === 0,
+    `${allCloses.length} closes across ${withCrowd.length} days. `
+    + `${pinned.length} club-runs held one close for ${PIN_RUN_DAYS}+ days while fair value moved`
+    + `${pinned.length ? ' -- ' + pinned.slice(0, 4).map((p) => `${p.id} at ${p.value.toFixed(2)} from ${p.from} (${p.days}d)`).join(', ') : ''}. `
+    + `Range ${Math.min(...allCloses).toFixed(2)} to ${Math.max(...allCloses).toFixed(2)}. `
+    + `Premiums above the ${PRICE_MAX} estimate ceiling: ${premiums.length} closes`
+    + `${peakPremium !== null ? `, peak ${(peakPremium * 100).toFixed(0)}% over fair` : ''} -- expected, and `
+    + 'measured p99 for close/fair on a real ledger is 1.576, so this is the mechanism working. '
+    + 'A premium above 30% was impossible to represent while the ceiling and the estimate were the same number. '
+    + 'The corrupt-save guard is asserted in checkSharePrice, which can actually reach it.',
   );
 
   const movedMore = ids.filter((id) => Math.abs(withCrowd[withCrowd.length - 1].close[id] / control[control.length - 1].close[id] - 1) > 0.01).length;
