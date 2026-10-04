@@ -1510,6 +1510,39 @@ function App() {
     draftCenterRef.current = draftCenter;
   }, [draftCenter]);
 
+  /*
+   * THREE KEYS, ONE GATE.
+   *
+   * Draft center, season history and the offseason workflow were each a load effect followed by an
+   * ungated persist effect, and all three lost their contents on every reload in development for the
+   * same reason: on mount the load queues a state update while the writer persists the value from
+   * the render that just committed -- the initial empty value. So the empty value lands in
+   * localStorage while the real contents sit unused in a variable. Under StrictMode the effects then
+   * run again immediately and the load RE-READS what the first pass just overwrote.
+   *
+   * Measured, three seasons seeded and then reloaded:
+   *
+   *     StrictMode on, ungated   [2023,2024,2025] -> []                n=3 -> n=0
+   *     StrictMode off, ungated  [2023,2024,2025] -> [2025,2024,2023] n=3 -> n=3
+   *     StrictMode on, gated     [2023,2024,2025] -> [2025,2024,2023] n=3 -> n=3
+   *
+   * In production the ungated version self-corrects, because the re-render re-runs the writer with
+   * the loaded value and puts it back. That is why this read as a dev-only ghost rather than a bug.
+   *
+   * One flag rather than three because the three loads are adjacent and independent, so no single
+   * one of them can be finished before the others -- and a per-key flag would let a writer unblock on
+   * its own load finishing while an earlier sibling in the same commit is still mid-flight. The
+   * history flag already existed (`isSeasonHistoryLoaded`, `119fc53`, the day after the load landed)
+   * and gated two other things; it was simply never wired to the writer, which was the whole defect.
+   *
+   * `gpb_season_history_v1` is the one that mattered. The other two lose an accumulated draft-class
+   * list and the offseason checklist position -- the second of which silently drops a manager back
+   * to step one of the offseason every time the page refreshes.
+   *
+   * The rule, for the next key: do not write a key you have not read.
+   */
+  const [isLocalKeysLoaded, setIsLocalKeysLoaded] = useState(false);
+
   useEffect(() => {
     try {
       const serialized = localStorage.getItem(DRAFT_CENTER_STORAGE_KEY);
@@ -1567,32 +1600,50 @@ function App() {
       });
     } catch (error) {
       console.error('Failed to load offseason workflow state:', error);
+    } finally {
+      setIsLocalKeysLoaded(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!isLocalKeysLoaded) {
+      return;
+    }
     try {
       localStorage.setItem(DRAFT_CENTER_STORAGE_KEY, JSON.stringify(draftCenter));
     } catch (error) {
       console.error('Failed to persist draft center state:', error);
     }
-  }, [draftCenter]);
+  }, [draftCenter, isLocalKeysLoaded]);
 
+  /*
+   * PERSIST SEASON HISTORY -- but never before the load has finished.
+   *
+   * The reasoning, and the measurement behind it, are on `isLocalKeysLoaded` above. This is the key
+   * that lost real data: three archived seasons were being reduced to none on every reload in dev,
+   * which is what a manager sees as "it only remembers the last season".
+   */
   useEffect(() => {
+    if (!isLocalKeysLoaded) {
+      return;
+    }
     try {
       localStorage.setItem(SEASON_HISTORY_STORAGE_KEY, JSON.stringify(seasonHistory.slice(0, MAX_SEASON_HISTORY_ENTRIES)));
     } catch (error) {
       console.error('Failed to persist season history state:', error);
     }
-  }, [seasonHistory]);
+  }, [isLocalKeysLoaded, seasonHistory]);
 
   useEffect(() => {
+    if (!isLocalKeysLoaded) {
+      return;
+    }
     try {
       localStorage.setItem(OFFSEASON_WORKFLOW_STORAGE_KEY, JSON.stringify(offseasonWorkflow));
     } catch (error) {
       console.error('Failed to persist offseason workflow state:', error);
     }
-  }, [offseasonWorkflow]);
+  }, [isLocalKeysLoaded, offseasonWorkflow]);
 
   useEffect(() => {
     if (!draftCenter.activeClass) {
