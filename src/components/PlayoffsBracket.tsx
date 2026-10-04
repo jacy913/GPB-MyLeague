@@ -603,14 +603,20 @@ const SeriesPips: React.FC<{ wins: number; bestOf: number; fill: string; size?: 
 };
 
 /**
- * Seed badge -- skewed chip. 1 and 2 carry the gold because a top-two seed is
- * the only seeding distinction that means something postseason; 3+ falls back
- * to the league identity fill so the badge still reads as belonging to a league.
+ * Seed badge -- skewed chip, ALWAYS in the league's own colour.
+ *
+ * This used to force seeds 1 and 2 to gold on the reasoning that "a top-two seed is the only
+ * seeding distinction that means something postseason". That was wrong for a bracket with two
+ * leagues: a seed-1 in Prestige and a seed-1 in Platinum were both gold, so the two best clubs in
+ * the league were the one pair a reader could not tell apart.
+ *
+ * League colour now comes first and gold is reserved for LEADING a series, which is the distinction
+ * that actually changes what happens next. The trailing team is dimmed in INK rather than recessed
+ * onto a dark chip, so the seed stays legible when it is behind -- it used to drop to `panel-2` with
+ * `ink-dim` and become the least readable number on the card.
  */
 const SeedBadge: React.FC<{ seed: number; league: AnyLeague; dimmed?: boolean }> = ({ seed, league, dimmed }) => {
-  const isTopSeed = seed <= 2;
-  const leagueFill = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
-  const fill = isTopSeed ? 'bg-[var(--color-gold)]' : leagueFill;
+  const fill = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
   return (
     // 30px rather than 22px, and the digit is t-stat at 17px rather than
     // t-stat-sm. A skewed 22px chip holding a 13px digit was the smallest
@@ -619,8 +625,8 @@ const SeedBadge: React.FC<{ seed: number; league: AnyLeague; dimmed?: boolean }>
     // hard to read. The number is also never dimmed to the point of losing it:
     // a non-leading seed keeps full-strength ink on a recessed chip.
     <span
-      className={`skew-shadow inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center ${
-        dimmed ? 'bg-[var(--color-panel-2)] text-[var(--color-ink-dim)]' : `${fill} text-[var(--color-ink-invert)]`
+      className={`skew-shadow inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center ${fill} ${
+        dimmed ? 'text-[var(--color-ink-dim)]' : 'text-[var(--color-ink-invert)]'
       }`}
       aria-label={`Seed ${seed}`}
     >
@@ -635,10 +641,8 @@ const BracketTeamRow: React.FC<{
   bestOf: number;
   league: AnyLeague;
   isLeader: boolean;
-  isClinch?: boolean;
-  winsNeeded?: number;
   pipFill: string;
-}> = ({ participant, wins, bestOf, league, isLeader, isClinch = false, winsNeeded, pipFill }) => {
+}> = ({ participant, wins, bestOf, league, isLeader, pipFill }) => {
   if (!participant) {
     return (
       <div className="flex items-center gap-2 border border-dashed border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-2">
@@ -655,9 +659,7 @@ const BracketTeamRow: React.FC<{
       className={`flex items-center gap-2 border-l-[3px] px-2 py-2 ${
         isLeader
           ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]'
-          : isClinch
-            ? 'border-l-[var(--color-neg)] bg-[var(--color-base-2)]'
-            : 'border-l-transparent'
+          : 'border-l-transparent'
       }`}
     >
       <SeedBadge seed={participant.seed} league={league} dimmed={!isLeader} />
@@ -671,12 +673,7 @@ const BracketTeamRow: React.FC<{
         </p>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
-        <div className="flex items-baseline gap-1.5">
-          {isClinch && winsNeeded !== undefined && (
-            <span className="t-caption text-[var(--color-neg)]">1 from {winsNeeded}</span>
-          )}
-          <StatValue size="lg" variant={isLeader ? 'accent' : 'default'}>{wins}</StatValue>
-        </div>
+        <StatValue size="lg" variant={isLeader ? 'accent' : 'default'}>{wins}</StatValue>
         <SeriesPips wins={wins} bestOf={bestOf} fill={pipFill} />
       </div>
     </div>
@@ -690,14 +687,16 @@ const BracketTeamRow: React.FC<{
  * finished. That is derived from the view model rather than passed in, so the
  * live treatment cannot drift from the data that justifies it.
  *
- * The live treatment was previously a two-pixel hazard stripe along the top plus
- * a small "NEXT" tag floating over the round title, which said almost nothing
- * about what was happening and, being drawn in the same gold as the series lead
- * marker, competed with it. It now says what it means: a gold edge, a filled
- * IN PROGRESS label in the header, and a line stating the actual stakes -- the
- * lead, how many games each club needs, and who is eliminated. State is carried
- * by wording and position as well as colour, so it survives a reader who cannot
- * separate the two.
+ * The live treatment is now only the gold left edge, the leading row's gold left
+ * edge, and the IN PROGRESS label in the header. It used to also print a stakes
+ * footer -- "Match point - X needs one more", "leads 2-1, first to 4", and
+ * "{City} eliminated" -- plus a "1 from 3" tag beside each club's win count.
+ *
+ * All of that was a restatement of two numbers already on the card. The wins are
+ * printed, and the series length is drawn as one diamond per game, so a reader
+ * deriving "2-1 with three diamonds" needs no prose to know a team is one win
+ * from ending it. The prose was redundant on a card whose entire job is to be
+ * scanned, and it crowded out the increment the card is actually for.
  */
 const BracketSeriesCard: React.FC<{
   series: BracketSeriesView;
@@ -708,13 +707,6 @@ const BracketSeriesCard: React.FC<{
   const isLive = !series.winner && (series.topWins > 0 || series.bottomWins > 0);
   const topLeading = series.leader?.team.id === series.topSeed?.team.id;
   const bottomLeading = series.leader?.team.id === series.bottomSeed?.team.id;
-
-  const winsNeeded = Math.floor(series.bestOf / 2) + 1;
-  const topClinch = isLive && series.topWins === winsNeeded - 1;
-  const bottomClinch = isLive && series.bottomWins === winsNeeded - 1;
-  const eliminated = isLive
-    ? `${series.topWins === winsNeeded - 1 ? series.bottomSeed?.team.city : series.topSeed?.team.city} eliminated`
-    : null;
 
   return (
     <div ref={cardRef} className="relative">
@@ -731,7 +723,6 @@ const BracketSeriesCard: React.FC<{
                 <span className="t-caption text-[var(--color-ink-invert)]">In Progress</span>
               </span>
             )}
-            <span className="t-caption text-[var(--color-ink-faint)]">BO{series.bestOf}</span>
           </div>
         </div>
 
@@ -742,8 +733,6 @@ const BracketSeriesCard: React.FC<{
             bestOf={series.bestOf}
             league={league}
             isLeader={topLeading}
-            isClinch={topClinch}
-            winsNeeded={winsNeeded}
             pipFill={pipFill}
           />
           <BracketTeamRow
@@ -752,22 +741,11 @@ const BracketSeriesCard: React.FC<{
             bestOf={series.bestOf}
             league={league}
             isLeader={bottomLeading}
-            isClinch={bottomClinch}
-            winsNeeded={winsNeeded}
             pipFill={pipFill}
           />
         </div>
 
-        {isLive ? (
-          <div className="space-y-0.5 border-t border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-3 py-2">
-            <p className="t-caption text-[var(--color-gold-hi)]">
-              {topClinch || bottomClinch
-                ? `Match point — ${topClinch ? series.topSeed?.team.city : series.bottomSeed?.team.city} needs one more`
-                : `${series.leader?.team.city ?? 'Leader'} leads ${series.topWins}-${series.bottomWins}, first to ${winsNeeded}`}
-            </p>
-            {eliminated && <p className="t-caption text-[var(--color-ink-faint)]">{eliminated}</p>}
-          </div>
-        ) : (
+        {isLive ? null : (
           <p className="border-t border-[var(--color-chrome-lo)] px-3 py-2 text-right t-caption text-[var(--color-ink-dim)]">
             {series.statusValue}
           </p>
