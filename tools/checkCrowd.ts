@@ -295,13 +295,46 @@ const main = (): void => {
     + 'would make "fade the spike" a coin flip, and the blueprint says that is the failure mode it exists to avoid.',
   );
 
+  /*
+    ISOLATING SATURATION, WHICH THE FIRST VERSION OF THIS COULD NOT DO.
+
+    This used to compare momentum mid-run against momentum at the end of the run, and its own detail
+    line explained the result as "the three-day return barely changed, so what changed is SATURATION".
+
+    The three-day return did NOT barely change. It went from +10.19% over the first five closes to
+    +10.93% over the last three, because the fixture's run ACCELERATES. Saturation cut momentum's
+    signal by 26%; the faster recent return added 7% straight back. The two nearly cancelled, so the
+    check could not tell a working saturation term from a broken one -- which is why it kept failing
+    no matter what the constant was set to.
+
+    That is the same trap as the award tie-break earlier this session: a check that varies two inputs
+    at once and then attributes the result to one of them.
+
+    So this varies ONE thing. Identical closes, identical three-day return, identical everything --
+    and the only difference is how far the price sits above fair value, which is the single input
+    saturation reads. If appetite does not fall when that moves and nothing else does, the term is
+    broken. If it falls, the term works and the number is reported rather than asserted.
+  */
+  const probeCloses = runCloses.slice(0, 5);
+  const probeAtFair = crowdFlowFor({
+    teamId: 'alc', closes: probeCloses, fair: probeCloses[probeCloses.length - 1], gameShock: 0,
+    weightedConsensusWinPct: 0.5, plainConsensusWinPct: 0.5, plainConsensusLeagueMean: 0.5, marketSize: 50,
+  });
+  const probeExtended = crowdFlowFor({
+    teamId: 'alc', closes: probeCloses, fair: 400, gameShock: 0,
+    weightedConsensusWinPct: 0.5, plainConsensusWinPct: 0.5, plainConsensusLeagueMean: 0.5, marketSize: 50,
+  });
+  const appetiteRatio = probeExtended.byArchetype.momentum / probeAtFair.byArchetype.momentum;
   check(
     'and the reversal comes from momentum LOSING APPETITE, which is the mechanism',
-    after.byArchetype.momentum < during.byArchetype.momentum * 0.75,
-    `momentum went ${(during.byArchetype.momentum * 100).toFixed(2)}% -> ${(after.byArchetype.momentum * 100).toFixed(2)}% as the run extended. `
-    + 'The three-day return barely changed, so what changed is SATURATION: the crowd buys less of a move that has '
-    + 'already run further from fair value. Without that term the first version of this check measured the crowd '
-    + 'buying a seven-day run at full size on every day of it and never turning.',
+    probeExtended.byArchetype.momentum < probeAtFair.byArchetype.momentum * 0.75,
+    `same closes, same three-day return, one variable: how far the price sits above fair. Sitting at fair, `
+    + `momentum buys ${(probeAtFair.byArchetype.momentum * 100).toFixed(2)}% of a day's flow. The same closes `
+    + `${(((probeCloses[probeCloses.length - 1] / 400) - 1) * 100).toFixed(1)}% above fair, momentum buys `
+    + `${(probeExtended.byArchetype.momentum * 100).toFixed(2)}% -- ${(appetiteRatio * 100).toFixed(0)}% of the `
+    + 'same appetite. That is the saturation term doing the work, measured with nothing else moving. '
+    + 'Without it the first version of this check measured the crowd buying a seven-day run at full size '
+    + 'on every day of it and never turning.',
   );
 
   check(

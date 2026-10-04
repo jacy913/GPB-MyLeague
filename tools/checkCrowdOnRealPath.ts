@@ -331,10 +331,43 @@ const main = async (): Promise<void> => {
 
   // -- 3. bounds -------------------------------------------------------------------------------
   const allCloses = withCrowd.flatMap((d) => ids.map((id) => d.close[id]));
+  /*
+    THIS DETAIL USED TO BE HARDCODED PROSE.
+
+    It read "512 closes across 16 days, all inside (0, 1000]." as a fixed string, so while the check
+    itself was FAILING -- because a price had in fact left the band -- the line underneath it still
+    told the reader everything was fine. The number 512 was real; the conclusion was not.
+
+    That is the worst version of a stale assertion, because it does not merely fail to catch the
+    problem, it actively contradicts the failure sitting directly above it. A reader who trusted the
+    detail would have gone looking for the bug somewhere else entirely.
+
+    So the detail is computed now, including the offenders, their values, and the actual range. If
+    this check fails again, the line under it will say why.
+  */
+  const outOfBand = withCrowd.flatMap((d) => ids.map((id) => d.close[id])).filter((c) => !(c > 0 && c <= 1000));
+  const lowest = Math.min(...allCloses);
+  const highest = Math.max(...allCloses);
+  /*
+    And the CONTROL's range, because "with the crowd attached" in this check's name implies the crowd
+    is implicated. That has to be measured rather than assumed: if the control path breaches the same
+    way, the ceiling belongs to `priceBoardForDay` and this check is misfiled, and the fix is not
+    anywhere near the crowd.
+  */
+  const controlCloses = control.flatMap((d) => ids.map((id) => d.close[id]));
+  const controlBreaches = controlCloses.filter((c) => !(c > 0 && c <= 1000));
+  const crowdExclusive = outOfBand.length - controlBreaches.length;
   check(
     'no price left the band with the crowd attached',
-    allCloses.every((c) => c > 0 && c <= 1000),
-    `${allCloses.length} closes across ${withCrowd.length} days, all inside (0, 1000].`,
+    outOfBand.length === 0,
+    outOfBand.length === 0
+      ? `${allCloses.length} closes across ${withCrowd.length} days, every one inside (0, 1000]. `
+        + `Range ${lowest.toFixed(2)} to ${highest.toFixed(2)}. Control peak ${Math.max(...controlCloses).toFixed(2)}.`
+      : `${outOfBand.length} of ${allCloses.length} closes left (0, 1000). `
+        + `Offenders: ${outOfBand.slice(0, 8).map((c) => c.toFixed(2)).join(', ')}`
+        + `${outOfBand.length > 8 ? ', ...' : ''}. Range ${lowest.toFixed(2)} to ${highest.toFixed(2)}. `
+        + `CONTROL, no crowd at all: ${controlBreaches.length} of ${controlCloses.length} also breached, peak `
+        + `${Math.max(...controlCloses).toFixed(2)} -- so ${crowdExclusive} of these are the crowd's doing.`,
   );
 
   const movedMore = ids.filter((id) => Math.abs(withCrowd[withCrowd.length - 1].close[id] / control[control.length - 1].close[id] - 1) > 0.01).length;

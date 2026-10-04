@@ -89,6 +89,52 @@ export const MOMENTUM_LOOKBACK = 3;
 export const VALUE_LOOKBACK = 20;
 
 /**
+ * Over how many days the passive archetype closes a gap to fair value.
+ *
+ * ===========================================================================
+ * WHY THIS EXISTS: THE SHARES WERE NOT DESCRIBING WHO MOVED THE MARKET
+ * ===========================================================================
+ *
+ * This constant was missing and the module did not work because of it. The symptom looked like a
+ * tuning problem rather than a structural one, so it is worth being precise about what was wrong.
+ *
+ * `momentumSignal` returns a PER-DAY RATE. It divides the three-day return by the lookback, because a
+ * full-size move every day of a run compounds into a bubble with no pull at all. Then it multiplies by
+ * the saturation appetite.
+ *
+ * `towardFairSignal` returned a LEVEL -- the raw fractional gap to fair -- with no normalisation at
+ * all. So a 12% gap produced a signal of 0.12, while a hot three-day run produced 0.014. One was 8x
+ * the other, for a smaller price move.
+ *
+ * The consequence, measured on the seven-day run in `checkCrowd`, share-weighted contribution mid-run:
+ *
+ *     momentum   share 0.40   +0.318%
+ *     passive    share 0.10   -0.416%
+ *
+ * The archetype with the LARGEST share lost to the one with the SMALLEST, by 1.3x. The design premise
+ * in this file's own header is that "the momentum crowd is the largest and most wrong". It was neither.
+ *
+ * And it destroyed the fade strategy on the way, through the net rather than through any one archetype:
+ *
+ *   - `net` was NEGATIVE for the whole run, so a chaser was already losing mid-run. The design says
+ *     "during a run the momentum archetype buys, flow is positive, and a chaser makes money", which
+ *     did not happen and cannot happen while an unnormalised term dominates the sum.
+ *   - Momentum's saturation was firing correctly and nobody could see it, because its contribution was
+ *     smaller than the term it was fighting. `checkCrowd` reported two failures that looked like a
+ *     saturation constant set too low. The constant was fine.
+ *
+ * Dividing by a drift horizon puts passive on the same per-day footing as momentum, so the two signals
+ * become comparable and CROWD_SHARES describes actual influence. The reasoning is momentum's own,
+ * stated above: the archetypes act daily, so a gap that persists for a week is closed over days rather
+ * than in a single move.
+ *
+ * Three is a CHOSEN number, in the same way CROWD_SATURATION is, and for the same reason: there is no
+ * ground truth for crowd behaviour to be fitted against. What is measured is the consequence, and
+ * `checkCrowd` gates on the consequence.
+ */
+export const PASSIVE_DRIFT_DAYS = 3;
+
+/**
  * How strongly each archetype acts on its own signal.
  *
  * These convert a normalised signal into a fractional flow. Chosen so that the resulting daily
@@ -194,11 +240,18 @@ const valueSignal = (closes: number[]): number => {
   return clamp((average / closes[closes.length - 1] - 1));
 };
 
-/** Trend toward fair value. Positive when the price is BELOW fair, so it buys. */
+/**
+ * Trend toward fair value. Positive when the price is BELOW fair, so it buys.
+ *
+ * Divided by PASSIVE_DRIFT_DAYS, and that division is the whole point -- see the constant's note. The
+ * raw gap to fair is a LEVEL and momentum's signal is a RATE; summing them directly lets a 10% weight
+ * out-shout a 40% weight eight times over. Dividing makes this a per-day drift, which is what the
+ * archetype actually is: it acts once a day and closes the gap over several, not in one move.
+ */
 const towardFairSignal = (closes: number[], fair: number): number => {
   const now = closes[closes.length - 1];
   if (now <= 0) return 0;
-  return clamp((fair - now) / now);
+  return clamp(((fair - now) / now) / PASSIVE_DRIFT_DAYS);
 };
 
 /**
