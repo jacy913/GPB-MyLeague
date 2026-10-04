@@ -174,27 +174,39 @@ check(
   'Perez refused a game his marquee gate should have admitted, so he would rarely write',
 );
 
-const scintillaRefusesBelow = isEligible(
-  HEADLINER_BY_ID.scintilla,
+/*
+ * THE SEVERITY FLOOR, NOW TESTED ON HOANI.
+ *
+ * These two checks used to run against Scintilla. He is a forecaster and no longer files sideline
+ * reports, and his entry is gone, so the pair has moved to Hoani -- who holds the same floor of 55
+ * because it was carried across from him wholesale. Retargeting rather than deleting is the point:
+ * the floor is still a live number deciding what Hoani files on, and losing the assertions because
+ * the persona who set it left the desk is how a threshold quietly drifts.
+ *
+ * `tools/checkHeadlinerCoverage.ts` records where the 55 came from; this file only has to prove the
+ * behaviour, which is the half that actually decides what appears on screen.
+ */
+const hoaniRefusesBelow = isEligible(
+  HEADLINER_BY_ID.hoani,
   event({ kind: 'anomaly', severity: 54 }),
   ctx,
 );
 check(
-  'Scintilla refuses below severity 55',
-  !scintillaRefusesBelow,
-  `refused at severity 54 (accepted: ${scintillaRefusesBelow})`,
-  'Scintilla accepted an event below her severity floor',
+  'Hoani refuses below severity 55',
+  !hoaniRefusesBelow,
+  `refused at severity 54 (accepted: ${hoaniRefusesBelow})`,
+  'Hoani accepted an event below his severity floor',
 );
-const scintillaAcceptsAt = isEligible(
-  HEADLINER_BY_ID.scintilla,
+const hoaniAcceptsAt = isEligible(
+  HEADLINER_BY_ID.hoani,
   event({ kind: 'anomaly', severity: 55 }),
   ctx,
 );
 check(
-  'Scintilla accepts at severity 55',
-  scintillaAcceptsAt,
-  `accepted at severity 55 (accepted: ${scintillaAcceptsAt})`,
-  'Scintilla refused an event exactly at her floor, so the threshold is off by one',
+  'Hoani accepts at severity 55',
+  hoaniAcceptsAt,
+  `accepted at severity 55 (accepted: ${hoaniAcceptsAt})`,
+  'Hoani refused an event exactly at his floor, so the threshold is off by one',
 );
 
 // --- 3. determinism -----------------------------------------------------------

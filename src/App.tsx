@@ -16,6 +16,7 @@ import {
   Game,
   SeasonHistoryAwardWinner,
   SeasonHistoryDivisionWinner,
+  SeasonHistoryLeagueWinner,
   SeasonHistoryEntry,
   SeasonHistoryTeamRecord,
   SimulationSettings,
@@ -26,14 +27,15 @@ import { latestClose, leaguePriceSeed, marketFloorFor, priceAndAppendDay, type P
 import { crowdEventShocksFor } from './lib/analytics/crowd';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
-import { SeasonAwardsModal } from './components/SeasonAwardsModal';
-import { SimulationFloatingPanel } from './components/SimulationFloatingPanel';
+import { SeasonAwardsSummary } from './components/SeasonAwardsSummary';
+
 import { SimCompletePanel } from './components/simulation/SimCompletePanel';
 import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
 import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
+import { leagueChampionsFromSeries } from './lib/futuresRisk';
 import { PreviousDateScoreStrip } from './components/PreviousDateScoreStrip';
 import { Activity, Bell, ChartNoAxesColumn, Clock3, Menu, Receipt } from 'lucide-react';
 import { FolderNav } from './navigation/FolderNav';
@@ -339,6 +341,37 @@ const computeDivisionWinnersSnapshot = (teams: Team[]): SeasonHistoryDivisionWin
   });
 
   return winners;
+};
+
+/**
+ * League champions, from the completed league championship series.
+ *
+ * ============================================================================
+ * WHY NOT FROM THE DIVISION WINNERS
+ * ============================================================================
+ *
+ * The obvious cheap version -- take `computeDivisionWinnersSnapshot` and key each winner by its
+ * league -- is wrong in a way that is easy to miss. There are two divisions per league, so that Map
+ * gets the same key written twice, and a Map keeps the LAST write. The archived "league champion"
+ * was therefore whichever division leader happened to come last in `DIVISION_ORDER`: not a seed,
+ * not the better record, and not anything the playoffs decided.
+ *
+ * A league champion is the winner of a best-of-seven between the two divisional winners, so it is
+ * not even guaranteed to be a division winner. It can only be read off played games, which is what
+ * this does -- exactly as `resolveWorldSeriesChampion` already does for the title.
+ *
+ * `leagueChampionsFromSeries` is shared with `lockedRaces`, so the board deciding a league is over
+ * and the archive naming its winner cannot disagree.
+ *
+ * A league whose series is unfinished contributes NO record, rather than a provisional one. That
+ * absence is what makes those bets void instead of paying out to a club that has won nothing.
+ */
+const computeLeagueChampionsSnapshot = (games: Game[], teams: Team[]): SeasonHistoryLeagueWinner[] => {
+  const teamsById = new Map(teams.map((team) => [team.id, team]));
+  return [...leagueChampionsFromSeries(games)].flatMap(([league, teamId]) => {
+    const team = teamsById.get(teamId);
+    return team ? [{ ...toSeasonHistoryTeamRecord(team), league }] : [];
+  });
 };
 
 const resolveWorldSeriesChampion = (games: Game[], teamsById: Map<string, Team>) => {
@@ -1793,15 +1826,15 @@ function App() {
   const freeAgencyOpenDate = offseasonEventSchedule.freeAgencyDate;
 
   const {
-    seasonAwardsSelection,
-    setSeasonAwardsSelection,
-    saveSeasonAwardsSelection,
-    applyAutoSeasonAwards,
+    seasonAwardsSummary,
+    seasonAwardsSeen,
+    dismissSeasonAwardsSummary,
+    reviewSeasonAwards,
+    clearSeasonAwardsSummary,
     offseasonStage,
   } = useSeasonLifecycle({
     seasonComplete,
     currentDate,
-    awardsUnlockDate,
     games,
     teams,
     playerState,
@@ -1814,6 +1847,7 @@ function App() {
     pushNotice,
     resolveSeasonYear,
     computeDivisionWinnersSnapshot,
+    computeLeagueChampionsSnapshot,
     computeBattingMvpCandidates,
     computePitchingMvpCandidates,
     computeWorldSeriesMvpCandidates,
@@ -2228,7 +2262,7 @@ function App() {
         setPendingTrades([]);
         setTradeBoardDate('');
         setTradeInterruptionPrompt(null);
-        setSeasonAwardsSelection(null);
+        clearSeasonAwardsSummary();
         setOffseasonWorkflow(IDLE_OFFSEASON_WORKFLOW_STATE);
         setSelectedGameId(null);
       });
@@ -2272,6 +2306,7 @@ function App() {
       }, 500);
     }
   }, [
+    clearSeasonAwardsSummary,
     acquireLocalOperation,
     teams,
     settings,
@@ -2321,7 +2356,7 @@ function App() {
     setIsClearingHistory(true);
     try {
       setSeasonHistory([]);
-      setSeasonAwardsSelection(null);
+      clearSeasonAwardsSummary();
       localStorage.removeItem(SEASON_HISTORY_STORAGE_KEY);
 
       if (!isSupabaseConfigured) {
@@ -2439,7 +2474,7 @@ function App() {
         setPendingTrades([]);
         setTradeBoardDate('');
         setTradeInterruptionPrompt(null);
-        setSeasonAwardsSelection(null);
+        clearSeasonAwardsSummary();
         setSeasonHistory([]);
         setDraftCenter({ activeClass: null, history: [] });
         setOffseasonWorkflow(IDLE_OFFSEASON_WORKFLOW_STATE);
@@ -2486,6 +2521,7 @@ function App() {
       localOperationLockRef.current.release('universe_termination');
     }
   }, [
+    clearSeasonAwardsSummary,
     acquireLocalOperation,
     createMasterSchedule,
     currentDate,
@@ -3443,7 +3479,14 @@ function App() {
     onRefreshTradeBoard: refreshTradeBoard,
     onAssignFreeAgent: assignFreeAgentFromRouter,
     onShakeUpFreeAgency: shakeUpFreeAgencyFromRouter,
-    onAutoSelectAwards: applyAutoSeasonAwards,
+    /*
+     * The offseason timeline's "Awards" step.
+
+     * It used to run the auto-pick -- choosing the three MVPs for the manager. There is nothing to
+     * pick now, so it opens the RESULTS instead. Same step, honest meaning: this is the point in
+     * the year where the award markets have settled and the reasoning behind them is worth reading.
+     */
+    onAutoSelectAwards: reviewSeasonAwards,
     onSimulateRetirements: simulateRetirements,
     onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
@@ -3472,7 +3515,7 @@ function App() {
   }), [
     approvePendingTradeFromRouter,
     assignFreeAgentFromRouter,
-    applyAutoSeasonAwards,
+    reviewSeasonAwards,
     completeFreeAgency,
     autoDraftAllFromRouter,
     autoDraftRoundFromRouter,
@@ -3709,8 +3752,17 @@ function App() {
       onPendingClubConsumed={() => setHxseClubSelection(null)}
             offseasonStage={offseasonStage}
             offseasonSeasonYear={offseasonEventSeasonYear}
-            offseasonChampionLabel={seasonAwardsSelection?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}
-            hasPendingSeasonAwards={Boolean(seasonAwardsSelection)}
+            offseasonChampionLabel={seasonAwardsSummary?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}
+            /*
+           * "Pending" now means UNREAD rather than UNARCHIVED.
+           *
+           * Before this it meant "the ballot is open and the season cannot be archived until
+           * somebody presses Save" -- which was the exploit: the archive, and therefore the award
+           * settlement, waited on a click the bettor controlled. The archive is now written the
+           * moment the season ends, so what remains is reading the result, and that is what gates
+           * the timeline.
+           */
+          hasPendingSeasonAwards={Boolean(seasonAwardsSummary) && !seasonAwardsSeen}
             awardsUnlockDate={awardsUnlockDate}
             lotteryOpenDate={lotteryOpenDate}
             draftOpenDate={draftOpenDate}
@@ -3820,29 +3872,45 @@ function App() {
         markedOn={latestLedgerDate}
       />
 
-      <SeasonAwardsModal
-        selection={seasonAwardsSelection}
+      {/*
+        THE SEASON'S AWARDS, AS A RESULT TO READ.
+
+        This replaced a ballot that asked the manager to pick three MVPs. Because pressing
+        Save is what wrote the season archive, and the archive is what settles award bets,
+        the click WAS the outcome -- so betting an award meant betting on a decision the
+        bettor was about to make.
+
+        The winners are now the top of each ranked candidate list, and the archive is
+        written the moment the season ends, so there is nothing here to choose. The screen
+        exists to show the reasoning that decided it, which is the part a manager who backed
+        somebody else needs.
+      */}
+      <SeasonAwardsSummary
+        selection={seasonAwardsSummary}
+        seen={seasonAwardsSeen}
         resolveAwardCandidateTeam={resolveAwardCandidateTeam}
-        onSelectBattingPlayer={(playerId) => {
-          setSeasonAwardsSelection((current) => current ? { ...current, selectedBattingPlayerId: playerId } : current);
-        }}
-        onSelectPitchingPlayer={(playerId) => {
-          setSeasonAwardsSelection((current) => current ? { ...current, selectedPitchingPlayerId: playerId } : current);
-        }}
-        onSelectWorldSeriesPlayer={(playerId) => {
-          setSeasonAwardsSelection((current) => current ? { ...current, selectedWorldSeriesPlayerId: playerId } : current);
-        }}
-        onAutoPickLeaders={applyAutoSeasonAwards}
-        onSaveAwardWinners={saveSeasonAwardsSelection}
+        onDismiss={dismissSeasonAwardsSummary}
       />
 
-      <SimulationFloatingPanel
-        isVisible={view !== 'simulation' && isSimulating}
-        simulationProgress={simulationProgress}
-        currentDate={currentDate}
-        onOpenSimulation={() => setView('simulation')}
-        onCancelSimulation={cancelSimulationRun}
-      />
+      {/*
+        SimulationFloatingPanel is deliberately NOT mounted.
+
+        It was the last unmigrated surface in the shell and the only component still written
+        against the pre-token stylesheet: `font-mono`, `font-headline` (a family that was never
+        loaded and silently fell back to Teko), `rounded-[1.75rem]`, a hardcoded
+        `bg-[linear-gradient(135deg,#121212,#1b1b1b,#101010)]` and a `rounded-full` progress bar.
+        Every one of those is a §12 acceptance-gate violation, and it sat on top of the bracket
+        during exactly the runs a manager is watching -- which is why it was noticed.
+
+        The modern replacement is `SimulationHub`, which carries the same three facts (label,
+        active date, games completed) on the tokens, and is reachable from the COMMISSIONER rail
+        and from the completion receipt. Removing the mount rather than deleting the file keeps
+        this reversible; the component is now unreferenced and can be dropped when nothing wants it
+        back.
+
+        `isSimulating`, `simulationProgress` and `cancelSimulationRun` all still have callers -- the
+        hub and the receipt both consume them -- so nothing above this goes dead with it.
+      */}
 
       {/*
         The completion receipt. Below the slip's z-index (70/71) and its own at

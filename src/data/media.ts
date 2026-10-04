@@ -491,3 +491,43 @@ export const MEDIA_BY_ID: Record<MediaId, MediaProfile> = MEDIA_PROFILES.reduce(
 
 /** Accent CSS custom property for a medium, for use in inline styles. */
 export const mediaAccentVar = (id: MediaId): string => `var(--color-media-${id})`;
+
+/**
+ * THE NAME OF THE PERSON, for anywhere a label has to say WHICH forecaster.
+ *
+ * ============================================================================
+ * WHY THIS EXISTS
+ * ============================================================================
+ *
+ * There are nine forecasters and five outlets. Three of them publish as "The Booth" -- Hollis,
+ * Sallow and Jardins -- two as "Glorest Sports", and two as "Calibrated Sports". So `outlet` names a
+ * newsroom, not a forecaster, and any label built from it is ambiguous by construction.
+ *
+ * That is not hypothetical. The `Pack` popover listed nine prices and rendered three consecutive rows
+ * all reading "The Booth", which defeats the entire purpose of the panel: the manager opened it to
+ * find out who disagrees and was handed three identical words with three different numbers.
+ *
+ * `profile.name` is the person -- Quincy Hollis, Gary Sallow, Audrey Jardins -- and is unique across
+ * all nine. It is the right label anywhere a reader might have to tell two forecasters apart.
+ *
+ * `outlet` is still correct where the ORGANISATION is the subject rather than the forecaster: a
+ * column headed "The Booth Props", or the publisher of a feed. Nothing in those claims to identify a
+ * person, so nothing in them is ambiguous. The distinction is not "outlet is wrong" -- an outlet
+ * names a newsroom and a name names a forecaster, and only one of those answers "who said this?".
+ *
+ * A function in one place rather than `profile.name` sprinkled at each call site, so the next person
+ * adding a tenth forecaster does not have to rediscover this.
+ */
+export const forecasterName = (id: MediaId): string => MEDIA_BY_ID[id].name;
+
+/**
+ * Both halves, for a label with room for them.
+ *
+ * "Quincy Hollis, The Booth" identifies the forecaster and keeps the masthead visible, which is worth
+ * keeping: several of these outlets carry an editorial identity of their own that is not reducible
+ * to the people who work there.
+ */
+export const forecasterByline = (id: MediaId): string => {
+  const profile = MEDIA_BY_ID[id];
+  return profile.outlet === profile.name ? profile.name : `${profile.name}, ${profile.outlet}`;
+};

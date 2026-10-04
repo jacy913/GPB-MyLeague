@@ -572,85 +572,6 @@ const GATZ: VoiceBank = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// SCINTILLA -- stats analyst
-// ---------------------------------------------------------------------------
-
-/**
- * Excited about mathematics. Speaks in BABIP, K/9 and standard deviations, and
- * addresses the reader as someone who wants the number rather than the feeling. His
- * good lines are the ones where the maths undercuts the narrative.
- */
-const SCINTILLA: VoiceBank = {
-  titles: {
-    anomaly: [
-      "What {PLAYER}'s BABIP Actually Says About That Night",
-      'This One Was Not Variance',
-      'The Number Was Two Sigma Out',
-      'Regression Is Coming and It Is Coming Fast',
-    ],
-    sustained_rate: [
-      '{PLAYER} Has Been Doing This Since April',
-      'This Is Not a One-Night Thing',
-      'The Trend Line Is Not Pretending',
-      'Sample Size Actually Matters Here',
-    ],
-    expected_divergence: [
-      'Expected vs. Actual: {TEAM} Got Lucky',
-      'The Model Did Not Have {OPPONENT}',
-      'A {FIGURE}-Point Gap, the Wrong Way',
-      'This One Should Not Have Happened',
-    ],
-    meltdown: [
-      '{OPPONENT} Did Not Have a Bad Night. It Was a Bad Sample.',
-      'The Variance Explained Exactly None of It',
-      'This Is What Regression Looks Like From Inside',
-      'The Numbers Were Against Them All Game',
-    ],
-    pitching_dome: [
-      '{PLAYER} and a Strikeout Rate With No Ceiling',
-      'The Count Distribution Says Everything',
-      'That Was Not a Fluke of Sequencing',
-      'The Whiff Rate Was Historic',
-    ],
-    generic: [
-      'The Data Says Something Different',
-      'Let Us Be Precise About This',
-      'A Note on the Numbers',
-      'This Is What the Distribution Did',
-    ],
-  },
-  decks: {
-    meltdown: [
-      '{TEAM} did not lose the game so much as stop playing it somewhere in the middle. {FIGURE} runs is not the interesting number; the inning they went quiet in is.',
-      'A collapse is usually arithmetic rather than emotional. {TEAM} ran out of outs they could manufacture and the scoreboard caught up.',
-      'There is a rate at which a club stops being able to score, and {TEAM} found it. {FIGURE} runs is what that looks like on a board.',
-    ],
-    pitching_dome: [
-      '{FIGURE} strikeouts in one outing. The interesting column is not the strikeouts, it is what happened to the balls in the zone that did not miss.',
-      'A pitcher who gets {FIGURE} of them has done something a manager will remember and a scouting report will eventually contradict. Treat the first sample as a sample.',
-      '{PLAYER} struck out {FIGURE} and it is worth asking how much of that was the pitch and how much was the hitters simply not seeing the ball.',
-    ],
-    anomaly: [
-      '{PLAYER} posted a BABIP of {FIGURE}, which is two standard deviations out on a single-game sample. Small enough that I would not act on it, large enough that I would write it down.',
-      'A {FIGURE} BABIP on one night. The interesting question is not whether it repeats -- it almost certainly will not -- but what the contact quality looked like underneath it.',
-      'Two sigma on a {FIGURE}. Before anyone builds a narrative: three at-bats is a sample, and the honest reading is "watch, do not conclude".',
-    ],
-    sustained_rate: [
-      '{PLAYER} has been running at this level across the sample rather than in one night. That is the difference between an outlier and a rate, and only one of them should change how you roster.',
-      'A {FIGURE} average over a window large enough to mean something. This is the only kind of number in the paper that survives contact with a full season.',
-      'Not a hot streak -- a rate. The distinction matters because one of them gets you traded and the other gets you in a lineup.',
-    ],
-    expected_divergence: [
-      'The ratings had {TEAM} a {FIGURE}-point favourite and the simulation went the other way. One result is a sample, but the gap was wide enough to be worth naming.',
-      'A {FIGURE}-point gap, resolved against the better club. Variance explains this about one time in ten, which is not impossible and is not comfortable.',
-      '{OPPONENT} won a game they were not supposed to win. One of those is an upset and six of those is a correction, and nobody knows which this was yet.',
-    ],
-    generic: [
-      'Everyone in the building has an opinion. The interesting question is how far tonight sits from the distribution, and the answer is further than most people would like.',
-    ],
-  },
-};
 
 // ---------------------------------------------------------------------------
 // TOMBUCCELLI -- columnist
@@ -928,7 +849,6 @@ export const VOICE_BANKS: Readonly<Record<HeadlinerId, VoiceBank>> = {
   perez: PEREZ,
   soo: SOO,
   gatz: GATZ,
-  scintilla: SCINTILLA,
   hoani: HOANI,
   shinonome: SHINONOME,
   tombuccelli: TOMBUCCELLI,

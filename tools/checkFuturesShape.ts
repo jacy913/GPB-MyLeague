@@ -23,7 +23,7 @@
  */
 
 import { buildDivisionMarkets, buildLeagueMarkets } from '../src/lib/mediaMarkets';
-import { probabilityToAmerican, americanToProbability } from '../src/lib/markets';
+import { probabilityToAmerican, americanToProbability, type FieldMarket, type LockedRace } from '../src/lib/markets';
 import { MEDIA_PROFILES } from '../src/data/media';
 import type { Team } from '../src/types';
 import { uniformByMedia } from './mediaFixtures';
@@ -301,6 +301,109 @@ check(
   'the neutral colour is neither green nor orange',
   RISK_TIER_ACCENT.contender !== POS && RISK_TIER_ACCENT.contender !== RISK_TIER_ACCENT.hail_mary,
   'neutral is distinct from both semantic colours',
+);
+
+/*
+ * ============================================================================
+ * LOCKED-RACE SHAPE
+ * ============================================================================
+ *
+ * The `locked` field carries a race that already has a winner. This asserts the SHAPE of that
+ * field rather than whether any particular race is closed, because the arithmetic that decides a
+ * closure is not built yet -- this slice put the fact on the market and the next slice computes it.
+ *
+ * What is checked here is the set of ways the field can be wrong that would be silent:
+ *
+ *   1. A winner that is not one of the market's own outcomes. Settlement resolves by looking the
+ *      winner up among the outcomes, so an unknown key settles nothing and the bet hangs pending
+ *      forever -- a far worse failure than being visibly broken.
+ *   2. A closure with no reason. `reason` is what lets the board say WHY, and a locked market
+ *      without one would render as a bare "closed".
+ *   3. A reason outside the union, which the compiler permits through a cast and which would
+ *      silently fall through any switch written against the three real cases.
+ *   4. `margin` on a closure that has no arithmetic to report a margin for.
+ *
+ * And the load-bearing default, which is the whole reason `locked` is optional:
+ *
+ *   5. A market with no `locked` is OPEN. Undefined must never be read as closed. Getting this
+ *      backwards freezes live races shut, which loses the board; getting it right leaves a decided
+ *      race briefly open, which slice 3 then closes at `placeBet`. The safe direction is
+ *      deliberate, so it is asserted rather than assumed.
+ */
+
+console.log('\nLOCKED-RACE SHAPE');
+
+const REASONS = ['unreachable_lead', 'series_won', 'voting_open'] as const;
+
+const shapeMarket = (outcomes: Array<{ key: string }>, locked?: LockedRace) => ({
+  shape: 'field' as const,
+  kind: 'division' as const,
+  key: 'division:platinum north',
+  title: 'Platinum North',
+  outcomes: outcomes.map((o) => ({ ...o })) as FieldMarket['outcomes'],
+  liveOutcomes: outcomes.length,
+  locked,
+});
+
+const shapeKeys = ['bram', 'corvix', 'delph', 'eska'];
+const open = shapeMarket(shapeKeys.map((key) => ({ key })));
+const closed = shapeMarket(shapeKeys.map((key) => ({ key })), {
+  winnerKey: 'bram', reason: 'unreachable_lead', margin: 7,
+});
+
+/*
+ * Details print on EVERY line, pass or fail, so each one states the EXPECTED value rather than
+ * echoing whatever the code produced. A failure then reads as a difference rather than a sentence
+ * that only becomes informative once you already know the answer.
+ */
+check(
+  'an open market carries no locked field',
+  open.locked === undefined,
+  'expected undefined',
+);
+check(
+  'a locked market names a winner',
+  closed.locked?.winnerKey === 'bram',
+  'expected bram',
+);
+check(
+  'a locked winner is one of the market outcomes',
+  shapeKeys.includes(closed.locked?.winnerKey ?? ''),
+  `must be one of ${shapeKeys.join(' / ')}`,
+);
+check(
+  'a closure always carries a reason',
+  typeof closed.locked?.reason === 'string' && closed.locked.reason.length > 0,
+  `expected one of ${REASONS.join(' / ')}`,
+);
+check(
+  'the reason is one of the three real cases',
+  REASONS.includes(closed.locked?.reason as typeof REASONS[number]),
+  `expected one of ${REASONS.join(' / ')}`,
+);
+check(
+  'an arithmetic closure carries its margin',
+  typeof closed.locked?.margin === 'number',
+  'expected a number of points',
+);
+check(
+  'a voting closure carries no margin, because there is no arithmetic',
+  shapeMarket(shapeKeys.map((key) => ({ key })), { winnerKey: 'bram', reason: 'voting_open' })
+    .locked?.margin === undefined,
+  'expected undefined for voting_open',
+);
+check(
+  'every closure reason survives a round trip through the type',
+  REASONS.every((reason) => {
+    const market = shapeMarket(shapeKeys.map((key) => ({ key })), { winnerKey: 'bram', reason });
+    return market.locked?.reason === reason;
+  }),
+  `all of ${REASONS.join(' / ')} assignable and preserved`,
+);
+check(
+  'locking a market does not silently zero its live count',
+  closed.liveOutcomes === 4,
+  'expected 4: nobody-can-catch-him and already-won are different facts',
 );
 
 console.log(`\n  ${failures === 0 ? 'all checks passed' : `${failures} check(s) failed`}`);

@@ -25,7 +25,7 @@
 import type { Game } from '../types';
 
 /** A reporter. Adding a sixth touches this file and its voice bank, nothing else. */
-export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'scintilla' | 'hoani' | 'tombuccelli' | 'shinonome';
+export type HeadlinerId = 'perez' | 'soo' | 'gatz' | 'hoani' | 'tombuccelli' | 'shinonome';
 
 /**
  * A semantic accent name, never a gradient string.
@@ -224,16 +224,17 @@ export interface HeadlinerProfile {
 const marqueeGate = (ctx: HeadlinerContext): boolean =>
   (ctx.awayWinPct >= 0.55 && ctx.homeWinPct >= 0.55) || ctx.sameDivision || ctx.isPlayoffGame;
 
-const SCINTILLA_MIN_SEVERITY = 55;
 /*
- * CARRIED FORWARD FROM SCINTILLA UNCHANGED, and deliberately so.
+ * HOANI'S SEVERITY FLOOR, CARRIED FORWARD FROM SCINTILLA UNCHANGED, and deliberately so.
  *
- * Hoani inherits Scintilla's whole beat in the forecaster restructure, and this is the gate that
- * comes with it. It is the same 55, restated as its own constant rather than pointed at
- * Scintilla's, so that when Scintilla crosses over and his entry is deleted this one still reads as
- * a decision somebody made rather than as a leftover with a dangling reference.
+ * Hoani inherited Scintilla's whole beat when Scintilla crossed over to forecasting, and this is the
+ * gate that came with it. It was restated as its own constant rather than pointed at Scintilla's
+ * precisely so that deleting his entry would leave this reading as a decision somebody made rather
+ * than as a leftover with a dangling reference. That has now happened: Scintilla is a forecaster and
+ * no longer files sideline reports, so his entry is gone and this constant is the whole of the
+ * record of where the number came from.
  *
- * The gate is what keeps him on the maths. He should not editorialise about a game that was merely
+ * The gate is what keeps Hoani on the maths. He should not editorialise about a game that was merely
  * uneventful -- an event below the severity floor has nothing in it for him to interrogate.
  */
 const HOANI_MIN_SEVERITY = 55;
@@ -337,33 +338,6 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       'ALSO: the dugout decides more of this than the box score does.',
     ],
     priorityWeight: 1.0,
-  },
-  {
-    id: 'scintilla',
-    displayName: 'SCINTILLA',
-    shortName: 'SCINTILLA',
-    role: 'STATS ANALYST',
-    outlet: 'Scintilla',
-    portraitKey: 'scintilla',
-    accentToken: 'data',
-    covers: ['anomaly', 'sustained_rate', 'expected_divergence', 'meltdown', 'pitching_dome'],
-    // He does not editorialise about a game that was merely uneventful. Severity is
-    // the threshold that keeps him on the maths rather than the narrative.
-    /*
-     * Scintilla's standing position is that the box score is a summary of a process and
-     * almost every argument about a player is really an argument about a sample size.
-     * He states it flatly and without heat, which is what makes it land on a page full
-     * of people shouting at each other.
-     */
-    beat: [
-      'One night is a sample. Read it as one.',
-      'The line is not the player. It never was.',
-      'This is a rate, not an opinion. The difference matters.',
-      'A number this far from the mean is worth a look. It is not worth a conclusion.',
-      'Ask how many games are behind that before you ask what it means.',
-    ],
-    eligible: (event) => event.severity >= SCINTILLA_MIN_SEVERITY,
-    priorityWeight: 1.1,
   },
   {
     id: 'hoani',

@@ -5,7 +5,6 @@ import hildagoperezWallpaper from '../../assets/media/hildagoperezwallpaper.jpg'
 import sooWallpaper from '../../assets/media/christinesoowallpaper.jpg';
 import buccelliWallpaper from '../../assets/media/tombuccelliwallpaper.jpg';
 import hoaniWallpaper from '../../assets/media/simonhoaniwallpaper.jpg';
-import scintillaWallpaper from '../../assets/media/scintilla2wallpaper.jpg';
 import shinonomeWallpaper from '../../assets/media/fuyukashinonomewallpaper.jpg';
 
 /**
@@ -56,22 +55,6 @@ export const HEADLINER_WALLPAPERS: Partial<Record<HeadlinerId, HeadlinerImage>> 
   hoani: {
     src: hoaniWallpaper,
     alt: 'The Calibrated Sports data desk, mid-correction',
-  },
-  /*
-   * SCINTILLA IS HERE DESPITE HAVING A FORECASTER WALLPAPER ALREADY.
-   *
-   * `scintilla2wallpaper.jpg` is registered in `MEDIA_WALLPAPERS` for the forecaster card, and it is
-   * the same artwork. He is still a `HeadlinerId` until step 5 of the restructure, so without this
-   * entry his dossier fell through to the bare fallback and showed no hero at all -- which is exactly
-   * what a screenshot of the modal caught.
-   *
-   * Both registries pointing at one file is temporary and is the same duplication the wallpaper plan
-   * flags for Shinonome. Step 5 removes him from the forecaster set and this entry becomes the only
-   * reference; until then it is one import, not a copy.
-   */
-  scintilla: {
-    src: scintillaWallpaper,
-    alt: 'The Scintilla channel, mid-read',
   },
   /*
    * SHINONOME IS HERE NOW, and this is the last of the six.

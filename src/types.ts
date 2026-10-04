@@ -454,6 +454,21 @@ export interface SeasonHistoryDivisionWinner extends SeasonHistoryTeamRecord {
   division: Team['division'];
 }
 
+/**
+ * A league champion on the season archive.
+ *
+ * Carries `league` because the archive is keyed by it -- settlement looks a league champion up by
+ * league alone, with no division to narrow by, since the winner of a league championship series is
+ * not tied to a division the way a division winner is.
+ *
+ * Deliberately NOT folded into `SeasonHistoryDivisionWinner`: that adds `division`, and a league
+ * champion has no single division to name, because the series is between the winners of two
+ * different ones. Reusing it would mean writing a division the club did not win.
+ */
+export interface SeasonHistoryLeagueWinner extends SeasonHistoryTeamRecord {
+  league: Team['league'];
+}
+
 export interface SeasonHistoryAwardWinner {
   playerId: string;
   playerName: string;
@@ -471,4 +486,17 @@ export interface SeasonHistoryEntry {
   battingMvp: SeasonHistoryAwardWinner | null;
   pitchingMvp: SeasonHistoryAwardWinner | null;
   divisionWinners: SeasonHistoryDivisionWinner[];
+  /**
+   * League champions, one per league, from the league championship SERIES.
+   *
+   * NOT derived from `divisionWinners`. That was the bug: mapping two division winners onto one
+   * league key in a `Map` keeps the last write, so the archived "league champion" was whichever
+   * division came last in `DIVISION_ORDER`. Settlement now reads this instead, and a league with no
+   * completed series is simply absent -- which settles those bets void rather than paying a club that
+   * did not win anything.
+   *
+   * Optional because seasons archived before this field existed do not have it, and a missing entry
+   * has to read as "unknown" rather than as a guess.
+   */
+  leagueWinners?: SeasonHistoryLeagueWinner[];
 }

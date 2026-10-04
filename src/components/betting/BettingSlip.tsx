@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { ChevronRight, Receipt, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { MEDIA_BY_ID } from '../../data/media';
+import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import { formatAmerican } from '../../lib/markets';
 import { MIN_STAKE, MAX_STAKE, settleReturn, STARTING_BALANCE, type PlacedBet } from '../../lib/wallet';
 import type { WalletSummary } from './BettingHub';
@@ -179,7 +179,7 @@ export const BettingSlip: React.FC<{
                         className="h-4 w-4 object-contain"
                       />
                       <span className="t-caption text-[var(--color-warn)]">
-                        At {MEDIA_BY_ID[entry.backedMedia].outlet}&rsquo;s price, not the house line
+                        At {forecasterName(entry.backedMedia)}&rsquo;s price, not the house line
                       </span>
                     </div>
                   )}
@@ -217,13 +217,33 @@ export const BettingSlip: React.FC<{
                     </RetroButton>
                     <RetroButton variant="ghost" onClick={onClear}>Clear</RetroButton>
                   </div>
-                  {notice && (
-                    <p className="t-caption mt-2 text-[var(--color-warn)]" role="status">{notice}</p>
-                  )}
                 </div>
               ) : (
                 <p className="t-body border-b border-[var(--color-chrome-lo)] p-4 text-[var(--color-ink-dim)]">
                   Press any price to add it here. Nothing is wagered until you confirm.
+                </p>
+              )}
+
+              {/*
+                THE NOTICE, AT PANEL LEVEL RATHER THAN INSIDE THE ENTRY.
+
+                This used to sit inside the `entry ? ... : ...` branch, which meant it was only ever
+                visible while a bet was loaded. That is fine for "Stake must be between 10 and
+                5000" -- there is always an entry when the stake is wrong -- and it quietly hides
+                every refusal that happens with NO entry, which is exactly what a closed market
+                produces: `select` refuses before it sets the slip, so the manager is left looking at
+                an empty slip that says nothing.
+
+                A refusal the manager cannot read is not a refusal, it is a button that silently did
+                nothing. So it renders whatever the panel holds, and the empty-state line above is
+                where it lands when there is no entry.
+              */}
+              {notice && (
+                <p
+                  className="t-caption border-l-[3px] border-l-[var(--color-warn)] bg-[var(--color-sunken)] px-3 py-2 text-[var(--color-warn)]"
+                  role="status"
+                >
+                  {notice}
                 </p>
               )}
 
@@ -273,7 +293,7 @@ export const BettingSlip: React.FC<{
                           {bet.backedMedia && (
                             <img
                               src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
-                              alt={MEDIA_BY_ID[bet.backedMedia].outlet}
+                              alt={forecasterName(bet.backedMedia)}
                               title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
                               className="h-4 w-4 object-contain"
                             />

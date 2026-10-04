@@ -793,3 +793,77 @@ body {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
+
+/* ============================================================================
+   THE OUTLET PALETTE, DECLARED WHERE IT CANNOT BE TREE-SHAKEN.
+
+   Every forecaster's accent now exists as a real CSS custom property.
+
+   WHAT WAS WRONG. All nine accents were declared in the `@theme` block above, and
+   Tailwind v4 only emits a theme variable when something generates a utility from
+   it. Seven of the nine were referenced only from inline `style` attributes --
+   `style={{ background: 'var(--color-media-sallow)' }}` -- which Tailwind's scanner
+   never sees, because an inline style is not a utility class. So those seven
+   variables were never emitted, and every `var(--color-media-sallow)` in the app
+   resolved to nothing. Measured in the browser: of the nine live forecasters, only
+   `glorest` emitted a value. The other eight computed to `rgba(0, 0, 0, 0)`.
+
+   WHY THAT IS WORSE THAN IT LOOKS. These are not decorative. The accent IS an
+   outlet's identity -- it is what colour-codes that forecaster's border, their text
+   and their dot on a prop strip. Seven of nine outlets were rendering with no colour
+   at all, which is a large part of why the outlet-heavy screens read as noise: the
+   colour that was supposed to let a manager sort publishers at a glance was simply
+   absent. The props dot-strip drew nine 6px cells and exactly one of them was
+   painted.
+
+   WHY A PLAIN `:root` AND NOT `@theme static`. Marking the whole `@theme` block
+   static would emit every token in the design system rather than the nine at issue,
+   which is a far larger change to make as a side effect of a colour bug. Declaring
+   these nine in ordinary CSS puts them somewhere the bundler has no reason to
+   remove. The values are identical to the `@theme` declarations, so nothing
+   changes for the two that did work; this only makes the other seven exist.
+
+   The `-dim` and `-hi` variants come with them because they are used by the same
+   callers and were equally missing.
+
+   `shinonome` is deliberately absent. That forecaster was removed, and leaving a
+   palette entry for a publisher who no longer exists is how a colour ends up looking
+   assigned when it is not.
+   ============================================================================ */
+:root {
+  --color-media-hollis:     #0876fc;
+  --color-media-hollis-hi:  #3e94fd;
+  --color-media-hollis-dim: rgba(8, 118, 252, 0.18);
+
+  --color-media-glorest:     #ed2012;
+  --color-media-glorest-hi:  #f3655b;
+  --color-media-glorest-dim: rgba(237, 32, 18, 0.18);
+
+  --color-media-sharply:     #c00dfc;
+  --color-media-sharply-hi:  #d55dfd;
+  --color-media-sharply-dim: rgba(192, 13, 252, 0.18);
+
+  --color-media-sallow:   #12a5a5;
+  --color-media-sallow-hi:#3fd6d6;
+  --color-media-sallow-dim: rgba(18, 165, 165, 0.18);
+
+  --color-media-jardins:  #3fbf3f;
+  --color-media-jardins-hi:#6ee06e;
+  --color-media-jardins-dim: rgba(63, 191, 63, 0.18);
+
+  --color-media-boyle:    #e08a1e;
+  --color-media-boyle-hi: #f5b04a;
+  --color-media-boyle-dim: rgba(224, 138, 30, 0.18);
+
+  --color-media-mussad:   #7b5cf0;
+  --color-media-mussad-hi:#a68cff;
+  --color-media-mussad-dim: rgba(123, 92, 240, 0.18);
+
+  --color-media-wardley:  #787600;
+  --color-media-wardley-hi:#b8b52e;
+  --color-media-wardley-dim: rgba(120, 118, 0, 0.18);
+
+  --color-media-scintilla:  #ef77c2;
+  --color-media-scintilla-hi:#e8a3fa;
+  --color-media-scintilla-dim: rgba(239, 119, 194, 0.18);
+}

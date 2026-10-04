@@ -109,14 +109,22 @@ check(
     : 'Hoani is not in the registry at all.',
 );
 
-// -- 4. HIS SEVERITY GATE IS SCINTILLA'S, CARRIED FORWARD UNCHANGED ------------------------
+// -- 4. HIS SEVERITY FLOOR IS 55, SCINTILLA'S, CARRIED FORWARD UNCHANGED -------------------
 /*
   The gate is deliberately not re-derived. A fresh severity threshold would be a new decision dressed
-  as a handover, and it would quietly change which events reach him. `HOANI_MIN_SEVERITY` and
-  `SCINTILLA_MIN_SEVERITY` are both 55 by construction in the source; this asserts the resulting
-  behaviour agrees by asking whether two personas with the same threshold respond identically to a
-  synthetic sweep of severities.
+  as a handover, and it would quietly change which events reach him.
+
+  This used to be asserted by comparing Hoani's gate against Scintilla's, sweep by sweep. That
+  comparison is no longer possible: Scintilla is a forecaster now, his `HeadlinerProfile` is deleted,
+  and there is nothing left to compare against. So the claim has been restated in the only form that
+  survives his departure -- Hoani's gate is 55, which is the number Scintilla set -- and the sweep is
+  kept because a bare constant comparison would not notice the `eligible` function drifting away
+  from the constant it is supposed to be reading.
+
+  Provenance now lives in the comment on `HOANI_MIN_SEVERITY` in `src/logic/headliners.ts`. Behaviour
+  is proved in `tools/verifyHeadlinerPipeline.ts`, which checks the boundary from both sides.
 */
+const SCINTILLA_FLOOR = 55;
 const sweep = [0, 25, 54, 55, 56, 80, 100];
 const gateOf = (p: typeof hoani) => (p?.eligible
   ? sweep.map((severity) => {
@@ -132,20 +140,18 @@ const gateOf = (p: typeof hoani) => (p?.eligible
   : []);
 
 const hoaniGate = gateOf(hoani);
-const scintilla = HEADLINERS.find((p) => p.id === 'scintilla');
-const scintillaGate = gateOf(scintilla ?? undefined);
-const gatesMatch = hoaniGate.length > 0
-  && hoaniGate.every((v, i) => v === scintillaGate[i]);
+const expectedGate = sweep.map((severity) => severity >= SCINTILLA_FLOOR);
+const gatesMatch = hoaniGate.length > 0 && hoaniGate.every((v, i) => v === expectedGate[i]);
 
 check(
-  "Hoani's severity gate is Scintilla's, carried forward unchanged",
+  "Hoani's severity floor is 55, Scintilla's, carried forward unchanged",
   gatesMatch,
   gatesMatch
-    ? `Both accept the same severities across a sweep of ${sweep.join('/')}. The gate is what keeps him on the `
-      + 'maths -- an event below the floor has nothing in it for him to interrogate -- so re-deriving it would '
-      + 'have been a new decision wearing a handover\'s clothes.'
-    : `Gate mismatch across ${sweep.join('/')}: Hoani ${JSON.stringify(hoaniGate)} against Scintilla `
-      + `${JSON.stringify(scintillaGate)}. The brief was that the gate is his, not a new one.`,
+    ? `Accepts exactly the severities at or above ${SCINTILLA_FLOOR} across a sweep of ${sweep.join('/')}. `
+      + 'The gate is what keeps him on the maths -- an event below the floor has nothing in it for him to '
+      + 'interrogate -- so re-deriving it would have been a new decision wearing a handover\'s clothes.'
+    : `Gate mismatch across ${sweep.join('/')}: Hoani ${JSON.stringify(hoaniGate)} against the carried-forward `
+      + `floor of ${SCINTILLA_FLOOR} ${JSON.stringify(expectedGate)}.`,
 );
 
 // -- 5. EVERY PERSONA HAS A VOICE BANK ------------------------------------------------------

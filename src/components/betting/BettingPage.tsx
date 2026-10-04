@@ -10,7 +10,7 @@ import {
   buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildWorldSeriesMarkets, buildAwardMarket,
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
-import { leagueSeriesLosers, remainingRegularSeasonGames } from '../../lib/futuresRisk';
+import { leagueSeriesLosers, lockedRaces, remainingRegularSeasonGames } from '../../lib/futuresRisk';
 import { projectSeasonCalendar } from '../../lib/marketDates';
 import { isPlayoffGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
@@ -62,6 +62,19 @@ interface BettingPageProps extends MediaReadInput {
   currentDate: string;
   /** The shell's slip, so the page and the panel cannot disagree. */
   slip: BettingSlipState;
+  /**
+   * True once every scheduled game is played.
+   *
+   * Present for ONE purpose: closing the award races. `useSeasonLifecycle` writes the season
+   * archive on this same transition, and the archive is what settles award bets, so this is the
+   * exact instant an MVP becomes decided -- not the awards date on the calendar, which is a
+   * projection and can disagree with when the money actually moves.
+   *
+   * Passed in rather than derived from `games` here because the shell already owns the real
+   * definition, including the offseason cases. A second derivation would be a second answer to
+   * "is the season over", and the two would disagree exactly when it matters.
+   */
+  seasonComplete: boolean;
 }
 
 /**
@@ -261,15 +274,44 @@ const BettingPage: React.FC<BettingPageProps> = ({
    */
   const eliminatedFromLeague = useMemo(() => leagueSeriesLosers(games), [games]);
 
+  /*
+   * RACES THAT ALREADY HAVE A WINNER, computed once for all three builders.
+   *
+   * Built here rather than inside each of `buildWorldSeriesMarkets`, `buildLeagueMarkets` and
+   * `buildDivisionMarkets`, because those are three separate calls: a closure derived inside each
+   * would be three implementations that agree today and drift the first time one of them is edited.
+   *
+   * `games` is passed because of the league and title races. Standings decide the DIVISIONS and
+   * cannot decide the other two at all -- a league champion and a world champion are both decided by
+   * games won in a series, and no win total produces either. A board built from standings alone
+   * therefore stayed sellable for the whole playoffs, which was the second half of the exploit.
+   */
+  const locked = useMemo(
+    () => lockedRaces({ teams: input.teams, gamesRemainingByTeamId, games }),
+    [input.teams, gamesRemainingByTeamId, games],
+  );
+
   const futures = useMemo<FieldMarket[]>(() => [
     // The title FIRST, because it is the one season-long bet a manager actually
     // wants and it was missing entirely. Everything below it is a narrower race.
     ...buildWorldSeriesMarkets({
-      teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague,
+      teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked,
     }),
-    ...buildLeagueMarkets({ teams: input.teams, scoreBy }),
-    ...buildDivisionMarkets({ teams: input.teams, scoreBy }),
-  ], [input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague]);
+    /*
+     * BOTH CALLS NEED THE STANDINGS.
+     *
+     * `buildWorldSeriesMarkets` was passed `gamesRemainingByTeamId` and `eliminatedFromLeague`;
+     * the two grouped builders were not. That is not a cosmetic difference: `groupMarkets` computes
+     * its contender set ONLY when `gamesRemainingByTeamId` is present, because with no standings
+     * there is nothing to decide elimination from. Omitting it left every division and league race
+     * with `contenders === null`, so `eliminated` was `undefined` on every outcome and every club
+     * stayed bettable -- which is exactly what the championship tab had already fixed.
+     *
+     * Passing them here is what makes the three kinds agree with each other.
+     */
+    ...buildLeagueMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked }),
+    ...buildDivisionMarkets({ teams: input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, lockedRaces: locked }),
+  ], [input.teams, scoreBy, gamesRemainingByTeamId, eliminatedFromLeague, locked]);
 
   const awards = useMemo<FieldMarket[]>(() => {
     const awardInputs = {
@@ -284,10 +326,18 @@ const BettingPage: React.FC<BettingPageProps> = ({
       ['batting_mvp', 'Batting MVP', buildAwardsForBoard('batting', awardInputs, 8)],
       ['pitching_mvp', 'Pitching MVP', buildAwardsForBoard('pitching', awardInputs, 8)],
     ];
+    /*
+     * `decided` is the whole point of passing `seasonComplete` down here.
+     *
+     * Before this the award board carried no closure at all, so the race stayed open after the MVP
+     * had been named and archived -- which is the same exploit as the ballot, arriving by the back
+     * door. Backing the player who had just been announced is not a bet; it is a read of the
+     * settlement record.
+     */
     return built
       .filter(([, , entries]) => entries.length > 0)
-      .map(([key, title, entries]) => buildAwardMarket(key, title, entries));
-  }, [input.playerState, teamById]);
+      .map(([key, title, entries]) => buildAwardMarket(key, title, entries, { decided: input.seasonComplete }));
+  }, [input.playerState, input.seasonComplete, teamById]);
 
   return (
     <section className="space-y-5">

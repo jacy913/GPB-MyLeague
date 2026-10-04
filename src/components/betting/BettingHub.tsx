@@ -1,16 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
 import type { MediaId } from '../../data/media';
-import { MEDIA_PROFILES, MEDIA_BY_ID } from '../../data/media';
-import type { FieldMarket, LineMarket } from '../../lib/markets';
-import { formatAmerican, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
-import { futuresRiskRead, type FuturesRiskTier } from '../../lib/futuresRisk';
+import { MEDIA_PROFILES, MEDIA_BY_ID, forecasterName } from '../../data/media';
+import type { FieldMarket, LineMarket, MarketKind } from '../../lib/markets';
+import { formatAmerican, lockedMarketRefusal, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
+import { futuresRiskRead, type FuturesRiskRead, type FuturesRiskTier } from '../../lib/futuresRisk';
 import macrobetLogo from '../../assets/macrobetlogo-trim.png';
-import { formatResolutionDate, resolveDateFor, type SeasonCalendar } from '../../lib/marketDates';
+import { buildFutureTabs } from './futureTabs';
+import { FutureTabStrip } from './FutureTabStrip';
+import { buildPropRows, type PropRowModel } from './propRows';
+import { PropCard } from './PropCard';
+import { AnchoredPanel } from './AnchoredPanel';
+import { OutletPack } from './OutletPack';
+import { formatResolutionDate, resolveDateFor, type ResolutionBasis, type SeasonCalendar } from '../../lib/marketDates';
 import type { GameLine } from '../../lib/mediaOdds';
-import { propMarketTitle, propSelectionLabel } from '../../lib/mediaProps';
 import { MAX_PROPS_PER_OUTLET } from '../../lib/mediaProps';
-import { propSidePrices, type PropMarket, type PropSide, type PropStatKey, type PropTemperament } from '../../lib/playerProps';
+import type { PropMarket, PropStatKey, PropTemperament } from '../../lib/playerProps';
 import type { PlacedBet, BetKind, BetStatus, Selection } from '../../lib/wallet';
 import { MAX_STAKE, MIN_STAKE, STARTING_BALANCE, settleReturn } from '../../lib/wallet';
 import type { PropFocus } from '../../hooks/useBettingSlip';
@@ -92,7 +97,20 @@ interface BettingSlateProps {
 export const BettingHub: React.FC<BettingSlateProps> = ({
   view, onView, lines, moneyline, propBoards, focusedProp, futures, awards, teams, calendar, slateDate, bets, onPlace, balance,
 }) => {
-  const propCount = MEDIA_PROFILES.reduce((sum, profile) => sum + (propBoards.get(profile.id)?.length ?? 0), 0);
+  /*
+   * THE TAB COUNTS PROPS, NOT OUTLET OPINIONS.
+   *
+   * It used to sum every outlet's board, which counted one prop once per outlet that published it
+   * -- "Props (135)" over a board holding 69 distinct markets. That inflated number was the
+   * overcount this rebuild exists to remove, and a count is the first thing anyone checks, so an
+   * inflated one undoes the fix from the tab strip alone.
+   *
+   * `propRows` is built ONCE, here, and both this label and the board below read it. They are
+   * therefore the same array rather than two calculations that happen to agree today. The outlet
+   * opinions the count used to tally are still there, just behind each card's disclosure, where
+   * they belong.
+   */
+  const propRows = useMemo(() => buildPropRows(propBoards), [propBoards]);
 
   return (
     <section className="space-y-5">
@@ -137,7 +155,7 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
           onChange={(value) => onView(value as BettingView)}
           options={[
             { value: 'slate', label: 'Next Slate' },
-            { value: 'props', label: propCount > 0 ? `Props (${propCount})` : 'Props' },
+            { value: 'props', label: propRows.length > 0 ? `Props (${propRows.length})` : 'Props' },
             { value: 'futures', label: 'Season Futures' },
             { value: 'awards', label: 'Awards' },
           ]}
@@ -159,7 +177,7 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
       {view === 'slate' && <SlateView lines={lines} moneyline={moneyline} onPlace={onPlace} balance={balance} />}
       {view === 'props' && (
         <PropsView
-          boards={propBoards}
+          rows={propRows}
           focusedProp={focusedProp}
           onPlace={onPlace}
           balance={balance}
@@ -250,6 +268,16 @@ const GameBetCard: React.FC<{
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ game, total, balance, onPlace }) => {
   /*
+    * The forecaster popover for THIS game.
+    *
+    * Local state, as on the futures card: the panel is drawn beside the card that opened it, so
+    * nothing above this needs to know which game is open. Cleared when the game changes, for the same
+    * reason -- a different fixture is a different set of prices.
+    */
+  const [packOpen, setPackOpen] = useState(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => setPackOpen(false), [game.gameId]);
+  /*
     ONE HALF OF THE TILE, AND IT IS THE BIGGEST THING ON THE CARD.
 
     This used to be a small `size="sm"` button holding a 24px crest and a 17px price --
@@ -288,7 +316,7 @@ const GameBetCard: React.FC<{
       variant="default"
       size="sm"
       disabled={balance < MIN_STAKE}
-      className="w-full flex-col gap-3 py-5"
+      className="w-full flex-col gap-2.5 py-4"
       aria-label={`Back ${team.city} ${formatAmerican(price)}`}
       title={`${team.city} ${team.name}`}
       onClick={() => onPlace({
@@ -302,7 +330,19 @@ const GameBetCard: React.FC<{
         resolvesOn: game.date,
       })}
     >
-      <TeamLogo team={team} sizeClass="h-14 w-14" />
+      {/*
+        h-16, UP FROM h-14.
+
+        The user's instruction on this card was to keep the crests the same size or bigger, after
+        an earlier pass shrank the marks on the props board and lost the thing that identifies a
+        club at a glance. So this is a deliberate step up rather than a redesign: 56px to 64px.
+
+        `py-5` to `py-4` alongside it. A bigger crest inside the same padding would have made every
+        card on a fifteen-game slate taller, and the board's density is the thing most likely to be
+        complained about next -- so the extra 8px of crest is taken out of the button's own padding
+        rather than added to the card. Net height is roughly unchanged and the mark is more legible.
+      */}
+      <TeamLogo team={team} sizeClass="h-16 w-16" />
       <span className="t-stat-hero">{formatAmerican(price)}</span>
     </RetroButton>
   );
@@ -327,17 +367,22 @@ const GameBetCard: React.FC<{
       Without that the pitchfork heights float and the row reads as ragged.
     */
     <Panel
+      ref={cardRef}
       className="flex flex-col overflow-hidden"
       style={{ borderLeft: `3px solid ${NEUTRAL_BORDER}` }}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 pt-3">
         <h2 className="sr-only">{game.awayTeam.city} at {game.homeTeam.city}</h2>
         <span className="t-caption text-[var(--color-ink-dim)]">{formatResolutionDate(game.date)}</span>
-        {game.disagreement >= 0.12 && (
-          <span className="t-caption text-[var(--color-neutral-hi)]">
-            outlets split
-          </span>
-        )}
+        {/*
+          NO "outlets split" CHIP.
+
+          It was two unexplained words sitting in the corner of the card, and a manager had no way to
+          turn it into a number. What it meant is `disagreement >= 0.12` -- the forecasters are at
+          least twelve points apart on this game -- and that fact is now stated in the footer in the
+          units it is actually measured in, with the outlier named. So the signal survives, it is just
+          finally legible, and it lives next to the strip it belongs to rather than floating alone.
+        */}
       </div>
 
       {/*
@@ -374,33 +419,81 @@ const GameBetCard: React.FC<{
         Second, the row is ONE line. Label, three mark+price pairs, house price, spread.
         No wrapping second line, no second label row.
 
-        THE LABEL SAYS WHICH SIDE. `game.odds` is each outlet's posted price for the AWAY
-        club only (`GameLine.odds` is documented as exactly that), so an unlabelled row
-        of three prices under a tile showing two would be genuinely ambiguous -- a reader
-        could take them for the home side. "Away, per outlet" is the honest label and it
-        costs five words.
+        THE LABEL SAYS WHICH TEAM. `game.odds` is each forecaster's posted price for the
+        VISITING club only (`GameLine.odds` is documented as exactly that), so nine unlabelled
+        prices under a tile showing two would be genuinely ambiguous -- a reader could take
+        them for either side. The strip names the club, which is clearer than "away" and also
+        tells the reader which of the two crests is being priced.
+      */}
+      {/*
+        THE FORECASTER STRIP. Nine dots, and nothing else.
+
+        This used to print a mark and a price for all nine forecasters, in the tile's footer, on
+        every one of fifteen games -- 135 price cells on a board whose subject is two prices and a
+        total. It is the same fan-out that was removed from the props board and from the futures
+        board, and it was left here last, which is why this tab still looked like the old one.
+
+        The dots carry the only fact the face of the card needs: nine forecasters have an opinion on
+        this game, and these are their colours. The prices are one click away in the popover, sorted
+        widest-disagreement-first so the interesting one is first.
+
+        "Away side" is named because `GameLine.odds` is documented as each outlet's price for the
+        AWAY club only. Nine numbers under a tile showing two prices would otherwise read as a
+        mixture of both sides, and the home side is not in there at all.
       */}
       <div className="mt-auto border-t border-[var(--color-chrome-lo)] px-3 py-2">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-          <span className="t-caption text-[var(--color-ink-faint)]">Away, per outlet</span>
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex shrink-0 items-center gap-[2px]">
             {MEDIA_PROFILES.map((profile) => (
-              <span key={profile.id} className="flex items-center gap-1">
-                <img
-                  src={MEDIA_MARKS_SQUARE[profile.id]}
-                  alt=""
-                  aria-hidden="true"
-                  className="h-4 w-4 object-contain"
-                />
-                <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
-                  {formatAmerican(game.odds[profile.id])}
-                </span>
-              </span>
+              <span
+                key={profile.id}
+                className="h-[6px] w-[6px] shrink-0"
+                style={{ background: `var(--color-media-${profile.accent})` }}
+                aria-hidden="true"
+              />
             ))}
-          </div>
-          <span className="t-caption tabular-nums text-[var(--color-ink-faint)]">
-            House {formatAmerican(game.houseOdds)} · {Math.round(game.disagreement * 100)} pts apart
           </span>
+          {/*
+            NAMED IN PLAIN WORDS, WITH NO JARGON AND NO "AWAY".
+
+            This said "Away side · 11 pts apart", which fails twice. "Away" is a convention of the
+            sport rather than a word -- it means the visiting club -- and a manager who does not
+            already know that learns nothing from it. And the card shows two crests and no team
+            names, so nothing identified which of the two was being priced.
+
+            So it names the club. "Reno · forecasters differ by 11 points" is a sentence a newcomer
+            can read without being told anything about baseball, and it doubles as the answer to
+            "which crest is which" -- the one named is the crest on the left.
+
+            The forecasters publish one price per game, for the visiting club only, and the home
+            price is not simply its negation, so there is genuinely only one side to report. That
+            limit is stated in the popover rather than compressed into a word here.
+          */}
+          <span
+            className="t-caption truncate"
+            style={{ color: game.disagreement >= 0.12 ? 'var(--color-warn)' : 'var(--color-ink-faint)' }}
+            title={
+              `All ${MEDIA_PROFILES.length} forecasters price ${game.awayTeam.city} to win, and they`
+              + ` disagree by ${Math.round(game.disagreement * 100)} points.`
+              + ` ${forecasterName(game.outlier)} is furthest from the others.`
+            }
+          >
+            {game.awayTeam.city} · differ by {Math.round(game.disagreement * 100)} points
+          </span>
+          <RetroButton
+            variant="ghost"
+            size="sm"
+            onClick={() => setPackOpen((open) => !open)}
+            aria-expanded={packOpen}
+            aria-controls={`game-pack-${game.gameId}`}
+            title="Every forecaster's own price on the away side"
+            className="ml-auto shrink-0"
+          >
+            {packOpen
+              ? <ChevronDown className="h-3 w-3" aria-hidden="true" />
+              : <ChevronRight className="h-3 w-3" aria-hidden="true" />}
+            Pack
+          </RetroButton>
         </div>
       </div>
 
@@ -476,6 +569,34 @@ const GameBetCard: React.FC<{
           </div>
         </div>
       )}
+
+      {/*
+        THE FORECASTER POPOVER, beside this card.
+
+        `GameLine.odds` holds each forecaster's posted price for the AWAY club only -- there is no
+        per-outlet home price in the model -- so the panel is scoped to the away side and says so. That
+        is the honest limit of what the nine forecasters published for a single game, and claiming
+        otherwise would mean inventing a home number nobody posted.
+
+        The house price is passed through so the panel can state what the consensus actually resolved
+        to, which is what makes the nine numbers an explanation of the -119 on the card rather than a
+        list that happens to sit near it.
+      */}
+      <AnchoredPanel
+        id={`game-pack-${game.gameId}`}
+        anchor={packOpen ? cardRef.current : null}
+        onClose={() => setPackOpen(false)}
+        label={`Every forecaster's price on ${game.awayTeam.city} winning`}
+      >
+        <OutletPack
+          subject={`${game.awayTeam.city} to win`}
+          odds={game.odds}
+          consensusProbability={game.consensusProbability}
+          outlier={game.outlier}
+          houseOdds={game.houseOdds}
+          footnote={`The forecasters publish one price per game -- for ${game.awayTeam.city}, the visiting club -- so these nine are all about that one team.`}
+        />
+      </AnchoredPanel>
     </Panel>
   );
 };
@@ -541,7 +662,7 @@ const TotalMarketCard: React.FC<{
             ))}
           </div>
           <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
-            House line {market.houseLine.toFixed(1)} including margin, {market.spread.toFixed(1)} runs apart across the three.
+            House line {market.houseLine.toFixed(1)} including margin, {market.spread.toFixed(1)} runs apart across the pack.
           </p>
         </div>
 
@@ -649,33 +770,69 @@ const RISK_TIER_ACCENT: Record<FuturesRiskTier, string> = {
  */
 const NEUTRAL_BORDER = 'var(--color-neutral)';
 
+/**
+ * WHEN WE KNOW, PER KIND.
+ *
+ * A futures race is decided at a different point for every kind, and the board has to say which:
+ *
+ *   division    the last day of the REGULAR SEASON. A division winner is a division leader, and
+ *               that is settled the moment the final regular-season game is played -- some weeks
+ *               before the World Series.
+ *   league      the end of the LEAGUE CHAMPIONSHIP SERIES, a best-of-seven that finishes before the
+ *               World Series. This is the date the user was looking for.
+ *   world_series the last game of the World Series.
+ *   award       the awards date.
+ *
+ * This used to be `kind === 'award' ? 'season_awards' : 'championship_series'`, which sent every
+ * other kind to the World Series date. So a division advertised 10/31 for a race decided in
+ * September, and a league advertised 10/31 for a series finished in October.
+ *
+ * Total over `MarketKind` rather than partial, so a sixth kind cannot be added without answering
+ * this question. That is the whole value: the failure mode was a chain that handled the one case
+ * somebody remembered and defaulted the rest.
+ *
+ * `moneyline` is here for completeness. No `FieldMarket` is built with that kind -- the slate's
+ * moneyline is a `GameLine` on a different tab -- so the value is unreachable today, and it is
+ * 'game' rather than a guess about the championship.
+ */
+const FUTURES_RESOLUTION_BASIS: Record<MarketKind, ResolutionBasis> = {
+  division: 'regular_season_end',
+  league: 'league_championship',
+  world_series: 'championship_series',
+  award: 'season_awards',
+  moneyline: 'game',
+};
+
 const PropsView: React.FC<{
-  boards: Map<MediaId, PropMarket[]>;
+  /** One row per unique prop, already collapsed from the per-outlet boards. */
+  rows: PropRowModel[];
   focusedProp: PropFocus | null;
   slateDate: string | null;
   balance: number;
   /** The slate's games, so a prop row can name the fixture it belongs to. */
   moneyline: GameLine[];
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ boards, focusedProp, slateDate, balance, moneyline, onPlace }) => {
+}> = ({ rows, focusedProp, slateDate, balance, moneyline, onPlace }) => {
   /*
-   * Scroll the arrived-at row into view.
+   * Scroll the arrived-at prop into view.
    *
-   * Keyed by outlet AND prop, because the same prop is published by every outlet
-   * that picked it and the betting page renders one row per outlet. Keyed by prop
-   * alone, the map keeps only the last row registered -- the bottom one -- and
-   * the manager arrives at the bottom of the page having been sent to a card
-   * they did not click, with the card they did click scrolled off the top.
-   * Measured at 315px above the fold before this was keyed by outlet.
+   * Keyed by prop id ALONE now, and that is a direct consequence of the dedupe. The map used to
+   * be keyed by outlet AND prop, because the page rendered one row per outlet and prop id alone
+   * could not tell those copies apart -- the map kept only the last copy registered and the
+   * manager landed at the bottom of the page, 315px below the card they had actually clicked.
    *
-   * The effect keys on the whole focus, so it fires once per arrival and not on
-   * every render. Keyed on truthiness instead, returning to a prop already looked
-   * at would yank the view away from wherever the manager had since wandered.
+   * There is exactly one card per prop id now, so the id names the card unambiguously and there
+   * is nothing left to disambiguate. The outlet that published it no longer identifies a row; it
+   * is an opinion carried on the one card, which is the whole point of the rebuild.
+   *
+   * The effect keys on the whole focus, so it fires once per arrival and not on every render.
+   * Keyed on truthiness instead, returning to a prop already looked at would yank the view away
+   * from wherever the manager had since wandered.
    */
   const rowRefs = useRef(new Map<string, HTMLDivElement | null>());
   useEffect(() => {
     if (!focusedProp) return;
-    rowRefs.current.get(propRowKey(focusedProp))?.scrollIntoView({ block: 'center' });
+    rowRefs.current.get(focusedProp.propId)?.scrollIntoView({ block: 'center' });
   }, [focusedProp]);
 
   /*
@@ -692,9 +849,15 @@ const PropsView: React.FC<{
     [moneyline],
   );
 
-  const total = MEDIA_PROFILES.reduce((sum, profile) => sum + (boards.get(profile.id)?.length ?? 0), 0);
-
-  if (total === 0) {
+  /*
+   * Empty is empty.
+   *
+   * This used to total the per-outlet boards, because a single non-empty board meant there was
+   * something to show. With rows already collapsed, the test is simply "are there any" -- and it
+   * says the same thing, one stage later, for the same reason: a row exists if and only if some
+   * outlet published its prop.
+   */
+  if (rows.length === 0) {
     return (
       <Panel className="p-6">
         <p className="t-body text-[var(--color-ink-dim)]">
@@ -707,284 +870,61 @@ const PropsView: React.FC<{
   }
 
   /*
-    * THE OUTLET PANELS ARE THE COLUMNS. Not a grid of cards inside three stacked panels.
-    *
-    * I got this wrong once. The user's first request was "one column per media outlet" and I
-    * read it as "one card per row inside each outlet's panel" -- so each panel became a single
-    * column of full-width cards and the three panels stacked down the page. That is a column
-    * per outlet in the only sense that was already true, and it is not what was asked for.
-    *
-    * What was asked for is three panels SIDE BY SIDE, one per outlet, each holding that
-    * outlet's props in a single column of its own. So the three columns are siblings in one
-    * grid, and a reader comparing outlets compares them by looking left and right rather than
-    * by scrolling. That is the whole reason to show three outlets: they disagree, and a
-    * disagreement you have to scroll to see is a disagreement you will not see.
-    *
-    * `items-start` so a short outlet's column does not stretch to match a full one -- a
-    * fifteen-prop panel next to a nine-prop panel is information, and padding the shorter one
-    * out to match would throw that away. The panels are then unequal in height, which is
-    * honest and is the price of comparing them.
-    *
-    * `2xl` rather than `xl` because each column holds a full prop card -- a fixture strip, a
-    * name, a chip, a line, a read and three buttons -- and three of those need more room than
-    * two columns of market cards do.
-    */
-  const visibleOutlets = MEDIA_PROFILES.filter((profile) => (boards.get(profile.id)?.length ?? 0) > 0);
+   * THE FIXTURE A PROP BELONGS TO, OR NULL.
+   *
+   * Resolved from the slate moneyline above rather than a second schedule source, so a prop
+   * cannot name a fixture that disagrees with the one the slate shows. Null when the game has
+   * dropped off the slate since the outlet published it -- the card then says so in words,
+   * because a prop with a date and no fixture is still placeable and still needs its settlement
+   * stated.
+   *
+   * The whole `GameLine` is passed, not a formatted string, because the card paints two crests
+   * and needs both clubs. A `string` prop here is precisely what would quietly remove them.
+   */
+  const fixtureFor = (row: PropRowModel): GameLine | null => fixtureById.get(row.market.gameId) ?? null;
 
+  /*
+    * THE CAPTION DESCRIBES THE PRICE, NOT THE LAYOUT.
+    *
+    * It used to open with "in its own column" because the outlets were the columns. They are not
+    * now: one card per prop, with the publishing outlets as a dot strip and their individual reads
+    * behind the Outlets disclosure. Everything it still says about the price is unchanged, and the
+    * house line is still built from the same consensus over the same pool -- only the presentation
+    * moved.
+    *
+    * The "N outlets published this" line is per card rather than here, because it is a fact about
+    * one prop and a fact that differs from prop to prop.
+    */
   return (
     <div className="grid gap-4">
       <p className="t-caption px-1 text-[var(--color-ink-faint)]">
-        Each outlet publishes up to {MAX_PROPS_PER_OUTLET} props a day, in its own column. The border
-        says how that outlet rates it: green for a prop its own read says lands more often than not,
-        orange for one it expects to lose. Prices are the mean of the three published probabilities plus
-        the margin.
+        Each outlet publishes up to {MAX_PROPS_PER_OUTLET} props a day, and every outlet has already
+        said its piece on some of the same ones. One card per prop, priced at the house. The dots
+        show which outlets published it and the Outlets button opens their individual reads, widest
+        disagreement first. Prices are the confidence-weighted consensus of every published
+        probability, plus the margin, so a better-calibrated outlet moves the line further than a
+        worse one. The border says how the house rates it: green for one it reads as landing more
+        often than not, orange for one it expects to lose.
       </p>
 
-      <div className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-        {visibleOutlets.map((profile) => {
-          const markets = boards.get(profile.id) ?? [];
-          if (markets.length === 0) return null;
-          return (
-            <Panel key={profile.id} className="overflow-hidden">
-            <div
-              className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4"
-              style={{ borderLeft: `3px solid var(--color-media-${profile.accent})` }}
-            >
-              <div className="flex min-w-0 items-center gap-2.5">
-                {/*
-                  h-8 rather than h-6, at the user's request for bigger logos.
-
-                  This is the OUTLET panel header, and the mark is the only thing on it that
-                  says which outlet the board below belongs to. At h-6 the mark and the `t-h3`
-                  name beside it were nearly the same size, so the header had no clear primary.
-                  At h-8 the mark leads and the name supports it, which matches how the cards
-                  underneath are read: logo first, then whose number it is.
-                */}
-                <img
-                  src={MEDIA_MARKS_SQUARE[profile.id]}
-                  alt=""
-                  aria-hidden="true"
-                  className="h-8 w-8 object-contain"
-                />
-                <h2 className="t-h3 truncate" style={{ color: `var(--color-media-${profile.accent}-hi)` }}>
-                  {profile.outlet}
-                </h2>
-              </div>
-              <span className="t-caption text-[var(--color-ink-faint)]">
-                {markets.length} of {MAX_PROPS_PER_OUTLET} slots used
-              </span>
-            </div>
-
-            {/*
-          ONE CARD PER ROW INSIDE ITS OUTLET'S COLUMN.
-
-          This was `md:grid-cols-2 2xl:grid-cols-3` -- cards across INSIDE each panel, so three
-          cards wide in a panel that is itself a third of the page. The user asked for one column
-          per outlet, and the two things that means are now both true: the three outlet panels
-          are the three columns, and each holds its cards in a single column of its own.
-
-          The inner grid had to go as well as the outer one. A prop card carries a fixture
-          strip, a player name, a temperament chip, an O/U line, a per-outlet read and three
-          buttons; squeezed into a third of a column those wrap, and the button row -- the part
-          a manager actually acts on -- ends up across three lines with one button orphaned.
-        */}
-        <div className="flex flex-col gap-2 p-3">
-              {markets.map((market) => {
-                const key = propRowKey({ propId: market.propId, mediaId: profile.id });
-                return (
-                  <PropBetRow
-                    key={key}
-                    market={market}
-                    mediaId={profile.id}
-                    rowKey={key}
-                    // Only the clicked copy is ringed. The other outlets' copies of
-                    // the same prop are still on screen, and ringing all of them
-                    // would leave the manager unsure which one to act on.
-                    focused={focusedProp !== null && key === propRowKey(focusedProp)}
-                    balance={balance}
-                    fixture={fixtureById.get(market.gameId) ?? null}
-                    onPlace={onPlace}
-                    registerRef={(node) => rowRefs.current.set(key, node)}
-                  />
-                );
-              })}
-            </div>
-          </Panel>
-          );
-        })}
+      <div className="grid grid-cols-1 items-start gap-2.5 xl:grid-cols-2">
+        {rows.map((row) => (
+          <PropCard
+            key={row.propId}
+            row={row}
+            focused={focusedProp !== null && focusedProp.propId === row.propId}
+            balance={balance}
+            fixture={fixtureFor(row)}
+            onPlace={onPlace}
+            registerRef={(node) => rowRefs.current.set(row.propId, node)}
+          />
+        ))}
       </div>
     </div>
   );
 };
 
-/** Ref key for one row: a prop is only unique within an outlet's board. */
-const propRowKey = (focus: { propId: string; mediaId: MediaId }) => `${focus.mediaId}:${focus.propId}`;
-
-const PropBetRow: React.FC<{
-  market: PropMarket;
-  mediaId: MediaId;
-  rowKey: string;
-  focused: boolean;
-  balance: number;
-  /**
-   * The game this prop belongs to, resolved from the slate's own moneyline list.
-   *
-   * Null when the game is not on the current slate -- a stale board, or a prop on a
-   * fixture that has dropped off the slate since the outlet published it. The strip
-   * degrades to the date alone rather than disappearing, because a prop with a date
-   * and no fixture is still placeable and still needs its resolution stated.
-   */
-  fixture: GameLine | null;
-  onPlace: BettingSlateProps['onPlace'];
-  registerRef: (node: HTMLDivElement | null) => void;
-}> = ({ market, mediaId, rowKey, focused, balance, fixture, onPlace, registerRef }) => {
-  const temperament = TEMPERAMENT[market.temperament[mediaId]];
-  const { Icon } = temperament;
-  const house = propSidePrices(market.consensusProbability);
-  const own = propSidePrices(market.probability[mediaId]);
-  const marketTitle = propMarketTitle(market);
-
-  /**
-   * The outlet's own number, on the side it favours.
-   *
-   * Only offered where the outlet is far enough from the other two for taking
-   * someone's number to be a decision rather than a vote. The same rule the
-   * futures rows use, and deliberately the same threshold: a "fade to theirs"
-   * button on a market where the three agree within two points is a button that
-   * cannot lose money for a reason nobody can see.
-   */
-  const ownSide: PropSide = market.probability[mediaId] >= 0.5 ? 'over' : 'under';
-  const ownPrice = ownSide === 'over' ? own.overPrice : own.underPrice;
-  const canFade = market.spread >= 0.06;
-
-  const place = (side: PropSide, price: number, backed: MediaId | null) => onPlace({
-    kind: 'prop',
-    marketKey: market.gameId,
-    marketTitle,
-    selection: side,
-    selectionLabel: propSelectionLabel(market, mediaId, side),
-    price,
-    line: market.line,
-    backedMedia: backed,
-    resolvesOn: market.date,
-    propStat: market.stat,
-    propPlayerId: market.playerId,
-    propPlayerName: market.playerName,
-    propLine: market.line,
-  });
-
-  return (
-    <div
-      ref={registerRef}
-      // The row's identity, in the DOM as well as in the ref map.
-      //
-      // A prop is published by up to three outlets and rendered once per outlet,
-      // so the props view carries several rows that a prop id alone cannot tell
-      // apart. Without a way to name a row from outside, "the highlight landed on
-      // the wrong copy" is indistinguishable from "the highlight did not land",
-      // and both read as the same 0 from a query. Measured that way already: a
-      // scroll target picked by prop id alone scrolled to the last outlet's copy
-      // with the clicked one 315px above the fold, and the only evidence was
-      // that no row matched.
-      data-prop-row={rowKey}
-      data-focused={focused ? 'true' : undefined}
-      className={`flex flex-col gap-2 border bg-[var(--color-sunken)] p-3 ${
-        focused ? 'ring-2 ring-[var(--color-gold)]' : ''
-      }`}
-      style={{ borderColor: temperament.border, borderLeftWidth: '3px' }}
-    >
-      {/*
-        WHICH GAME, AND WHEN.
-
-        This is the fix for a real gap: the row said a player's name, a stat and a
-        line, and nothing about the fixture or the date. A manager could read a prop,
-        take it, and still not know which game to watch or on what day. The bet record
-        carried `marketKey: market.gameId` and the settlement could find the game --
-        but nothing on screen could.
-
-        The information was never missing. `PropMarket` has carried `gameId` and `date`
-        since the family was built; neither was ever painted. So this is a row that
-        says what it always knew.
-
-        Two crests and a date rather than a text matchup, for the same reason as
-        everywhere else on this screen: the marks identify the fixture in a third of
-        the width, and the city names are still the crests' accessible names.
-
-        The date is on the strip rather than buried in a tooltip because a prop bet
-        resolves when the game is played, which makes the date the second half of the
-        bet's identity. It settles the same night the game does.
-      */}
-      <div className="flex items-center justify-between gap-2 border-b border-[var(--color-chrome-lo)] pb-2">
-        <span className="flex min-w-0 items-center gap-1.5">
-          {fixture ? (
-            <>
-              <TeamLogo team={fixture.awayTeam} sizeClass="h-6 w-6" />
-              <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
-              <TeamLogo team={fixture.homeTeam} sizeClass="h-6 w-6" />
-              <span className="sr-only">
-                {fixture.awayTeam.city} at {fixture.homeTeam.city}
-              </span>
-            </>
-          ) : (
-            <span className="t-caption text-[var(--color-warn)]">Fixture not on this slate</span>
-          )}
-        </span>
-        <span className="t-caption shrink-0 tabular-nums text-[var(--color-ink-dim)]">
-          {formatResolutionDate(market.date)}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <span className="t-stat truncate">{market.playerName}</span>
-        <span
-          className="inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 t-caption"
-          style={{ borderColor: temperament.border, color: temperament.border }}
-        >
-          <Icon className="h-3 w-3" aria-hidden="true" />
-          {temperament.label}
-        </span>
-      </div>
-
-      <p className="t-caption text-[var(--color-ink-dim)]">
-        O/U {market.line} {market.statPlural}
-        {' · '}
-        {MEDIA_BY_ID[mediaId].outlet} reads {Math.round(market.probability[mediaId] * 100)}% over
-        {canFade && ` · ${Math.round(market.spread * 100)}pt from the other two`}
-      </p>
-
-      <div className="mt-auto flex flex-wrap items-center gap-1.5">
-        <RetroButton
-          variant="primary"
-          size="sm"
-          disabled={balance < MIN_STAKE}
-          onClick={() => place('over', house.overPrice, null)}
-        >
-          Over {formatAmerican(house.overPrice)}
-        </RetroButton>
-        <RetroButton
-          variant="default"
-          size="sm"
-          disabled={balance < MIN_STAKE}
-          onClick={() => place('under', house.underPrice, null)}
-        >
-          Under {formatAmerican(house.underPrice)}
-        </RetroButton>
-        {canFade && (
-          <RetroButton
-            variant="ghost"
-            size="sm"
-            disabled={balance < MIN_STAKE}
-            title={`Take ${MEDIA_BY_ID[mediaId].outlet}'s own read of this prop instead of the house line`}
-            onClick={() => place(ownSide, ownPrice, mediaId)}
-          >
-            Fade to theirs
-          </RetroButton>
-        )}
-      </div>
-    </div>
-  );
-};
- /* ------------------------------------------------------------------ *
+/* ------------------------------------------------------------------ *
  * Field markets -- futures and awards
  * ------------------------------------------------------------------ */
 
@@ -1018,11 +958,89 @@ const FieldMarketCard: React.FC<{
    * same inputs would be the same answer today and would be two things to keep in
    * step tomorrow -- and the failure mode is a bet that says it settles on a different
    * day from the one the card advertised when it sold it.
+   *
+   * Per KIND, not for the whole board: see `FUTURES_RESOLUTION_BASIS`. Every non-award kind used
+   * to resolve on the World Series date, so a division advertised 10/31 for a race decided in
+   * September and a league advertised it for a series that finishes earlier.
    */
   const resolvesOn = resolveDateFor(
-    market.kind === 'award' ? 'season_awards' : 'championship_series',
+    FUTURES_RESOLUTION_BASIS[market.kind],
     calendar,
   );
+
+  /*
+   * THE WINNER'S NAME, FOR THE REFUSAL.
+   *
+   * `LockedRace` carries the winner as a KEY, because a key is what matches an outcome and what
+   * settlement can compare. A manager needs a NAME, so it is resolved here against this market's own
+   * outcome list -- the same list the board renders -- rather than from a team table that could
+   * disagree with what is on screen.
+   *
+   * Undefined when the market is open, and undefined again if the key matches no outcome, which is a
+   * board bug rather than a closure. `lockedMarketRefusal` handles a missing name by writing a
+   * sentence that still says what happened, so a mismatch degrades the wording instead of rendering
+   * "undefined has already won".
+   */
+  const lockedWinnerLabel = market.locked
+    ? market.outcomes.find((candidate) => candidate.key === market.locked?.winnerKey)?.label
+    : undefined;
+
+  /*
+    * Which outcome's outlet pack is open. At most one, and null for none.
+    *
+    * Local to the card rather than lifted, because the disclosure is drawn inside this card's
+    * panel and lifting it would mean threading an outlet's identity up to a parent that has no
+    * other business knowing it. It resets when `market` changes, which is the behaviour wanted:
+    * a different market is a different board, and an open pack from the last one is not a thing
+    * the manager asked to keep.
+    */
+  const [openOutlets, setOpenOutlets] = useState<string | null>(null);
+  useEffect(() => setOpenOutlets(null), [market.key]);
+
+  /*
+    * Cell nodes by outcome key, so the popover can anchor to a club rather than to a button.
+    *
+    * A ref map rather than a single ref because only one pack is open at a time but any of the
+    * cells may be the one that opened it, and the map is what remembers which.
+    *
+    * There is deliberately NO effect that clears this map on `market.key`, which is the obvious
+    * thing to add and is wrong. Effects run AFTER React has already attached every ref callback in
+    * the commit, so a `clear()` there deletes the nodes the render just collected and the popover
+    * is handed a null anchor -- which does not throw, it simply never appears. React already calls
+    * each callback with `null` when a cell unmounts, so the map empties itself, and the only
+    * entries that can be looked up are ones for cells that are currently on the board.
+    */
+  const cellRefs = useRef(new Map<string, HTMLDivElement | null>());
+
+  /*
+    * The outcome whose pack is open, resolved once.
+    *
+    * `openOutlets` is a key rather than the outcome itself so that the state stays comparable and
+    * survives a re-render of the market. The lookup can still miss -- a key for an outcome this
+    * market does not have -- so `openOutcome` is nullable and the popover simply has no content
+    * rather than throwing on a stale key.
+    */
+  const openOutcome = openOutlets
+    ? market.outcomes.find((entry) => entry.key === openOutlets) ?? null
+    : null;
+
+  /*
+    * The one risk read this whole board shares, or null when it does not share one.
+    *
+    * Computed from the live outcomes rather than assumed, so a division board that has genuinely
+    * separated shows per-cell badges and only a board that is uniformly one thing collapses to a
+    * single line. `eliminated` rows are excluded: ELIMINATED is a per-club fact and is still drawn
+    * on the cell, so folding them in here would let a dead club decide what the header says.
+    */
+  const oneTier = useMemo(() => {
+    const tiers = new Map<FuturesRiskTier, FuturesRiskRead>();
+    market.outcomes.forEach((outcome) => {
+      if (outcome.eliminated === true) return;
+      const read = futuresRiskRead(market.outcomes, outcome.consensusProbability);
+      tiers.set(read.tier, read);
+    });
+    return tiers.size === 1 ? [...tiers.values()][0] : null;
+  }, [market]);
 
   return (
     <Panel className="overflow-hidden">
@@ -1073,6 +1091,30 @@ const FieldMarketCard: React.FC<{
           )}
         </span>
       </div>
+
+      {/*
+        A RISK TIER THAT SAYS THE SAME THING 32 TIMES IS NOISE.
+
+        The tier is an absolute probability band -- under 5% is a hail mary -- and in April every
+        club in a thirty-two-way race sits near 3%, so all thirty-two rows rendered HAIL MARY. That
+        is not a wrong label. It is the correct reading of a thirty-two-way race in April, and the
+        tier function is deliberately absolute: `tools/verifyFuturesRisk.ts` check 2 pins 0.05 to
+        LONG SHOT and 0.40 to FAVOURITE, and that boundary is not what was wrong.
+
+        What was wrong is printing it on every cell. A badge repeated identically down a whole board
+        is thirty-two chances to read as thirty-two separate claims, and it is the loudest thing in
+        each cell competing with the price, which is the one thing on the cell that matters.
+
+        So it is stated ONCE, here, whenever the whole board agrees. As the season runs and the field
+        compresses the tiers separate, this line disappears and the per-cell badges come back --
+        which is exactly when they have something to say. Both paths are the same rule: say it once
+        if it is one fact, say it per row if it is not.
+      */}
+      {oneTier && (
+        <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 t-caption">
+          {market.outcomes.length} clubs, all {oneTier.label.toLowerCase()} at this stage of the season
+        </p>
+      )}
 
       {/*
         TWO COLUMNS OF CLUBS, NOT A STACK OF FULL-WIDTH ROWS.
@@ -1131,6 +1173,8 @@ const FieldMarketCard: React.FC<{
           return (
             <div
               key={outcome.key}
+              ref={(node) => cellRefs.current.set(outcome.key, node)}
+              data-outcome={outcome.key}
               className="flex flex-col gap-2 border-l-[3px] bg-[var(--color-sunken)] px-3 py-2.5"
               style={{ borderLeftColor: isFavourite ? 'var(--color-gold)' : 'transparent' }}
             >
@@ -1166,7 +1210,7 @@ const FieldMarketCard: React.FC<{
                     VARIANCE, which is the thing the bettor is actually choosing when
                     he takes a hail mary.
 
-                    An eliminated club is shown as such and its Back button is
+                    An eliminated club is shown as such and its At house button is
                     disabled below, because a title that can no longer be won is not a
                     bet at any price.
                   */}
@@ -1202,6 +1246,19 @@ const FieldMarketCard: React.FC<{
                       of the row rather than as another caption competing with the club's name
                       for attention.
                     */
+                    if (oneTier) {
+                      /*
+                        Suppressed when the header is already saying it. Same rule as the header
+                        line: one fact is stated once. `oneTier` is null exactly when the board
+                        carries more than one tier, so this badge reappears on its own as soon as
+                        the field has separated and it has something to differentiate.
+
+                        Returns nothing rather than an empty styled span -- a bordered box with
+                        nothing in it is worse than the badge it replaced.
+                      */
+                      return null;
+                    }
+
                     return (
                       <span
                         className="mt-0.5 inline-flex w-fit items-center border px-1.5 py-0.5 t-caption"
@@ -1220,8 +1277,8 @@ const FieldMarketCard: React.FC<{
 
               {split && (
                 <p className="t-caption text-[var(--color-warn)]">
-                  {MEDIA_BY_ID[outcome.outlier].outlet} is {Math.round(outcome.disagreement * 100)} points
-                  away from the other two
+                  {forecasterName(outcome.outlier)} is {Math.round(outcome.disagreement * 100)} points
+                  away from the pack
                 </p>
               )}
 
@@ -1244,37 +1301,68 @@ const FieldMarketCard: React.FC<{
                 line can change.
               */}
               <div className="flex items-center justify-between gap-2 border-t border-[var(--color-chrome-lo)] pt-2">
-                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                {/*
+                  THE OUTLET STRIP, and what it replaced.
+
+                  This block used to map over all nine forecasters and print a logo AND a price for
+                  every one of them, on every outcome. On the championship tab -- thirty-two clubs,
+                  four across -- that is 288 price cells below the fold of a board whose entire
+                  purpose is comparing the field. The user read it as "all of the outlets are
+                  still there", which is exactly what it was: the same fan-out the props board had,
+                  in the place it had not been cleaned up yet.
+
+                  The strip answers the only question the face of the card should answer, which is
+                  "what does the pack think", and the disclosure holds the individual numbers. Same
+                  shape as `PropCard`, deliberately: one rule for how the pack is summarised, so a
+                  manager learns it once.
+
+                  Every outlet's own price is still shown, still priced from the same
+                  `outcome.odds`, and still placeable from the disclosure. The house line is
+                  untouched -- it is `outcome.houseOdds`, computed over the full pool upstream and
+                  never read anything on this screen.
+                */}
+                <span className="inline-flex shrink-0 items-center gap-[2px]">
                   {MEDIA_PROFILES.map((profile) => (
-                    <span key={profile.id} className="flex items-center gap-1">
-                      <img
-                        src={MEDIA_MARKS_SQUARE[profile.id]}
-                        alt=""
-                        aria-hidden="true"
-                        className="h-5 w-5 object-contain"
-                      />
-                      <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
-                        {formatAmerican(outcome.odds[profile.id])}
-                      </span>
-                    </span>
+                    <span
+                      key={profile.id}
+                      className="h-[6px] w-[6px] shrink-0"
+                      style={{ background: `var(--color-media-${profile.accent})` }}
+                      aria-hidden="true"
+                    />
                   ))}
-                </div>
+                </span>
 
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <OutletDisclosureButton
+                    market={market}
+                    outcome={outcome}
+                    open={openOutlets === outcome.key}
+                    onToggle={() =>
+                      setOpenOutlets((current) => (current === outcome.key ? null : outcome.key))
+                    }
+                  />
                   {split && (
                     <RetroButton
                       variant="ghost"
                       size="sm"
-                      disabled={balance < MIN_STAKE}
-                      title={`Take ${MEDIA_BY_ID[outcome.outlier].outlet}'s own price instead of the house`}
+                      disabled={balance < MIN_STAKE || market.locked !== undefined || outcome.eliminated === true}
+                      title={
+                        market.locked
+                          ? lockedMarketRefusal(market.locked, lockedWinnerLabel)
+                          : outcome.eliminated === true
+                            ? `${outcome.label} can no longer win, so there is nothing to price`
+                            : `Take ${forecasterName(outcome.outlier)}'s own price instead of the house`
+                      }
                       onClick={() => onPlace({
                         kind,
                         marketKey: groupKey,
                         marketTitle: market.title,
                         selection: outcome.key,
-                        selectionLabel: `${outcome.label} (${MEDIA_BY_ID[outcome.outlier].outlet})`,
+                        selectionLabel: `${outcome.label} (${forecasterName(outcome.outlier)})`,
                         price: outcome.odds[outcome.outlier],
                         resolvesOn,
+                        locked: market.locked,
+                        lockedWinnerName: lockedWinnerLabel,
                         backedMedia: outcome.outlier,
                       })}
                     >
@@ -1284,7 +1372,14 @@ const FieldMarketCard: React.FC<{
                   <RetroButton
                     variant="primary"
                     size="sm"
-                    disabled={balance < MIN_STAKE || outcome.eliminated === true}
+                    disabled={balance < MIN_STAKE || market.locked !== undefined || outcome.eliminated === true}
+                    title={
+                      market.locked
+                        ? lockedMarketRefusal(market.locked, lockedWinnerLabel)
+                        : outcome.eliminated === true
+                          ? `${outcome.label} can no longer win, so there is nothing to price`
+                          : `Take the house line on ${outcome.label}`
+                    }
                     onClick={() => onPlace({
                       kind,
                       marketKey: groupKey,
@@ -1293,10 +1388,28 @@ const FieldMarketCard: React.FC<{
                       selectionLabel: outcome.label,
                       price: outcome.houseOdds,
                       resolvesOn,
+                      locked: market.locked,
+                      lockedWinnerName: lockedWinnerLabel,
                       backedMedia: null,
                     })}
                   >
-                    Back
+                    {/*
+                      "At house", NOT "Back".
+
+                      The button was labelled "Back", which on this screen means nothing -- nothing
+                      navigates back from here. It collided with two real things: "Back to Schedule"
+                      in `GameScreen` and the `<RetroButton>Back</RetroButton>` on the game screen,
+                      so a manager who has learned that "Back" means "leave this screen" would
+                      read this one as the opposite of what it does. It takes money.
+
+                      It is named for WHOSE price it takes, because the cell beside it already
+                      paints the other one. The house line is the big gold number at the top right
+                      of the cell, so the button only has to say whose number pressing it commits
+                      to. `Fade` on the left says the same thing about the outlier's number, and
+                      pairing them as "Fade" / "At house" makes the choice explicit: the pack, or
+                      the dissenter.
+                    */}
+                    At house
                   </RetroButton>
                 </div>
               </div>
@@ -1304,9 +1417,79 @@ const FieldMarketCard: React.FC<{
           );
         })}
       </div>
+
+      {/*
+        THE PACK POPOVER, FLOATING BESIDE THE CELL THAT OPENED IT.
+
+        This was a full-width band pinned under the board, so opening a club's numbers sent the
+        answer to the bottom of the page and the manager's eye had to leave the cell and travel
+        there. The reasoning at the time was that a disclosure inside its own cell would resize
+        that cell, resize its row, and leave a hole under the neighbours -- which is true, and is
+        why a popover rather than an in-cell expansion is the fix: it is positioned against the
+        cell's RECTANGLE instead of participating in its layout, so nothing moves.
+
+        Anchored to the cell node, not to the toggle, so the panel sits beside the whole club rather
+        than under a button. One at a time, because `openOutlets` holds a single key and the
+        question being asked is "who disagrees about THIS club".
+      */}
+      <AnchoredPanel
+        id={openOutcome ? outletDetailId(market, openOutcome.key) : undefined}
+        anchor={openOutlets ? cellRefs.current.get(openOutlets) ?? null : null}
+        onClose={() => setOpenOutlets(null)}
+        label={openOutcome ? `Every forecaster's price on ${openOutcome.label}` : 'Outlet prices'}
+      >
+        {openOutcome && (
+          <OutletPack
+            subject={openOutcome.label}
+            odds={openOutcome.odds}
+            consensusProbability={openOutcome.consensusProbability}
+            outlier={openOutcome.outlier}
+            houseOdds={openOutcome.houseOdds}
+            footnote={`${market.outcomes.length} clubs in this race.`}
+          />
+        )}
+      </AnchoredPanel>
     </Panel>
   );
 };
+
+/**
+ * The DOM id linking one cell's disclosure toggle to the panel it opens.
+ *
+ * One function, called from both ends, because these two are a pair and computing the string twice
+ * is how they drift: a toggle whose `aria-controls` names an id nothing carries is a silent
+ * accessibility failure that no assertion on visible text would ever catch. `PropCard` had the
+ * same shape of bug and the same fix.
+ *
+ * Sanitised because both halves are built from market and club keys that carry colons.
+ */
+const outletDetailId = (market: FieldMarket, outcomeKey: string): string =>
+  `outlet-detail-${market.key}-${outcomeKey}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+/**
+ * The disclosure toggle on one outcome cell.
+ *
+ * Named rather than inlined because it is the only piece of the cell that needs to know it lives
+ * in a grid: it carries the `aria-controls` pairing for the panel rendered above.
+ */
+const OutletDisclosureButton: React.FC<{
+  market: FieldMarket;
+  outcome: FieldMarket['outcomes'][number];
+  open: boolean;
+  onToggle: () => void;
+}> = ({ market, outcome, open, onToggle }) => (
+  <RetroButton
+    variant="ghost"
+    size="sm"
+    onClick={onToggle}
+    aria-expanded={open}
+    aria-controls={outletDetailId(market, outcome.key)}
+    title="Every forecaster's own price on this club"
+  >
+    {open ? <ChevronDown className="h-3 w-3" aria-hidden="true" /> : <ChevronRight className="h-3 w-3" aria-hidden="true" />}
+    Pack
+  </RetroButton>
+);
 /**
  * The club lookup every field row needs.
  *
@@ -1352,66 +1535,35 @@ const FieldMarketsView: React.FC<{
   caption: string;
   emptyMessage: string;
   /**
-   * A single heading for a board that is one kind of market.
+   * REQUIRED. The single heading for this board.
    *
-   * Futures gets sections derived from `market.kind` instead, because it mixes three kinds in
-   * one list and the whole point of that tab's change is to stop them being indistinguishable.
-   * Awards passes this because every market on it is already one kind and a heading per race
+   * Futures passes the selected tab's label, because it now shows one market at a time. Awards
+   * passes a fixed heading, because every race on it is already one kind and a heading per race
    * would be four headings in a row saying nothing.
    */
-  groupLabel?: string;
+  groupLabel: string;
   onPlace: BettingSlateProps['onPlace'];
 }> = ({ markets, onPlace, balance, calendar, teams, caption, emptyMessage, groupLabel }) => {
   const teamById = useTeamLookup(teams);
 
   /*
-    * THREE KINDS OF RACE, GROUPED AND LABELLED.
+    * THE CALLER NOW GROUPS; THIS COMPONENT NO LONGER DOES.
 
-    * The user reported that the divisions and leagues "just don't organize well", and the
-    * cause is visible in how this list was built: `BettingPage` concatenates the title, both
-    * league races and all four division races into ONE flat array, and this component rendered
-    * it in a two-column grid in that order.
+    * This used to bucket futures by `market.kind` into three labelled sections -- Championship,
+    * League races, Division races -- because a Platinum League card sat beside an East Division
+    * card, both rendered identically, with nothing saying they were different kinds of competition.
+    * That fix was right and it is superseded.
 
-    * So a Platinum League card sat directly beside an East Division card, both rendered
-    * identically, with nothing on either to say they were different kinds of competition. A
-    * manager could not tell a league title from a division title by looking at it, and the
-    * two carry very different risk -- winning a division is arithmetic, winning a league
-    * requires surviving a series of playoffs.
+    * Futures is now one market per tab (see `buildFutureTabs`), so a division race is one click
+    * away rather than seven scroll positions down a section. The caller passes the single market
+    * plus `groupLabel`, which makes the `kind` bucketing unreachable: both callers now supply the
+    * label, so the branch below always took the first arm.
 
-    * So the markets are bucketed by `kind` and each bucket gets a labelled section. The
-    * section order is Championship, League races, Division races: broadest first, because a
-    * manager reads this board top-down from "who could win it all" to "who is winning their
-    * own division".
-    *
-    * `groupLabel` is optional because AWARDS shares this component and its markets are all
-    * one kind -- there is nothing to group, and a heading per award race would be noise.
+    * Kept as a REQUIRED prop rather than made optional, because an optional one would restore the
+    * dead branch by accident the next time a caller forgets it. The notes moved to the per-kind
+    * caption map in `FuturesView`, where each one sits next to the market it describes.
     */
-  const SECTIONS: Array<{ kind: FieldMarket['kind']; label: string; note: string }> = [
-    {
-      kind: 'world_series',
-      label: 'Championship',
-      note: 'Every club in both leagues. The only market that spans the divisions.',
-    },
-    {
-      kind: 'league',
-      label: 'League races',
-      note: 'Won by finishing top of a league. Eight clubs each.',
-    },
-    {
-      kind: 'division',
-      label: 'Division races',
-      note: 'Won on the season record in your own division. Arithmetic, not a series.',
-    },
-  ];
-
-  const grouped = groupLabel
-    ? [{ label: groupLabel, note: null as string | null, markets }]
-    : SECTIONS
-      .map((section) => ({
-        ...section,
-        markets: markets.filter((market) => market.kind === section.kind),
-      }))
-      .filter((section) => section.markets.length > 0);
+  const grouped = [{ label: groupLabel, note: null as string | null, markets }];
 
   return (
     <div className="grid gap-4">
@@ -1478,17 +1630,60 @@ const FuturesView: React.FC<{
   calendar: SeasonCalendar;
   teams: Team[];
   onPlace: BettingSlateProps['onPlace'];
-}> = ({ markets, onPlace, balance, calendar, teams }) => (
-  <FieldMarketsView
-    markets={markets}
-    balance={balance}
-    calendar={calendar}
-    teams={teams}
-    onPlace={onPlace}
-    caption="Season-long markets settle when a season is archived, not before. Each price is the mean of the three outlets' probabilities; the marks beside it show each outlet's own price, and where one of them sits furthest from the other two it is named. The risk tier is the HOUSE's read of the outcome, not any one outlet's."
-    emptyMessage="No division or league races could be built."
-  />
-);
+}> = ({ markets, onPlace, balance, calendar, teams }) => {
+  const tabs = useMemo(() => buildFutureTabs(markets), [markets]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
+  // Falls back to the default when the selected tab is gone, which happens the moment a season is
+  // archived and this season's eleven markets are replaced by next season's. Without it the panel
+  // would render nothing at all rather than opening on a valid market.
+  const selectedTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+
+  return (
+    <div className="grid gap-3">
+      <FutureTabStrip
+        tabs={tabs}
+        activeId={selectedTab?.id ?? ''}
+        onSelect={setActiveTabId}
+      />
+      {selectedTab && (
+        <FieldMarketsView
+          markets={[selectedTab.market]}
+          balance={balance}
+          calendar={calendar}
+          teams={teams}
+          onPlace={onPlace}
+          caption={FUTURES_CAPTION[selectedTab.kind] ?? FUTURES_CAPTION.default}
+          emptyMessage="No division or league races could be built."
+          groupLabel={selectedTab.label}
+        />
+      )}
+    </div>
+  );
+};
+
+/*
+  PER-KIND CAPTION.
+
+  Each kind of race answers a different question and carries a different risk, and the old single
+  caption had to describe all three at once -- which is also how it went stale when the outlet count
+  changed and the sentence kept saying "three outlets". One caption per kind means each panel
+  explains itself, and the text sits next to the thing it describes.
+*/
+const FUTURES_CAPTION: Record<string, string> = {
+  world_series:
+    'Every club in both leagues, and the only market here that spans the divisions. Settles when '
+    + 'the season is archived. The marks beside each price are the individual outlets\' own numbers, '
+    + "and the risk tier is the HOUSE's read rather than any one outlet's.",
+  league:
+    'Won by finishing top of a league, so this is a race on the season record -- eight clubs each. '
+    + 'Settles when the season is archived.',
+  division:
+    'Won on the season record in your own division, so this is arithmetic rather than a series. '
+    + 'Settles when the season is archived.',
+  default:
+    'Season-long markets settle when a season is archived, not before.',
+};
 
 const AwardsView: React.FC<{
   markets: FieldMarket[];
@@ -1503,7 +1698,7 @@ const AwardsView: React.FC<{
     calendar={calendar}
     teams={teams}
     onPlace={onPlace}
-    caption="The three outlets differ on awards by how hard they regress a hot start toward the field. The metrics forecaster pulls hardest, which makes a narrow leader look narrow; the narrative one barely regresses at all, so it will pay 5-to-1 for a player nobody else has noticed. The crest is the player's club -- these races are keyed by player, so the name beside it is the player and not the team."
+    caption="Outlets differ on awards by how hard they regress a hot start toward the field. The metrics forecaster pulls hardest, which makes a narrow leader look narrow; the narrative one barely regresses at all, so it will pay 5-to-1 for a player nobody else has noticed. The crest is the player's club -- these races are keyed by player, so the name beside it is the player and not the team."
     emptyMessage="No award race is available yet."
     groupLabel="Award races"
   />
@@ -1560,7 +1755,7 @@ export const OpenBets: React.FC<{
               {bet.backedMedia && (
                 <img
                   src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
-                  alt={MEDIA_BY_ID[bet.backedMedia].outlet}
+                  alt={forecasterName(bet.backedMedia)}
                   title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
                   className="h-5 w-5 object-contain"
                 />

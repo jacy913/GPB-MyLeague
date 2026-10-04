@@ -3,7 +3,7 @@ import { Newspaper } from 'lucide-react';
 import type { Game, Team } from '../../types';
 import { isPlayoffGame } from '../../logic/playoffs';
 import gpbLogo from '../../assets/gpb.png';
-import { MEDIA_BY_ID } from '../../data/media';
+import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import type { GameLine } from '../../lib/mediaOdds';
 import { formatAmerican } from '../../lib/markets';
 import { Panel, StatValue, StripeDivider, TeamLogo } from '../ui';
@@ -245,7 +245,7 @@ export const FeaturedGamePanel: React.FC<{
           </div>
           {line.disagreement >= 0.10 && (
             <p className="t-caption mt-4 text-[var(--color-warn)]">
-              {MEDIA_BY_ID[line.outlier].outlet} is {Math.round(line.disagreement * 100)} points
+              {forecasterName(line.outlier)} is {Math.round(line.disagreement * 100)} points
               away from the other two
             </p>
           )}

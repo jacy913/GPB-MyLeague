@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Receipt, TrendingDown, TrendingUp } from 'lucide-react';
 import { formatAmerican } from '../../lib/markets';
 import { formatResolutionDate } from '../../lib/marketDates';
-import { MEDIA_BY_ID } from '../../data/media';
+import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import { STARTING_BALANCE, type PlacedBet } from '../../lib/wallet';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
 import { Panel, StatTable, StatValue, type StatTableColumn, type StatTableRow } from '../ui';
@@ -78,7 +78,7 @@ export const BettingRecordScreen: React.FC<{
             {bet.backedMedia && (
               <img
                 src={MEDIA_MARKS_SQUARE[bet.backedMedia]}
-                alt={MEDIA_BY_ID[bet.backedMedia].outlet}
+                alt={forecasterName(bet.backedMedia)}
                 title={`Acted on ${MEDIA_BY_ID[bet.backedMedia].outlet}'s number`}
                 className="h-5 w-5 shrink-0 object-contain"
               />

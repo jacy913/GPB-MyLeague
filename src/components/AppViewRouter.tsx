@@ -664,6 +664,7 @@ export const AppViewRouter = ({
           seasonHistory={seasonHistory}
           seasonYear={resolveSeasonYear(currentDate, games)}
           slip={bettingSlip}
+          seasonComplete={seasonComplete}
         />
       )}
 
