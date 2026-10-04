@@ -121,8 +121,14 @@ export const OutletPack: React.FC<OutletPackProps> = ({
                 each other, because `innerText` and a screen reader both report inline margins as
                 nothing -- the name has to be its own box to be legibly its own word.
 
-                The outlet is skipped when it is the name, which is Scintilla's case: she publishes
-                under her own name, so printing it twice reads as a stutter rather than as a byline.
+                The outlet is skipped when it is the name, which is Scintilla's case: he publishes
+                under his own name, so printing it twice reads as a stutter rather than as a byline.
+
+                HE, not she. Every other mention in the codebase -- media.ts, mediaReads.ts,
+                mediaMarkets.ts -- has him as "he", and an earlier version of this comment said
+                "she". A comment is not a rendering bug, but a codebase that misgenders a character
+                in one file and not the other is a codebase where the next person cannot tell which
+                one is right.
               */}
               <span
                 className="min-w-0 truncate t-caption"
