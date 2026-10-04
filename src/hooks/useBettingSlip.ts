@@ -7,7 +7,9 @@ import {
 } from '../lib/wallet';
 import type { SeasonHistoryEntry, Team, Game } from '../types';
 import { MIN_STAKE, MAX_STAKE } from '../lib/wallet';
+import { buildSettlementContext } from '../lib/settlementContext';
 import type { PropStatKey } from '../lib/playerProps';
+import { lockedMarketRefusal, type LockedRace } from '../lib/markets';
 
 /**
  * The slip, as shared state.
@@ -57,6 +59,31 @@ export interface SlipEntry {
   propPlayerId?: string;
   propPlayerName?: string;
   propLine?: number;
+  /**
+   * The race's closure, as the board computed it, when the market is already decided.
+   *
+   * Travel on the slip and read at BOTH ends of its life -- when a price is picked, and again when
+   * it is confirmed -- because either check alone leaves a hole:
+   *
+   *   checking only `confirm` means the board still sells a decided race and the manager finds out
+   *   at the last click. The button was there, the price was quoted, and the refusal arrives too late
+   *   to be anything but a bait-and-switch.
+   *
+   *   checking only `select` means a slip opened while the race was genuinely live can still be
+   *   confirmed after it closes. A race can end between the two clicks, and that is not a
+   *   hypothetical here: a bet on a division ten games up sits in the slip for as long as the
+   *   manager takes to enter a stake.
+   *
+   * This is the same staging-post reasoning as the line and the resolution date above: anything that
+   * must be true when the money moves has to be attached before it does, because by confirm time the
+   * board is somewhere else on screen and cannot be consulted.
+   *
+   * Undefined means OPEN, matching `FieldMarket.locked`. See that field for why the default runs this
+   * way rather than the other.
+   */
+  locked?: LockedRace;
+  /** The winner's name, so a refusal can name them rather than saying "a club". */
+  lockedWinnerName?: string;
 }
 
 /** A prop to highlight, and the outlet's copy of it that was clicked. */
@@ -142,30 +169,7 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
     setWallet((current) => {
       if (current.bets.every((bet) => bet.status !== 'open')) return current;
 
-      const latest = input.seasonHistory[input.seasonHistory.length - 1];
-      const next = settleWallet(current, {
-        games: input.games,
-        teams: input.teams,
-        currentDate: input.currentDate,
-        seasonComplete: Boolean(latest),
-        seasonWinners: latest
-          ? {
-            seasonYear: latest.seasonYear,
-            divisions: new Map(latest.divisionWinners.map((w) => [`${w.league} ${w.division}`, w.teamId])),
-            leagues: new Map(latest.divisionWinners.map((w) => [w.league, w.teamId])),
-            // Already archived on the history entry, so this is read rather than
-            // derived. Null when the season produced no champion, which settles the
-            // title bets as void -- undetermined, not lost.
-            champion: latest.champion?.teamId ?? null,
-          }
-          : null,
-        awardWinners: latest
-          ? new Map<string, string>([
-            ['batting_mvp', latest.battingMvp?.playerId],
-            ['pitching_mvp', latest.pitchingMvp?.playerId],
-          ].filter((pair): pair is [string, string] => Boolean(pair[1])))
-          : null,
-      });
+      const next = settleWallet(current, buildSettlementContext(input));
       // Identity is preserved when nothing settled, so this does not re-render
       // the shell on every simulation tick.
       return next === current ? current : next;
@@ -173,6 +177,26 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
   }, []);
 
   const select = useCallback((entry: SlipEntry) => {
+    /*
+     * REFUSE AT THE FIRST CLICK.
+     *
+     * This is the earliest moment the board has said anything about the race, and refusing here
+     * means a closed market never becomes a slip at all -- so there is nothing to confirm, nothing
+     * staked, and no state to clean up. The notice says what happened in the plainest terms the
+     * reason allows; see `lockedMarketRefusal` for why the three reasons are three sentences.
+     */
+    if (entry.locked) {
+      setNotice(lockedMarketRefusal(entry.locked, entry.lockedWinnerName));
+      /*
+       * Open the slip to show the refusal, even though no slip was added.
+       *
+       * Without this the notice is set on a panel nobody is looking at, and the manager's experience
+       * of pressing a price on a decided race is nothing at all happening. The slip is the one piece
+       * of UI that owns this message, so the message has to go there -- empty, with the reason in it.
+       */
+      setOpen(true);
+      return;
+    }
     setSlip(entry);
     setNotice(null);
     // Acting on the prop retires the pointer to it. The highlight exists to say
@@ -195,6 +219,23 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
     if (!slip) return;
     if (stake < MIN_STAKE || stake > MAX_STAKE) {
       setNotice(`Stake must be between ${MIN_STAKE} and ${MAX_STAKE}.`);
+      return;
+    }
+    /*
+     * REFUSE AGAIN, AT THE LAST CLICK. This is the one that matters.
+     *
+     * `select` already refused a market that was closed when the price was picked, but the race can
+     * close while the slip sits open -- and this hook is the only path from a slip to a placed bet,
+     * from every screen, which is what makes it the choke point `placeBet` would have been.
+     *
+     * The order matters: this runs BEFORE the stake is validated, so a closed market reports why it
+     * is closed rather than complaining about a stake the manager never gets to set anyway. And it
+     * drops the slip, because leaving a closed market in the slip invites a second attempt that will
+     * be refused identically -- and a slip that cannot be transacted should not look transactable.
+     */
+    if (slip.locked) {
+      setNotice(lockedMarketRefusal(slip.locked, slip.lockedWinnerName));
+      setSlip(null);
       return;
     }
     setWallet((current) => {

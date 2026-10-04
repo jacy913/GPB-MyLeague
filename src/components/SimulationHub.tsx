@@ -241,8 +241,8 @@ export const SimulationHub: React.FC<SimulationHubProps> = ({
       description: seasonComplete && currentDate < awardsUnlockDate
         ? `Awards voting opens on ${awardsUnlockDate}.`
         : hasPendingSeasonAwards
-          ? 'Awards ballot is ready. Save winners to archive the season.'
-          : 'Awards are archived once winners are saved.',
+          ? 'Season awards are decided. Open to see who won, and on what numbers.'
+          : 'Season awards are decided and archived.',
       status: timelineStatuses.awards,
     },
   ];

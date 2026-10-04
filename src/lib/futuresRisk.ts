@@ -1,3 +1,7 @@
+import { getRoundBestOf } from '../logic/playoffs';
+import { WORLD_SERIES_MARKET_KEY, type LockedRace } from './markets';
+import type { PlayoffLeague, PlayoffRoundKey, Team } from '../types';
+
 /**
  * Risk tiers and live field size for futures markets.
  *
@@ -242,6 +246,306 @@ export const remainingRegularSeasonGames = (
 export const liveOutcomeCount = (
   outcomes: ReadonlyArray<{ consensusProbability: number }>,
 ): number => outcomes.filter((outcome) => outcome.consensusProbability > LIVE_OUTCOME_FLOOR).length;
+
+/* ------------------------------------------------------------------ *
+ * Locked races
+ * ------------------------------------------------------------------ */
+
+/** A completed or scheduled playoff game, as much of one as a closure needs. */
+export interface LockedRaceGame {
+  homeTeam: string;
+  awayTeam: string;
+  status: string;
+  score: { home: number; away: number };
+  playoff?: { round?: string; league?: PlayoffLeague; seriesId?: string } | null;
+}
+
+/** The running score of one series, as it stands from completed games. */
+interface SeriesScore {
+  round: string;
+  /**
+   * The league this series belongs to, or '' when the schedule did not say.
+   *
+   * `PlayoffLeague` rather than `string` because that is what the playoff payload actually carries,
+   * and typing it precisely is what lets `leagueChampionsFromSeries` return a
+   * `Map<Team['league'], string>` instead of casting its way out of a string. The World Series
+   * carries the sentinel 'GPB', which is why the league champion resolver filters it out rather than
+   * trusting it.
+   */
+  league: PlayoffLeague | '';
+  /**
+   * Wins by TEAM ID, not by home and away side.
+   *
+   * This was originally tallied as `homeWins` / `awayWins` off the first game's homeTeam and
+   * awayTeam, on the assumption that a team keeps the same side for a whole series. It does not: a
+   * seven-game series alternates venues, so game three has the opposite assignment from game one, and
+   * the tally credited every win to whichever side happened to host first.
+   *
+   * Measured consequence, on a real 4-2: it reported 6-0 and called it a sweep. On 3-2 -- a series
+   * nobody has won yet -- it reported 5-0 and locked the market. `tools/checkLockedRaces.ts` caught
+   * both by asserting the margin, and neither was visible on screen, because the winner's NAME came
+   * out right and only the number beside it was nonsense.
+   *
+   * Keyed by id, so the venue schedule cannot influence the result.
+   */
+  wins: Map<string, number>;
+  /** Everyone who appeared, so the loser's total can be read. */
+  participants: Set<string>;
+  winsNeeded: number;
+}
+
+/**
+ * Wins required to take a series.
+ *
+ * Derived from the playoff table rather than written down, because a hand-copied 4 here is a 4 that
+ * silently stops being true the day someone changes `getRoundBestOf`. `playoffs.ts` imports only
+ * from `types`, so importing it here introduces no cycle.
+ */
+const winsNeededFor = (round: string): number => {
+  const bestOf = getRoundBestOf(round as PlayoffRoundKey);
+  return Math.floor(bestOf / 2) + 1;
+};
+
+/**
+ * Every series that has been decided, read off completed playoff games.
+ *
+ * By round and league, because "the platinum championship series" and "the prestige championship
+ * series" are different races and a `league_series` key does not say which. `seriesId` is preferred
+ * where the schedule supplies it, and the round/league pair is the fallback, which is the same
+ * precedence `leagueSeriesLosers` uses.
+ *
+ * A series is decided when somebody reaches `winsNeeded`, NOT when the last scheduled game of it
+ * has been played. That distinction is the whole point: a best-of-seven finished 4-2 is decided on
+ * the night of the fifth win, and treating it as open until game seven would leave the market
+ * sellable for two games after it was already over.
+ */
+const decidedSeries = (games: ReadonlyArray<LockedRaceGame>): Map<string, SeriesScore> => {
+  const series = new Map<string, SeriesScore>();
+  for (const game of games) {
+    if (game.status !== 'completed') continue;
+    const round = game.playoff?.round;
+    // Only the two championship rounds decide a futures race. A wild-card or divisional series
+    // decides who reaches a league series, not who wins anything the board is selling.
+    if (round !== 'league_series' && round !== 'world_series') continue;
+
+    const key = `${round}:${game.playoff?.league ?? ''}:${game.playoff?.seriesId ?? `${game.homeTeam}-${game.awayTeam}`}`;
+    const row = series.get(key) ?? {
+      round,
+      league: game.playoff?.league ?? '',
+      wins: new Map<string, number>(),
+      participants: new Set<string>(),
+      winsNeeded: winsNeededFor(round),
+    };
+
+    row.participants.add(game.homeTeam);
+    row.participants.add(game.awayTeam);
+    // Credited to the team that actually won, which is not necessarily the one at home.
+    if (game.score.home > game.score.away) {
+      row.wins.set(game.homeTeam, (row.wins.get(game.homeTeam) ?? 0) + 1);
+    } else if (game.score.away > game.score.home) {
+      row.wins.set(game.awayTeam, (row.wins.get(game.awayTeam) ?? 0) + 1);
+    }
+    series.set(key, row);
+  }
+
+  const decided = new Map<string, SeriesScore>();
+  series.forEach((row, key) => {
+    const reached = [...row.participants].some((team) => (row.wins.get(team) ?? 0) >= row.winsNeeded);
+    if (reached) decided.set(key, row);
+  });
+  return decided;
+};
+
+/** The winner of a decided series, and how many games clear they took it by. */
+const seriesOutcome = (series: SeriesScore): { winnerKey: string; margin: number } | null => {
+  let winnerKey: string | null = null;
+  let winnerWins = 0;
+  series.participants.forEach((team) => {
+    const wins = series.wins.get(team) ?? 0;
+    if (wins >= series.winsNeeded && wins > winnerWins) {
+      winnerKey = team;
+      winnerWins = wins;
+    }
+  });
+  if (!winnerKey) return null;
+  let loserWins = 0;
+  series.participants.forEach((team) => {
+    if (team !== winnerKey) loserWins = Math.max(loserWins, series.wins.get(team) ?? 0);
+  });
+  return { winnerKey, margin: winnerWins - loserWins };
+};
+
+/**
+ * League champions, read off completed league series. Keyed by league, valued by club id.
+ *
+ * ============================================================================
+ * WHY THIS EXISTS, AND WHY IT IS NOT A NEW IDEA
+ * ============================================================================
+ *
+ * Settlement used to decide a league champion by standings: it took the division winners, mapped
+ * every one of them onto its league, and put them in a `Map`. With two divisions per league that
+ * writes the same key twice, and a Map keeps the LAST write -- so the "league champion" was the
+ * leader of whichever division happened to be listed last in `DIVISION_ORDER`. Not a seed, not the
+ * better record, just an arbitrary one of the two.
+ *
+ * The league champion is the winner of the league championship series: a best-of-seven between the
+ * winners of the two divisional series, played before the World Series. It may not even be a
+ * division winner, which is precisely why no amount of standings arithmetic can produce it.
+ *
+ * This delegates to the same `decidedSeries` that `lockedRaces` uses, deliberately. Two independent
+ * implementations of "who won this series" would agree on the obvious cases and disagree at the
+ * boundaries -- a series decided on its fourth win rather than its seventh, venues alternating --
+ * and a disagreement there means the board closes a race on one answer while settlement pays out on
+ * another. One implementation, two callers.
+ *
+ * A league with no completed series is ABSENT rather than present-and-null, and absent means nobody
+ * has won it, which settles those bets void instead of paying the wrong club.
+ */
+export const leagueChampionsFromSeries = (
+  games: ReadonlyArray<LockedRaceGame>,
+): Map<Team['league'], string> => {
+  const champions = new Map<Team['league'], string>();
+  for (const series of decidedSeries(games).values()) {
+    // 'GPB' is the World Series' sentinel league, never a real one, and an unnamed series belongs to
+    // nobody. Neither is a league champion, and admitting either would key a league that does not
+    // exist -- which then settles bets against a club that won nothing.
+    if (series.round !== 'league_series' || series.league === '' || series.league === 'GPB') continue;
+    const outcome = seriesOutcome(series);
+    if (outcome) champions.set(series.league, outcome.winnerKey);
+  }
+  return champions;
+};
+
+/**
+ * Every futures race that already has a winner, keyed by MARKET KEY.
+ *
+ * ============================================================================
+ * THE EXPLOIT THIS CLOSES
+ * ============================================================================
+ *
+ * A division whose leader is ten games up with three to play has already been won, and before this
+ * nothing in the model could say so. `titleContenders` asks whether a club CAN still win, and a
+ * club nobody can catch satisfies that -- so the locked leader stayed in contention, kept a live
+ * price, and kept a working button. Taking it was free money at a stale number.
+ *
+ * The same held one level up. The platinum and prestige champions are decided by a seven-game
+ * series, and standings arithmetic never closes them at all -- the win totals say nothing about who
+ * won four games. So the league and title boards stayed open for the entire playoffs.
+ *
+ * ============================================================================
+ * WHY TWO SEPARATE RULES
+ * ============================================================================
+ *
+ * Because "decided" genuinely means two different things at the two levels, and the existing code
+ * already reflects that:
+ *
+ *   DIVISION and, where a league champion is settled on records, by STANDINGS. Nobody can catch the
+ *     leader, so nobody else can win.
+ *
+ *   LEAGUE and TITLE, by a COMPLETED SERIES. Four games to none is a fact about games played, and
+ *     no amount of win-total arithmetic produces it.
+ *
+ * Trying to express the series case with standings would mean reading playoff results out of a
+ * season record, which is the kind of second implementation that disagrees with the first on exactly
+ * the boundary cases.
+ *
+ * ============================================================================
+ * WHY A TIE DOES NOT LOCK A DIVISION
+ * ============================================================================
+ *
+ * `titleContenders` deliberately keeps a club level with the leader alive, on the grounds that a
+ * tiebreaker decides a tied division. This agrees with it, and has to: a rule that locked a tie
+ * would report a division decided a game early, and the two functions would then disagree about
+ * whether the same club is in the race. A closed board on a tie would be worse than a wrong price.
+ */
+export const lockedRaces = (input: {
+  teams: ReadonlyArray<{ id: string; league: string; division: string; wins: number }>;
+  /**
+   * Regular-season games each club has left.
+   *
+   * Optional, and a division with no standings basis is never locked. Guessing a closure would close
+   * a live board; the reverse costs a decided division a few days of being sellable, which slice 3
+   * then prevents at the point of sale.
+   */
+  gamesRemainingByTeamId?: ReadonlyMap<string, number>;
+  /** The schedule, read for completed playoff series. */
+  games?: ReadonlyArray<LockedRaceGame>;
+}): Map<string, LockedRace> => {
+  const locked = new Map<string, LockedRace>();
+
+  // --- divisions, by standings -----------------------------------------------------------------
+  if (input.gamesRemainingByTeamId) {
+    const divisions = new Map<string, Array<typeof input.teams[number]>>();
+    for (const team of input.teams) {
+      const key = `${team.league} ${team.division}`;
+      const bucket = divisions.get(key) ?? [];
+      bucket.push(team);
+      divisions.set(key, bucket);
+    }
+
+    divisions.forEach((members, divisionId) => {
+      if (members.length < 2) return;
+      const ranked = [...members].sort((a, b) => b.wins - a.wins);
+      const leader = ranked[0];
+
+      /*
+       * The ceiling is the best any RIVAL could still finish on. It is not `leader.wins + remaining`:
+       * a club cannot out-score itself, and using its own games on both sides would make every
+       * division look closer than it is.
+       */
+      const bestRivalCeiling = ranked
+        .slice(1)
+        .reduce((best, rival) => {
+          const ceiling = rival.wins + (input.gamesRemainingByTeamId?.get(rival.id) ?? 0);
+          return Math.max(best, ceiling);
+        }, Number.NEGATIVE_INFINITY);
+
+      // Strictly greater. Equality means a tiebreaker decides it, which is not "decided".
+      if (leader.wins > bestRivalCeiling) {
+        locked.set(`division:${divisionId}`, {
+          winnerKey: leader.id,
+          reason: 'unreachable_lead',
+          margin: leader.wins - bestRivalCeiling,
+        });
+      }
+    });
+  }
+
+  // --- leagues and the title, by completed series ----------------------------------------------
+  // `.values()`, because `for...of` over a Map yields `[key, value]` pairs rather than the values.
+  for (const series of decidedSeries(input.games ?? []).values()) {
+    const outcome = seriesOutcome(series);
+    if (!outcome) continue;
+
+    if (series.round === 'world_series') {
+      locked.set(WORLD_SERIES_MARKET_KEY, {
+        winnerKey: outcome.winnerKey,
+        reason: 'series_won',
+        margin: outcome.margin,
+      });
+      continue;
+    }
+
+    /*
+     * A league race is keyed by league alone, which matches `groupMarkets(input, 'league', team =>
+     * team.league, ...)`. The series' `league` field is that same string, so the two agree without
+     * a lookup table.
+     *
+     * 'GPB' is the World Series' sentinel league rather than a real one, and an unnamed series
+     * belongs to nobody. Either would key a league that does not exist, and a market closed against a
+     * non-existent league is a LIVE race frozen shut -- the one direction that loses the board rather
+     * than merely the sale. Skipped rather than guessed at.
+     */
+    if (series.league === '' || series.league === 'GPB') continue;
+    locked.set(`league:${series.league}`, {
+      winnerKey: outcome.winnerKey,
+      reason: 'series_won',
+      margin: outcome.margin,
+    });
+  }
+
+  return locked;
+};
 
 /**
  * The risk read for one market, as a row would show it.

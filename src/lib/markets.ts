@@ -198,6 +198,87 @@ export type MarketKind =
   | 'award';
 
 /**
+ * WHY a race has a known winner.
+ *
+ * ============================================================================
+ * THE EXPLOIT THIS EXISTS TO CLOSE
+ * ============================================================================
+ *
+ * A division whose leader is ten games up with three to play has ALREADY been won. Before this
+ * field existed, nothing in the model could say so, so the club kept a live price and a working
+ * button and could be backed at a stale number -- taking money on a result that is not in doubt.
+ *
+ * The reason it was possible is worth recording, because the fix is not "disable the button":
+ *
+ *   - `titleContenders` asks whether a club CAN still win. A club that cannot be caught satisfies
+ *     that test, so a locked leader was never eliminated and stayed sellable.
+ *   - `placeBet` receives no market state at all, so it could not have refused the bet even if the
+ *     UI had not greyed the button out. The only enforcement was one `disabled` attribute.
+ *
+ * So the fact has to be carried ON THE MARKET, where the settlement layer and the button can both
+ * read it. That is this type.
+ *
+ * ============================================================================
+ * WHY IT LIVES ON `FieldMarket` AND NOT ON `MarketOutcome`
+ * ============================================================================
+ *
+ * A race has at most one winner, and the winner is a property of the RACE -- not of an outcome.
+ * Putting it on the outcome would mean one outcome says "I am decided" while its rivals say
+ * nothing, which is both noisier to consume and easy to get wrong: a reader checking "can I back
+ * this outcome?" would have to conclude that an outcome with no flag is live, which is the opposite
+ * of the truth for the seventeen losers in a decided division.
+ *
+ * ============================================================================
+ * WHY THE REASON IS ENUMERATED AND NOT A BOOLEAN
+ * ============================================================================
+ *
+ * Because "decided" arrives from genuinely different places, and a manager looking at a closed
+ * market deserves to know which rule closed it:
+ *
+ *   - `unreachable_lead` -- standings arithmetic. Nobody can catch the leader. The ordinary case,
+ *     and the one that fires in the last month of the season.
+ *   - `series_won` -- a completed playoff series. This is the league and title case: the platinum
+ *     and prestige champions are decided by a series, not by a win total, so standings alone never
+ *     close them.
+ *   - `voting_open` -- the award case. Unlike every other market here, an award's winner is a
+ *     choice rather than a schedule fact, so the market closes the moment voting opens.
+ *
+ * A single boolean would have hidden exactly the distinction a bettor needs: "nobody can catch him"
+ * and "he has already won four games to nil" are different facts about the same closed market.
+ */
+export type LockedReason = 'unreachable_lead' | 'series_won' | 'voting_open';
+
+/** A race that has a known winner, and therefore no live market. */
+export interface LockedRace {
+  /** The winning outcome's `key`. Always a member of this market's `outcomes`. */
+  winnerKey: string;
+  /**
+   * Why the race is closed.
+   *
+   * Enum rather than free text so the UI can phrase it correctly and so a checker can assert that
+   * a closure arrived for a real reason rather than by default.
+   */
+  reason: LockedReason;
+  /**
+   * How decisively the race was settled, in the units the reason implies.
+   *
+   *   `unreachable_lead` -- GAMES CLEAR. How many more wins the winner holds than the best any rival
+   *     could still reach. A whole number of at least 1, and it is what lets the board say "locked,
+   *     4 games clear" instead of merely "locked".
+   *
+   *   `series_won` -- SERIES WINS. How many more games the winner took than the loser, so 4-1 is 3.
+   *
+   *   `voting_open` -- absent. Nothing was out-run; the race closed because a choice was made, and a
+   *     margin for that would be a number meaning nothing.
+   *
+   * Named `margin` rather than `marginPoints` because the units are not probability points in two of
+   * the three cases. A field called `marginPoints` holding a count of games is a name that eventually
+   * gets read as a percentage by somebody who trusts it.
+   */
+  margin?: number;
+}
+
+/**
  * The one constant market key for the title.
  *
  * It lives here rather than in `wallet.ts` because `wallet` already imports this
@@ -224,7 +305,125 @@ export interface FieldMarket {
    * threshold.
    */
   liveOutcomes: number;
+  /**
+   * Set when this race has a known winner and can no longer be bet.
+   *
+   * OPTIONAL, and undefined means OPEN. That default is the safe direction: a market with no
+   * `locked` is treated as live and therefore still bettable, so failing to compute a closure
+   * leaves the board slightly wrong rather than freezing a live race shut. Every other unknown in
+   * this file defaults the other way -- `eliminated` being undefined means nobody checked -- and the
+   * difference is deliberate. `eliminated` protects a bettor from a false claim that a club is out;
+   * `locked` protects the book from a bet on a decided race. Guessing `locked` would take money on
+   * the wrong side of a real result; guessing `eliminated` would only ever hide a row.
+   *
+   * Once this is set, the slip REFUSES the market outright rather than relying on the UI to grey the
+   * button, because a disabled attribute is not an invariant.
+   *
+   * The refusal lives in `useBettingSlip`, not in `placeBet`. That comment used to say `placeBet` and
+   * was wrong about where it could be done: `placeBet` receives no market state, and `wallet.ts` is
+   * deliberately not edited by this work. `useBettingSlip.confirm` is the equivalent choke point --
+   * every bet in the app reaches a placed bet through it, from every screen, so a closure checked
+   * there is checked everywhere. `select` checks it too, one step earlier, so a slip cannot even be
+   * opened on a closed market.
+   */
+  locked?: LockedRace;
 }
+
+/**
+ * WHY A CLOSED MARKET CANNOT BE BET ON, IN WORDS A MANAGER CAN ACT ON.
+ *
+ * Three reasons, three sentences, because they are three different facts and "market closed" would
+ * hide which one you are looking at. The user is not a gambler; "locked" and "unreachable lead" mean
+ * nothing on their own, so each sentence says what HAPPENED and, where there is one, by how much.
+ *
+ * `margin` is used where it means something and omitted where it does not. On a `voting_open`
+ * closure there is no margin at all -- the race did not get run out, a choice closed it -- and
+ * printing a number there would be inventing a figure.
+ *
+ * `winnerName` is passed rather than looked up, because this module has no team list and a lookup
+ * by key would be a second place for club names to come from.
+ */
+export const lockedMarketRefusal = (locked: LockedRace, winnerName?: string): string => {
+  /*
+   * TWO SENTENCES, AND TWO SUBJECTS.
+   *
+   * The first sentence is the FACT: who has won, and by how much where that means anything. The
+   * second is the CONSEQUENCE, and it is the same either way, because it is the same either way --
+   * there is nothing left to bet on.
+   *
+   * Each fact has a named and an unnamed form, and that is not decoration. The name normally
+   * resolves, because the card resolves it against the very market it is rendering. But when it
+   * does not -- a winner key matching no outcome, which is a board bug rather than a closure --
+   * the message still has to be a sentence a manager can act on. A refusal that degrades into a
+   * bare fragment reads as a glitch, and a glitch gets clicked past.
+   */
+  /*
+   * The margin, in words, for both sentence shapes.
+   *
+   * Held as a bare phrase rather than as a fragment with a preposition attached, because the two
+   * sentences need it differently: "...has already won BY seven games" against "is already seven
+   * games CLEAR". Sharing one string with its preposition produced "The leader is already by 7
+   * games", which is how the unnamed path shipped a broken sentence in the first place.
+   *
+   * Undefined is kept as its own case rather than folded into zero. Zero would print "0 games",
+   * which is a claim about arithmetic instead of an admission that nobody computed one.
+   */
+  const n = locked.margin;
+  const gameCount = n === undefined ? null : n === 1 ? 'one game' : n + ' games';
+
+  switch (locked.reason) {
+    case 'unreachable_lead': {
+      /*
+       * A division race, closed on arithmetic: the leader holds more wins than anybody can still
+       * reach.
+       *
+       * `margin` is in GAMES, per `LockedRace`. A margin of 1 is a real margin -- a leader who
+       * cannot be caught even losing every game left -- so the singular is spelled out rather
+       * than rounded away or printed as "1 games".
+       *
+       * The margin is OPTIONAL, and a lead with none still gets a fact, because "already won" is
+       * true whether or not anybody computed by how much. The alternative is refusing a bet
+       * without saying what happened, which is the failure this whole message exists to avoid.
+       */
+      const fact = winnerName
+        ? winnerName + ' has already won by ' + gameCount + '.'
+        : gameCount
+          ? 'The leader is already ' + gameCount + ' clear.'
+          : 'The leader is already out of reach.';
+      return fact + ' Nobody can catch them, so this market is closed.';
+    }
+    case 'series_won': {
+      /*
+       * A league or title race, closed on a finished series.
+       *
+       * The margin is SERIES WINS, so a 4-1 is 3 -- which is not how anyone describes a
+       * best-of-seven out loud. It is left out on purpose: "won the series 3 ahead" is worse
+       * phrasing than saying the series is over, and the board shows the scoreline beside this
+       * anyway.
+       */
+      const fact = winnerName
+        ? winnerName + ' has already won the series.'
+        : 'The series is already won.';
+      return fact + ' It is over, so this market is closed.';
+    }
+    case 'voting_open': {
+      /*
+       * An award race, closed because the vote has been cast.
+       *
+       * Nothing was out-run here, which is precisely why the margin is absent, and why this says
+       * what happened rather than implying a race that was never run. The unnamed form says
+       * "given" rather than "won", because an award is conferred -- while the named form says
+       * "won", which is the word the board uses and the one the bettor was thinking in.
+       */
+      const fact = winnerName
+        ? winnerName + ' has already won the award.'
+        : 'The award has already been given.';
+      return fact + ' The vote is in, so this market is closed.';
+    }
+    default:
+      return 'This market is already decided, so it can no longer be bet.';
+  }
+};;
 
 /**
  * A market over mutually exclusive outcomes.
@@ -284,6 +483,16 @@ export const buildFieldMarket = (input: {
    * what a bettor actually needs.
    */
   liveOutcomesOverride?: number;
+  /**
+   * The known winner, when the schedule or the season has already produced one.
+   *
+   * Carried through to the market rather than inferred by the consumer, for the reason `eliminated`
+   * is carried through: a component that re-derived a closure would be a second implementation of
+   * the arithmetic, and the two would disagree on exactly the boundary cases -- a club level on the
+   * leader with one game left, a series won on the final game -- where being wrong means taking
+   * money on a decided race.
+   */
+  locked?: LockedRace;
 }): FieldMarket => {
   const outcomes = input.entries.map((entry) => {
     const values = MEDIA_PROFILES.map((profile) => clampProbability(entry.probability[profile.id]));
@@ -350,6 +559,20 @@ export const buildFieldMarket = (input: {
     subtitle: input.subtitle,
     outcomes: ordered,
     liveOutcomes: input.liveOutcomesOverride ?? liveOutcomeCount(ordered),
+    /*
+     * THE CLOSURE, CARRIED VERBATIM.
+     *
+     * Only when the caller supplied it. A locked market whose winner is not among its own outcomes
+     * would be a contradiction the settlement layer cannot resolve, so that is checked rather than
+     * assumed -- see `checkLockedShape` in tools/checkFuturesShape.ts, which asserts the winner is
+     * always a real member and that a locked market keeps exactly one live-free field.
+     *
+     * `liveOutcomes` is deliberately NOT forced to 0 here. The count describes how many clubs can
+     * still WIN, which is a different question from whether the race has a winner: a division with
+     * four contenders can have been clinched by one of them. Overwriting it would conflate "nobody
+     * can catch him" with "he has already won", and the board needs to be able to say both.
+     */
+    locked: input.locked,
   };
 };
 

@@ -3,7 +3,7 @@ import type { AwardEntry } from './awardRace';
 import { MEDIA_PROFILES, type MediaId } from '../data/media';
 import {
   WORLD_SERIES_MARKET_KEY, buildFieldMarket, buildLineMarket,
-  type FieldMarket, type LineMarket,
+  type FieldMarket, type LineMarket, type LockedRace,
 } from './markets';
 import { titleContenders } from './futuresRisk';
 import { BOYLE_BEAT } from './mediaReads';
@@ -90,6 +90,19 @@ export interface FuturesInput {
   gamesRemainingByTeamId?: ReadonlyMap<string, number>;
   /** Clubs whose league championship is already decided against them. */
   eliminatedFromLeague?: ReadonlySet<string>;
+  /**
+   * Races that already have a winner, keyed by MARKET KEY, from `lockedRaces`.
+   *
+   * Passed in rather than recomputed per builder, because the three builders are called separately
+   * and a closure derived inside each of them is three implementations that agree today and drift
+   * the first time one is edited. One map, built once, read three times.
+   *
+   * The keys match what the builders themselves emit: `division:<league> <division>`,
+   * `league:<league>`, and `world_series:champion`. A miss is a lookup returning undefined, which
+   * leaves the market OPEN -- the safe direction, since a guessed closure freezes a live race, while
+   * a missed one only leaves a decided race briefly sellable, which `placeBet` then refuses.
+   */
+  lockedRaces?: ReadonlyMap<string, LockedRace>;
 }
 
 /**
@@ -186,6 +199,35 @@ const groupMarkets = (
     groups.set(key, bucket);
   });
 
+  /*
+   * WHO IS STILL IN IT, for every grouped race rather than only the championship.
+   *
+   * `titleContenders` answers one question -- can this club still win its own division -- and
+   * that single answer is correct for BOTH grouped kinds, which is why one computed set serves
+   * both and no per-kind logic is needed:
+   *
+   *   DIVISION  you must win your division.
+   *   LEAGUE    the league champion is decided between division champions, so you must win your
+   *             division first.
+   *
+   * So the same set that drives the championship's live field also drives both of these. It was
+   * computed only for the championship, which is why a club the schedule had already put out of
+   * its division still showed a price and a Back button on every other futures tab.
+   *
+   * Guarded on `gamesRemainingByTeamId` for the same reason the championship is: with no
+   * standings there is nothing to decide from, and asserting a club is eliminated when nobody
+   * checked is worse than showing it in contention.
+   *
+   * Computed once per board rather than per group, because the answer is per-CLUB, not per-group.
+   */
+  const contenders = input.gamesRemainingByTeamId
+    ? titleContenders({
+      teams: input.teams,
+      gamesRemainingByTeamId: input.gamesRemainingByTeamId,
+      eliminatedFromLeague: input.eliminatedFromLeague,
+    })
+    : null;
+
   return [...groups.entries()]
     .map(([groupId, members]) => {
       /*
@@ -212,17 +254,48 @@ const groupMarkets = (
         });
       });
 
+      /*
+       * The live field for THIS group, which is not the size of the contenders set: contenders
+       * spans both leagues, and a four-club division keeps only the ones inside it.
+       */
+      const liveInGroup = contenders
+        ? members.filter((team) => contenders.has(team.id)).length
+        : undefined;
+
       return buildFieldMarket({
         kind,
         key: `${kind}:${groupId}`,
         title: labelOf(groupId),
-        subtitle: `${members.length} clubs`,
+        /*
+         * A grouped race is small enough that the plain club count says nothing. "4 clubs" in
+         * September when one of them is out of the race is the sentence the subtitle exists to
+         * replace, so it becomes "1 of 4 in it" the moment there is a standings basis for it.
+         */
+        subtitle: contenders && liveInGroup !== undefined
+          ? `${liveInGroup} of ${members.length} in it`
+          : `${members.length} clubs`,
+        liveOutcomesOverride: liveInGroup,
+        /*
+         * The closure for THIS group, looked up by the key this builder is about to emit.
+         *
+         * Read from the shared map rather than derived, so a division that is already won cannot be
+         * reported as live by one builder and closed by another. The key is assembled from the same
+         * `kind` and `groupId` that produce `market.key` directly above it, so the two cannot drift.
+         */
+        locked: input.lockedRaces?.get(`${kind}:${groupId}`),
         entries: members.map((team) => ({
           key: team.id,
           teamId: team.id,
           label: team.city,
           sublabel: team.name,
           probability: probabilityBy.get(team.id) ?? ({} as Record<MediaId, number>),
+          /*
+           * Prices are NOT touched. An eliminated club keeps its probability and its price,
+           * because the probability is what the forecasters believe and the elimination is
+           * what the schedule permits. Overwriting one with the other would be inventing a
+           * forecast to match a fact, which is the thing this layer is built not to do.
+           */
+          eliminated: contenders ? !contenders.has(team.id) : undefined,
         })),
       });
     })
@@ -319,6 +392,14 @@ export const buildWorldSeriesMarkets = (input: FuturesInput): FieldMarket[] => {
       // Overrides the probability-derived count, because the probability-derived one
       // is 32 all season and therefore says nothing. See the note above.
       liveOutcomesOverride: liveOutcomes,
+      /*
+       * The title closes on a completed World Series and on nothing else.
+       *
+       * No amount of standings arithmetic can produce a champion, because the champion is the club
+       * that took four games in the final. Win totals say nothing about that, which is why the title
+       * board stayed sellable for the whole playoffs before this.
+       */
+      locked: input.lockedRaces?.get(WORLD_SERIES_MARKET_KEY),
       entries: input.teams.map((team) => ({
         key: team.id,
         teamId: team.id,
@@ -375,6 +456,30 @@ export const buildAwardMarket = (
   key: string,
   title: string,
   entries: AwardEntry[],
+  options: {
+    /**
+     * True once the season's awards have been decided and archived.
+     *
+     * This is the `voting_open` closure, and it is the only closure in the codebase that is not
+     * arithmetic. A division is out-run and a series is won; an MVP is out-run by nobody -- it is
+     * simply the top of a ranked list once the season is over, and the moment that list is archived
+     * is the moment the race is over.
+     *
+     * Which is exactly why this market was an exploit twice over. Before the season began archiving
+     * itself, the "winner" was whoever the manager chose in a ballot, so the bet and the decision
+     * were the same act. And with no closure at all, the board stayed open after the archive was
+     * written -- long enough to back the player who had just been named.
+     *
+     * The trigger is deliberately the ARCHIVE, not the awards date on the calendar. The two can
+     * disagree: the calendar projects a ceremony, while the archive is what actually settles the bet.
+     * Locking on the archive closes the board at precisely the moment the money is decided, so
+     * there is no window where a market is closed and unsettled, or settled and still open.
+     *
+     * Optional and defaulting to OPEN, matching every other closure in this codebase. An award
+     * market built without it is a live race as far as anyone can tell.
+     */
+    decided?: boolean;
+  } = {},
 ): FieldMarket => {
   const totals = entries.map((entry) => entry.total);
   const mean = totals.reduce((sum, value) => sum + value, 0) / Math.max(1, totals.length);
@@ -405,10 +510,30 @@ export const buildAwardMarket = (
     });
   });
 
+  /*
+   * THE WINNER IS `entries[0]`, THE SAME INDEX THE ARCHIVE WRITES.
+   *
+   * `archiveSeasonAwards` records `candidates[0]` for each award, and `buildAwardsForBoard` is what
+   * ranks those candidates, so index 0 is the player who will be named. That is the whole reason an
+   * award race stops being a market the moment the season ends: the winner and the price the board
+   * was quoting come out of the same ranking.
+   *
+   * Stated rather than assumed, because the alternative -- a closure with no winner -- is worse than
+   * useless. A refusal that cannot name the player leaves the manager no way to tell whether the
+   * board is wrong or they are, and `settleWallet` would have nothing to compare the bet against.
+   *
+   * Guarded on `entries.length > 0` so an empty field closes to nothing rather than to a winnerKey
+   * of the empty string, which would match no outcome and settle no bet.
+   */
+  const decided = options.decided === true && entries.length > 0;
+
   return buildFieldMarket({
     kind: 'award',
     key: `award:${key}`,
     title,
+    ...(decided
+      ? { locked: { winnerKey: entries[0]?.playerId ?? '', reason: 'voting_open' as const } }
+      : {}),
     entries: entries.map((entry) => ({
       key: entry.playerId,
       teamId: entry.team?.id,
