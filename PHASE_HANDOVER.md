@@ -1,18 +1,48 @@
 # GPB MyLeague — Handover
 
-Updated 2026-10-01. UX Phases 0–3.2 and Groups A–E are **committed**, as is the
-media module, the betting layer, the global betting slip, and the whole player-prop
-stack — the fitted model, its settlement gate, and the media/betting UI that
-presents and places props. **Everything is now pushed**; `origin/local` tracks the
-local `local` branch and the two are in sync at `c83d466`. The working tree is
-clean, and **this file is now tracked** (`2db19ad`) after four requests for it.
+Updated 2026-10-05. `HEAD` is `e68dc29`, the working tree is clean, and this file
+is tracked.
 
-This revision is a rewrite, not a patch. The previous one was stale in three ways
-that would each have misled a session: it described the betting layer as though
-the slip still lived on the Betting screen, it carried a superseded story about
-why tables drifted, and it stopped at `e3f968d`. The table-geometry rule and the
-slip's architecture are now first-class sections, because both are easy to break
-and neither is obvious from reading the code.
+**This revision is a catch-up, not a rewrite.** The previous one stopped at
+`ae3d07d` and everything below it — storage, metrics, run value, the boards — is
+still accurate. But **115 commits have landed since**, and they did not extend the
+existing subsystems. They built four new ones:
+
+| Landed | What it is |
+|---|---|
+| **The HXSE** | A share-price market with its own valuation, Monte Carlo playoff probability, five-archetype crowd, and a long-only position ledger |
+| **The headliner newsroom** | Six named sideline reporters filing against the day's results, with a priority carousel |
+| **Park factors** | Three phases, and a measured answer: the engine can take them, and it broke the totals market doing it |
+| **Leaders + splits** | The Dashboards route, quadrant plots, and a split explorer |
+
+Plus the work that most recently changed what a session should believe: the
+**MacroBet board rebuild** (the props board was showing 135 rows for 69 distinct
+questions), **postseason elimination** (eliminated clubs were still being priced
+all October), the **MVP race closure** (five weeks earlier than before, and then
+a fix to the closure itself), and the **bracket UI pass**.
+
+Five claims in this file were wrong before this revision and are corrected below,
+each marked **CORRECTED** with what it used to say. The navigation section was the
+worst of them.
+
+**Three numbers worth having before you read anything else**, all re-measured
+today rather than copied forward:
+
+- **`tsc --noEmit` reports 10 errors**, unchanged since the UX phases began, all
+  in files this work never touched. That is the baseline, not a regression.
+- **`tools/` now holds 116 scripts**, up from 37. Four of them are **injection
+  gauntlets** that re-inject a known bug and assert the suite catches it. See
+  [Verification state](#verification-state).
+- **The forecaster Brier band has shifted and one entry is now a coin flip.**
+  Nine forecasters, re-fitted across five outlets; see
+  [The forecaster pool](#the-forecaster-pool-nine-outlets-re-fitted).
+
+The prop work since is recorded under [Player props](#player-props). It is the
+largest single subsystem added after the betting layer, and it changed two things
+about how this app is reasoned about: settlement reads the play log rather than a
+box score, and the three outlets tilt props by a **modelling choice** that is
+explicitly not a measured character property. Both are easy to misread from the
+code.
 
 The prop work since is recorded under [Player props](#player-props). It is the
 largest single subsystem added after the betting layer, and it changed two things
@@ -47,16 +77,218 @@ which matters for any sample-size floor anyone writes next.
 
 `C:\Users\ADMIN\.opencode\plan\gpb-ux-overhaul.md` — the Interface &
 Navigation Revitalization proposal, Revision 1. It remains the design authority
-for the UX work. It does **not** cover the media or betting modules, which were
-built without one.
+for the UX work. It does **not** cover the media, betting, exchange, newsroom or
+leader modules, all of which were built without one.
 
 Where this file and the proposal disagree, this file records what was actually
 built and why; the proposal has not been edited.
 
+The `opencode/plan` folder holds the proposals for everything that landed after
+the UX phases. **One of them is marked SUPERSEDED and must not be built**:
+`gpb-award-ballot.md` describes an exploit, not a market. Its banner is the
+explanation. `gpb-macrobet-hxse.md` is the HXSE design and its Phase 0–4 exit
+lists are all closed; `gpb-postseason-newsroom.md` covers the newsroom.
+
+## Navigation — CORRECTED, this file was wrong
+
+**This section previously described a seven-folder rail with `Betting` under
+LEAGUE and `Scores` under SCORES. Both are wrong, and both were wrong because a
+session read them instead of reading `folders.ts`.**
+
+The rail is now five folders, and the grouping is a considered decision rather
+than an accident — the reasoning is at `folders.ts:79-118` and is worth reading
+before moving anything:
+
+```
+PLAY          Dashboard · The Media · MacroBet · Exchange
+SCORES        Results · Schedule
+LEAGUE        Standings · Leaders · History · Map
+TEAMS         Rosters · Players
+PLAYOFFS      Bracket
+COMMISSIONER  Simulate · Trades · Free Agents · Draft · Lottery · Offseason
+SYSTEM        GPB Engine · System Logs · Settings
+```
+
+The folder count is still seven and that part of the old section was right. What
+changed is **which leaves sit where**, and two of them were renamed.
+
+Three corrections that each have a reason worth not undoing:
+
+| Was | Now | Why |
+|---|---|---|
+| LEAGUE › Betting | PLAY › **MacroBet** | Media, betting and the dashboard were asked for as one group, and "Betting" beside a screen headed with the MacroBet wordmark was two names for one page |
+| SCORES › Scores | SCORES › **Results** | The rail printed "Scores" twice within three lines, which is the same fault MacroBet had |
+| *(absent)* | PLAY › **Exchange** | The HXSE is its own destination, **not** a fifth tab inside MacroBet. MacroBet already stacks four sub-views; putting the market under the bookmaker would have made it a feature of the book |
+
+**`BettingRecordScreen` has no `NAV_FOLDERS` leaf and must not get one.** It is
+reachable only from the slip, by design. `VIEW_TO_FOLDER` maps it only so
+auto-expand knows which folder to open. The missing leaf is the mechanism that
+keeps it off the rail — this is the single most "obviously broken" thing in the
+file and it is correct.
+
 ## Commits
 
-Newest first. All pushed to `origin/local`; `77fa260 Ver 0.0.10` is the last
-non-UX commit.
+Newest first. `77fa260 Ver 0.0.10` is the last non-UX commit.
+
+**Not pushed.** `local` is **39 commits ahead of `origin/local`**. Everything below
+is local only.
+
+### The recent run — verification, exploits, and the crowd
+
+| Commit | Scope |
+|---|---|
+| `e68dc29` | Close the last open crowd check, by moving the constant to where the fade happens |
+| `02f7ea8` | Four bracket complaints, and gold was crowding out what it was crowding |
+| `f9726c1` | The price ceiling was never missing. The check was asserting the bug. |
+| `4a31516` | The crowd's largest share was not the largest, and two checks were hiding it |
+| `f04caed` | Make two dead checks run, and make six stale ones honest |
+| `d384a64` | Fix the MVP closure derivation, which the running app found and the suite could not |
+| `709cb5e` | Postseason elimination, and the MVP races closed at the end of the regular season |
+| `cca675c` | Rebuild the season awards popup on the design system |
+| `25cbcca` | Cleanup: mark the ballot plan as the exploit it was, drop two dead portraits |
+| `b637fde` | Close the "bet on an already-decided race" exploit, and settle league champions from the series |
+| `978e64d` | Betting board overhaul: dedupe props, redesign Next Slate, forecaster bylines |
+| `79c45a3` | The Exchange gets MacroBet's hero header, sized by the logo rather than by eye |
+| `ed12a33` | Two probes that killed my own proposal, and one of them found the risk I tried to invent |
+| `7135eec` | The HXSE book follows you: a portfolio drawer in the header, beside Parlays |
+| `d3660a3` | Trade in dollars: "I want to own $150 of the Nighthawks" |
+| `137a4de` | Season settlement: the compounding bound, and the book moves up to App |
+| `b8d5d60` | The chart axis steps instead of clipping a premium off the top of the plot |
+| `4d972ab` | Measure freezing instead of proximity to a constant |
+| `11e17b4` | Give price room to disagree with its own fair value |
+| `5eb8d5e` | Measure whether any club ever pins at the $1000 ceiling |
+| `8bc3c3f` | Chart 680 → 480: the taller chart was showing empty panel, not market |
+
+### The HXSE — build, then the trading desk
+
+| Commit | Scope |
+|---|---|
+| `7e5adfc` | The trading desk: buy, sell, and a book that survives a reload |
+| `0a8253c` | HXSE positions: a long-only ledger that cannot drift by a cent |
+| `a140919` | HXSE portfolio persistence: cash derived on load, corruption reported not swallowed |
+| `d55477d` | Measure whether the HXSE is tradeable before putting a buy button on it |
+| `101720c` | Exchange: open on a club, dollars to the cent, a legend, and headroom |
+| `da608bb` | Exchange: two columns, a 680px chart, and the roster in a rail |
+| `158d69c` | Exchange: the league's price board, all 32 crests at 340px |
+| `e3b5976` | Exchange: club crests, the league mark, and the HXSE wordmark |
+| `34cf7f3` | Exchange: compare two clubs on the same axis |
+| `bc4fdd4` | Exchange: stop stretching the chart, and restore the ledger on every boot path |
+| `977ffad` | Measure when the Exchange is actually worth looking at |
+| `78f5b31` | Finish the Exchange: hover readout, range control, and an honest header |
+| `ac73ee4` | Pin the futures-risk season, and report the check it was hiding |
+| `cfd79c2` | Let the Exchange drill down to one club |
+| `f28c76f` | Give the Exchange a fair-value line, and break it where the record stops |
+| `a81c130` | Scintilla crosses to the forecaster side, and the pool is re-fitted |
+| `9a960b2` | **Make the HXSE survive a reload (CHECKPOINT)** |
+| `ea875e2` | Rename the SCORES leaf to Results so the rail stops printing Scores twice |
+| `4f34669` | Scaffold the Exchange page, and find that the price ledger never reaches the save |
+| `8a38382` | HXSE part 1: the price chart geometry, and the check that proves it is not lying |
+| `e8d4fd7` | Continue the market across worker runs instead of reopening it at fair value every time |
+| `a7e52c8` | Wire the HXSE price path into the worker day loop and the save |
+| `61a669f` | Price the day on the interactive step path too |
+| `a3e84f8` | Wire the crowd into the price path on both the worker and the interactive step |
+| `bcece36` | Have the crowd check assemble the crowd through the shipping function |
+| `9059fdf` | Make the crowd check call the shipping consensus instead of its own copy |
+| `3dd725a` | Measure the crowd on the real price path, and report that the fade edge is negative |
+| `9dda170` | Add the crowd: five archetypes, and an honest report that the fade edge is marginal |
+| `e593810` | Derive club market size and liquidity; measure it is not a strength proxy |
+| `9acd8ce` | Set the daily Monte Carlo cadence from measurement, and fix a look-ahead bias |
+| `3cc83f3` | Wire the HXSE price series to a live league day |
+| `d8f54f3` | Add the HXSE share price series, its persistence, and deterministic bet ids |
+| `5daeb3d` | Fit the team-value weights against realised win totals; open the index gate |
+| `1816d21` | Add playoff probability by Monte Carlo over the remaining season |
+| `4a87ded` | Add HXSE team valuation function and value-weighted index |
+
+### The forecaster pool — eight outlets, then three institutions
+
+| Commit | Scope |
+|---|---|
+| `e710161` | Collapse the six renamed outlets into three institutions and one solo channel |
+| `434dc9b` | Fix `fitMediaOdds` reading a frozen roster, then measure how stable its output is |
+| `b907597` | Re-fit all eight slopes and derive confidence from measured Brier |
+| `6785094` | Eight forecasters: five profiles, five real reads, calibration state made visible |
+| `7be50c1` | Build the five new forecasters' marks as WebP, and correct the plan's premise about them |
+| `702f31a` | Weight the forecaster consensus by confidence, before the five new outlets land |
+| `64b4f4a` | Group the three screens you read, and assert the tree agrees with itself |
+
+### The newsroom
+
+| Commit | Scope |
+|---|---|
+| `b977a41` | Rebuild Fuyuka's byline mark from the new art, and loosen the crop |
+| `61d4d5d` | Move Fuyuka Shinonome from forecaster to sideline reporter |
+| `09ac813` | Move the award race into the right column, loosen Hoani's crop, rebuild the dossier |
+| `7173893` | Remove a stray `);` from the newsroom, put the newsroom in the wide column |
+| `7673aaf` | Take the reporter wallpaper out of the dashboard byline and leave it in the dossier |
+| `6c84664` | Give the sideline reporters a backdrop and a dossier you can open from the byline |
+| `c2850c3` | Add Simon Hoani, and the coverage check that makes his reason for existing testable |
+| `7cd97be` | Give reporters an outlet and turn `house` from a dead grey token into a real accent |
+| `0d3b80a` | Add Fuyuka Shinonome as a ninth outlet, and use the supplied wallpapers |
+| `eb486f7` | Wire Gary Sallow's wallpaper into the outlet card |
+| `97541bc` | Give the character popup the portraits, and check the right files are wired in |
+
+### Park factors — three phases and a measured answer
+
+| Commit | Scope |
+|---|---|
+| `ad7ca65` | Wire park factors into the engine, and measure them until one of them broke the totals market |
+| `f9ed408` | Measure the park channels instead of arguing about them |
+| `6800abf` | Measure the run factor before recalibrating it, and find it was not the problem |
+| `a613291` | Assert on the identified part of the park signal, and report the cancellation it finds |
+| `5104769` | Park Phase 3: HR, FB, GB and run factors, calibrated against ten archetypes |
+| `e3da8ec` | Park Phase 2: derive the physical profile, and a physics check validating a copy |
+| `c31e28f` | Park profiles for all 32 clubs, in fixed mode |
+
+### Leaders, splits, and the dashboard
+
+| Commit | Scope |
+|---|---|
+| `f54ddc3` | **Correct** the split derivation cost: 0.31s, not the 8.42s reported last time |
+| `f9fdac7` | Give every board the same column header, and the header the dashboard's hero |
+| `d326642` | Fill the empty decks: 54 to 120, and retire nine templates that could never render |
+| `9efc974` | Split explorer: does this player hit the same everywhere? |
+| `f508097` | Replace the Glorest Press mark, and recover the trim rule instead of guessing it |
+| `fb867e7` | Leaders Phase 3: the two quadrant plots, and a comment the tests caught being false |
+| `02299a9` | Measure the splits derivation before building it: 8.4s, and it reconciles exactly |
+| `16fb200` | Leaders Phase 2: the Dashboards route, with the league's own shape on it |
+| `260b24e` | Leaders Phase 1: the context layer, and a typecheck hole I had to close first |
+
+### MacroBet, props, and the betting board
+
+| Commit | Scope |
+|---|---|
+| `d5a81d3` | Density pass: media, betting, and the dashboard front page |
+| `d89dfbf` | Slate and props to columns; props now name their game; dead counters removed |
+| `48ab839` | The slip names its bets too: three surfaces, one answer |
+| `17c1f00` | A placed bet now names its game and its date |
+| `b0a24ad` | Rename the page MacroBet, and give every betting card one border language |
+| `b104ef6` | One box per card, and the outlets are the columns |
+| `452df7d` | Rebuild the slate as a two-team tile, and stop the shape check reading comments |
+| `82ff515` | A render loop in the futures lookup, which froze the page |
+| `7b39cad` | Fix the blank page: BettingSlip was missing two props at its call site |
+| `59082bd` | `verifyPropCardDiversity`: replicate the overlap gate, fix a dead affinity term |
+| `a733934` | Team props: built, measured, and **not enabled** |
+| `a44700b` | Resolution dates, and four new prop lines that survived the gate |
+| `e3cf87d` | New prop lines, first batch: two rejected, and a gate the plan was missing |
+| `a6d05af` | Outlet prop cards: fifteen distinct props, and the cap was never the defect |
+| `b43fe01` | Championship futures: the title market, and a risk curve that had to be built |
+| `11d0799` | Futures: measure the fade claim before shipping it, and finish elimination |
+
+### Headliners, feedback loop, and handover
+
+| Commit | Scope |
+|---|---|
+| `894e835` | Record where run value ended up, and close Open Question 10 |
+| `5b04780` | Headliner steps 8–10: the ledger, the panel, and a played season |
+| `c8dc4fb` | Headliner stages 1–3: event detection, the voice banks, the pipeline |
+| `9df0cde` | Extract the play-log walk so the persona pipeline can share it |
+| `ee2b65c` | Headliner newsroom: portraits, persona registry, portrait primitive |
+| `36c881e` | Give each writer a standing opinion, and measure where the banks are thin |
+| `e4e4308` | Record the feedback loop and its standing caveat |
+| `a3d2068` | Let a measured season influence player development |
+| `bdcc0d0` | `verifyDevelopmentFeedback`: replicate both sides, fix a statistical error |
+
+### Before this run
 
 | Commit | Scope |
 |---|---|
@@ -1281,54 +1513,235 @@ than no check*, because it teaches a reader to ignore it.
    outlet attached. Grouping by outlet also keeps the board at fifteen rows instead
    of the several hundred a full board would be.
 
+## The forecaster pool: nine outlets, re-fitted
+
+**CORRECTED.** This file said "three forecasters" throughout, and quoted
+Booth 0.2467 / Glorest 0.2477 / Sharply 0.2561. The pool is now **nine forecasters
+across five outlets**, re-fitted end to end (`6785094`, `b907597`), and those three
+numbers are stale.
+
+`verifyMediaOdds`, re-measured today at seed 1337, 7,225 settled priced games:
+
+| Outlet | Brier | | Outlet | Brier |
+|---|---|---|---|---|
+| The Booth (Hollis) | 0.2461 | | Calibrated Sports (Boyle) | 0.2482 |
+| Glorest Sports | 0.2472 | | Calibrated Sports (Mussad) | 0.2490 |
+| Lined Sharply Podcast | 0.2557 | | Glorest Sports (Wardley) | **0.2500** |
+| The Booth (Sallow) | 0.2468 | | Scintilla | 0.2472 |
+| The Booth (Jardins) | 0.2516 | | | |
+
+**Read the Wardley row carefully.** 0.2500 is *exactly* a coin flip — the score of a
+forecaster posting 50/50 on everything. A flat 50/50 call scores precisely 0.2500, so
+anything at or above that is worse than random information wearing a price. He is
+currently the weakest forecaster in the pool and the gap is not rounding. This is a
+**known open item**, not a settled result: the earlier plan set an acceptance bar of
+"every Brier below 0.2500" and he does not meet it. Two readings are possible and
+this file does not pretend to know which is right — the `scout` method may be
+re-fitted against a longer horizon, or Wardley may be understood as deliberately
+close to worthless because long-horizon re-rating is *supposed* to look like noise.
+That is a product decision, not a fitting one.
+
+**Sharply's overconfidence is preserved and must stay that way.** His posted slope is
+roughly 3× his fitted optimum. That gap is the exploitable flaw the betting layer is
+built around, and a recalibration pass that "fixes" him destroys the most valuable
+play in the game. `HOUSE_SHADE` exists so the *house* can be safe without editing
+him.
+
+**Mean predicted away win rate is 49.2%,** against 50.0% for a coin — so the pool as
+a whole is slightly under-confident rather than merely regressive.
+
+### The unweighted-mean bug, which was a bug only at eight
+
+The consensus was an unweighted mean of the forecasters' probabilities, and
+`confidence` fed only the on-screen error bar — **it never touched the
+arithmetic**. With three outlets that is defensible. With eight it is a bug: a
+0.55-confidence outlet moved the house line exactly as much as a 0.84 one.
+
+Fixed at `702f31a`, deliberately *before* the new forecasters landed rather than
+after. Re-fitting everything afterwards would have produced a consistent but wrong
+model, which is harder to notice than an obviously broken one.
+
+**This changed every price in the game.** The 0.045 margin and the 0.20 shade were
+fitted against an unweighted three-outlet mean, so `fitHouseShading` and
+`verifyShadedHouse` had to be re-run. The load-bearing property is not a price level
+but this:
+
+> a bettor with no edge at all, betting one side relentlessly, must not print money
+
+0.20 is the mildest shade where **both** flat strategies lose on every seed tried.
+That is what "the house is safe" means here, and if it breaks the weighting was wrong.
+
+Note the two consensus figures are not the same number: the plain mean drives the
+**analysts** archetype and the confidence-weighted one drives **fair value**. That is
+deliberate, and it is the only reason those are two archetypes rather than one.
+
+## The HXSE — a market, not a decoration
+
+`gpb-macrobet-hxse.md` is the design document; all of its Phase 0–4 exit lists are
+closed. What matters to a reader who did not build it:
+
+| Layer | File | Note |
+|---|---|---|
+| Valuation | `analytics/teamValue.ts` | Weights **fitted** against realised end-of-season win totals, not chosen |
+| Index | `analytics/hxseIndex.ts` | Value-weighted, not equal-weighted |
+| Playoff probability | `analytics/playoffMonteCarlo.ts` | Monte Carlo over the remaining season, memoised by `(season, date)`, worker-only |
+| Price series | `analytics/sharePrice.ts` | Two volatility regimes, seeded throughout |
+| Crowd | `analytics/crowd.ts` | Five archetypes; see the fade strategy below |
+| Liquidity | `analytics/fanbase.ts` | Thin markets **gap**; the gap multiplier is never applied to game results |
+| Ledger | `lib/portfolio.ts` | Long-only, dollars, cash moves only on trades |
+| UI | `components/markets/ExchangeView.tsx` | Its own nav leaf, not a MacroBet tab |
+
+**Three properties that are load-bearing and easy to break:**
+
+1. **`PRICE_MAX = 1000` is a ceiling on the FAIR VALUE ESTIMATE, not on price.**
+   `sharePrice.ts` says so in its own words: *"IT IS NOT A CEILING ON PRICE, and
+   treating it as one is a bug that shipped and was played on."* The close used to be
+   clamped to it too, which pinned the fair value, which pinned the close, which made
+   the **entire price mechanism for that club go inert** — mean reversion, crowd, game
+   shocks, all of it. It hit the best club in the league, because the valuation is a
+   z-score against the league. Measured p99 for `close / fair` on a real ledger is
+   **1.576**, so a $1,335 close is a premium, not a breach.
+2. **Positions are denominated in dollars, cash-only, no outcome-based payout.** So a
+   share above 1,000 is holdable and settleable and nothing is capped at fair. If that
+   ever changes, the ceiling question reopens.
+3. **The ledger is long-only and cash-only.** Unrealised P&L is displayed and never
+   touches cash. This was chosen to keep cash-moving events to a small, auditable
+   set — `wallet.ts` has already shipped two ledger bugs, and positions are a larger
+   surface than slips.
+
+### The crowd, and why the fade edge is NEGATIVE
+
+This is the counter-intuitive result and the one most likely to be re-litigated, so
+it is worth stating plainly.
+
+The design premise is that **the momentum crowd is the largest and the most wrong**,
+because a learnable strategy is the difference between a feature and a gambling
+mechanic. Momentum carries a **0.40** share, the largest of five.
+
+For several commits that was false. `momentumSignal` returned a per-day *rate* while
+`towardFairSignal` returned a raw *level* — **summing a rate with a level**. A 12% gap
+to fair produced 0.119 while a hot three-day run produced 0.014, so the archetype with
+the smallest share out-shouted the largest by 1.3×. Fixed by dividing `towardFair`
+by `PASSIVE_DRIFT_DAYS`: momentum vs passive went 0.76× → 2.29×.
+
+The remaining honest finding: **measured over 99 emergent runs, chasing beats fading
+by 12.4 points, and on a control path with no crowd at all by 11.5.** So the crowd is
+not creating the edge — the price path's own mean reversion is. Both numbers are
+negative, meaning momentum *works* at this horizon on both paths.
+
+That is a design premise that measurement did not confirm, and it is recorded as
+**unresolved rather than reframed**. What is confirmed is that the crowd buys an
+established run (+0.683% mean net flow) and stops buying it (−0.571% with no run), and
+that it measurably moves the market — 28 of 32 clubs ended more than 1% from where
+the no-crowd control put them.
+
+**`CROWD_SATURATION` is 15, and it is a chosen number with a located boundary.**
+`e68dc29` moved it from 10. At 10 the crowd never turned. The boundary was found by
+running the suite rather than trusted from a comment: **S = 13 fails check 12, S = 14
+passes, S = 15 carries a full unit of margin** above the highest value that still
+fails. There is no ground truth for crowd appetite in this project — what is measured
+is the consequence, and the consequence is now gated by a suite that fails two units
+below the shipped value.
+
+## Recent bug fixes a session should know about
+
+Four of these are the same shape, and the shape is the lesson: **each survived a green
+suite.**
+
+**1. Postseason elimination (`709cb5e`).** A club knocked out in the wild card was still
+being offered prices on its LEAGUE board throughout the league championship series.
+Two causes, only one visible from outside:
+
+- `titleContenders` is regular-season arithmetic, and it **freezes** at the end of the
+  regular season because playoff games never touch `team.wins` (`simulationManager`
+  gates every increment on `isRegularSeasonGame`). It went on calling a club that had
+  lost the wild card a contender.
+- `leagueSeriesLosers` counted **venues, not clubs** — it tallied `homeWins` against
+  `awayWins` and eliminated `row.away`. A best-of-seven alternates venues, so a real
+  4-2 arrived as 2-2 and returned an **empty set**, and an empty set cannot eliminate
+  anyone.
+
+This was the same bug found once before in `lockedRaces`. The response was to delete
+the second tally rather than patch it: one `seriesTallies` counts by club, scoped by
+round for its two readers.
+
+**2. The MVP closure (`d384a64`).** The races did not close — 16 buttons, 0 disabled.
+`regularSeasonOver` was `gamesRemainingByTeamId.size > 0 && …every(v => v <= 0)`, but
+that map records a club **only when it has an unfinished game**. So a completed season
+reads as **EMPTY, not zeroes**, and `size > 0` read finished as unfinished. The guard
+existed to stop "no schedule at all" being mistaken for "finished", and it did that by
+making the real case unreachable.
+
+**Why no suite caught it, which is the part worth remembering:** every award assertion
+called `buildAwardMarket` with an explicit `decided` flag, so the suite structurally
+**could not see how that flag was derived**. Fifty-odd checks, nine suites, two
+injection gauntlets, all green, and the feature did not work.
+
+**3. A guard that asserted the bug (`f9726c1`).** A check read *"no price left the
+band"* and asserted `close <= 1000`. **That assertion was the historical bug.** A
+green result would have been evidence of a regression. The check now looks for the
+real failure mode — a price **pinning** at a bound while fair value moves.
+
+Its detail line was worse: hardcoded prose reading *"512 closes, all inside (0, 1000]"*
+printed **while the check was failing**. It did not merely miss the problem, it
+contradicted the failure printed directly above it. That is the guard against
+hardcoded detail prose, not just the assertion.
+
+**4. The award tie-break, and the same trap as #3 (`709cb5e`).** Closing a market on
+`entries[0]` while settlement reads `candidates[0]` is only safe if those are the same
+ranking. They were not: the board had no tie-break (stable sort, so roster order) and
+the archive broke ties alphabetically. On an exact tie the board could name one MVP and
+settlement pay another. The same commit also fixed `take` being capped at eight —
+the ranking was sliced before `take` applied, so the archive asking for ten silently
+received eight.
+
+`d384a64`'s lesson generalises and is now asserted rather than remembered:
+**vary one input, then attribute the result to it.** `4a31516` hit the identical trap
+in a crowd check that compared a mid-run value against an end-of-run value on a
+fixture whose run *accelerated*, so two effects cancelled and the check could not
+distinguish a working term from a broken one.
+
 ## Current state
 
-`HEAD` is `ae3d07d`, **pushed and in sync with `origin/local`**, and the working
-tree is clean. This file is now **tracked** (`2db19ad`) — it had been untracked by
-choice, on the reasoning that it is a working document rather than a deliverable.
-That reasoning did not hold up: four of the Stage B design decisions were settled by
-reading numbers out of it, and two claims in it had gone stale and wrong in ways that
-would have misled the next session. Open Question 9 is closed.
+`HEAD` is `e68dc29`, the working tree is clean, and `local` is **38 commits ahead of
+`origin/local`** — **nothing has been pushed.** `PHASE_HANDOVER.md` is tracked
+(`2db19ad`).
 
-Three subsystems are now complete end to end, each calibrated against settled games
-rather than asserted: the media module (three forecasters, Booth 0.2467 / Glorest
-0.2477 / Sharply 0.2561), the betting layer, and player props (per-stat Brier
-0.2194 fitted, 0.2216 held out).
+**This section previously said `HEAD` was `ae3d07d`, pushed and in sync.** Both
+halves were wrong, and it had been wrong through every commit since.
 
-Two more subsystems landed after that and are documented above: the **storage
-rebuild** (`5d072a6`) and the **offline metric layer** (`e7272d2`, `454cde2`). Both
-are verified, and neither changed any forecaster or prop output — by construction,
-since nothing either of them touches feeds a forecast.
+**`local` is 39 commits ahead of `origin/local`** (`git rev-list --count
+origin/local..HEAD`). Nothing has been pushed.
 
-**A fourth has now landed: Stage B of the metric layer** (`02b90f0`) — wOBA fitted to
-this league and a park-neutral, batter-only wRC+, with `verifyWrc` at 22/22. It reads
-its inputs from `metrics.ts` rather than recomputing them, so the Stage A accumulator
-verification (3,360 fields) is inherited rather than re-earned, and it too leaves
-every forecaster and prop output byte-identical. Two findings from it reshape work
-that has not started: the **schedule is not seeded**, so a season is not a pure
-function of its universe seed and league-level constants must be measured rather than
-stored; and **wOBA precision tracks home run count, not plate appearances** (+0.807 vs
--0.048), which matters for any future sample-size floor.
+Nine subsystems are complete end to end: the **media module** (nine forecasters,
+re-fitted — see above), the **betting layer**, **player props**, the **storage
+rebuild**, the **offline metric layer**, **Stage B run value** (wOBA + park-neutral
+wRC+, `verifyWrc` 22/22), the **development feedback loop**, the **headliner
+newsroom**, and the **HXSE**.
 
-**The work now staged, in the order it was decided:**
+**Two asset facts a session will trip over immediately.** `src/assets/media/`
+holds ~22 MB of raw outlet PNGs next to their 3 KB WebP versions; `HeadlinerPortrait`
+and `TeamLogo` glob `*.webp` and never touch the PNGs. There is also an untracked
+`fuyukashinonome2.png` (3.1 MB) that **nothing references**. This has happened three
+times in this project — the same "22 MB for five 40px avatars" defect. New art ships
+as WebP at display resolution.
 
-1. **The new metric leaderboards are done** (`8fb2610`) — BABIP, ISO, K − BB% and
-   XBH, on the derived 82-AB floor, verified in the browser. Note the floor is a
+**The work staged, in the order it was decided:**
+
+1. **The new metric leaderboards are done** (`8fb2610`). Note the 82-AB floor is a
    *display* floor; `wrcPlus` shrinks on precision rather than filtering, so it does
    not use it as a gate.
-2. **wRC+ is deliberately NOT on a leaderboard**, on measured evidence: the top ten
-   spans 4.0 points and produces 5 distinct whole numbers from 10 rows. It is on
-   the **player card** instead (`ae3d07d`), where the shrinkage is shown beside the
-   figure rather than implied by a ranked list. See the presentability section.
-3. **The development feedback loop is done and shipped**, with the standing caveat
-   above: no detectable harm at the shipped gain, and no demonstrated safety either.
-4. The **batted-ball model** is the remaining item needing the standing
-   presentation-only scope relaxed — the last of the three original Tier-2 pieces.
-5. Optionally, upgrading wOBA to **per-outcome-and-base-state weights**. The probe
-   already holds the joint table so it is nearly free, and the single-weight
-   approximation is coarsest exactly where interesting hitters live. Note this
-   attacks the occupancy problem, **not** the wRC+ compression and **not** the
-   feedback loop's weak signal — three separate things that are easy to conflate.
+2. **wRC+ is deliberately NOT on a leaderboard**, on measured evidence. It is on the
+   **player card** instead (`ae3d07d`).
+3. **The development feedback loop is done and shipped**, with the standing caveat: no
+   detectable harm at the shipped gain, and no demonstrated safety either.
+4. **The batted-ball model** is the remaining item needing the presentation-only scope
+   relaxed.
+5. Optionally, upgrading wOBA to **per-outcome-and-base-state weights**. This attacks
+   the occupancy problem, **not** the wRC+ compression and **not** the feedback loop's
+   weak signal — three separate things that are easy to conflate.
+6. **NEW — Wardley's Brier.** See the forecaster pool section. Either re-fit the
+   `scout` method or decide he is deliberately near-worthless.
 
 **If the feedback loop is to be trusted rather than merely shipped**, the next step is
 not more tuning: it is enough replicated runs to establish the noise floor to a factor
@@ -1344,18 +1757,49 @@ navigates rather than containing price buttons.
 
 **Remaining UX debt** is the unmigrated Group F screens, measured as
 hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
-`GPBBook.tsx` (1,230 lines, 172), `CommissionerSettings.tsx` (975, 46),
-`TeamCalendar.tsx` (42), `SeasonAwardsModal.tsx` (37), `MapHub.tsx` (14), plus
-`Controls.tsx`, `TradeInterruptionModal.tsx` and `NewUniversePreview.tsx`.
+`GPBBook.tsx` (73 KB, 172 instances), `CommissionerSettings.tsx` (46 KB, 46),
+`TeamCalendar.tsx` (42), `MapHub.tsx` (14), plus `Controls.tsx`,
+`TradeInterruptionModal.tsx` and `NewUniversePreview.tsx`. `SeasonAwardsModal.tsx` is
+**no longer on this list** — it was replaced by `SeasonAwardsSummary.tsx` (`cca675c`),
+which is on the design system.
+
+`SimulationFloatingPanel.tsx` is **deliberately unmounted, not deleted** (`02f7ea8`).
+It was the last unmigrated surface in the app shell. `SimulationHub` is the
+replacement and carries the same three facts. The mount site in `App.tsx` has a
+comment explaining the removal, so it is reversible.
 
 ## Verification state
 
-- `npm run build` passes (~6s, re-verified after Stage B).
-- `npx tsc --noEmit` reports **10 pre-existing diagnostics**, all outside this
-  work and unchanged since the UX phases began: `Controls.tsx:50`,
-  `SeasonCalendarStrip.tsx:41`, `TeamCalendar.tsx:53` (`localeCompare` on
-  `unknown`); `lib/storage.ts:1123`; `playerGenerator.ts` ×3; `tradeLogic.ts:146`;
-  `simulationWorker.ts:18` and `:204`.
+**Re-verified 2026-10-05**, by running the suites rather than reading the output of a
+previous session.
+
+| | Result |
+|---|---|
+| `npx tsc --noEmit` | **10 errors** — unchanged, the baseline |
+| `checkBettingCardShape` | **29/29** |
+| `checkCrowd` | **14/14** |
+| `checkCrowdOnRealPath` | **6/6** |
+| `proveCrowdCeilingGuard` | **3/3 injected bugs caught** |
+| `checkSharePrice` | **18/18** |
+| `checkFanbase` | **11/11** |
+| `checkWorkerPriceHandoff` | **8/8** |
+| `checkPlayoffElimination` | **all passed** |
+| `provePlayoffEliminationGuard` | **7/7 injected bugs caught** |
+| `verifyLockedRaces` | **exploit closed** |
+| `proveBettingCardShapeGuard` | **9/9 injected bugs caught** |
+| `checkPropCard` | **all passed** |
+| `verifyMediaOdds` | 9 forecasters priced, Wardley at 0.2500 |
+
+- **`npx tsc --noEmit` reports 10 pre-existing diagnostics**, unchanged since the UX
+  phases began: `Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`,
+  `TeamCalendar.tsx:53` (`localeCompare` on `unknown`); `lib/storage.ts:1249`;
+  `playerGenerator.ts` ×3; `tradeLogic.ts:146`; `simulationWorker.ts:21` and `:211`.
+  **Line numbers have drifted** (`storage.ts` 1123 → 1249, `simulationWorker.ts`
+  18 → 21 and 204 → 211); the count and the files are identical.
+- **`checkPropCard` cannot run under plain `npx tsx`** — it throws
+  `ERR_UNKNOWN_FILE_EXTENSION` on the `.jpg` asset imports. It needs the asset stub:
+  **`npm run propcard`**, which is `tsx --import ./tools/assetStub.mjs`. This is a
+  package script and not an accident.
 - **The PowerShell build exits 1 even on success** — Tailwind's chunk-size
   warning goes to stderr. Real signal is `✓ built in Ns`.
 - **A browser harness exists.** No desktop browser is attached to this session,
@@ -1503,12 +1947,49 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
   cannot manufacture a spread that sampling noise did not produce — but with
   seeds available, its "three independent runs" framing is the wrong description of
   what it measured. Its own numbers are unaffected.
+- **`PRICE_MAX` is a ceiling on the fair-value ESTIMATE, never on price.** Treating
+  it as a price ceiling is a bug that shipped and was played on: it clamped the close
+  as well as the fair value, which pinned both and made the whole price mechanism
+  inert for that club — mean reversion, crowd, shocks. Measured p99 for `close/fair`
+  is 1.576, so premiums above 1,000 are expected and are the dislocation the crowd
+  exists to create. The failure mode to look for is a price **pinning** at a bound
+  while fair value moves, never a price exceeding an estimate.
+- **`betId()` is no longer `Date.now()` + `Math.random()`.** Fixed in `d8f54f3`
+  along with the price path. This file previously cited it as a live sync hazard;
+  it is seeded now. `wallet.ts:168` records the scar it left — trusting an undefined
+  localStorage entry produced `bet-undefined`.
+- **A check can assert the bug it is meant to catch.** `f9726c1` removed a check that
+  read `close <= 1000`, because that assertion *was* the historical bug — a green
+  result would have been evidence of a regression. When a guard is inverted, ask
+  what a green result would prove before keeping it.
+- **Never hardcode the conclusion into a check's detail line.** One read
+  `"512 closes, all inside (0, 1000]"` in prose **while the check was failing
+  directly above it**. It did not merely miss the problem, it contradicted it and sent
+  the reader elsewhere. Compute the detail.
+- **An empty collection is not a zero.** `remainingRegularSeasonGames` records a club
+  only when it has an **unfinished** game, so a completed season yields an **empty
+  map, not zeroes** — and "nothing left to play" and "no season was ever scheduled"
+  are the same value. The disambiguation has to come from the schedule. This bit the
+  MVP closure in `d384a64` and the feature shipped broken through a fully green
+  suite.
+- **Count by club, never by venue.** `leagueSeriesLosers` tallied `homeWins` against
+  `awayWins`, which is wrong for every best-of-seven because venues alternate. Found
+  twice in this project, once in each copy of the function.
+- **Vary one input, then attribute the result to it.** Twice now: the award tie-break
+  and the crowd saturation check both compared two moments and blamed one factor when
+  two moved. `4a31516` hit it with a fixture whose run accelerated, so the effects
+  cancelled and the check could not distinguish a working term from a broken one.
+- **A suite cannot check a derivation it supplies.** Every award assertion passed an
+  explicit `decided` flag, so the suite structurally could not see how that flag was
+  computed. Pass explicit values to reach a branch; assert the *derivation* separately,
+  and assert the property that made the first version wrong.
 - **Constants must be measured or fitted, or labelled as chosen.** The 0.05 target
   SE that yields the 82-AB floor is a stated design choice; the 20-out pitching
-  floor is a convention; the `homeFieldAdvantage` value is a model constant whose
-  effect is not measurable. All three are named as such at the point of use. The
-  inverse — presenting a chosen number as measured — is the failure this project
-  has actually produced, repeatedly.
+  floor is a convention; `homeFieldAdvantage` is a model constant whose effect is
+  not measurable; `PASSIVE_DRIFT_DAYS = 3` is chosen for the same reason
+  `CROWD_SATURATION` is. All are named as such at the point of use. The inverse —
+  presenting a chosen number as measured — is the failure this project has actually
+  produced, repeatedly.
 - **Report a null result with its power floor.** The park-factor probe does not
   claim "there is no home-field effect"; it claims the spread is below **0.31 R/G**
   at 95% confidence on this sample. A bare null reads as proof and is not one.
@@ -1577,6 +2058,27 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
   correct error that varies across bands; closing it means moving the
   forecasters' slopes. The best-priced-band figure is an upper bound on a
   strategy, not a strategy.
+- **The crowd's fade strategy does not work as designed, and this is measured.**
+  Chasing beat fading by 12.4 points over 99 emergent runs — and beat it by 11.5
+  with **no crowd at all**. So the edge comes from the price path's own mean
+  reversion, not from the crowd. The design premise ("the momentum crowd is the
+  largest and the most wrong") is **not confirmed by measurement**. What is
+  confirmed is that the crowd buys a run and then stops buying it, and that it
+  moves the market. Re-tuning the archetypes will not fix this, because the
+  control path has the same sign.
+- **One forecaster is a coin flip.** Wardley (Glorest Sports, `scout`) sits at
+  **Brier 0.2500** — exactly what a flat 50/50 call scores. The earlier acceptance
+  bar was "every forecaster below 0.2500" and he does not meet it. Either the
+  `scout` method needs a longer-horizon re-fit, or he is deliberately near-
+  worthless because long-horizon re-rating is supposed to look like noise. That
+  is a product decision, and it is open.
+- **The corrupt-save guard in `sharePrice.ts` is unreachable by any test.**
+  `PRICE_SANITY_MAX` "exists to catch a corrupt save rather than to bound a
+  market", and no run of the model produces the corrupt save it defends against.
+  A unit test over computed closes cannot reach it, because by construction those
+  closes are not corrupt. Two attempts to inject coverage for it both failed to
+  bite. This is **recorded in `proveCrowdCeilingGuard.mjs` as an expected
+  survivor** rather than papered over with a claim of coverage it does not have.
 - **Futures temperature is fitted on four-team divisions** and applied to
   sixteen-team leagues via a `sqrt(fieldSize/4)` correction. That correction is
   principled but not itself fitted.
@@ -1715,3 +2217,28 @@ hardcoded-hex colors + large radii + `font-mono` + soft blurred shadows:
     scope relaxation). Upgrading wOBA to per-outcome-and-base-state weights needs no
     relaxation and is nearly free, but it addresses the occupancy approximation and
     **will not** change the wRC+ compression — the two are independent.
+11. **NEW — Wardley's Brier is 0.2500, a coin flip.** The `scout` method either needs
+    a longer-horizon re-fit or he is deliberately near-worthless. See Known
+    limitations; this is the one open item the forecaster pool has.
+12. **NEW — the crowd's fade strategy does not survive measurement.** Chasing beat
+    fading on both the crowd path and the no-crowd control, so the edge is the price
+    path's own mean reversion rather than anything the crowd adds. Is the design
+    premise being kept for now and reported honestly, or revised?
+13. **NEW — `buildPlayoffProjection` is dead code with two confirmed red bugs.** It
+    has **zero callers**; the real bracket is built in `simulationManager.ts`. The
+    bugs (wild cards paired by seed index rather than role, so a runner-up can appear
+    in a card labelled "Wild Card"; and weak wild-card matchups projecting as 2–0
+    sweeps at a 6-win separation threshold) are invisible to every player. **The
+    decision is binary: ship the projection or delete it.** Fixing bugs in code
+    nothing calls is wasted motion and would suggest it is live.
+14. **NEW — the bracket's empty live-card footer needs eyes.** Removing the stakes
+    footer left live series cards with an empty lower region. The card still reads
+    correctly (gold left-edge, IN PROGRESS label) but the vertical balance changed
+    and only a browser can confirm whether it looks hollow. If it does, the fix is a
+    borderless padding strip — **not** reinstated prose.
+15. **NEW — 39 commits are unpushed.** `local` is ahead of `origin/local` and no push
+    has been attempted.
+16. **NEW — the ~22 MB of raw PNGs in `src/assets/media/` should probably go.** They
+    are unreferenced next to their WebP versions, and an untracked
+    `fuyukashinonome2.png` (3.1 MB) sits among them. Third time this project has
+    shipped oversized art.
