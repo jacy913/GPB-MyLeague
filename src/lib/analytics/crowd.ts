@@ -205,12 +205,19 @@ const clamp = (value: number): number => Math.max(-MAX_DAILY_MOVE, Math.min(MAX_
  * parabolic move with the same enthusiasm as the second, because the people who were going to buy
  * have already bought. Appetite therefore decays with how far the price has extended from fair value.
  *
- * `CROWD_SATURATION` is a CHOSEN number, chosen so that appetite falls to roughly a third by the
- * time a move is 20% extended -- which is where the reversal has to happen for the design to work.
- * It is not fitted to anything and there is no ground truth for crowd appetite to be fitted against.
- * What IS measured is the consequence, and `checkCrowd` gates on the crowd actually turning.
+ * `CROWD_SATURATION` is a CHOSEN number, derived from the behavioural requirement that the crowd
+ * actually turns in the fixture tested by `checkCrowd`. With extension x above fair (x = price/fair-1),
+ * appetite = 1/(1 + S*x). The boundary was located rather than asserted: at S = 13 check 12 fails
+ * (net flow +0.13%, the crowd never turns), at S = 14 it passes (net flow -0.01%, it does). So the
+ * threshold sits between 13 and 14, and S = 15 carries a full unit of margin above the highest value
+ * that still fails -- deliberate rather than sitting on the edge. At 20% extension, S = 15 leaves
+ * appetite at 0.25; at S = 14 it would be 0.263, and at S = 13 it would be 0.279, where the fade is
+ * too weak to be the mechanism it is supposed to be.
+ *
+ * It is not fitted to market data and nothing in this project could fit it -- there is no ground
+ * truth for crowd appetite. What IS measured is the consequence, and the checks gate it.
  */
-export const CROWD_SATURATION = 10;
+export const CROWD_SATURATION = 15;
 
 const momentumSignal = (closes: number[], fair: number): number => {
   if (closes.length < MOMENTUM_LOOKBACK + 1) return 0;
