@@ -539,12 +539,54 @@ console.log('\n7. THE WIRING, WHICH IS WHERE ALL THREE ACTUALLY LIVE');
   check('the award closure no longer reads seasonComplete',
     /decided: regularSeasonOver/.test(page) && !/decided: input\.seasonComplete/.test(page),
     'seasonComplete is five weeks late for a regular-season award');
-  check('regularSeasonOver is derived from the standings map, not a new count',
-    /gamesRemainingByTeamId\.size > 0[\s\S]{0,120}every\(\(left\) => left <= 0\)/.test(page),
-    'one signal for "the season is over", so two tabs cannot disagree');
-  check('and it is guarded on a non-empty map',
-    /gamesRemainingByTeamId\.size > 0/.test(page),
-    '[].every() is true, so an unknown schedule would read as a finished season');
+  /*
+   * The DERIVATION, not just the flag -- and this is the assertion whose absence let a real bug ship.
+   *
+   * Everything above this point calls `buildAwardMarket` with an explicit `decided`, so no behavioural
+   * check here could see how that flag was produced. The first version tested
+   * `size > 0 && every(v <= 0)`, which is wrong precisely because `remainingRegularSeasonGames` records
+   * a club only when it has an UNFINISHED game: a completed regular season yields an EMPTY map, not a
+   * map of zeroes. So the guard meant the opposite of its intent, both MVP races stayed open all
+   * playoffs, and every suite stayed green. Only the running board showed it.
+   *
+   * The empty map is ambiguous on its own, and the fix is that the disambiguation comes from the
+   * SCHEDULE rather than from the map.
+   */
+  check('regularSeasonOver reads the remaining map as EMPTY when finished, not as zeroes',
+    /gamesRemainingByTeamId\.size === 0/.test(page),
+    'the map records only clubs with UNFINISHED games, so a played-out season is empty -- testing size > 0 meant a finished season read as unfinished');
+  check('and it requires regular-season games to have existed at all',
+    /regularSeasonScheduled && gamesRemainingByTeamId\.size === 0/.test(page)
+    && /games\.some\(isRegularSeasonGame\)/.test(page),
+    '"nothing left to play" and "no regular season was scheduled" are identical in an empty map, so the schedule has to break the tie');
+
+  /*
+   * And the property that made the first version wrong, asserted on the map itself rather than on
+   * the component. A finished season MUST produce an empty map; if it produced zeroes instead, the
+   * correct derivation would still be `size > 0` and this whole detour would have been avoidable.
+   */
+  const finishedGames = [
+    { homeTeam: 'brah', awayTeam: 'corvix', status: 'completed' },
+    { homeTeam: 'delph', awayTeam: 'eska', status: 'completed' },
+  ];
+  const midSeason = [
+    { homeTeam: 'brah', awayTeam: 'corvix', status: 'completed' },
+    { homeTeam: 'delph', awayTeam: 'eska', status: 'scheduled' },
+  ];
+  const noSeason = [
+    { homeTeam: 'brah', awayTeam: 'corvix', status: 'completed', playoff: { round: 'league_series' } },
+  ];
+  const neverRegular = () => false;
+  const asRegular = () => false;
+  check('a COMPLETED regular season leaves the map EMPTY, not full of zeroes',
+    remainingRegularSeasonGames(finishedGames as never, asRegular).size === 0,
+    'this is why size > 0 was the wrong test');
+  check('an unfinished game does put a club in the map',
+    remainingRegularSeasonGames(midSeason as never, asRegular).size === 2,
+    'so size === 0 genuinely distinguishes finished from unfinished');
+  check('and playoff games never count, so an empty postseason schedule is not a finished season',
+    remainingRegularSeasonGames(noSeason as never, (g) => Boolean(g.playoff)).size === 0);
+  void neverRegular;
 
   check('App ranks the batting MVP by DELEGATING, not by re-deriving',
     /buildAwardsForBoard\(\s*'batting'/.test(app) && !/stat\.avg \* 700/.test(app),

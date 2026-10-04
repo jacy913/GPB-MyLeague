@@ -12,7 +12,7 @@ import {
 import type { FieldMarket } from '../../lib/markets';
 import { leagueSeriesLosers, playoffEliminations, lockedRaces, remainingRegularSeasonGames } from '../../lib/futuresRisk';
 import { projectSeasonCalendar } from '../../lib/marketDates';
-import { isPlayoffGame } from '../../logic/playoffs';
+import { isPlayoffGame, isRegularSeasonGame } from '../../logic/playoffs';
 import { getTeamRosterStrength } from '../../logic/teamStrength';
 import {
   getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
@@ -245,21 +245,33 @@ const BettingPage: React.FC<BettingPageProps> = ({
   /*
    * HAS THE REGULAR SEASON BEEN PLAYED OUT?
    *
-   * Every club on zero, which is the same signal that closes the division races -- deliberately one
-   * signal rather than two, so the futures board cannot decide "the season is over" differently
-   * depending on which tab you are looking at.
+   * This is what the AWARD races key their closure on, not `seasonComplete`, which is five weeks
+   * later for a race decided by regular-season numbers.
    *
-   * Guarded on a NON-EMPTY map, because `[].every(...)` is true. An empty schedule means nothing is
-   * known about the season, not that the season is finished, and reading it the other way would close
-   * both MVP races on a universe that had not played a game.
+   * ============================================================================
+   * WHY IT IS NOT "EVERY CLUB ON ZERO"
+   * ============================================================================
    *
-   * This is what the AWARD races key their closure on. It is not `seasonComplete`, which is five
-   * weeks later.
+   * That was the first version, and it was wrong in the direction that matters. The map it reads
+   * records a club ONLY when that club has an UNFINISHED regular-season game, so the moment the
+   * regular season is complete the map is EMPTY -- not full of zeroes. Testing `size > 0` therefore
+   * meant a FINISHED regular season read as unfinished, and both MVP races stayed open for the whole
+   * playoffs. Which is the bug this change set out to close, reintroduced one line later.
+   *
+   * Caught by running the app, not by the suite: the fixtures call `buildAwardMarket` with an
+   * explicit `decided`, so nothing there could notice how the flag was derived.
+   *
+   * The empty map is genuinely ambiguous on its own -- "nothing left to play" and "no regular season
+   * was ever scheduled" look identical -- so the disambiguation comes from the schedule itself:
+   *
+   *   regular-season games exist, none unfinished  -> over, close the races
+   *   regular-season games exist, some unfinished  -> not over
+   *   no regular-season games at all                -> nothing is known, do NOT close
    */
+  const regularSeasonScheduled = useMemo(() => games.some(isRegularSeasonGame), [games]);
   const regularSeasonOver = useMemo(
-    () => gamesRemainingByTeamId.size > 0
-      && [...gamesRemainingByTeamId.values()].every((left) => left <= 0),
-    [gamesRemainingByTeamId],
+    () => regularSeasonScheduled && gamesRemainingByTeamId.size === 0,
+    [gamesRemainingByTeamId, regularSeasonScheduled],
   );
 
   /*
