@@ -238,11 +238,13 @@ These were found in the same review and are **deliberately unchanged.** None is 
 | `getHomeRecords` files a **tied** game as a home loss | 🟠 | Unreachable — baseball games cannot tie. Two-minute defensive fix, worth doing |
 | Wild card series paired by **seed index**, not by role | 🔴 | `clinchType` is stored on every seeded team and never read. Two wild cards can be drawn against each other while a runner-up sits in a card labelled "Wild Card" |
 | Weak wild card matchups project as **2–0 sweeps** | 🔴 | Threshold is 6 wins of separation, which is ordinary in an 8-team field |
-| **The entire projection system is dead code** | ⚪ | `buildPlayoffProjection` has **zero callers.** The real bracket is built in `simulationManager.ts`. Findings 2 and 3 above are correct bugs that **no player will ever see** |
+| **The entire projection system is dead code** | ✅ **RESOLVED** | `buildPlayoffProjection` had **zero callers** and was deleted outright. It was dead on arrival: `3a5eebd` ("Ver 0.0.4", 2026-03-02) created this file and `PlayoffsBracket.tsx` in one commit, and the only line ever added containing the string `buildPlayoffProjection` is its own definition. Findings 2 and 3 above were bugs in code no player would ever see, and they went with it |
 | `seeds[5]` unguarded | 🟠 | Unreachable at 32 teams; throws if any division drops below two |
 | World Series day offsets copied from League Series | 🟠 | Cosmetic. Real baseball varies the final-series format deliberately |
 
-**The judgement call:** the two red findings were left alone because the projection is dead. Fixing bugs in code nothing calls is wasted motion, and doing it would suggest the projection is live. **The real decision is binary — ship the projection or delete it.**
+**The judgement call, and how it resolved:** the two red findings were left alone because the projection is dead. Fixing bugs in code nothing calls is wasted motion, and doing it would suggest the projection is live. That left a binary — ship the projection or delete it — and it was **deleted**, on the grounds that "who wins" is already a shipped capability: `analytics/playoffMonteCarlo.ts` samples the remaining schedule and is live in `priceBoard.ts:405` and fitted into `teamValue.ts`. The projection would have been a second, worse mechanism answering a question that is already answered properly. Deleting it removed 111 lines and 7 symbols with no behaviour change.
+
+The cost was one stale sentence in the in-app book, which had claimed the page "uses a live projection engine seeded from current standings". That was never true and is now corrected to say the bracket plays series out and that outcome probabilities live in the Monte Carlo engine.
 
 ---
 

@@ -1027,7 +1027,7 @@ export const GPBBook: React.FC<GPBBookProps> = ({ teams, games, settings, curren
         <div className="rounded-xl border border-platinum/25 bg-[linear-gradient(135deg,rgba(23,182,144,0.1),rgba(255,255,255,0.02))] px-4 py-3 mb-4">
           <p className="font-mono text-[11px] uppercase text-zinc-400">Current Engine Status</p>
           <p className="text-sm text-zinc-200 mt-2">
-            The `Playoffs` page now uses a live projection engine seeded from current standings. Qualification and ordering use W-L, run differential, and derived home record from completed schedule data.
+            The `Playoffs` page seeds a real field from current standings: qualification and ordering use W-L, run differential, and derived home record from completed schedule data, then play the resulting series out game by game. It does <span className="text-platinum">not</span> project series winners. Outcome probabilities live in the Monte Carlo engine behind the playoff odds board, which samples the remaining schedule rather than guessing a scoreline.
           </p>
         </div>
 

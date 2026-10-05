@@ -2283,13 +2283,38 @@ previous session.
     fading on both the crowd path and the no-crowd control, so the edge is the price
     path's own mean reversion rather than anything the crowd adds. Is the design
     premise being kept for now and reported honestly, or revised?
-13. **NEW — `buildPlayoffProjection` is dead code with two confirmed red bugs.** It
-    has **zero callers**; the real bracket is built in `simulationManager.ts`. The
-    bugs (wild cards paired by seed index rather than role, so a runner-up can appear
-    in a card labelled "Wild Card"; and weak wild-card matchups projecting as 2–0
-    sweeps at a 6-win separation threshold) are invisible to every player. **The
-    decision is binary: ship the projection or delete it.** Fixing bugs in code
-    nothing calls is wasted motion and would suggest it is live.
+13. ~~**`buildPlayoffProjection` is dead code with two confirmed red bugs.**~~ **RESOLVED
+    — deleted, not fixed.** It was dead on arrival: `3a5eebd` ("Ver 0.0.4",
+    2026-03-02) created `src/logic/playoffs.ts` and `PlayoffsBracket.tsx` in a single
+    commit, and searching every file in every commit turned up exactly one line ever
+    added containing the string `buildPlayoffProjection` — its own definition. **No
+    caller ever existed**, so the two confirmed red bugs (wild cards paired by seed
+    index rather than role, so a runner-up can appear in a card labelled "Wild Card";
+    and weak wild-card matchups projecting as 2–0 sweeps at a 6-win separation
+    threshold) were never seen by a player and were fixed by deletion instead.
+    111 lines and 7 symbols removed: types `ProjectedSeries`,
+    `LeaguePlayoffProjection`, `PlayoffProjection`, and private
+    `getLeagueProjection`, `buildProjectedSeries`, `getProjectedSeriesScore`.
+
+    **Deletion chosen over shipping**, because "who wins" is already a shipped
+    capability — `analytics/playoffMonteCarlo.ts` samples the remaining schedule, is
+    live in `priceBoard.ts:405`, and is fitted into `teamValue.ts`. Shipping the
+    projection would have added a second and worse mechanism for a question already
+    answered properly.
+
+    **The trap, recorded because it is one line away:** `SeededPlayoffTeam.clinchType`
+    is **live** (`simulationManager.ts:535,546`, `PlayoffsBracket.tsx:102`,
+    `TeamCalendar.tsx:102,109`). The exported `ClinchType` alias has no importers —
+    those sites use the literal `'wildcard'` — but the field is load-bearing, so both
+    the alias and the field stayed. Verified after the delete: `tsc` still 10 errors
+    (the documented baseline), `checkPlayoffElimination` all passed,
+    `provePlayoffEliminationGuard` 7/7, `checkLockedRaces` all passed,
+    `verifyLockedRaces` exploit closed, `proveLockedRacesGuard` 9/9.
+
+    One stale sentence was found by the delete rather than by any check: the in-app
+    book claimed the Playoffs page "uses a live projection engine seeded from current
+    standings". That was never true. Corrected to say the bracket seeds a real field
+    and plays series out, with outcome probabilities in the Monte Carlo engine.
 14. **NEW — the bracket's empty live-card footer needs eyes.** Removing the stakes
     footer left live series cards with an empty lower region. The card still reads
     correctly (gold left-edge, IN PROGRESS label) but the vertical balance changed
