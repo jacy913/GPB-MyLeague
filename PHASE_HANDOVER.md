@@ -1818,12 +1818,16 @@ previous session.
 
 | | Result |
 |---|---|
-| `npx tsc --noEmit` | **10 errors** — unchanged, the baseline |
+| `npx tsc --noEmit` | **7 errors** — all triaged below, none blocking |
 | `checkBettingCardShape` | **29/29** |
 | `checkCrowd` | **14/14** |
 | `checkCrowdOnRealPath` | **6/6** |
 | `proveCrowdCeilingGuard` | **3/3 injected bugs caught** |
-| `checkSharePrice` | **18/18** |
+| `checkSharePrice` | **21/21** |
+| `checkPriceBoard` | **20/20** |
+| `checkPortfolio` | **28/28** |
+| `checkSharePersistence` | **26/26** |
+| `probeTerminateThenExchange` | **green** (terminate → Exchange renders, no throw) |
 | `checkFanbase` | **11/11** |
 | `checkWorkerPriceHandoff` | **8/8** |
 | `checkPlayoffElimination` | **all passed** |
@@ -1833,12 +1837,42 @@ previous session.
 | `checkPropCard` | **all passed** |
 | `verifyMediaOdds` | 9 forecasters priced, Wardley at 0.2500 |
 
-- **`npx tsc --noEmit` reports 10 pre-existing diagnostics**, unchanged since the UX
-  phases began: `Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`,
-  `TeamCalendar.tsx:53` (`localeCompare` on `unknown`); `lib/storage.ts:1249`;
-  `playerGenerator.ts` ×3; `tradeLogic.ts:146`; `simulationWorker.ts:21` and `:211`.
-  **Line numbers have drifted** (`storage.ts` 1123 → 1249, `simulationWorker.ts`
-  18 → 21 and 204 → 211); the count and the files are identical.
+- **`npx tsc --noEmit` reports 7 diagnostics. Every one is triaged below, and none
+  of them blocks anything.** This section exists because the count used to be
+  carried as verbal tradition ("the 10 baseline"), which is not a safe way to
+  hold a number: a session that introduced an 8th error would have seen "8, not
+  10" and had no way to judge whether the new one mattered.
+
+  **They do not block a build.** `npm run build` is `vite build`, which does not
+  run `tsc` (`npm run lint` does, separately). Verified: `✓ built in 9.63s`. So a
+  type error cannot stop a build or a ship, and "fix the errors" is never a
+  release blocker here.
+
+  | Diagnostic | Verdict |
+  |---|---|
+  | `Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`, `TeamCalendar.tsx:53` — `localeCompare` on `unknown` | **Narrowing gap.** Values are strings at runtime; the compiler cannot see it. Lowest priority of the seven. |
+  | `lib/storage.ts:1249` — `number` not assignable to `Timeout` | **DOM vs Node lib conflict.** `window.setTimeout` returns a number in a browser; the variable is typed with Node's `Timeout`. Runtime-correct. |
+  | `simulationWorker.ts:21` — `self` cast to `DedicatedWorkerGlobalScope` | **Needs `as unknown as`.** A worker really does have that scope; the two lib types just don't overlap enough for TS. |
+  | `simulationWorker.ts:211` — `Game[]` vs an inferred literal type | **`playoff` is optional on `Game` and required in the inferred shape.** Widening the inferred type is the fix; no behaviour depends on it. |
+  | `playerGenerator.ts:596` — no overload matches | **Not yet triaged in detail.** Left alone deliberately rather than guessed at. |
+
+  **What was here before, and why it went:**
+
+  - `tradeLogic.ts:146` — **fixed.** `getTargetPositionForSlot` ended in
+    `return slotCode`, where `CoreRosterSlotCode` includes `'SP1'`..`'SP5'` and
+    `'RP1'`..`'RP4'`, none of which is a `PlayerPosition`. The runtime was
+    *correct* — three `startsWith` early-returns caught every pitching slot first
+    — but `startsWith` is not a type guard, so TypeScript could not prove it. Now
+    a `isBatterSlot` type predicate does, and the proof lives with the code rather
+    than in a reader's head. Verified behaviourally identical against the old
+    implementation across all 19 slots in `CORE_ROSTER_SLOTS`.
+  - `playerGenerator.ts` ×2 — **fixed.** `OverallTierKey` was declared twice in one
+    module scope: a hand-written union at the top and `OverallTier['key']` at the
+    old `:503`. The second was circular — `OverallTier.key` is typed *as*
+    `OverallTierKey` — so it resolved straight back to the union and deleting it
+    changed no type. **One drift direction remains unguarded:** adding a tier to
+    `ACTIVE_OVERALL_TIERS` fails the type check, but *removing* one does not, so
+    the union can hold a key no array produces. Recorded at the site.
 - **`checkPropCard` cannot run under plain `npx tsx`** — it throws
   `ERR_UNKNOWN_FILE_EXTENSION` on the `.jpg` asset imports. It needs the asset stub:
   **`npm run propcard`**, which is `tsx --import ./tools/assetStub.mjs`. This is a
@@ -1920,6 +1954,20 @@ previous session.
 
 ## Guardrails
 
+- **Never carry a diagnostic count as verbal tradition.** The "10 baseline" phrase
+  survived several sessions and every one of them had to re-derive what it meant.
+  A count with no per-item verdict is not a safety net: the session that introduces
+  an 11th error sees "11, not 10" and cannot tell whether the new one matters. The
+  tsc errors are now tabled with a verdict each, under **Verification state**. Same
+  rule for any "known failures" list — record *why* each is acceptable, or it is
+  not known, it is only deferred.
+- **A type error is a claim about proof, not about behaviour — but "the runtime was
+  right" is still not a reason to leave it.** `tradeLogic.ts:146` had been an error
+  for months on exactly that justification. It was true (three `startsWith` guards
+  did catch every pitching slot) and it was still worth fixing: the compiler was
+  asking for a proof it could not get, and the fix was one type predicate. When the
+  runtime is right and the type is unproven, make the type provable — do not
+  annotate the error away.
 - **Presentation layer only, as a standing rule rather than a UX-phase one.** Do not
   touch `src/logic/` or `src/workers/`. `AppViewRouter.tsx` is the sole exception
   and is presentation routing. Leave all Supabase lines, imports, hooks and calls

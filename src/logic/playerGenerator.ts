@@ -500,7 +500,26 @@ const ACTIVE_OVERALL_TIERS: OverallTier[] = [
   { key: 'replacement', min: 60, max: 69, weight: 15 },
 ];
 
-type OverallTierKey = OverallTier['key'];
+/*
+  NO LOCAL ALIAS HERE, and this used to have one.
+
+  `type OverallTierKey = OverallTier['key']` sat here as well as the hand-written union at the top of
+  this file -- the same name declared twice in one module scope, which is why tsc carried a "Duplicate
+  identifier" error against both lines for as long as it did.
+
+  It was circular rather than useful: `OverallTier.key` is itself typed AS `OverallTierKey`, so the
+  derived alias resolved straight back to the union. Removing it changed no type anywhere.
+
+  The union at the top is the one that has to stay, because it is what `OverallTier` derives from.
+
+  WORTH KNOWING about the surviving union: it and `ACTIVE_OVERALL_TIERS` are two sources of truth for
+  the same seven keys, and only one drift direction is caught. Adding a tier to the array fails the
+  type check, because `OverallTier.key` only admits the union. REMOVING one does not -- the union keeps
+  a key no array produces, and any code that switches exhaustively over it is quietly handling a case
+  that cannot occur. Deriving the union from the array would close that, but the array is typed
+  `OverallTier[]`, so the two would have to be untangled together. Left as-is with the direction
+  written down, rather than discovered later.
+*/
 type PoolStatus = Exclude<PlayerStatus, 'retired'>;
 
 type TierQuotaAllocation = {

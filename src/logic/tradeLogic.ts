@@ -1,4 +1,5 @@
 import {
+  BatterPosition,
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
   CoreRosterSlotCode,
@@ -133,17 +134,36 @@ const getNeedSlotsForTeam = (
     .filter((entry) => entry.overall < 75);
 };
 
+/**
+ * Is this roster slot a batting position rather than a pitching slot?
+ *
+ * A type predicate, and that is the whole point of it. `CoreRosterSlotCode` includes `'SP1'`..`'SP5'`
+ * and `'RP1'`..`'RP4'`, none of which is a `PlayerPosition` -- the pitcher positions are `'SP'`, `'RP'`
+ * and `'CL'`. So the final `return slotCode` below could hand back something that is not a position.
+ *
+ * It never did, because the three early returns caught every pitching slot first. But "it never did"
+ * was the compiler's job to establish and it could not: `String.prototype.startsWith` is not a type
+ * guard, so `!slotCode.startsWith('SP')` tells TypeScript nothing about which arm of the union is left.
+ * The runtime was right and the type was unproven, which is why this line sat in `tsc`'s output as a
+ * real error rather than a warning.
+ *
+ * Expressed as a predicate so the proof lives with the code. The three families are disjoint --
+ * `SP*`, `RP*`, and `'CL'` -- so excluding all of them leaves exactly `BatterPosition`.
+ */
+const isBatterSlot = (slotCode: CoreRosterSlotCode): slotCode is BatterPosition =>
+  !slotCode.startsWith('SP') && !slotCode.startsWith('RP') && slotCode !== 'CL';
+
 const getTargetPositionForSlot = (slotCode: CoreRosterSlotCode): PlayerPosition => {
+  if (isBatterSlot(slotCode)) {
+    return slotCode;
+  }
   if (slotCode.startsWith('SP')) {
     return 'SP';
   }
   if (slotCode === 'CL') {
     return 'CL';
   }
-  if (slotCode.startsWith('RP')) {
-    return 'RP';
-  }
-  return slotCode;
+  return 'RP';
 };
 
 const isTradeChipProspect = (
