@@ -100,10 +100,10 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       on screen.
 
       Seeded from `startPayload.priceLedger`, NOT from `[]`. Those two are the same on the first run of
-      a league and completely different on every run after it: an empty ledger means no previous
-      close, which `priceBoardForDay` answers by opening every club at exactly fair value with a
-      0.000% move. So a worker started from `[]` reopens the whole market at fair every time it was
-      asked to advance, putting a cliff in the share-price chart that no game produced.
+      a league and completely different on every run after it: an empty ledger means no previous close,
+      so `previous` falls back to fair, the drift term is exactly zero, and the run restarts the price
+      path from scratch. So a worker started from `[]` reopens the whole market every time it was asked to
+      advance, putting a cliff in the share-price chart that no game produced.
     */
     priceLedger: startPayload.priceLedger ?? [],
   };

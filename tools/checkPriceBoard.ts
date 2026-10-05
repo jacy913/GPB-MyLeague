@@ -453,6 +453,43 @@ const main = async (): Promise<void> => {
     + 'the cache happened to be warm',
   );
 
+  /*
+    THE OPENING, ON THE LIVE PATH. `checkSharePrice` proves this for `buildPriceSeries`, which is a
+    DIFFERENT function -- the app prices through this one, and this one had its own `isFirstDay`
+    branch. A property proven on one is not a property of the other, and nothing gated this copy.
+  */
+  clearFairLayerCache();
+  const openingOf = (seed: number) => {
+    const board = priceBoardForDay({
+      teams: state.teams, games: state.games, date: state.games[0].date, playerState: state.playerState,
+      seasonYear: YEAR, seed, mcTrials: HXSE_DAILY_TRIALS, settings: DEFAULT_SETTINGS,
+      previousClose: undefined,
+    });
+    return teamIds.map((id) => board.close[id] / board.fair[id] - 1);
+  };
+  const openMoves = openingOf(SEED);
+  const openMovesAgain = openingOf(SEED);
+  const openMovesReseeded = openingOf(SEED + 1);
+  const pct = (m: number) => (m * 100).toFixed(2);
+
+  check(
+    'the live path opens every club off fair, so day one has a market to trade',
+    openMoves.every((m) => Math.abs(m) > 1e-9),
+    `all ${openMoves.length} clubs opened off their own fair value, spanning ${pct(Math.min(...openMoves))}% `
+    + `to ${pct(Math.max(...openMoves))}%. With the old exact-fair open every stray-from-fair readout on the `
+    + 'Exchange was zero on opening day, which left the whole desk with nothing to price until day two.',
+  );
+
+  check(
+    'that opening is seeded, so it is reproducible but not a shared constant offset',
+    openMoves.every((m, i) => Math.abs(m - openMovesAgain[i]) < 1e-12)
+      && openMoves.every((m, i) => Math.abs(m - openMovesReseeded[i]) > 1e-9),
+    `the same seed reproduced all ${openMoves.length} openings exactly, and a seed one higher moved all `
+    + `${openMoves.length} of them. Both halves are asserted: reproducibility alone would also be satisfied `
+    + 'by a fixed fudge factor, which would look random on one chart while mispricing every club identically '
+    + 'in every universe.',
+  );
+
   // -- report ------------------------------------------------------------------------------------
   const failed = checks.filter((c) => !c.pass);
   const sample = teamIds.slice(0, 4);

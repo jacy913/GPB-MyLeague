@@ -290,7 +290,7 @@ export interface PriceSeries {
 export interface PriceSeriesInput {
   /** Season seed. The ONLY source of randomness, and it is hashed, never drawn from a clock. */
   seed: number;
-  /** Dates in ascending order. The first date opens at fair value. */
+  /** Dates in ascending order. The first date opens at fair value plus one noise step. */
   dates: string[];
   teamIds: string[];
   /** ISO date -> (teamId -> fair price). */
@@ -323,18 +323,37 @@ export const buildPriceSeries = (input: PriceSeriesInput): PriceSeries[] => {
     const close: Record<string, number> = {};
     for (const teamId of input.teamIds) {
       const fairPrice = fair[teamId] ?? PRICE_MID;
-      const isFirst = Object.keys(previousById).length === 0;
-      close[teamId] = isFirst
-        ? Math.max(PRICE_MIN, Math.min(PRICE_MAX, fairPrice))
-        : nextPrice({
-          seed: input.seed,
-          date,
-          teamId,
-          previous: previousById[teamId] ?? fairPrice,
-          fair: fairPrice,
-          shock: shocks[teamId] ?? 0,
-          regime,
-        });
+      /*
+        NO OPENING SPECIAL CASE. The first day takes the same step as every other day.
+
+        It used to clamp day one to exactly fair value, and `checkSharePrice` gated that as "the
+        opening close is exactly fair value". The reasoning was that a series should start where the
+        valuation says, rather than at a number the valuation cannot account for.
+
+        The problem is what it did to the product. Fair value is the MODEL's opinion, and opening
+        every club EXACTLY on it means stray-from-fair is precisely zero for all thirty-two clubs on
+        opening day. The Exchange's entire tradable surface -- the fair line, the close line, the
+        mispricing readout, the Monte Carlo edge -- is flat until day two. A manager opens a trading
+        game with nothing at all to price.
+
+        `previous` falls back to `fairPrice` when there is no prior close, so on day one `gap` is
+        zero, `drift` is exactly zero, and the opening is `fair x (1 + noise)`: one honest step of
+        imprecision, no shock, nothing invented. An opening auction being imprecise is defensible
+        fiction. A market that had already reacted to a game nobody played would not be.
+
+        Still reproducible, because `noiseFor` is a hash of `(seed, date, teamId)` rather than a
+        draw. The same universe reopens at the same prices, which is what keeps a re-simulation
+        comparable instead of merely plausible.
+      */
+      close[teamId] = nextPrice({
+        seed: input.seed,
+        date,
+        teamId,
+        previous: previousById[teamId] ?? fairPrice,
+        fair: fairPrice,
+        shock: shocks[teamId] ?? 0,
+        regime,
+      });
     }
     previousById = close;
     series.push({ date, close });

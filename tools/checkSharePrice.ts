@@ -468,13 +468,64 @@ const main = (): void => {
     + 'valuation is the fastest route to a confusing screen.',
   );
 
+  /*
+    THE OPENING IS FAIR VALUE PLUS ONE NOISE STEP.
+
+    This REPLACED a gate that asserted the opposite -- that day one's close was exactly fair value
+    to within 1e-9. Replacing a gate is the dangerous direction, so this asserts four properties
+    rather than one, because several of them each pass for a broken build:
+
+      1. the opening is off fair (the old behaviour is genuinely gone),
+      2. it is reproducible from the seed, so a re-simulation reopens at the same prices,
+      3. a DIFFERENT seed gives a DIFFERENT opening, so it is real per-club noise and not a shared
+         constant offset, and
+      4. it stays inside MAX_DAILY_MOVE, so removing the special case did not open a club somewhere
+         the rest of the series could never have reached.
+
+    (3) is the one that matters most. A fixed fudge factor would satisfy (1) and (2) perfectly --
+    looking random on one chart, while mispricing all thirty-two clubs identically in every universe
+    ever generated. Only a seed comparison distinguishes that from the thing we meant to build.
+  */
+  const openingOf = (built: PriceSeries[]): number[] => TEAM_IDS.map((id) => {
+    const target = fair.get(DATES[0])?.[id] ?? 500;
+    return target > 0 ? built[0].close[id] / target - 1 : 0;
+  });
+  const openMoves = openingOf(series);
+  const openMovesSameSeed = openingOf(buildFor(12345));
+  const openMovesOtherSeed = openingOf(buildFor(999));
+  const openPct = (m: number) => (m * 100).toFixed(2);
+
   check(
-    'the opening close is exactly fair value, so a series starts where the valuation says it should',
-    TEAM_IDS.every((id) => {
-      const target = fair.get(DATES[0])?.[id] ?? 500;
-      return Math.abs(series[0].close[id] - target) < 1e-9;
-    }),
-    'every club opens on its own fair price rather than a shared default',
+    'the opening close is fair value plus one NOISY step, not fair value exactly',
+    openMoves.some((m) => Math.abs(m) > 1e-9),
+    `${openMoves.filter((m) => Math.abs(m) > 1e-9).length}/${openMoves.length} clubs opened off fair, `
+    + `spanning ${openPct(Math.min(...openMoves))}% to ${openPct(Math.max(...openMoves))}%. `
+    + `The gate this replaced required 0.00% for all ${openMoves.length} of them, which left the `
+    + 'Exchange with no mispricing to trade on its opening day.',
+  );
+
+  check(
+    'that opening is reproducible from the seed, so a re-simulation reopens at the same prices',
+    openMoves.every((m, i) => Math.abs(m - openMovesSameSeed[i]) < 1e-12),
+    'a second build at the same seed reproduced every opening move exactly. This is what keeps a '
+    + 're-run comparable rather than merely plausible, and it is the check that would fail if the '
+    + 'opening were ever drawn from Math.random instead of the noise hash.',
+  );
+
+  check(
+    'a different seed produces a different opening, so it is per-club noise and not one shared offset',
+    openMoves.some((m, i) => Math.abs(m - openMovesOtherSeed[i]) > 1e-9),
+    `${openMoves.filter((m, i) => Math.abs(m - openMovesOtherSeed[i]) > 1e-9).length}/${openMoves.length} `
+    + 'clubs opened differently under a different seed. Had this been zero the opening would be a '
+    + 'constant fudge factor: random-looking on one chart, identically mispriced in every universe.',
+  );
+
+  check(
+    'the opening move respects MAX_DAILY_MOVE, so no club can open somewhere the series could not reach',
+    openMoves.every((m) => Math.abs(m) <= MAX_DAILY_MOVE + 1e-9),
+    `largest opening move ${openPct(Math.max(...openMoves.map(Math.abs)))}% against a `
+    + `${(MAX_DAILY_MOVE * 100).toFixed(0)}% cap. Day one now goes through the same clamp as every `
+    + 'other day, so removing the special case cannot produce a price the rest of the series could not.',
   );
 
   // -- report ---------------------------------------------------------------------------------

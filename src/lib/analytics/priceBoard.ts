@@ -446,22 +446,37 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
   const close: Record<string, number> = {};
   const move: Record<string, number> = {};
   const gameShocks = regime === 'in_season' ? shocksForDate(asOf.filter((g) => g.date === input.date)) : {};
-  const isFirstDay = !input.previousClose || Object.keys(input.previousClose).length === 0;
+
+  /*
+    NO OPENING SPECIAL CASE, and this is the one that mattered.
+
+    `isFirstDay` used to pin the close to `fairPrice` exactly. Removed for the same reason as the
+    matching branch in `sharePrice.ts` -- an exchange that opens every club precisely on the
+    valuation has a stray-from-fair of exactly zero across all thirty-two clubs, so the mispricing
+    the whole desk exists to trade does not exist until day two.
+
+    `previous` falls back to `fairPrice`, so on a first day the gap is zero and `drift` is zero:
+    the open is `fair x (1 + noise)`. No shock is invented either -- there are no completed games on
+    an opening date, so `gameShocks` is empty and `eventShocks` is whatever the caller actually
+    passed. The market opens imprecise, not informed.
+
+    `checkPriceBoard` now gates this directly, because it is the function the app actually prices
+    through. `checkSharePrice` gates the same property on `buildPriceSeries`, which is a different
+    implementation -- a property proven on one is not a property of the other.
+  */
 
   for (const teamId of Object.keys(fair)) {
     const fairPrice = fair[teamId];
     const shock = (gameShocks[teamId] ?? 0) + (input.eventShocks?.[teamId] ?? 0);
-    const next = isFirstDay
-      ? fairPrice
-      : nextPrice({
-        seed: input.seed,
-        date: input.date,
-        teamId,
-        previous: (input.previousClose as Record<string, number>)[teamId] ?? fairPrice,
-        fair: fairPrice,
-        shock,
-        regime,
-      });
+    const next = nextPrice({
+      seed: input.seed,
+      date: input.date,
+      teamId,
+      previous: (input.previousClose as Record<string, number>)?.[teamId] ?? fairPrice,
+      fair: fairPrice,
+      shock,
+      regime,
+    });
     close[teamId] = next;
     move[teamId] = fairPrice > 0 ? next / fairPrice - 1 : 0;
   }

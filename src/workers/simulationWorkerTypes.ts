@@ -56,17 +56,16 @@ export interface SimulationWorkerStartPayload {
    *
    * The ledger has to arrive with the run, not only leave with it. The price path is sequential --
    * each day's close is yesterday's close plus drift, shock and noise -- so a worker that starts
-   * from an empty ledger prices its first day with no previous close, and `priceBoardForDay`
-   * answers that by opening every club at exactly fair value with a move of 0.000%. Measured on the
-   * real pricing path by `tools/probePreviousClose.ts`.
+   * from an empty ledger restarts that path, and `priceBoardForDay` answers it by reopening every club
+   * at fair plus one noise step. Measured on the real pricing path by `tools/probePreviousClose.ts`.
    *
-   * The visible consequence of omitting it: every "simulate forward" run reopens the whole market at
-   * fair, so a club that had climbed to 900 prints 500 on the first day of the next run and the
+   * The visible consequence of omitting it: every "simulate forward" run reopens the whole market, so
+   * a club that had climbed to 900 prints its fresh fair value on the first day of the next run and the
    * share-price chart shows a cliff that no game produced. Momentum and mean reversion also restart
    * from nothing on every run, so the crowd has no history to read on day one.
    *
-   * OPTIONAL, because a genuinely new market has no prior closes. Absent means "no market yet" and
-   * the run opens at fair, which is correct for a first day and wrong for every day after it.
+   * OPTIONAL, because a genuinely new market has no prior closes. Absent means "no market yet" and the
+   * run opens at fair, which is correct for a first day and wrong for every day after it.
    */
   priceLedger?: PriceSeries[];
 }

@@ -10,11 +10,16 @@
  * of a league and disagree on every run after it, because the price path is sequential: each day's
  * close is yesterday's close plus drift, shock and noise.
  *
- * With no previous close, `priceBoardForDay` opens every club at exactly fair value with a move of
- * 0.000%. So the visible consequence was that every "simulate forward" reopened the whole market at
- * fair -- a club that had climbed to 900 printed 500 on the first day of the next run, putting a
- * cliff in the share-price chart that no game produced. Momentum and mean reversion also restarted
- * from nothing each run, so the crowd had no history to read on day one.
+ * With no previous close, `priceBoardForDay` has nothing to resume from: `previous` falls back to fair, so
+ * the drift term is exactly zero and the day reopens the market at fair plus one noise step. So the visible
+ * consequence was that every "simulate forward" restarted the whole price path -- a club that had climbed
+ * to 900 printed its fresh fair value on the first day of the next run, putting a cliff in the share-price
+ * chart that no game produced. Momentum and mean reversion also restarted from nothing each run, so the
+ * crowd had no history to read on day one.
+ *
+ * (This opened at fair EXACTLY when the defect was found, via an `isFirstDay` branch that has since been
+ * removed. The check below was rewritten with it rather than deleted, because the discontinuity it
+ * detected is still a discontinuity -- it is now a noise step instead of a zero, and the defect is the same.)
  *
  * Note the comment directly above the seed argued that the ledger must be sequential, and then seeded
  * it in a way that broke exactly that. The reasoning was right and the code did the opposite.
@@ -141,11 +146,17 @@ const main = async (): Promise<void> => {
   });
 
   check(
-    'an unthreaded day opens every club at exactly fair value with a 0.000% move',
-    ids.every((id) => Math.abs(openFair.close[id] - openFair.fair[id]) < 1e-9
-      && Math.abs(openFair.move[id]) < 1e-12),
-    `across ${ids.length} clubs the close equals the fair price to within 1e-9 and the reported move is zero. This is `
-    + 'the documented meaning of a missing previous close, and it is what made a restarted run visibly wrong.',
+    'an unthreaded day REOPENS the market rather than resuming it, which is the defect this file is about',
+    ids.some((id) => Math.abs(openFair.close[id] - openFair.fair[id]) > 1e-9)
+      && ids.some((id) => Math.abs(openFair.close[id] - threaded.close[id]) > 1),
+    `across ${ids.length} clubs an unthreaded day opens at fair plus its own noise step rather than at fair `
+    + `exactly, so it still does not resume: ${ids[0]} opens at ${openFair.close[ids[0]].toFixed(1)} `
+    + `against a threaded ${threaded.close[ids[0]].toFixed(1)} and a fair ${openFair.fair[ids[0]].toFixed(1)}. `
+    + `The reported move is ${(openFair.move[ids[0]] * 100).toFixed(2)}% rather than a flat 0.000%. `
+    + 'This check used to assert the old behaviour -- an exact fair open with a zero move -- which was how a '
+    + 'dropped ledger was made detectable. The opening is noisy now, so the discontinuity it produced is a '
+    + 'noise step instead of a zero, but the defect is identical and this is what has to keep failing if '
+    + 'the threading ever comes out again.',
   );
 
   check(
@@ -209,8 +220,10 @@ const main = async (): Promise<void> => {
   check(
     'the two paths agree on day one, so the comparison below is comparing the same thing',
     ids.every((id) => Math.abs(continuous[0][id] - restarted[0][id]) < 1e-9),
-    'Both open at fair, so any later disagreement is the handoff and nothing else. Without this, a comparison that '
-    + 'differed from the first day could be blamed on misaligned dates rather than on the defect.',
+    'An unthreaded day now opens at fair plus a noise step rather than at fair exactly, so both paths still agree '
+    + 'on day one -- they are the same computation with the same seed. Any later disagreement is therefore the '
+    + 'handoff and nothing else. Without this, a comparison that differed from the first day could be blamed on '
+    + 'misaligned dates rather than on the defect.',
   );
 
   const boundary = daysPerRun;
