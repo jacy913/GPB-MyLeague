@@ -712,14 +712,49 @@ const HOANI: VoiceBank = {
     anomaly: [
       'ONE NUMBER IN THAT BOX SCORE IS WRONG',
       'THEY CHECKED THE WRONG THING',
+      'ONE FIGURE IS OUT OF LINE AND IT IS NOT NOISE',
+      'THE OTHER THIRTY-ONE NUMBERS AGREE WITH EACH OTHER. THIS ONE DOES NOT',
     ],
     sustained_rate: [
       'THAT NUMBER IS NOT A SLUMP',
       'ONE PITCHER IS CARRYING A BULLPEN',
+      'IT IS A SEQUENCE, AND SEQUENCES DO NOT REVERSE',
+      'THE LINE HAS MOVED EVERY GAME FOR THREE WEEKS. THAT IS NOT VARIATION',
     ],
     expected_divergence: [
       'THE LEAGUE GOT WORSE. HE DID NOT.',
       'EVERYTHING ABOUT THAT LINE IS FLAT',
+      'THE PREDICTION HELD AND THE PLAYER DID NOT MOVE',
+      'SAME ARITHMETIC, OPPOSITE SIGN',
+    ],
+    /*
+      THE TWO KINDS HE COVERS AND HAD NO TEMPLATES FOR, until this.
+
+      `headliners.ts` lists `meltdown` and `pitching_dome` in his `covers`, both detectors fire, and he
+      is eligible for both on severity -- but the bank had nothing for either, so every one of those
+      cards printed from `generic`. A 14-run loss came out as:
+
+          'Somebody went two-for-twelve and the box score says the third reliever did it.'
+
+      Which is a pitching story, told by a data correspondent, about the wrong club. The `generic` bank
+      above is anomaly-flavoured because every kind he *did* cover was anomaly-flavoured; these two
+      are an offensive collapse and a pitching disaster, and `meltdown` in particular is the most
+      on-brand card he could be handed -- a figure that makes the box score's story the wrong one.
+
+      `meltdown` carries { TEAM, FIGURE } where FIGURE is the run deficit.
+      `pitching_dome` carries { PLAYER, FIGURE, TEAM } where FIGURE is the strikeout count.
+    */
+    meltdown: [
+      'A {FIGURE}-RUN DEFICIT AND EVERYONE KNEW BY THE THIRD INNING',
+      'THE BOX SCORE SAYS ONE TEAM. THE INNING SCORE SAYS ANOTHER',
+      'NOBODY LOST THAT ONE ON A BAD CALL',
+      'THERE IS A FIGURE FOR HOW FAR A LINE MOVES. {TEAM} FOUND THE EDGE OF IT',
+    ],
+    pitching_dome: [
+      '{FIGURE} STRIKEOUTS. THE OPPONENT NEVER SAW THE THIRD ONE COMING',
+      'ONE PITCHER, {FIGURE} STRIKEOUTS, AND A BULLPEN THAT DID NOT NEED TO EXIST',
+      'THE BULLETIN WILL SAY {TEAM} WON. THE NUMBER SAYS WHY',
+      'THERE IS NO DEFENSIVE EXPLANATION FOR WHAT {PLAYER} DID',
     ],
     generic: [
       'Somebody went two-for-twelve and the box score says the third reliever did it.',
@@ -733,14 +768,39 @@ const HOANI: VoiceBank = {
     anomaly: [
       'I checked every number in that game. One of them is having a completely different season from the other thirty-one.',
       'This is the part I like best: everybody watched the same game and only one of us will say what it means.',
+      'There is no single-game explanation for a figure that sits this far from the line it belongs to, and the people who will give you one are describing the box score rather than reading it. I have the season totals and one of them is simply out of line with the rest.',
+      'Thirty-one numbers agree with each other and one does not, and the thirty-one are not wrong. A figure that disagrees with a consensus this strong is usually telling you the consensus is measuring something else, which is a more interesting sentence than it sounds.',
     ],
     sustained_rate: [
       'It looks like a slump and it is not a slump, which is why nobody can explain it. I can, and it is a sequence, not a talent.',
       'Four men on that staff and one of them is why the number moved. Find him before the next one does.',
+      'A line that has moved on consecutive days is not experiencing bad luck, it is experiencing something, and the distinction matters because bad luck stops on its own while a sequence does not. Three weeks is long enough that somebody has already asked me about it, which is to say long enough that it was not subtle.',
+      'Here is the part that confuses people: the number is not behaving like a person. A slumping player misses where he used to hit, which shows up in contact quality. This is the same volume arriving somewhere else, which is what a workload does instead. Same total, different address.',
     ],
     expected_divergence: [
       'The prediction was not wrong. The thing that moved underneath it was, and that is a different story with the same headline.',
       'He is not the problem. I did the arithmetic twice because I wanted to be wrong about this one.',
+      'The model and the player have separated, and only one of them can be right. I have run it both ways and the player is the one still matching his own history, which is a sentence I do not expect anybody to enjoy.',
+      'Two things moved and the press wrote them up as one. The expectation changed, and the line did not. Neither of those is a story about the player, and the arithmetic says so.',
+    ],
+    /*
+      KIND-SPECIFIC, so a pitching disaster reads as one rather than as a statistical curiosity.
+
+      The register is unchanged from the rest of his bank: a figure that settles the argument, said
+      with pleasure at having printed it. Not aggrieved -- he is not offended by {TEAM}, he is delighted
+      that the arithmetic is this legible.
+    */
+    meltdown: [
+      'A {FIGURE}-run deficit is not a slump, it is a shape. I have drawn this one twice to be sure of the slope, and it is a straight line from the third inning onward, which means it was decided early and the rest of the game was theatre.',
+      'The interesting part of a {FIGURE}-run loss is how early it was decided. You can get the inning from the box score and the reason from the totals, and the two do not need to agree: {TEAM} was behind before anybody settled in.',
+      'People will tell you {TEAM} ran out of outs. {TEAM} ran out of something more specific than that, and the figure that says so is {FIGURE}, which is a deficit large enough that nobody had to do anything clever in the ninth.',
+      'I checked whether this one had a reason attached, because usually it does -- a bad starter, a bullpen, one of the usual suspects. A {FIGURE}-run deficit has no reason attached. That is the interesting case. It is the one I get to write about, because the other kind is just baseball.',
+    ],
+    pitching_dome: [
+      '{PLAYER} struck out {FIGURE} and the number is the entire story. Not close to it, not an approximation of it -- {FIGURE}, and the second-best total that night belongs to somebody on the other team, which is the sort of comparison that does most of the work in this league.',
+      'There is a way this question gets asked badly, which is whether {PLAYER} was good. That is not the question. The question is whether {FIGURE} strikeouts against this lineup is the number we should have expected, and it is not, and the gap is wide enough that I do not think anybody is arguing about it in good faith.',
+      '{TEAM} did not win that game so much as survive the middle innings against one person. {PLAYER} struck out {FIGURE}, which means a third of the outs in it belonged to a single name, and I have written that sentence about roughly four pitchers this season and it has been the whole story every time.',
+      'I am going to be precise about what {FIGURE} strikeouts means, because people round it up in their own favour. It means the plate appearances ended at that number. It does not mean the batters did not swing, or that the contact was poor, or that anything about {PLAYER} was lucky. The count is what happened, and it happened repeatedly, and that is all I have.',
     ],
     generic: [
       'Not an opinion, not a feeling — a figure, and the figure does not care what anybody expected.',
@@ -764,37 +824,68 @@ const HOANI: VoiceBank = {
  */
 const SHINONOME: VoiceBank = {
   titles: {
+    /*
+      TWO TEMPLATES PER KIND WAS THE THINNEST THING IN THE FILE, and it was hers.
+
+      Every other persona sits at 4 titles and 3 decks per covered kind. Shinonome was at 2 and 2 across
+      all eight of hers, which by this file's own standard -- "no two consecutive days from the same
+      persona read alike", named in the header at :20 -- means she repeats inside two appearances of
+      the same kind. A fan is the persona most likely to be handed the same good news twice in a week,
+      because the league produces a good story most nights and she is only ever eligible for the good
+      ones (`valence === 'positive'`), so the thinness is load-bearing rather than incidental.
+
+      The two constraints are HARD and enforced by `eligible`, not by taste: no exclamation marks, and
+      no implied criticism anywhere. "They had their chances" is a complaint and is banned here. She is
+      pleased, and specific about what she is pleased about, which is how a fan sounds -- a generic
+      delighted sentence is a parody of her instead of her. Caps are her register and are correct.
+    */
     walk_off: [
       'AND THAT IS THE GAME',
       'SHE WALKED IT OFF. OF COURSE SHE DID',
+      'WALK-OFF. I AM STANDING AND I FORGOT TO BE SEATED',
+      'ONE SWING AND THE WHOLE PLACE MOVED',
     ],
     no_hitter: [
       'A NO-HITTER IN THIS LEAGUE TONIGHT',
       'NOBODY TOUCHED IT. NINETY NINE PITCHES',
+      'NO HITS. IN THIS LEAGUE. I NEED A MOMENT',
+      'ONE PITCHER AND NINETY NINE PITCHES AND NOT ONE HIT',
     ],
     winning_streak: [
       'FOUR IN A ROW AND THE PLACE IS BUZZING',
       'THAT IS FIVE NOW AND I LOSE COUNT',
+      'THEY HAVE WON FOUR AND I HAVE COUNTED EVERY ONE',
+      'ANOTHER ONE. THE STREAK KEEPS GOING AND SO DO I',
     ],
     multi_homer: [
       'THREE HOME RUNS. IN ONE GAME',
       'SHE HIT ANOTHER ONE AND THE PARK STOOD UP',
+      'THREE. IN ONE GAME. IN THIS LEAGUE',
+      'THAT BALL WENT INTO THE SECOND DECK AND SHE HIT IT TWICE MORE',
     ],
     rbi_barrage: [
       'SHE CAME UP WITH THE BASES LOADED',
       'THAT IS A LOT OF RUNS IN ONE INNING',
+      'BASES LOADED AND THEN THAT. THE SCOREBOARD GAVE UP',
+      'ONE INNING AND EVERYBODY SCORED. I AM STILL AT THE GATE',
     ],
     big_debut: [
       'A DEBUT. IN THIS LEAGUE',
       'FIRST GAME AND ALREADY THIS',
+      'HER FIRST GAME IN THIS LEAGUE AND THAT IS WHAT WE WATCHED',
+      'A DEBUT WORTH THE SEAT I PAID FOR',
     ],
     extra_innings: [
       'AND THEN WE WENT TO EXTRA INNINGS',
       'ELEVEN INNING NIGHT AND I WOULD DO IT AGAIN',
+      'EXTRA INNINGS AND THE WHOLE PARK STAYED',
+      'NOBODY LEFT. THE LIGHTS STAYED ON AND WE STAYED',
     ],
     one_run_game: [
       'ONE RUN. THAT IS THE WHOLE SCORE',
       'ONE RUN AND IT COUNTED',
+      'ONE RUN DECIDED IT AND I AM STILL HERE FOR THE WHOLE THING',
+      'ONE RUN. THE WHOLE GAME WAS WORTH THAT ONE RUN',
     ],
     generic: [
       'What a game. Genuinely, what a game.',
@@ -808,34 +899,50 @@ const SHINONOME: VoiceBank = {
     walk_off: [
       'You do not get a walk-off every season and when you do you remember where you were standing.',
       'The whole park knew before the ball landed. The whole park was right.',
+      'It was one swing at the end of a game that had gone on far too long, and then the whole building stood up and stayed standing.',
+      'I have watched a lot of baseball and the ones I remember are not always the ones that were close. That was a good one to remember.',
     ],
     no_hitter: [
       'One team, one batter, ninety-nine pitches and not one of them was a hit. I have no notes.',
       'I will be thinking about this one for a while. That is the entire review.',
+      'Ninety-nine pitches and not a single ball in the gaps. Whoever was hitting was better than the result, which is the nicest thing anybody can say about a lost at-bat.',
+      'There is a reason people stay late for baseball and tonight was it. I have never seen that game more than once and I already have the ending.',
     ],
     winning_streak: [
       'They keep finding a way and I keep watching and nobody has explained to me why that is not better.',
       'A good stretch, a good month, and a good seat to watch it from.',
+      'Four straight, and the thing about a streak like this is that each one is its own night and you only need to enjoy the one in front of you.',
+      'They are winning again and the park has decided that this is normal now, which is the highest compliment a place can give a team.',
     ],
     multi_homer: [
       'Two of them were necessary. The third one was just for everyone in the building.',
       'Every one of them was hit. That is the part worth saying twice.',
+      'Three home runs and the third one was only ever going to be for us. That is how the arithmetic works when you are ahead.',
+      'She hit it hard three times and the third time the people behind me stood up before it landed, which tells you what kind of game that was.',
     ],
     rbi_barrage: [
       'Bases loaded and a hitter up. There is not much to decide there.',
       'The kind of inning where the scoreboard stops keeping up with the game.',
+      'Everyone scored and then we all went back to our seats still talking about the previous one. Good innings are like that.',
+      'That is the sort of inning that makes a season worth following, and everybody in this park knew it while it was happening.',
     ],
     big_debut: [
       'First game in this league and she arrives like she has been here a season. Enjoy it.',
       'You only get a first game once. That one was a good one to spend it on.',
+      'A debut is one of the few things in sport that happens exactly once, and we got to watch this one go well.',
+      'She looked like she belonged out there, which is the highest thing you can say about somebody on their first night.',
     ],
     extra_innings: [
       'Nobody wanted to go home. Honestly, neither did I.',
       'The kind of night where the lights stay on and everybody stays in the seats.',
+      'Extra innings and the best part is that everybody was still making noise an hour after they could have gone.',
+      'We went past the end and it got better. That happens maybe twice a year and I remember both.',
     ],
     one_run_game: [
       'One run decided it. The rest of it was everybody else failing to score, which I can live with.',
       'Close game, good ending, and I will take that trade every time.',
+      'One run. Somebody has to score it and tonight that somebody did, and I am glad it was our side.',
+      'That is a fine way to win, ugly if you like, and I was there and I enjoyed every minute of it.',
     ],
     generic: [
       'I am not going to break this down for you. I watched it and I liked it.',
