@@ -21,6 +21,7 @@ import {
   deriveGameLines,
   deriveGameShape,
   generateHeadlineDeck,
+  createPowerRankingsHeadline,
   getFeaturedGame,
   type DerivedGameLines,
   type GameShape,
@@ -43,6 +44,8 @@ import { HeadlinerPanel } from './home/HeadlinerPanel';
 import { FeaturedGamePanel, HeadlinePanel } from './home/HeadlinePanel';
 import { MvpRacePanel } from './home/MvpRacePanel';
 import { ActionCenter, DivisionSnapshotPanel, MilestoneTimeline, TradeDeskModal } from './home/Panels';
+import { PowerRankingsStrip } from './home/PowerRankingsStrip';
+import type { PowerRankings } from '../lib/analytics/powerRankings';
 import { RetroButton, StatValue } from './ui';
 
 /** Days of prior columns the panel remembers when picking today's lines. */
@@ -91,6 +94,20 @@ interface HomeDashboardProps {
   onOpenSimulation: (targetDate?: string) => void;
   onOpenFreeAgency: () => void;
   onOpenStandings: () => void;
+  /**
+   * Opens the full power rankings board. A route switch rather than a callback into the parent,
+   * because the board is a real LEAGUE nav destination and the strip should reach it the same way a
+   * manager would from the rail.
+   */
+  onOpenPowerRankings: () => void;
+  /**
+   * The League Office board, or null when it could not be computed.
+   *
+   * Passed in rather than built here for one reason: the strip and the full board must read the SAME
+   * object. It comes from a Monte Carlo over the remaining season, so building it twice would run the
+   * expensive term twice and let the two surfaces disagree about a club.
+   */
+  powerRankings: PowerRankings | null;
   onSimulateToSelectedDate: () => void;
   onSimulateToEndOfRegularSeason: () => void;
   onSimulateDay: () => void;
@@ -136,6 +153,8 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenSimulation,
   onOpenFreeAgency,
   onOpenStandings,
+  onOpenPowerRankings,
+  powerRankings,
   onSimulateToSelectedDate,
   onSimulateToEndOfRegularSeason,
   onSimulateDay,
@@ -251,6 +270,21 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     ],
   );
 
+  /*
+    THE POWER RANKINGS STORY, memoised on its own.
+
+    Separate from the deck memo on purpose. It is derived from `powerRankings` and `teamsById` alone,
+    while the deck memo also depends on the play log, per-player stats and the transaction date -- so
+    folding this in would rebuild the story text every time any of those moved. It is cheap either
+    way, but a dependency list that changes for no reason is how a memo quietly stops being a memo.
+  */
+  const powerRankingsStory = useMemo(
+    () => (powerRankings
+      ? createPowerRankingsHeadline(powerRankings.rows, teamsById)
+      : null),
+    [powerRankings, teamsById],
+  );
+
   const headlineDeck = useMemo(() => {
     const getGameStoryCandidates = (game: Game): StoryCandidate[] => {
       const rawPlayLog = typeof game.stats.playLog === 'string' ? game.stats.playLog : null;
@@ -298,6 +332,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       headlineTransactionStories,
       getGameStoryCandidates,
       headlineTransactionDate || null,
+      powerRankingsStory,
     );
   }, [
     battingStatsByPlayerId,
@@ -306,6 +341,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     headlineTransactionDate,
     headlineTransactionStories,
     pitchingRatingsByPlayerId,
+    powerRankingsStory,
     teamsById,
     timelineDate,
   ]);
@@ -805,6 +841,26 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         </div>
 
         <div className="flex flex-col gap-5">
+          {/*
+            THE POWER RANKINGS STRIP, above the division snapshots and for a specific reason.
+
+            It is first in this column because it is the only panel here that is computable on a
+            freshly rebuilt universe. The division snapshot reads the win-loss record, which is 0-0
+            across the board on day one; the slate reads the schedule for the active date; the MVP race
+            reads season stats. Every one of them is legitimately empty at the start of a season, and
+            this is the panel that is not -- which is the entire point of putting it on the dashboard.
+
+            It renders nothing at all when there are no rankings, which is deliberate: a panel reading
+            "power rankings unavailable" on a fresh league would be a worse lie than the empty page it
+            was added to fix.
+          */}
+          <PowerRankingsStrip
+            rankings={powerRankings}
+            teamsById={teamsById}
+            onOpenPowerRankings={onOpenPowerRankings}
+            onSelectTeamId={onSelectTeamId}
+          />
+
           <DivisionSnapshotPanel
             snapshots={divisionSnapshots}
             activeIndex={activeDivisionIndex}

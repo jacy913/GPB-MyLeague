@@ -19,6 +19,7 @@ import {
 import { GamesScheduleView } from './GamesScheduleView';
 import { ExchangeView } from './markets/ExchangeView';
 import type { PriceSeries } from '../lib/analytics/sharePrice';
+import type { PowerRankings } from '../lib/analytics/powerRankings';
 import { HomeDashboard } from './HomeDashboard';
 import { SimulationHub, SimulationRunState } from './SimulationHub';
 import { TeamCalendar } from './TeamCalendar';
@@ -38,6 +39,7 @@ import { MediaHub } from './media/MediaHub';
 import { BettingPage } from './betting/BettingPage';
 import { BettingRecordScreen } from './betting/BettingRecordScreen';
 import { LeadersDashboard } from './leaders/LeadersDashboard';
+import { PowerRankingsView } from './leaders/PowerRankingsView';
 import type { BettingSlipState } from '../hooks/useBettingSlip';
 import { resolveSeasonYear } from '../lib/seasonYear';
 import { GPBBook } from './GPBBook';
@@ -104,6 +106,15 @@ interface AppViewRouterProps {
   seasonComplete: boolean;
   /** HXSE closes, one entry per simulated day. Undefined before anything is priced. */
   priceLedger?: PriceSeries[];
+  /**
+   * The League Office board, computed once in App.
+   *
+   * Null rather than optional-with-a-default because App is the only thing that can build it: it
+   * needs the rosters, the schedule and the date together, and it has to be the SAME object the
+   * dashboard strip reads. Building it in two places would run the Monte Carlo twice and let the two
+   * surfaces disagree about a club -- which is the failure this screen exists to avoid.
+   */
+  rankings: PowerRankings | null;
   /**
    * The player's HXSE book, owned by App rather than by the Exchange view.
    *
@@ -226,6 +237,7 @@ export const AppViewRouter = ({
   selectedTeamId,
   seasonComplete,
   priceLedger,
+  rankings,
   book,
   offseasonStage,
   hasPendingSeasonAwards,
@@ -373,6 +385,8 @@ export const AppViewRouter = ({
           onOpenSimulation={onOpenSimulationCenter}
           onOpenFreeAgency={() => onSetView('free_agency')}
           onOpenStandings={() => onSetView('league_standings')}
+          onOpenPowerRankings={() => onSetView('power_rankings')}
+          powerRankings={rankings}
           onSimulateToSelectedDate={onSimulateToSelectedDate}
           onSimulateToEndOfRegularSeason={onSimulateToEndOfRegularSeason}
           onSimulateDay={onSimulateDay}
@@ -585,6 +599,21 @@ export const AppViewRouter = ({
           rosterSlots={playerState.rosterSlots}
           onSelectTeam={onSelectStandingsTeam}
         />
+      )}
+
+      {/*
+        POWER RANKINGS. `rankings` is computed once in App and passed down, rather than built here,
+        because the dashboard strip and this screen read the SAME object -- one Monte Carlo over the
+        remaining season per (rosters, date), not two.
+      */}
+      {view === 'power_rankings' && (
+        rankings && (
+          <PowerRankingsView
+            rankings={rankings}
+            teamsById={teamLookup}
+            onSelectTeamId={onSetSelectedTeamId}
+          />
+        )
       )}
 
       {view === 'leaders' && (

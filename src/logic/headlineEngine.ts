@@ -290,6 +290,55 @@ const getHeadlinePriorityScore = (game: Game): number => {
   return score;
 };
 
+/**
+ * The power rankings, as a story.
+ *
+ * A THIRD story source, alongside games and transactions -- not a fixed slot at the end of the deck.
+ * A fixed fifth slide bypasses the priority sort, so it could never lead even on a pristine universe
+ * where it is the only story that exists. This competes like the others, and
+ * `generateHeadlineDeck` promotes it to the lead in exactly the empty case it was written for.
+ *
+ * It is a real story rather than a label: power rankings are a genuine sports-news genre, and the
+ * copy is composed from the measured board, so the headline and the board beneath it cannot disagree
+ * about who is top. `game` is null because there is no game behind it -- which the panel already
+ * renders as a league note, showing the GPB mark in place of a crest.
+ */
+/**
+ * The floor the rankings story competes at, in the same units as `getHeadlinePriorityScore`.
+ *
+ * Deliberately a FLOOR rather than a fixed slot or a high priority. A blowout or a playoff clincher
+ * is a bigger piece of news than a board that is recalculated every day, so a real game story should
+ * take the lead when there is one. A quiet day leaves this as the only candidate, which is when it
+ * should surface.
+ */
+const POWER_RANKINGS_HEADLINE_PRIORITY = 1;
+
+export const createPowerRankingsHeadline = (
+  rows: ReadonlyArray<{ teamId: string; valuation: number; championshipPct: number; divisionTag: string }>,
+  teamsById: Map<string, Team>,
+): HeadlineCard | null => {
+  if (rows.length === 0) return null;
+  const leader = rows[0];
+  const leaderTeam = teamsById.get(leader.teamId);
+  const challenger = rows[1] ? teamsById.get(rows[1].teamId) : undefined;
+  const leaderName = leaderTeam ? leaderTeam.city.toUpperCase() : 'the League Office';
+  const challengerName = challenger ? challenger.city.toUpperCase() : null;
+
+  return {
+    headline: `${leaderName} TOP THE POWER RANKINGS`,
+    summary: challengerName
+      ? `The League Office rates ${leaderName} the strongest club in the GPB on a valuation of `
+        + `${leader.valuation.toFixed(1)}, ahead of ${challengerName}. The board ranks every club by `
+        + `the forecaster consensus, the roster measured against the record, and a simulation of the `
+        + `season still to come.`
+      : `The League Office rates ${leaderName} the strongest club in the GPB on a valuation of `
+        + `${leader.valuation.toFixed(1)}. The board ranks every club by the forecaster consensus, the `
+        + `roster measured against the record, and a simulation of the season still to come.`,
+    accent: 'from-[#3d2f09] via-[#1f1f1f] to-[#0d3a33]',
+    game: null,
+  };
+};
+
 const createGameHeadline = (game: Game, teamsById: Map<string, Team>): HeadlineCard => {
   const awayTeam = teamsById.get(game.awayTeam);
   const homeTeam = teamsById.get(game.homeTeam);
@@ -1210,10 +1259,37 @@ export const generateHeadlineDeck = (
   transactionStories: TransactionStoryCandidate[],
   getGameStoryCandidates: (game: Game) => StoryCandidate[],
   fallbackTransactionDate: string | null,
+  powerRankingsStory?: HeadlineCard | null,
 ): HeadlineDeck => {
   const recentCompleted = gameIndexes.completedGamesDesc;
 
   if (recentCompleted.length === 0 && transactionStories.length === 0) {
+    /*
+      THE EMPTY DECK, and the reason this function needed a third story source at all.
+
+      A freshly rebuilt universe has no completed games and no transactions, so this branch is what
+      the dashboard renders immediately after Terminate Universe. It used to return ONE hardcoded
+      slide -- "THE PENNANT RACE BEGINS", `secondary: []` -- which is the empty dashboard being
+      reported: a full-width hero panel holding a single generic sentence, with nothing else in it.
+
+      The power rankings are computable with zero games played, because they come from the rosters and
+      a simulation of the season still to come rather than from results. That makes them the one story
+      genuinely available here, so they lead, and the pennant-race note becomes the second slide
+      instead of the only one. On a universe with no rankings to show, the old single slide is
+      returned unchanged -- a fallback is still a fallback.
+    */
+    if (powerRankingsStory) {
+      return {
+        primary: powerRankingsStory,
+        secondary: [{
+          headline: 'THE PENNANT RACE BEGINS',
+          summary: 'The GPB calendar is live. Storylines, rivalries, and title pressure will build as the season unfolds.',
+          accent: 'from-[#3d2f09] via-[#1f1f1f] to-[#0d3a33]',
+          game: null,
+        }],
+        sourceDate: null,
+      };
+    }
     return {
       primary: {
         headline: 'THE PENNANT RACE BEGINS',
@@ -1263,6 +1339,26 @@ export const generateHeadlineDeck = (
     }
     seen.add(key);
     uniqueStories.push(story);
+  }
+
+  /*
+    THE POWER RANKINGS STORY, appended LAST so it cannot displace a real game story.
+
+    It goes at the end of the pool rather than in front, and the ordering matters: a blowout or a
+    playoff clincher is a bigger piece of news than a board that is recalculated every day, so it
+    earns the lead slot when there is one. What the rankings are for is the QUIET day -- and on a
+    quiet day this ordering leaves them last in a pool that is itself nearly empty, which is exactly
+    where they should be.
+
+    The empty-deck branch above handles the pristine case, where they lead outright.
+  */
+  if (powerRankingsStory) {
+    const key = `power-rankings:${powerRankingsStory.headline}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      // A floor, not a ceiling: any real story outranks it, but a day with nothing else gets it.
+      uniqueStories.push({ ...powerRankingsStory, priority: POWER_RANKINGS_HEADLINE_PRIORITY });
+    }
   }
 
   if (uniqueStories.length < 4) {

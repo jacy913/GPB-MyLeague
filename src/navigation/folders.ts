@@ -30,6 +30,7 @@ import {
   Shuffle,
   Table2,
   Trophy,
+  TrendingUp,
   UserRound,
   Users,
 } from 'lucide-react';
@@ -178,6 +179,12 @@ export const NAV_FOLDERS: NavFolder[] = [
     icon: Table2,
     leaves: [
       { view: 'league_standings', label: 'Standings', icon: Table2 },
+      /*
+        Power Rankings sits directly under Standings because it is the same question asked forwards
+        rather than backwards -- and putting it there means a manager who wants "who is best" finds
+        both answers next to each other instead of hunting.
+      */
+      { view: 'power_rankings', label: 'Power Rankings', icon: TrendingUp },
       { view: 'leaders', label: 'Leaders', icon: BarChart3 },
       { view: 'history', label: 'History', icon: ScrollText },
       { view: 'map', label: 'Map', icon: MapIcon },
@@ -239,6 +246,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
   games_schedule: 'scores',
   team_calendar: 'scores',
   league_standings: 'league',
+  power_rankings: 'league',
   leaders: 'league',
   leaders_dashboards: 'league',
   history: 'league',

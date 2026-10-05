@@ -21,6 +21,17 @@ export type AppView =
   | 'team_calendar'
   | 'simulation'
   | 'league_standings'
+  /**
+   * The League Office power rankings.
+   *
+   * A nav leaf rather than a tab inside Standings, because it is a different question and both
+   * answers are wanted side by side: standings say where a club HAS LEFT the league, rankings say
+   * where it is expected to finish. Collapsing them into one screen with a toggle would make the
+   * reader remember which question they are looking at.
+   *
+   * It reads the SAME fair layer the HXSE prices from, so the two can never disagree about a club.
+   */
+  | 'power_rankings'
   | 'leaders'
   /**
    * The visual half of the Leaders screen.

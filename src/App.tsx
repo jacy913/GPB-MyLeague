@@ -69,6 +69,7 @@ import {
   saveSharePriceLedger,
 } from './lib/storage';
 import { useSimulationEngine } from './hooks/useSimulationEngine';
+import { buildPowerRankings } from './lib/analytics/powerRankings';
 import { useBettingSlip } from './hooks/useBettingSlip';
 import { usePortfolio } from './hooks/usePortfolio';
 import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
@@ -3399,6 +3400,50 @@ function App() {
     getProjectedSeasonSummary,
   });
 
+  /*
+    THE POWER RANKINGS, built ONCE here and read by three surfaces.
+
+    The dashboard strip, the full LEAGUE board and the newsroom's rankings story all read this one
+    object. That is not tidiness -- `buildPowerRankings` runs a Monte Carlo over the remaining season,
+    so building it per-surface would run the expensive term three times and, worse, let the three
+    surfaces disagree about a club. The Exchange prices from the same fair layer, so the rankings and
+    the market cannot drift apart either.
+
+    MEMOISED, and the key is the state that actually changes the answer: rosters, the date the board is
+    read at, and the teams. `currentDate` rather than the timeline date, because the fair layer filters
+    games by date and a board that moved when the manager merely scrolled back would be answering a
+    question nobody asked.
+
+    `leagueHasNoPlayers` short-circuits it: with an empty pool there is no roster to value, and
+    `fairLayerFor` would spend a full-season simulation discovering that.
+  */
+  const powerRankings = useMemo(() => {
+    if (!currentDate || teams.length === 0 || playerState.players.length === 0) {
+      return null;
+    }
+    try {
+      return buildPowerRankings({
+        teams,
+        games,
+        playerState,
+        seasonYear: resolveSeasonYear(currentDate, games),
+        date: currentDate,
+        settings,
+        fairCacheKey: `rankings|${seasonHistory.length}|${currentDate}`,
+      });
+    } catch (error) {
+      /*
+        A FAILED BOARD MUST NOT TAKE THE DASHBOARD WITH IT.
+
+        This runs inside a render, and an exception here would blank the whole page rather than one
+        panel. The honest degradation is no rankings, which is exactly the state the strip already
+        handles by rendering nothing.
+      */
+      console.error('Failed to build power rankings:', error);
+      return null;
+    }
+  }, [currentDate, games, playerState, seasonHistory.length, settings, teams]);
+
   const resolveAwardCandidateTeam = useCallback((candidate: SeasonHistoryAwardWinner): Team | null => {
     if (!candidate.teamId) {
       return null;
@@ -3871,6 +3916,7 @@ function App() {
             selectedTeamId={selectedTeamId}
             seasonComplete={seasonComplete}
           priceLedger={priceLedger}
+      rankings={powerRankings}
       book={book}
       pendingClub={hxseClubSelection}
       onPendingClubConsumed={() => setHxseClubSelection(null)}

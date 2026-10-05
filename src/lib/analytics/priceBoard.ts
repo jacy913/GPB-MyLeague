@@ -52,7 +52,7 @@
  * headlines, and a price that moved on a transaction that never happened is worse than a flat one.
  */
 
-import { playoffMonteCarlo } from './playoffMonteCarlo';
+import { playoffMonteCarlo, type PlayoffOdds } from './playoffMonteCarlo';
 import {
   buildValueInputs,
   measureLeague,
@@ -203,10 +203,24 @@ export interface PriceBoardInput {
   fairCacheKey?: string;
 }
 
-/** The cached layer: everything that depends on league state rather than on yesterday's close. */
+/**
+ * The cached layer: everything that depends on league state rather than on yesterday's close.
+ *
+ * `playoffOdds` LIVES IN HERE, and it did not for a while -- which put 0% in the title column of the
+ * power rankings board on every row. The dashboard memo builds the board, React StrictMode invokes
+ * the render twice in development, the second call hit the cache, and a cache hit returned a layer
+ * carrying valuations and fair prices but no odds. The unit check missed it because it compared fair
+ * prices and valuations and never looked at the probabilities.
+ *
+ * It belongs here on the merits, not as a patch: the odds come from
+ * `playoffMonteCarlo(teams, played, remaining, settings, trials, seed)` and the valuation is built
+ * FROM those odds, so the two have identical inputs. Caching one without the other guaranteed that
+ * part of every cached layer was missing.
+ */
 interface FairLayer {
   valuation: Record<string, number>;
   fair: Record<string, number>;
+  playoffOdds: PlayoffOdds[];
   mcTrials: number;
 }
 
@@ -356,9 +370,34 @@ export const priceAndAppendDay = (
   return { ledger: appendPriceDay(ledger, board), board };
 };
 
-export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
+/**
+ * THE FAIR LAYER ALONE: consensus + roster surplus + playoff odds -> valuation and fair price.
+ *
+ * Extracted so a caller that wants the VALUATION does not have to take a price with it. A power
+ * ranking is literally "the fair layer as of today" -- it has no yesterday's close to step from --
+ * and the price step is the part it would throw away.
+ *
+ * This is a REFACTOR, not a new model. Same computation, same order, and `priceBoardForDay` below
+ * now calls this. `checkPriceBoard` (18/18) and `checkSharePrice` (21/21) are the proof that pricing
+ * did not move; if either changes, the extraction broke something.
+ */
+export interface FairLayerResult {
+  layer: FairLayer;
+  /** Games visible to this date. The price step needs the SAME filter, hence it is returned. */
+  asOf: Game[];
+  /**
+   * Playoff probabilities, returned on BOTH the cache-miss and cache-hit paths.
+   *
+   * A cache hit used to hand back an empty array here, which is how every row of the power rankings
+   * board came up 0% for "make" and "title". The probabilities have the same inputs as the valuations
+   * they feed, so they are cached with them rather than treated as absent on a hit.
+   */
+  odds: PlayoffOdds[];
+  mcTrials: number;
+}
+
+export const fairLayerFor = (input: PriceBoardInput): FairLayerResult => {
   const mcTrials = input.mcTrials ?? DEFAULT_BOARD_TRIALS;
-  const regime = input.regime ?? 'in_season';
   const cacheKey = input.fairCacheKey ? `${input.fairCacheKey}|${mcTrials}` : null;
 
   /*
@@ -368,6 +407,15 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
   const asOf = input.games.filter((g) => g.date <= input.date);
 
   let layer = cacheKey ? fairLayerCache.get(cacheKey) : undefined;
+  /*
+    The odds, on BOTH paths.
+
+    Hoisted out of the cache-miss branch because a caller that wants the playoff probabilities should
+    not have to re-run the expensive term for them -- and, more importantly, because the previous
+    version left them empty on a cache HIT, which is what put 0% in the power rankings' title column.
+    A cache hit now returns the odds it cached alongside the valuations they produced.
+  */
+  let odds: PlayoffOdds[] = layer ? layer.playoffOdds : [];
   if (!layer) {
     /*
       ---------------------------------------------------------------------------
@@ -410,7 +458,7 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
     const surplusById = new Map(input.teams.map((t) => [t.id, getTeamStrengthEdge(t, strength)]));
 
     // 3. Playoff odds -- the expensive term, and the one `nextPrice` cannot do without.
-    const odds = playoffMonteCarlo({
+    const simulated = playoffMonteCarlo({
       teams: input.teams,
       playedGames: played,
       remainingGames: remaining,
@@ -418,7 +466,8 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
       trials: mcTrials,
       seed: input.seed,
     });
-    const playoffProbabilityById = new Map(odds.odds.map((o) => [o.teamId, o.championship]));
+    odds = simulated.odds;
+    const playoffProbabilityById = new Map(odds.map((o) => [o.teamId, o.championship]));
 
     // 4. Valuation, then the price scale.
     const valueInputs: TeamValueInput[] = buildValueInputs({
@@ -437,9 +486,23 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
       valuation[teamInput.teamId] = value;
       fair[teamInput.teamId] = fairPriceFor(value);
     }
-    layer = { valuation, fair, mcTrials };
+    layer = { valuation, fair, playoffOdds: odds, mcTrials };
     if (cacheKey) fairLayerCache.set(cacheKey, layer);
   }
+
+  return { layer, asOf, odds, mcTrials };
+};
+
+/**
+ * Today's closes for every club: the fair layer, then the price step on top of it.
+ *
+ * Step 5 is ALWAYS recomputed even on a fair-layer cache hit, because the close depends on
+ * `previousClose` and two callers asking for the same date from different ledgers want different
+ * closes. That is the reason the cache holds the fair layer and not the board.
+ */
+export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
+  const regime = input.regime ?? 'in_season';
+  const { layer, asOf, mcTrials } = fairLayerFor(input);
 
   // 5. The price step, always recomputed -- it depends on yesterday's close, not on league state.
   const fair = layer.fair;
