@@ -282,10 +282,27 @@ export function PreviousDateScoreStrip({
           <div
             className="flex w-max"
             style={{
-              // Never unset. Toggling animationPlayState is what holds the
-              // playhead; removing the animation would reset it to zero.
-              animation: reducedMotion ? undefined : `score-crawl ${duration}s linear infinite`,
-              animationPlayState: paused ? 'paused' : 'running',
+              /*
+                LONGHAND ONLY, and always every property present.
+
+                `animationPlayState` has to exist to hold the playhead -- removing it, or removing the
+                animation, resets the crawl to zero -- so this is not a case of setting one and
+                clearing the other. But it CANNOT be written as the `animation` shorthand alongside
+                `animationPlayState`, because React treats that as the documented hazard: updating a
+                longhand while a shorthand for the same value is being set warns on every single
+                hover-pause, and the residue it guards against is a playhead stranded mid-crawl.
+                Eight warnings on the Media page before this; the animated crawl in the top strip
+                sits above every page, so this was never a Media bug.
+
+                Every value below is present in both states -- 'none' and a zeroed iteration count
+                rather than undefined -- so React's managed property list is identical either way and
+                there is nothing to leak across a rerender.
+              */
+              animationName: reducedMotion ? 'none' : 'score-crawl',
+              animationDuration: reducedMotion ? '0s' : `${duration}s`,
+              animationTimingFunction: 'linear',
+              animationIterationCount: reducedMotion ? '1' : 'infinite',
+              animationPlayState: reducedMotion ? 'paused' : paused ? 'paused' : 'running',
             }}
           >
             {Array.from({ length: renderCount }, (_, index) => (

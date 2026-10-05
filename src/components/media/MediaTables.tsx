@@ -177,9 +177,15 @@ export const MediaDisagreementTable: React.FC<{ rows: MediaDisagreement[] }> = (
 
   return (
     <div>
+      {/*
+        "the other two" and "the three" were here from when there were three outlets. With nine they
+        are simply wrong on screen -- and "how far it sits from the other two" is not even a coherent
+        instruction at nine, since the sort compares against every other column rather than two
+        specific rivals. Counts now come from the data for the same reason the table's columns do.
+      */}
       <p className="t-caption mb-2 text-[var(--color-ink-faint)]">
-        Click an outlet to sort by where it ranks the club, or by how far it sits from the other two.
-        The widest rows are the clubs the three cannot agree on.
+        Click an outlet to sort by where it ranks the club, or by how far it sits from the rest. The
+        widest rows are the clubs the {MEDIA_PROFILES.length} cannot agree on.
       </p>
       <StatTable
         columns={columns}
