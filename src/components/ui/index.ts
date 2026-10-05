@@ -27,6 +27,13 @@ export { MediaMark, type MediaMarkProps } from './MediaMark';
 export { SectionTitle, type SectionTitleProps } from './SectionTitle';
 
 /**
+ * The render-throw boundary. Exported from the barrel because it is mounted by App, which is not a
+ * design-system consumer in the sense the others are -- but it is a primitive like them, and a
+ * second copy of an error boundary is precisely the thing that rots.
+ */
+export { ViewBoundary } from './ViewBoundary';
+
+/**
  * TeamLogo moved here in Phase 3.2 with its asset resolution intact -- the
  * import.meta.glob over src/assets/cured logos, the Supabase storage fallback,
  * cache-busting, and the teamlogo-updated listener. An earlier plate-only

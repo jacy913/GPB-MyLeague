@@ -2195,6 +2195,32 @@ previous session.
 
 ## Known limitations
 
+- **The error boundary catches render throws and nothing else.** `ViewBoundary` is
+  mounted inside `<main>`, around `<AppViewRouter>` only, so a throw in any view
+  costs that view and the nav, ticker and header survive. It does **not** catch
+  errors in event handlers, timers, or promises.
+
+  That limit is not academic: three defects this session were outside it — the
+  Terminate Universe Preview button calling an `undefined` prop, Commissioner's
+  Export Backup awaiting one the router had dropped, and a ref callback returning
+  a `Map` (React 19 warns; boundaries do not see it). All three threw on click and
+  none would have been reported by any boundary. **`tools/qaClicks.mjs` is what
+  finds that class**, because finding them means clicking them. Treat the boundary
+  as a floor, not a net.
+
+  Verified by `tools/probeErrorBoundary.mjs --expect-failure` with a throw injected
+  into `LeadersHub`: shell alive, real error message on screen, and Standings
+  still renders afterwards. The `resetKey={view}` prop is what makes that last part
+  work — a React boundary does **not** retry when its children change, so without
+  it the failure screen follows the reader to every subsequent view.
+- **`generateSchedule` takes no seed** and reshuffles 2459 of 2464 games between
+  builds, so `handleTerminateUniverse`'s promise that terminating with a seed
+  rebuilds the same universe is not kept. Rosters are already reproducible.
+  Threading a seed touches roughly sixteen check and fitting tools plus
+  `universeBootstrap`, and would move the measured numbers several of them print.
+  Deliberately not done alongside the boundary: it needs its own measurement, not
+  leftover time. The open decision is whether the seed is **required** — an
+  optional one leaves the bug on the default path, where nobody notices.
 - **The wallet is localStorage only.** It survives a refresh and closing the tab,
   but does not follow the user between machines and is not in the same save file
   as the season. Wiring it into the Supabase pipeline was out of scope. It is the

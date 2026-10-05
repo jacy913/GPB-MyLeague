@@ -33,6 +33,7 @@ import { SimCompletePanel } from './components/simulation/SimCompletePanel';
 import { BroadcastTickerFooter } from './components/BroadcastTickerFooter';
 import type { AppView } from './types';
 import { AppViewRouter } from './components/AppViewRouter';
+import { ViewBoundary } from './components/ui';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
 import { leagueChampionsFromSeries } from './lib/futuresRisk';
@@ -3908,8 +3909,35 @@ function App() {
         />
 
         <main className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6">
-          <AppViewRouter
-            view={view}
+          {/*
+            THE RENDER-THROW BOUNDARY, and its placement is the whole design.
+
+            Inside <main>, around the routed view and nothing else. The nav rail, the score ticker and
+            the header all sit outside it, which is the point: a throw in any single view now costs
+            that view rather than the application, and the reader keeps a working sidebar to navigate
+            away with. Wrapped one level higher it would catch exactly the same errors and still blank
+            the screen.
+
+            `resetKey={view}` is what stops the failure screen following the reader around. A React
+            error boundary does NOT retry when its children change -- it holds the fallback until it
+            is unmounted or explicitly reset -- so without this, breaking one view would leave every
+            view after it dead as well, which is a worse outcome than the blank page it replaces.
+
+            `onGoHome` calls App's own `setView` rather than the router's `onSetView`, because the
+            router is inside the boundary and is one of the things that may have thrown.
+
+            What this does not catch: errors in event handlers, timers, and promises. Two defects this
+            session were exactly that -- a Preview button calling an undefined prop, a backup button
+            awaiting one the router dropped -- and neither this boundary nor any other would have
+            reported them. `tools/qaClicks.mjs` finds those, because finding them means clicking them.
+          */}
+          <ViewBoundary
+            resetKey={view}
+            viewLabel={view}
+            onGoHome={() => setView('dashboard')}
+          >
+            <AppViewRouter
+              view={view}
             teams={teams}
             games={games}
             playerState={playerState}
@@ -3979,9 +4007,10 @@ function App() {
             commissionerNotices={commissionerNotices}
             isSupabaseEnabled={isSupabaseConfigured}
             getStatNumber={getStatNumber}
-            getFallbackHits={getFallbackHits}
-            {...routerActions}
-          />
+              getFallbackHits={getFallbackHits}
+              {...routerActions}
+            />
+          </ViewBoundary>
         </main>
       </div>
 
