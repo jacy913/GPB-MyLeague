@@ -9,7 +9,7 @@ export const PlayLog: React.FC<{
   logs: PlayLogEvent[];
   totalLogs: number;
   isBroadcasting: boolean;
-  viewportRef: React.RefObject<HTMLDivElement | null>;
+  viewportRef: React.RefObject<HTMLOListElement | null>;
   onSkip: () => void;
 }> = ({ logs, totalLogs, isBroadcasting, viewportRef, onSkip }) => (
   <Panel className="mx-auto max-w-5xl overflow-hidden">

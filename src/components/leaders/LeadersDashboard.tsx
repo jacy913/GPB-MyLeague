@@ -142,13 +142,34 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
    */
   const playerById = useMemo(() => new Map(players.map((p) => [p.playerId, p])), [players]);
 
+  /*
+    THE DISPLAY NAME, and why this helper exists.
+
+    Both quadrant plots read `player.fullName`. `Player` has no such field -- it carries `firstName`
+    and `lastName`, while `fullName` belongs to `GameParticipantBatter` and `GameParticipantPitcher`,
+    the shapes that pair a player with their box-score line. So the property was `undefined` at
+    runtime, the `??` fallback fired every time, and both plots labelled every dot with a raw
+    `playerId` instead of a name. The two plots are the OBP/SLG and K-BB quadrants, so this was a
+    visible defect on a page users land on, not a latent one.
+
+    It survived because `@types/react` was not installed, so `Player` resolved to `any` in every
+    component and no prop or field read in this file was ever checked. Nothing else in the file
+    builds a name, so there was no sibling line to disagree with it.
+
+    The body matches `displayName` in LeadersHub, which is the same job in the sibling leaders view.
+    */
+  const displayName = (playerId: string): string => {
+    const player = playerById.get(playerId);
+    return player ? `${player.firstName} ${player.lastName}` : playerId;
+  };
+
   const battingRows: BattingMetricsRow[] = useMemo(() => qualifiedBatting
     .map((stat) => {
       const m = battingMetrics(toBattingCounts(stat));
       if (m.obp === null || m.slg === null) return null;
       return {
         id: stat.playerId,
-        label: playerById.get(stat.playerId)?.fullName ?? stat.playerId,
+        label: displayName(stat.playerId),
         obp: m.obp,
         slg: m.slg,
         weight: stat.plateAppearances,
@@ -164,7 +185,7 @@ export const LeadersDashboard: React.FC<LeadersDashboardProps> = ({
       if (m.kPer9 === null || m.bbPer9 === null) return null;
       return {
         id: stat.playerId,
-        label: playerById.get(stat.playerId)?.fullName ?? stat.playerId,
+        label: displayName(stat.playerId),
         k9: m.kPer9,
         bb9: m.bbPer9,
         weight: stat.inningsPitched,

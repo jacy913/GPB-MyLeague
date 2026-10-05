@@ -349,7 +349,16 @@ export const useDraftCenterActions = ({
         return;
       }
 
-      draftAutoRunTimerRef.current = globalThis.setTimeout(step, 45);
+      /*
+        `window.setTimeout`, not `globalThis.setTimeout`.
+
+        `@types/node` is installed, so the unprefixed global resolves to Node's overload and its timer
+        handle is a `Timeout` object -- which cannot go in this `number | null` ref. In a browser the
+        handle is always a number. Naming the window explicitly picks the DOM overload, which is what
+        the ref type has always described, and it matches the two `clearTimeout` calls above that
+        already treat the handle as a number.
+      */
+      draftAutoRunTimerRef.current = window.setTimeout(step, 45);
     };
 
     step();

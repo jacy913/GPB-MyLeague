@@ -207,16 +207,30 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
     playersById, rosterSlots, selectedTeam,
   ]);
 
+  /*
+    THE ROSTER, and why it is `flatMap` rather than `map` plus a filter.
+
+    A slot with no entry is dropped, which is a `null` in a `map` and a type predicate in the `filter`.
+    The predicate was `(entry): entry is TeamRosterEntry => entry !== null`, and it does not typecheck:
+    a predicate's type must be assignable to the array's own element type, and the element here is the
+    anonymous spread type `{ slotCode, overall, potentialOverall, ...entry }` rather than the named
+    `TeamRosterEntry`. The two are structurally the same, which is exactly the sort of thing the rule
+    is there to stop someone waving through, and it left all three of these `TeamsHub` errors in place.
+
+    `flatMap` has no `null` to narrow, so there is no predicate to justify and no array of nulls
+    allocated and immediately discarded on every render of this screen. The same change also clears the
+    two downstream errors at the batting order and starting rotation, which were only ever the
+    consequence of `teamRosterPlayers` having the wrong element type.
+  */
   const teamRosterPlayers = useMemo(() => {
     return ROSTER_DISPLAY_ORDER
-      .map((slotCode) => {
+      .flatMap((slotCode) => {
         const entry = selectedTeamRosterBySlot.get(slotCode);
-        if (!entry) return null;
+        if (!entry) return [];
         const overall = entry.battingRatings?.overall ?? entry.pitchingRatings?.overall ?? 0;
         const potentialOverall = entry.battingRatings?.potentialOverall ?? entry.pitchingRatings?.potentialOverall ?? 0;
-        return { slotCode, overall, potentialOverall, ...entry };
+        return [{ slotCode, overall, potentialOverall, ...entry }];
       })
-      .filter((entry): entry is TeamRosterEntry => entry !== null)
       .sort((left, right) => right.overall - left.overall || left.player.lastName.localeCompare(right.player.lastName));
   }, [selectedTeamRosterBySlot]);
 
@@ -246,17 +260,19 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
 
   const battingOrder = useMemo(
     () => generateBattingOrder(
-      BATTING_ROSTER_SLOTS
-        .map((slotCode) => teamRosterPlayers.find((entry) => entry.slotCode === slotCode) ?? null)
-        .filter((entry): entry is TeamRosterEntry => entry !== null),
+      BATTING_ROSTER_SLOTS.flatMap((slotCode) => {
+        const entry = teamRosterPlayers.find((row) => row.slotCode === slotCode);
+        return entry ? [entry] : [];
+      }),
     ),
     [teamRosterPlayers],
   );
 
   const startingRotation = useMemo(
-    () => STARTING_PITCHER_SLOTS
-      .map((slotCode) => teamRosterPlayers.find((entry) => entry.slotCode === slotCode) ?? null)
-      .filter((entry): entry is TeamRosterEntry => entry !== null),
+    () => STARTING_PITCHER_SLOTS.flatMap((slotCode) => {
+      const entry = teamRosterPlayers.find((row) => row.slotCode === slotCode);
+      return entry ? [entry] : [];
+    }),
     [teamRosterPlayers],
   );
 

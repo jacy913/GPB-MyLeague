@@ -592,8 +592,27 @@ const distributeEvenly = <T extends string>(values: T[], total: number): Record<
   }, {} as Record<T, number>);
 };
 
-const buildBucketPool = <T extends string>(counts: Record<T, number>): T[] =>
-  Object.entries(counts).flatMap(([key, count]) => Array.from({ length: count }, () => key as T));
+/*
+    Repeat each key `count` times, so a bucket count becomes the players in that bucket.
+
+    `Object.entries` was the original, and it cannot typecheck against a `Record<T, number>`: the keys
+    of a mapped type are `T`, but `Object.entries` only knows `string`, so its overload resolution
+    lands on the `ArrayLike<unknown>` signature and `count` comes back `unknown`. That is the whole of
+    this diagnostic, which is why it sat untriaged for so long -- it needs one narrow fact, not an
+    investigation.
+
+    The fact is that the keys of a `Record<T, _>` ARE `T`, and this is the one place in the codebase
+    that has to be told so. `Object.keys` rather than `Object.entries` keeps the count lookup typed,
+    so the `as T[]` above is the only assertion in the function -- and it is a statement about the
+    keys, which is true by construction of the parameter.
+  */
+const buildBucketPool = <T extends string>(counts: Record<T, number>): T[] => {
+  const pool: T[] = [];
+  (Object.keys(counts) as T[]).forEach((key) => {
+    for (let index = 0; index < counts[key]; index += 1) pool.push(key);
+  });
+  return pool;
+};
 
 /**
  * Share of MLB roster spots held by players of each age, used to seed a new

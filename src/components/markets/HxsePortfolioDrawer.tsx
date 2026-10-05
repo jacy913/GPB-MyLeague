@@ -40,6 +40,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { ChartNoAxesColumn, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { dollars, markValue, positionLimitCentsFor, signedDollars, STARTING_CASH_CENTS, valueOf } from '../../lib/portfolio';
+import type { Portfolio } from '../../lib/portfolio';
 import { marketSizeFor } from '../../lib/analytics/fanbase';
 import type { Team } from '../../types';
 import { TeamLogo } from '../ui/TeamLogo';
@@ -52,12 +53,16 @@ export interface HxsePortfolioDrawerProps {
   teams: Team[];
   /** The most recent close for every club. */
   closes: Record<string, number>;
-  portfolio: {
-    cashCents: number;
-    positions: Array<{ teamId: string; costCents: number; units: number; openedOn: string }>;
-    realisedCents: number;
-    lifetimeRealisedCents: number;
-  };
+  /**
+   * The book, as the real `Portfolio`.
+   *
+   * This was an inline re-declaration of the shape, written out field by field. It had already drifted:
+   * `markValue` takes a `Portfolio`, and `Portfolio` carries `settledThrough`, which the inline copy
+   * did not. The call site passes `book.portfolio`, a genuine `Portfolio`, so nothing was ever wrong
+   * at runtime -- but a hand-copied interface is a snapshot that stops being true the first time the
+   * type gains a field, and this one had.
+   */
+  portfolio: Portfolio;
   /** Date of the closes being marked against, or null if the market has never printed. */
   markedOn: string | null;
 }

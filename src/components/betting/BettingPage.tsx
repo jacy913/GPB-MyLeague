@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  Game, SeasonHistoryEntry, PlayerBattingRatings, PlayerPitchingRatings,
+  Game, PlayerBattingRatings, PlayerPitchingRatings,
 } from '../../types';
 import type { MediaId } from '../../data/media';
 import { MEDIA_BY_ID, MEDIA_PROFILES } from '../../data/media';

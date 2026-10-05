@@ -371,7 +371,14 @@ export const BettingSlip: React.FC<{
                   className="gold-sweep gold-edge flex items-center gap-2 border-l-[3px] border-l-transparent py-1 pl-3 pr-2 t-caption text-[var(--color-ink-dim)] hover:text-[var(--color-gold-hi)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
                 >
                   Betting Record
-                  <ChevronRight depth={8} height={8} className="text-[var(--color-gold)]" />
+                  {/*
+                    `depth={8} height={8}` was not a size. `depth` is not a lucide-react prop at all,
+                    so it was dropped and the icon rendered at its default 24px inside a `t-caption`
+                    button -- roughly three times the height of the label it sits beside. The `8` was
+                    clearly meant as pixels, so it is `h-2 w-2` now, and it matches the `h-N w-N` sizing
+                    the rest of the icon set uses rather than mixing an attribute and a class.
+                  */}
+                  <ChevronRight className="h-2 w-2 text-[var(--color-gold)]" aria-hidden="true" />
                 </button>
               </div>
               <p className="mt-1 t-caption text-[var(--color-ink-faint)]">

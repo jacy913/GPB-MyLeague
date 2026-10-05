@@ -143,7 +143,10 @@ export const SimCompletePanel: React.FC<{
         <div className="shrink-0 border-t border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-4">
           <RetroButton variant="primary" className="w-full justify-between" onClick={onDismiss}>
             Back to dashboard
-            <ChevronRight depth={8} height={8} />
+            {/* `depth={8}` is not a lucide-react prop and was silently dropped, so this chevron
+                rendered at its 24px default inside a text-height button. Same correction as the one
+                in BettingSlip: the 8 was pixels. */}
+            <ChevronRight className="h-2 w-2" aria-hidden="true" />
           </RetroButton>
         </div>
       </motion.div>

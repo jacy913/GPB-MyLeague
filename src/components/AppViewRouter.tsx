@@ -222,9 +222,53 @@ interface AppViewRouterProps {
   onSimulateToGameInline: (targetGameId: string) => void;
   onClearNotifications: () => void;
   onSaveSettings: (newTeams: Team[], newSettings: SimulationSettings) => void;
-  onClearHistoricalData: () => void;
-  onHardWipePlayers: () => void;
+  /*
+    Both of these are `Promise<void>`, because they ARE async.
+
+    App builds them as `async` handlers, and `CommissionerSettings` declares them `() => Promise<void>`
+    and fires them with `void onClearHistoricalData()` -- a call that only makes sense if the result
+    is a promise being deliberately not awaited. The router was the odd one out, narrowing them to
+    `() => void` on the way through, which is what made passing them on to the settings page an error.
+  */
+  onClearHistoricalData: () => Promise<void>;
+  onHardWipePlayers: () => Promise<void>;
+  /**
+   * Builds a throwaway universe from the current seed and shows it, without changing anything.
+   *
+   * Forwarded to the Simulation Desk because that is where the Terminate Universe modal lives, and
+   * that modal's Preview button calls it. The whole feature existed -- the bootstrap, the preview
+   * modal, the handler in App, the two props on SimulationHub -- and none of it was connected:
+   * App never passed the handler down, so the button on screen invoked `undefined` and threw.
+   */
+  onPreviewNewUniverse: () => void;
   onDismissPlayerPreview: () => void;
+  /**
+   * A club the reader arrived wanting to look at, consumed once by ExchangeView.
+   *
+   * Set when the HXSE portfolio drawer's position rows are clicked: the comment there says the row
+   * "sends the reader to the Exchange with that club already selected", and ExchangeView has always
+   * had the effect that does it -- `pendingClub` is consumed on arrival and cleared through
+   * `onPendingClubConsumed`. This router simply did not carry the two across, so the selection never
+   * happened and the drawer landed you on the league average.
+   *
+   * Third instance of the same shape in this one commit: a prop written by a caller, consumed by a
+   * component, and dropped in the hop between them.
+   */
+  pendingClub?: string | null;
+  onPendingClubConsumed?: () => void;
+  /*
+    The two local-backup handlers, forwarded to Commissioner Settings.
+
+    These reached the router the whole time -- App spreads `{...routerActions}` into this element, and
+    that object carries both -- but they were not in this interface, so they were never destructured
+    and never reached CommissionerSettings, whose own props declare them required. The Export and
+    Import Local Backup controls were on screen and invoked `undefined`.
+
+    Declared rather than removed, because the handlers exist, are correct, and are already built into
+    the router-actions bundle that this file consumes. The gap was one hop.
+  */
+  onExportLocalBackup: () => Promise<LocalUniverseBundle>;
+  onImportLocalBackup: (payload: unknown) => Promise<void>;
 }
 
 export const AppViewRouter = ({
@@ -332,7 +376,12 @@ export const AppViewRouter = ({
   onSaveSettings,
   onClearHistoricalData,
   onHardWipePlayers,
+  onPreviewNewUniverse,
   onDismissPlayerPreview,
+  pendingClub,
+  onPendingClubConsumed,
+  onExportLocalBackup,
+  onImportLocalBackup,
 }: AppViewRouterProps) => (
   <AnimatePresence mode="wait">
     <motion.div
@@ -435,6 +484,20 @@ export const AppViewRouter = ({
           onOpenFreeAgency={() => onSetView('free_agency')}
           onOpenLottery={() => onSetView('lottery')}
           onOpenDraft={() => onSetView('draft')}
+          /*
+            The two props that make the Terminate Universe modal's Preview button work.
+
+            Both were declared required on SimulationHub and never passed, which is why this call site
+            was an error -- and why clicking Preview on that modal invoked `undefined`. `onPreview`
+            builds the throwaway universe; `newUniversePreview` is the result the preview modal then
+            renders.
+
+            Worth noting how this stayed invisible for so long: the feature is fully built on both
+            sides and only the single hop in the middle is missing, which is the shape a feature takes
+            when nothing connects it. The Preview button was on screen the whole time.
+          */
+          onPreviewNewUniverse={onPreviewNewUniverse}
+          newUniversePreview={newUniversePreview}
         />
       )}
 
@@ -659,6 +722,8 @@ export const AppViewRouter = ({
           priceLedger={priceLedger}
           teams={teams}
           book={book}
+          pendingClub={pendingClub}
+          onPendingClubConsumed={onPendingClubConsumed}
         />
       )}
 
@@ -690,7 +755,6 @@ export const AppViewRouter = ({
           battingStats={playerState.battingStats}
           pitchingStats={playerState.pitchingStats}
           playerState={playerState}
-          seasonHistory={seasonHistory}
           seasonYear={resolveSeasonYear(currentDate, games)}
           slip={bettingSlip}
         />
@@ -759,6 +823,8 @@ export const AppViewRouter = ({
           onClearHistoricalData={onClearHistoricalData}
           onHardWipePlayers={onHardWipePlayers}
           onDismissPlayerPreview={onDismissPlayerPreview}
+          onExportLocalBackup={onExportLocalBackup}
+          onImportLocalBackup={onImportLocalBackup}
           newUniversePreview={newUniversePreview}
           isClearingHistoricalData={isClearingHistoricalData}
           isGeneratingPlayers={isGeneratingPlayers}

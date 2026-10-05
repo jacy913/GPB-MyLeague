@@ -1818,7 +1818,7 @@ previous session.
 
 | | Result |
 |---|---|
-| `npx tsc --noEmit` | **7 errors** — all triaged below, none blocking |
+| `npx tsc --noEmit` | **0 errors** — was 7, all triaged and fixed; see below |
 | `checkBettingCardShape` | **29/29** |
 | `checkCrowd` | **14/14** |
 | `checkCrowdOnRealPath` | **6/6** |
@@ -1837,48 +1837,63 @@ previous session.
 | `checkPropCard` | **all passed** |
 | `verifyMediaOdds` | 9 forecasters priced, Wardley at 0.2500 |
 
-- **`npx tsc --noEmit` reports 7 diagnostics. Every one is triaged below, and none
-  of them blocks anything.** This section exists because the count used to be
-  carried as verbal tradition ("the 10 baseline"), which is not a safe way to
-  hold a number: a session that introduced an 8th error would have seen "8, not
-  10" and had no way to judge whether the new one mattered.
+- **`npx tsc --noEmit` reports ZERO diagnostics.** It was 7, and before that a "10 baseline"
+  carried as verbal tradition. This section exists because that count used to be held as a phrase
+  rather than a measurement: a session that introduced an 8th error would have seen "8, not 10"
+  and had no way to judge whether the new one mattered.
 
-  **They do not block a build.** `npm run build` is `vite build`, which does not
-  run `tsc` (`npm run lint` does, separately). Verified: `✓ built in 9.63s`. So a
-  type error cannot stop a build or a ship, and "fix the errors" is never a
-  release blocker here.
+  **`npm run lint` is now a real gate.** It is `tsc --noEmit`, so it checks the component tree
+  as well as the logic layer — see below for why that was not true before.
 
-  ### `tsc` DOES NOT CHECK A SINGLE COMPONENT PROP IN THIS PROJECT
+  ### `@types/react` WAS MISSING, AND THAT IS WHY 7 LOOKED LIKE A BASELINE
 
-  **`@types/react` is not installed.** Verified: `Test-Path node_modules/@types/react`
-  is `False`, and `const x: number = React` compiles clean in a `.tsx` file.
+  `@types/react` was not installed. Verified before the fact: `Test-Path node_modules/@types/react`
+  was `False`, and `const x: number = React` compiled clean in a `.tsx` file.
 
-  `React` therefore resolves to `any`, so `React.FC<Props>` is `any`, so **every
-  component's prop contract is unchecked**. All 7 diagnostics above are in plain
-  `.ts` logic files. `tsc` has never looked at a prop type in this codebase: not
-  `MediaReadInput`, not the 32-club ranking rows, not the betting slip, not the
-  season gate.
+  `React` resolved to `any`, so `React.FC<Props>` was `any`, and **every component's prop contract
+  was unchecked**. Every one of the 7 diagnostics was in a plain `.ts` logic file. `tsc` had never
+  looked at a prop type in this codebase — not `MediaReadInput`, not the leaderboard rows, not the
+  betting slip, not the season gate. A "7 baseline" in that state was 7 errors out of an unbounded
+  number that was never being looked for.
 
-  This is not theoretical. `MediaHub.clubsOf` handed `Game.awayTeam` — which
-  `types.ts` types as `string // Team ID` — back as a `Team`, and the renderer
-  passed a string into `TeamLogo`. It threw during render; with no error boundary
-  anywhere in `src/`, React unmounted the whole tree, and The Media rendered as a
-  **completely blank page**. Confirmed at runtime: `document.body.innerText` length
-  `0`, `#root` child count `0`.
+  This was not theoretical. `MediaHub.clubsOf` handed `Game.awayTeam` — which `types.ts` types as
+  `string // Team ID` — back as a `Team`, and the renderer passed a string into `TeamLogo`. It threw
+  during render; with **no error boundary anywhere in `src/`**, React unmounted the whole tree and
+  The Media rendered as a completely blank page. Confirmed at runtime: `document.body.innerText`
+  length `0`, `#root` child count `0`.
 
-  A scratch file asserting `const away: Team = game.awayTeam` errors correctly, so
-  the rule works — it simply never ran against the component. **A clean `tsc` here
-  means the logic layer is clean and says nothing whatsoever about the component
-  tree.** Installing `@types/react` will surface a large batch of new diagnostics
-  and is a decision to make deliberately, not as part of a fix.
+  Installing it took the count to **38**, and the 31 new ones were mostly real:
+
+  - **Six live defects, not type noise.** `LeadersDashboard` read `Player.fullName`, which does not
+    exist — `Player` carries `firstName`/`lastName` — so both quadrant plots labelled every dot with a
+    raw `playerId`. `ExchangeView` never passed `onSelect` to `ExchangeDesk`, which calls it on click.
+    `simulationWorker`'s `working.games` inferred `playoff` as required. `RunBoard` declared
+    `seasonProgress: number` and then read `.progress` off it. `HomeDashboard` used a prop it never
+    declared. `game/shared.tsx` compared `'top'|'bottom'` against `'away'|'home'` — two disjoint
+    unions — so the outs column had never once rendered.
+  - **Three features built on both sides, missing the hop in the middle**, all of which threw on
+    click: the Terminate Universe modal's Preview button, Commissioner Settings' Export/Import Local
+    Backup, and the HXSE drawer's position rows. Each had a caller, a consumer, and a control on
+    screen; only the connection was absent.
+  - **Two things silently dropped**: `ChevronRight depth={8}` (`depth` is not a lucide prop, so the
+    icons rendered at 24px inside text-height buttons) and a ref callback returning a `Map`, which
+    React 19 warns about once per outcome row on the betting page.
+
+  The 7 pre-existing ones are now fixed too, on their own merits — `storage.ts`'s timer type, the
+  worker's `self` cast, the `working.games` inference, and `playerGenerator`'s bucket pool, which
+  needed one narrow fact rather than an investigation. **The three `localeCompare`-on-`unknown`
+  errors resolved themselves**, because the `any` that produced the `unknown` is gone.
+
+  `strict` is still off and this commit did not turn it on. That remains available and remains a
+  separate decision.
 
   | Diagnostic | Verdict |
   |---|---|
-  | `Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`, `TeamCalendar.tsx:53` — `localeCompare` on `unknown` | **Narrowing gap.** Values are strings at runtime; the compiler cannot see it. Lowest priority of the seven. |
-  | `lib/storage.ts:1249` — `number` not assignable to `Timeout` | **DOM vs Node lib conflict.** `window.setTimeout` returns a number in a browser; the variable is typed with Node's `Timeout`. Runtime-correct. |
-  | `simulationWorker.ts:21` — `self` cast to `DedicatedWorkerGlobalScope` | **Needs `as unknown as`.** A worker really does have that scope; the two lib types just don't overlap enough for TS. |
-  | `simulationWorker.ts:211` — `Game[]` vs an inferred literal type | **`playoff` is optional on `Game` and required in the inferred shape.** Widening the inferred type is the fix; no behaviour depends on it. |
-  | `playerGenerator.ts:596` — no overload matches | **Not yet triaged in detail.** Left alone deliberately rather than guessed at. |
+  | ~~`Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`, `TeamCalendar.tsx:53` — `localeCompare` on `unknown`~~ | **Gone.** Not fixed — the `any` that produced the `unknown` no longer exists. |
+  | ~~`lib/storage.ts:1249` — `number` not assignable to `Timeout`~~ | **Fixed.** The variable was typed `ReturnType<typeof setTimeout>`, which is Node's `Timeout` because `@types/node` is installed, while the only assignment uses `window.setTimeout`, which returns a number. Storage is a browser module, so `number \| null` is the honest type. |
+  | ~~`simulationWorker.ts:21` — `self` cast~~ | **Fixed.** `self as unknown as DedicatedWorkerGlobalScope`, with the reason recorded: the DOM lib types `self` as `Window`, and this module is only ever loaded by `new Worker(...)`. |
+  | ~~`simulationWorker.ts:211` — `Game[]` vs inferred~~ | **Fixed.** `working` is now `Omit<SimulationWorkerSnapshot, 'seasonComplete' \| 'simulatedGameCount'>`. The map callback always writes `playoff`, so inference made it required while `Game` has it optional. |
+  | ~~`playerGenerator.ts:596` — no overload matches~~ | **Fixed.** `Object.entries` on a `Record<T, number>` cannot recover `T`, so its overload lands on `ArrayLike<unknown>` and `count` comes back `unknown`. `Object.keys` plus one documented `as T[]` on the keys. |
 
   **What was here before, and why it went:**
 

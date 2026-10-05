@@ -1119,6 +1119,12 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
         `latestCloses` is the LAST day's closes, not the visible range's, because a mark has to be
         against the most recent price the market actually printed. Marking against the last day of a
         shortened window would revalue the book to a stale close the moment the range narrowed.
+
+        `onSelect` was MISSING here and is wired now, which is not a formality: ExchangeDesk renders
+        a button per held position that calls `onSelect(p.teamId)` on click, so the prop was
+        `undefined` at runtime and clicking any position row threw. The prop had a doc comment
+        describing exactly this wiring, and the caller never passed it -- invisible because
+        `@types/react` was absent, so the component was `any` and no prop was ever checked.
       */}
       <ExchangeDesk
         teams={teams}
@@ -1126,6 +1132,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
         markedOn={latestDate}
         selectedClub={activeClub}
         book={book}
+        onSelect={chooseClub}
       />
       </div>
 

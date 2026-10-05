@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Flame, LineChart, Receipt, ShieldCheck, Trophy, Users } from 'lucide-react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES, MEDIA_BY_ID, forecasterName } from '../../data/media';
-import type { FieldMarket, LineMarket, MarketKind } from '../../lib/markets';
+import type { FieldMarket, LineMarket, LockedRace, MarketKind } from '../../lib/markets';
 import { formatAmerican, lockedMarketRefusal, WORLD_SERIES_MARKET_KEY } from '../../lib/markets';
 import { futuresRiskRead, type FuturesRiskRead, type FuturesRiskTier } from '../../lib/futuresRisk';
 import macrobetLogo from '../../assets/macrobetlogo-trim.png';
@@ -79,6 +79,23 @@ interface BettingSlateProps {
     propPlayerId?: string;
     propPlayerName?: string;
     propLine?: number;
+    /**
+     * The lock on this market, and the name of the already-decided winner, carried through to the
+     * slip.
+     *
+     * Both were being passed at the Fade and Take call sites and both were missing from this type,
+     * which is the one thing a local type like this is for. `useBettingSlip` reads them to REFUSE the
+     * bet -- `lockedMarketRefusal` explains the settlement in three sentences and the slip sets a
+     * notice instead of taking the stake -- so these two fields are the entire mechanism by which a
+     * market that has already been decided cannot be backed. The runtime was correct because
+     * JavaScript passes the properties regardless; the type said the guard did not exist.
+     *
+     * Typed optional to match `FieldMarket.locked`, where undefined means open. See that field for
+     * why the default runs this way rather than the other round.
+     */
+    locked?: LockedRace;
+    /** Human-readable winner for the refusal copy. Undefined when the market is open. */
+    lockedWinnerName?: string;
   }) => void;
   balance: number;
 }
@@ -1174,7 +1191,19 @@ const FieldMarketCard: React.FC<{
           return (
             <div
               key={outcome.key}
-              ref={(node) => cellRefs.current.set(outcome.key, node)}
+              /*
+                The ref callback is a BLOCK, and it has to be.
+
+                `ref={(node) => cellRefs.current.set(outcome.key, node)}` returns the Map, because
+                `Map.set` returns the map. React 19 types a ref callback as returning void, and warns
+                at runtime when it does not -- this was a live console warning on the betting page,
+                once per outcome row, and nothing else in the file objected to it.
+
+                These refs exist so the outcome strip can scroll a named row into view when a bet
+                resolves against it. That still works exactly as before; only the accidental return
+                value is gone.
+              */
+              ref={(node) => { cellRefs.current.set(outcome.key, node); }}
               data-outcome={outcome.key}
               className="flex flex-col gap-2 border-l-[3px] bg-[var(--color-sunken)] px-3 py-2.5"
               style={{ borderLeftColor: isFavourite ? 'var(--color-gold)' : 'transparent' }}

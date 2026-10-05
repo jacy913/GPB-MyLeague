@@ -236,7 +236,14 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [session, setSession] = useState<GameSessionState | null>(null);
   const [visibleLogCount, setVisibleLogCount] = useState(0);
   const [pendingCompletedGame, setPendingCompletedGame] = useState<CompletedGameResult | null>(null);
-  const logViewportRef = useRef<HTMLDivElement | null>(null);
+  /*
+    `<HTMLOListElement>`, because this ref is handed to the play-by-play `<ol>`.
+
+    It was declared as a div. The only thing done with it is `scrollTo`, which both element types
+    have, so nothing was ever wrong at runtime -- but a ref typed for one element and attached to
+    another is the kind of mismatch that gets copied into the next component and then does break.
+  */
+  const logViewportRef = useRef<HTMLOListElement | null>(null);
   const storedLogs = useMemo(() => parseStoredLogs(game), [game.gameId, game.stats.playLog]);
 
   useEffect(() => {

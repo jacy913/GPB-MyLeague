@@ -118,6 +118,17 @@ interface HomeDashboardProps {
   onResetSeason: () => void;
   onSimulateToDate: (date: string) => void;
   onProposeTrade: (trade: TradeProposal) => void;
+  /**
+   * The newsroom's running tally. Optional, and defaulted to `EMPTY_HEADLINER_LEDGER`.
+   *
+   * The long form of this -- why it is optional rather than required, and why the tally is read-only
+   * until the save path exists -- is on the destructuring default at the bottom of the component.
+   *
+   * It was destructured but never declared here, so `HomeDashboard` was reading a field its own props
+   * type did not admit. Runtime was fine and the default made it genuinely optional; the type was the
+   * only thing out of step, and only because the component was `any`.
+   */
+  headlinerLedger?: HeadlinerLedger;
 }
 
 /**

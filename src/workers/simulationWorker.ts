@@ -18,7 +18,18 @@ interface SimulationMarketAlert {
   interest: number;
 }
 
-const workerScope = self as DedicatedWorkerGlobalScope;
+/*
+    `self` is typed `Window & typeof globalThis` because the tsconfig loads the DOM lib, and a worker
+    has none of that. It IS a `DedicatedWorkerGlobalScope` -- this module is only ever loaded by
+    `new Worker(...)`, which is what `checkWorkerPriceHandoff` asserts about this file -- but the two
+    lib types share almost nothing, so the single cast is rejected and the honest one goes through
+    `unknown`.
+
+    The alternative was narrowing with a guard on every member this file touches, which would be a
+    runtime cost and a claim about types that is not what is actually happening here: this is a worker,
+    unconditionally.
+  */
+const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
 const getStableTradeMarketKey = (proposal: PendingTradeProposal): string =>
   [
@@ -73,7 +84,25 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
   let totalSimulatedGames = 0;
   let knownTradeIds = new Set<string>();
   let knownFreeAgencyKeys = new Set<string>();
-  const working = {
+  /*
+    Typed as `SimulationWorkerSnapshot`, which is what this object is.
+
+    This was left to inference, and the inferred type made `playoff` a REQUIRED property on every
+    game because the map callback always writes one -- `{ ...game.playoff }` or `null`, never absent.
+    `Game` declares it optional, so the inferred element was not a `Game` and the one line that
+    assigns a real league back on, `working.games = result.games`, was a type error.
+
+    Runtime was never affected -- absent and explicit `null` both read as falsy everywhere -- which
+    is why this sat in the table as a known diagnostic instead of a bug.
+
+    Annotating it at all is the fix; what it is annotated WITH is where two attempts went wrong.
+    Spelling the fields out inline dropped `priceLedger` and produced seven fresh errors, and
+    annotating it as a whole `SimulationWorkerSnapshot` failed because `seasonComplete` and
+    `simulatedGameCount` are not held here -- the worker tracks the game count in its own counter and
+    reports both at the end. `Omit` of the real type says exactly that and stays true if the snapshot
+    gains a field later.
+  */
+  const working: Omit<SimulationWorkerSnapshot, 'seasonComplete' | 'simulatedGameCount'> = {
     teams: startPayload.teams.map((team) => ({ ...team })),
     games: startPayload.games.map((game) => ({
       ...game,

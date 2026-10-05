@@ -86,7 +86,16 @@ const LOCAL_SAFETY_SNAPSHOT_INDEX_KEY = 'gpb_local_safety_snapshot_index_v1';
 const LOCAL_SAFETY_SNAPSHOT_LIMIT = 5;
 const LOCAL_SAFETY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 1000;
 let localSafetySnapshotLastAt = 0;
-let localSafetySnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+/*
+    A DOM timer handle, as a plain number.
+
+    Was `ReturnType<typeof setTimeout>`, which resolves to Node's `Timeout` object because
+    `@types/node` is installed -- and then the one place this is assigned uses `window.setTimeout`,
+    which returns a number. The two halves disagreed, which is the whole of this diagnostic: nothing
+    about the code was wrong, the declared type just came from the wrong runtime. Storage is a browser
+    module (it reaches for `window` throughout), so the number is the honest type.
+  */
+  let localSafetySnapshotTimer: number | null = null;
 
 const LEAGUE_SLUG = 'grand-league';
 const LEAGUE_NAME = 'Grand League Baseball';

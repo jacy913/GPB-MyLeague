@@ -161,7 +161,19 @@ export const LiveRun: React.FC<{
   cursorDate: string;
   currentDate: string;
   planProgress: number;
-  seasonProgress: number;
+  /**
+   * How far through the season the league is.
+   *
+   * Declared `number` and then read as `seasonProgress.progress` forty lines below, which cannot both
+   * be true. The caller passes `{ completedGames, totalGames, progress }` -- an object -- so the
+   * declaration was the wrong half. Runtime was correct: nothing validates a prop type, so the object
+   * arrived and `.progress` resolved. It only became visible once React had types, which is the whole
+   * argument for having them.
+   *
+   * NOT the same as `simulationProgress`, which is the narrower `{ completedGames, totalGames }` for
+   * the in-flight run. Two different denominators: one over the season, one over today's batch.
+   */
+  seasonProgress: { completedGames: number; totalGames: number; progress: number };
   simulationProgress: { completedGames: number; totalGames: number } | null;
   dateStepLabel: string;
   gamesLabel: string;

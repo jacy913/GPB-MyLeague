@@ -66,7 +66,23 @@ export const LineScore: React.FC<{
       <td className={`${cell} border-l-2 border-l-[var(--color-gold-dim)]`}>{totals.runs}</td>
       <td className={cell}>{totals.hits}</td>
       <td className={cell}>{totals.errors}</td>
-      <td className={cell}>{half === side ? outs : ''}</td>
+      {/*
+        THE OUTS COLUMN, and the comparison it actually needed.
+
+        This was `half === side ? outs : ''` -- comparing `'top' | 'bottom'` against `'away' | 'home'`,
+        two disjoint unions. It could never be true, so the trailing column was permanently blank in
+        every state of every game, which is the same failure as those icon `depth` props: something
+        that looks meaningful, gets dropped, and leaves no trace.
+
+        The intent was already written down in the doc comment above -- "the half currently in progress
+        shows its outs in the trailing column" -- and it is still true; only the encoding was wrong.
+        The top half is the away club batting and the bottom half the home club, so the mapping is the
+        missing half of the expression rather than something to cast.
+
+        Written as the comparison it means. Casting `half` into a side would have silenced the error
+        and left the column blank, which is the fix that satisfies the compiler and not the reader.
+      */}
+      <td className={cell}>{(half === 'top' ? 'away' : 'home') === side ? outs : ''}</td>
     </tr>
   );
 

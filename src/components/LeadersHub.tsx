@@ -269,6 +269,24 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
 interface CategoryBoard {
   key: string;
   title: string;
+  /**
+   * The header printed over the value column.
+   *
+   * On the BOARD, not only on the category config, because the three board families are not built the
+   * same way and the difference was invisible. Pitching and team categories are themselves
+   * `Omit<CategoryBoard, 'rows' | 'columns'>` objects and carry the header onto the board by spread.
+   * Batting has a separate `BattingCategory` type, so its board was assembled field by field and the
+   * header was left behind -- a board that could not state what its own value column was called.
+   *
+   * Nothing currently reads it back off a finished board; the header is consumed while the columns
+   * are being built. It is on the interface anyway because a board that knows its own column heading
+   * is the difference between one shape and three, and the next person adding a board family should
+   * not have to discover which assembly style silently drops fields.
+   *
+   * The long form of the argument -- why this is declared rather than derived from `title` -- is on
+   * `BattingCategory.columnHeader`.
+   */
+  columnHeader: string;
   /** 'desc' sorts the highest value first; 'asc' for ERA and WHIP. */
   direction: 'desc' | 'asc';
   qualified: boolean;
@@ -365,6 +383,25 @@ interface BattingCategory {
    */
   columnHeader: string;
 }
+
+/**
+ * The half of a board that a category list describes, as opposed to the half a builder computes.
+ *
+ * Both `pitchingCategories` and `teamCategories` were annotated
+ * `Array<Omit<CategoryBoard, 'rows' | 'columns'>>`, which asks the category list for `distribution`,
+ * `meanLabel`, `shortNote` and `scope` as well -- and those are exactly the fields each builder fills
+ * in. So the annotation demanded the builders' work from the builders' inputs, and every one of those
+ * object literals was short by four properties.
+ *
+ * `Omit` reads like it is excluding what the builder adds, and it is doing the opposite: it excludes
+ * only the two fields the builder genuinely replaces wholesale, `rows` and `columns`, and keeps the
+ * four the builder OVERWRITES with values it computed for this category. Naming the half properly is
+ * clearer than subtracting a list that has to be updated every time the board grows a field.
+ */
+type CategorySpec = Pick<
+  CategoryBoard,
+  'key' | 'title' | 'columnHeader' | 'direction' | 'qualified' | 'count'
+>;
 
 interface StatEntry {
   playerId: string;
@@ -615,21 +652,43 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
 
   const displayName = (player: Player) => `${player.firstName} ${player.lastName}`;
 
-  const battingEntries = useMemo<StatEntry[]>(() => players
-    .map((player) => {
-      const stat = battingByPlayerId.get(player.playerId);
-      if (!stat) return null;
-      return { playerId: player.playerId, name: displayName(player), team: player.teamId ? teamsById.get(player.teamId) ?? null : null, stat };
-    })
-    .filter((entry): entry is StatEntry => Boolean(entry)), [battingByPlayerId, players, teamsById]);
+  /*
+    THE JOIN, and why it is `flatMap` rather than `map` plus a filter.
 
-  const pitchingEntries = useMemo<StatEntry[]>(() => players
-    .map((player) => {
-      const stat = pitchingByPlayerId.get(player.playerId);
-      if (!stat) return null;
-      return { playerId: player.playerId, name: displayName(player), team: player.teamId ? teamsById.get(player.teamId) ?? null : null, stat };
-    })
-    .filter((entry): entry is StatEntry => Boolean(entry)), [pitchingByPlayerId, players, teamsById]);
+    Every entry is a player joined to their season line, and the players with no line for this half of
+    the season are dropped. The obvious shape is `.map(...).filter((e): e is StatEntry => Boolean(e))`,
+    which is what this was, and it does not typecheck: `StatEntry.stat` is the union
+    `PlayerSeasonBatting | PlayerSeasonPitching`, while the map has already narrowed it to whichever
+    half it is reading, so the predicate claims a type its own parameter cannot have. Widening the
+    parameter back to the union would compile and give up the narrowing every downstream `as` cast
+    depends on.
+
+    `flatMap` removes the problem rather than the symptom. There is no `null` in the array type, so
+    there is nothing to narrow and nothing to assert -- and no array of mostly-null placeholders
+    allocated and immediately filtered, which is what the two-step version was doing at every render.
+*/
+
+  const battingEntries = useMemo<StatEntry[]>(() => players.flatMap((player) => {
+    const stat = battingByPlayerId.get(player.playerId);
+    if (!stat) return [];
+    return [{
+      playerId: player.playerId,
+      name: displayName(player),
+      team: player.teamId ? teamsById.get(player.teamId) ?? null : null,
+      stat,
+    }];
+  }), [battingByPlayerId, players, teamsById]);
+
+  const pitchingEntries = useMemo<StatEntry[]>(() => players.flatMap((player) => {
+    const stat = pitchingByPlayerId.get(player.playerId);
+    if (!stat) return [];
+    return [{
+      playerId: player.playerId,
+      name: displayName(player),
+      team: player.teamId ? teamsById.get(player.teamId) ?? null : null,
+      stat,
+    }];
+  }), [pitchingByPlayerId, players, teamsById]);
 
   // -- batting categories ------------------------------------------------
   // The design proposal lists SB among the default batting categories. There is
@@ -691,6 +750,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     return {
       key: category.key,
       title: category.title,
+      columnHeader: category.columnHeader,
       direction: category.direction,
       qualified: category.qualified,
       count: pool.length,
@@ -716,7 +776,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   }), [battingEntries]);
 
   // -- pitching categories -----------------------------------------------
-  const pitchingCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => {
+  const pitchingCategories = useMemo<CategorySpec[]>(() => {
     const qualified = pitchingEntries.filter(
       (entry) => (entry.stat as PlayerSeasonPitching).inningsPitched * 3 >= PITCHING_QUALIFYING_OUTS,
     );
@@ -832,7 +892,7 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   }), [pitchingCategories, pitchingEntries]);
 
   // -- team categories ----------------------------------------------------
-  const teamCategories = useMemo<Array<Omit<CategoryBoard, 'rows' | 'columns'>>>(() => [
+  const teamCategories = useMemo<CategorySpec[]>(() => [
     // 'Runs Scored' and 'Runs Allowed' both sliced to 'RUNS' when this header was derived
     // from the title, so two adjacent tables were headed identically. RS and RA are what
     // the two figures are called everywhere else in the app.

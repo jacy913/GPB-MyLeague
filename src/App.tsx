@@ -3588,17 +3588,21 @@ function App() {
     setCommissionerNotices([]);
   }, []);
 
-  const clearHistoricalDataFromRouter = useCallback(() => {
-    void handleClearHistoricalData();
-  }, [handleClearHistoricalData]);
+  const clearHistoricalDataFromRouter = useCallback(() => handleClearHistoricalData(), [handleClearHistoricalData]);
 
   const generatePlayersFromRouter = useCallback(() => {
     void handleGeneratePlayers();
   }, [handleGeneratePlayers]);
 
-  const hardWipePlayersFromRouter = useCallback(() => {
-    void handleHardWipePlayers();
-  }, [handleHardWipePlayers]);
+  /*
+    These return the underlying promise rather than discarding it with `void`, which is what the
+    neighbouring `exportLocalBackupFromRouter` already does. Both handlers are genuinely async, and
+    the settings page that receives them declares them `() => Promise<void>` and fires them with
+    `void` -- so nothing awaits them either way and no behaviour changes. What changes is that the
+    router's own prop types can describe what these actually are instead of narrowing them to
+    `() => void` on the way through and erroring at the far end.
+  */
+  const hardWipePlayersFromRouter = useCallback(() => handleHardWipePlayers(), [handleHardWipePlayers]);
 
   const exportLocalBackupFromRouter = useCallback(() => exportLocalUniverseBackup(), [exportLocalUniverseBackup]);
 
@@ -3968,6 +3972,7 @@ function App() {
             settings={settings}
             dataSource={dataSource}
             newUniversePreview={newUniversePreview}
+            onPreviewNewUniverse={handlePreviewNewUniverse}
             isClearingHistoricalData={isClearingHistory}
             isGeneratingPlayers={isGeneratingPlayers}
             isWipingPlayers={isWipingPlayers}
