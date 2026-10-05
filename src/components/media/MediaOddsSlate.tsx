@@ -3,52 +3,63 @@ import { ArrowRight } from 'lucide-react';
 import type { MediaId } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
 import type { GameLine } from '../../lib/mediaOdds';
-import { formatAmerican, HOUSE_MARGIN } from '../../lib/mediaOdds';
+import { formatAmerican, HOUSE_MARGIN, isSplit, SPLIT_DISAGREEMENT } from '../../lib/mediaOdds';
 import { MEDIA_MARKS_SQUARE } from './mediaImages';
-import { Panel, TeamLogo } from '../ui';
+import { Panel, SegmentedControl, TeamLogo } from '../ui';
 
 /**
- * ===========================================================================
+ * ============================================================================
  * THE COLUMN WIDTH IS BUILT FROM THE OUTLET COUNT, NOT WRITTEN AS `3`
- * ===========================================================================
+ * ============================================================================
  *
- * The grid template used to be `[minmax(0,1fr)_repeat(3,72px)_minmax(120px,0.9fr)]` while the
- * body mapped over `MEDIA_PROFILES`. With three outlets that was correct. With nine it declared three
- * columns and rendered nine, so on desktop the last six outlet prices were laid out in the HOUSE
- * cell and clipped, and on mobile the `lg:hidden` fallback printed all nine inline with no header to
+ * The grid template used to be `[minmax(0,1fr)_repeat(3,72px)_minmax(120px,0.9fr)]` while the body
+ * mapped over `MEDIA_PROFILES`. With three outlets that was correct. With nine it declared three
+ * columns and rendered nine, so on desktop the last six outlet picks were laid out in the HOUSE cell
+ * and clipped, and on mobile the `lg:hidden` fallback printed all nine inline with no header to
  * align them to. Nothing errored -- a grid silently overflowing its template is not a type error --
  * so it read as a styling complaint rather than as a layout bug.
  *
  * `OUTLET_COUNT` is the single number both the template and the header derive from, so a tenth
  * forecaster widens the table instead of silently losing six columns.
  *
- * ===========================================================================
- * THE PICK CREST LIVES IN THE CELL, NOT THE HEADER
- * ===========================================================================
+ * ============================================================================
+ * THE TABLE IS A BOARD OF OPINIONS, NOT A LIST OF PRICES
+ * ============================================================================
  *
- * The request, and it is right: nine columns of bare prices with nine identical marks above them asks
- * the reader to hold a mark-to-column association across a whole screen.
+ * Each outlet cell used to print that outlet's posted price with the picked club beneath it, the
+ * price in `t-stat` and the crest in a 16px `h-4` beneath it. It now prints the club alone, at 32px,
+ * with the price on hover. The tab was renamed to "Who They're On" accordingly, and the mobile
+ * fallback was changed to match, because a phone view and a desktop view saying different things
+ * about one table is worse than either of them on its own.
  *
- * The answer is not a crest in the header. A header row spans every game on the slate, so it has no
- * single club to name -- an early draft here claimed it did, which is a comment describing a component
- * that cannot exist. The crest goes UNDER each price instead, where it is the club for that specific
- * game: Sharply is found by looking for the club he is on in the row you care about, not by tracing a
- * row back to a mark. Per-cell also means the association is never wrong, because there is no shared
- * header left to disagree with.
+ * The house price stays in its own column and is now the only number left on the table that is not
+ * somebody's opinion. It is derived from all of them rather than being one of them, which is the
+ * whole argument for keeping it visually separate from the outlet columns.
  *
- * The crest is `awayTeam` above a half and `homeTeam` below it -- the same `probability` the price is
- * converted from, so a cell cannot show a pick its own price contradicts.
+ * ============================================================================
+ * THE CREST IS THE CELL, AND SWAPPING IS WHAT "MAKE IT BIGGER" MEANT
+ * ============================================================================
  *
- * ===========================================================================
- * THE HOUSE LINE STAYS IN ITS OWN COLUMN, SEPARATE FROM THE OUTLETS
- * ===========================================================================
+ * The request was to give the crest the vertical space. The reason it did not have any is worth
+ * recording, because it is not a size problem: the price was the cell's subject and the crest was a
+ * footnote to it. So the fix is to swap which of the two is primary, not to grow the image from 16px
+ * to 20px and leave the number on top -- which would have kept the crest the smaller thing and
+ * satisfied nothing.
  *
- * The house price is the mean of the outlet PROBABILITIES with a margin, not the mean of the prices,
-* so it is not one more opinion in the row. Putting it last and outside the outlet columns keeps that
-* visible: the outlets are nine independent reads, the house is a derived number over all of them.
-*
-* Prices are not linear in probability, so an arithmetic mean of American odds is not the consensus of
-* anything -- it is the mean of nine numbers that each happened to be rounded for money.
+ * Nine marks in a header row is a grid of anonymous squares, so each column also carries the
+ * reporter's first name. That costs one line ONCE per table rather than once per row.
+ *
+ * The OUTLIER RING survives, and it is why this is not purely decorative. `line.outlier` is the
+ * outlet furthest from the rest on that game -- a per-column fact the house disagreement figure does
+ * NOT carry, since that is a widest-pair gap and says nothing about which column produced it. Without
+ * the ring the table loses its only per-outlet signal.
+ *
+ * ============================================================================
+ * THE HOUSE LINE IS THE MEAN OF PROBABILITIES, NOT OF PRICES
+ * ============================================================================
+ *
+ * Prices are not linear in probability, so an arithmetic mean of American odds is not the consensus of
+ * anything -- it is the mean of nine numbers that each happened to be rounded for money.
  */
 export const MediaOddsSlate: React.FC<{
   lines: GameLine[];
@@ -56,32 +67,89 @@ export const MediaOddsSlate: React.FC<{
 }> = ({ lines, slateDate }) => {
   const gridTemplate = OUTLET_COLUMNS[OUTLET_COUNT] ?? OUTLET_COLUMNS[9];
 
+  /*
+    THE FULL BOARD AND THE SPLIT GAMES, BOTH REACHABLE.
+
+    All games is the default, and it has to be. The nine columns are the product -- the outlier ring
+    is only meaningful against the set it is an outlier OF, and a column shown beside four others that
+    agree with each other says much less than the same column shown beside eight. Filtering to the
+    splits is a reading convenience on top of that, not a replacement for it, so it is a toggle and
+    not a default.
+
+    The threshold is `isSplit`, the same predicate that colours the house price in each row, and that
+    is the entire reason for extracting it into `mediaOdds`. If the filter used its own number the
+    filtered view would quietly disagree with the colour coding in the unfiltered one, and the reader
+    would see a table of rows all marked "split" and have no idea why any row ever was not.
+
+    The count is stated rather than left to be inferred from a shorter list, because "9 games"
+    becoming "3 games" with no explanation reads as the slate having shrunk.
+  */
+  const [onlySplit, setOnlySplit] = React.useState(false);
+  const visible = onlySplit ? lines.filter((line) => isSplit(line.disagreement)) : lines;
+  const splitCount = lines.reduce((n, line) => n + (isSplit(line.disagreement) ? 1 : 0), 0);
+
   return (
     <Panel className="overflow-hidden">
       {/*
         NO CHROME BAR HERE, deliberately, and this used to be a `bare` prop.
 
         The table renders inside the tab panel, which already carries a title and a count for whatever
-        tab is showing. With a bar of its own, "Published Lines" appeared twice within 40px of itself
-        and the second copy carried the same date and game count as the first -- which reads as two
-        components disagreeing rather than as a heading.
+        tab is showing. With a bar of its own, the heading appeared twice within 40px of itself and the
+        second copy carried the same date and game count as the first -- which reads as two components
+        disagreeing rather than as a heading.
 
         It was a prop for a while because the component was exported and might be used standalone. It
         is not, and has exactly one call site, so the other branch was unreachable: a flag whose only
         passing value is `true` is not configuration, it is a second code path nothing tests. Deleted
-        rather than defaulted. The slate date still shows, in the footnote, where it is still useful.
+        rather than defaulted. The slate date still shows, in the filter bar, where it is still useful.
       */}
+
+      {/*
+        THE FILTER, and it stays enabled when the filtered result is EMPTY.
+
+        A control that hides itself at the moment it has nothing to show is a control that disappears
+        exactly when the reader most wants to know why -- "there are no split games" and "there is no
+        toggle" look identical once the toggle is gone, and it cannot be switched back. So it renders
+        regardless, and the empty state below says why in words.
+      */}
+      {lines.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-chrome-lo)] px-3 py-2">
+          <SegmentedControl
+            aria-label="Line filter"
+            value={onlySplit ? 'split' : 'all'}
+            onChange={(value) => setOnlySplit(value === 'split')}
+            options={[
+              { value: 'all', label: `All ${lines.length}` },
+              { value: 'split', label: `Split ${splitCount}` },
+            ]}
+          />
+          <span className="t-caption text-[var(--color-ink-faint)]">
+            {onlySplit
+              ? `${visible.length} of ${lines.length} games · the ${OUTLET_COUNT} outlets are more than `
+                + `${Math.round(SPLIT_DISAGREEMENT * 100)} points apart`
+              : `${lines.length} ${lines.length === 1 ? 'game' : 'games'}`
+                + (slateDate ? ` · ${slateDate}` : '')}
+          </span>
+        </div>
+      )}
+
       {lines.length === 0 ? (
         <p className="p-6 t-body text-[var(--color-ink-dim)]">
           {slateDate
             ? 'No games are scheduled on that date.'
             : 'No further games are scheduled this season.'}
         </p>
+      ) : visible.length === 0 ? (
+        <p className="p-6 t-body text-[var(--color-ink-dim)]">
+          The {OUTLET_COUNT} outlets agree on every game tonight -- none is more than{' '}
+          {Math.round(SPLIT_DISAGREEMENT * 100)} points apart, so there is nothing to disagree about.
+          Switch to All to see the full board.
+        </p>
       ) : (
         <div className="p-3">
           {/*
             HEADER, ONCE, so the outlet columns line up with the rows. Below `lg` it is hidden and each
-            row prints its own prices inline, because a nine-column table cannot fit a phone.
+            row prints its own marks inline, because a nine-column table cannot fit a phone.
           */}
           <div
             className={`hidden items-end gap-2 border-b border-[var(--color-chrome-lo)] pb-2 lg:grid ${gridTemplate}`}
@@ -93,15 +161,17 @@ export const MediaOddsSlate: React.FC<{
             <span className="t-caption text-right text-[var(--color-ink-faint)]">HOUSE</span>
           </div>
 
-          {lines.map((line) => (
+          {visible.map((line) => (
             <GameOddsRow key={line.gameId} line={line} gridTemplate={gridTemplate} />
           ))}
 
           <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
-            Prices are for the away club, so the club under each outlet's mark is what they are backing
-            to win outright. The house line is the mean of the nine probabilities with a{' '}
-            {Math.round(HOUSE_MARGIN * 100)}% margin applied, then converted back to a price.
-            Disagreement is the widest gap between any two outlets on the same game.
+            Each column is one outlet and each crest is the club they are backing on that game -- the
+            side their own price favoured, so the ring and the crest can never contradict a number. A
+            ringed crest marks the outlet furthest from the rest. The house price is the mean of the{' '}
+            {OUTLET_COUNT} probabilities with a {Math.round(HOUSE_MARGIN * 100)}% margin applied, and
+            the figure beside it is the widest gap between any two of them. Individual outlet prices are
+            not printed here; they are on every card in MacroBet.
           </p>
         </div>
       )}
@@ -115,41 +185,41 @@ export const MediaOddsSlate: React.FC<{
  * NOT exported. It was, alongside an `outletIds()` helper that nothing called -- both were speculative
  * API surface invented during this change and used by nobody. The count is derived from
  * `MEDIA_PROFILES` at the point of use; a second export of the same value is a third place to forget
- * to update when a forecaster is added, which is the failure this whole section is about.
+ * to update when a forecaster is added, which is the failure this whole header is about.
  */
 const OUTLET_COUNT = MEDIA_PROFILES.length;
 
 /**
  * Grid templates by outlet count, because Tailwind only emits classes it can see literally.
  *
- * Widths tighten as outlets are added: three outlets can afford 88px columns, nine cannot, and at
- * nine the matchup column has to give ground or the table overflows a 1280px screen. Selected by
- * `OUTLET_COUNT`, with the nine-outlet template as the fallback for any count not listed -- an outlet
- * count that grows past what is declared gets the narrowest layout, which is degraded but never
- * broken. A silently-wrong column count is what this replaces.
+ * Widths are set by the CREST, not by the price it replaced. A cell used to hold "+145" beside a 16px
+ * crest and needed 60px to stop the digits touching; it now holds one 32px crest with a 2px outlier
+ * ring, so 44px is generous and the difference across nine columns goes back to the matchup column,
+ * which is the only column whose content is a length nobody chose.
+ *
+ * Narrowing them is a side effect of the redesign rather than its goal, but a 32px crest floating in
+ * 60px of cell with 28px of dead air either side looks like an alignment accident, which is the read
+ * worth avoiding. Selected by `OUTLET_COUNT`, with the nine-outlet template as the fallback for any
+ * count not listed -- an outlet count that grows past what is declared gets the narrowest layout,
+ * which is degraded but never broken.
  */
 const OUTLET_COLUMNS: Record<number, string> = {
-  3: 'grid-cols-[minmax(0,1fr)_repeat(3,88px)_minmax(140px,0.9fr)]',
-  4: 'grid-cols-[minmax(0,1fr)_repeat(4,84px)_minmax(140px,0.9fr)]',
-  5: 'grid-cols-[minmax(0,1fr)_repeat(5,78px)_minmax(140px,0.9fr)]',
-  6: 'grid-cols-[minmax(0,1fr)_repeat(6,72px)_minmax(130px,0.9fr)]',
-  7: 'grid-cols-[minmax(0,1fr)_repeat(7,68px)_minmax(130px,0.9fr)]',
-  8: 'grid-cols-[minmax(0,1fr)_repeat(8,64px)_minmax(124px,0.85fr)]',
-  9: 'grid-cols-[minmax(0,1fr)_repeat(9,60px)_minmax(120px,0.8fr)]',
+  3: 'grid-cols-[minmax(0,1fr)_repeat(3,56px)_minmax(150px,0.9fr)]',
+  4: 'grid-cols-[minmax(0,1fr)_repeat(4,52px)_minmax(150px,0.9fr)]',
+  5: 'grid-cols-[minmax(0,1fr)_repeat(5,48px)_minmax(150px,0.9fr)]',
+  6: 'grid-cols-[minmax(0,1fr)_repeat(6,46px)_minmax(140px,0.9fr)]',
+  7: 'grid-cols-[minmax(0,1fr)_repeat(7,44px)_minmax(140px,0.9fr)]',
+  8: 'grid-cols-[minmax(0,1fr)_repeat(8,44px)_minmax(134px,0.85fr)]',
+  9: 'grid-cols-[minmax(0,1fr)_repeat(9,44px)_minmax(130px,0.8fr)]',
 };
 
 /**
  * One outlet's column head: the mark, and the reporter's first name beneath it.
  *
- * The name is there because nine identical marks in a row is a grid of anonymous squares. "QUINCY"
- * costs one line of height once per table and makes a column findable by reading rather than by
- * tracing -- which matters more at nine columns, not less, since the eye has more chances to land on
- * the wrong one.
- *
- * There is deliberately NO crest here. An earlier version of this comment claimed the header carried
- * the club each outlet was backing, which is not a thing a header can do: the pick is per GAME, and
- * one header row sits above fourteen of them. The crest belongs in the cell, where it can be the club
- * for that specific row -- which is where it ended up, under each price.
+ * There is deliberately NO crest in the header. An earlier draft of this file put one there and the
+ * comment claimed the header carried "the club they are backing" -- which is not a thing a header can
+ * do, since it spans every game on the slate and has no single club to name. The crest belongs in the
+ * cell, where it is the club for that specific row. That is where it is, and it is the whole cell.
  */
 const OutletColumnHeader: React.FC<{ mediaId: MediaId }> = ({ mediaId }) => {
   const profile = MEDIA_PROFILES.find((entry) => entry.id === mediaId);
@@ -169,7 +239,7 @@ const OutletColumnHeader: React.FC<{ mediaId: MediaId }> = ({ mediaId }) => {
 };
 
 const GameOddsRow: React.FC<{ line: GameLine; gridTemplate: string }> = ({ line, gridTemplate }) => {
-  const split = line.disagreement >= 0.12;
+  const split = isSplit(line.disagreement);
 
   return (
     <div
@@ -183,14 +253,6 @@ const GameOddsRow: React.FC<{ line: GameLine; gridTemplate: string }> = ({ line,
         <span className="truncate t-stat-sm">{line.homeTeam.city}</span>
       </div>
 
-      {/*
-        THE OUTLET COLUMNS: price, with the picked club beneath it.
-
-        The price tints when this outlet is the row's outlier -- the furthest from the median of the
-        nine -- which is the whole diagnostic value of the column. The crest under it is the pick, so
-        the column answers "what does this outlet think, and on whom" without the reader cross-
-        referencing the header.
-      */}
       {MEDIA_PROFILES.map((profile) => {
         const isOutlier = line.outlier === profile.id;
         const backingAway = line.probability[profile.id] > 0.5;
@@ -198,25 +260,19 @@ const GameOddsRow: React.FC<{ line: GameLine; gridTemplate: string }> = ({ line,
         return (
           <div
             key={profile.id}
-            className="hidden min-w-0 flex-col items-center gap-0.5 lg:flex"
+            className="hidden min-w-0 items-center justify-center lg:flex"
             title={`${profile.outlet} · ${formatAmerican(line.odds[profile.id])} · backing ${backed.city}`}
           >
-            <span className="flex items-center gap-1">
-              <span
-                className="t-stat tabular-nums"
-                style={{ color: isOutlier ? `var(--color-media-${profile.accent}-hi)` : undefined }}
-              >
-                {formatAmerican(line.odds[profile.id])}
-              </span>
+            <div className="relative">
+              <TeamLogo team={backed} sizeClass="h-8 w-8" />
               {isOutlier && (
                 <span
-                  className="h-1.5 w-1.5"
-                  style={{ background: `var(--color-media-${profile.accent})` }}
+                  className="pointer-events-none absolute inset-0 rounded-sm"
+                  style={{ boxShadow: `inset 0 0 0 2px var(--color-media-${profile.accent})` }}
                   aria-hidden="true"
                 />
               )}
-            </span>
-            <TeamLogo team={backed} sizeClass="h-4 w-4" />
+            </div>
           </div>
         );
       })}
@@ -233,19 +289,33 @@ const GameOddsRow: React.FC<{ line: GameLine; gridTemplate: string }> = ({ line,
         </span>
       </div>
 
-      {/* Mobile: the nine prices inline, each labelled, since the header row is hidden. */}
-      <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--color-chrome-lo)] pt-2 lg:hidden">
-        {MEDIA_PROFILES.map((profile) => (
-          <span key={profile.id} className="flex items-center gap-1">
-            <img
-              src={MEDIA_MARKS_SQUARE[profile.id]}
-              alt=""
-              aria-hidden="true"
-              className="h-3.5 w-3.5 object-contain"
-            />
-            <span className="t-stat-sm tabular-nums">{formatAmerican(line.odds[profile.id])}</span>
-          </span>
-        ))}
+      {/*
+        MOBILE: mark then crest, matching the desktop cell.
+
+        This printed the price before, so the phone view and the desktop view were saying different
+        things about the same table. It now carries the same information in the same form, at 20px
+        rather than 32px because nine of them have to wrap inside a phone. The house price stays, being
+        the one number here that is not an outlet's opinion.
+
+        No tooltip exists on a touch screen, so the price is genuinely unreachable in this view.
+        Accepted: the odds are on every MacroBet card, and this view exists to say WHO is on.
+      */}
+      <div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-[var(--color-chrome-lo)] pt-2 lg:hidden">
+        {MEDIA_PROFILES.map((profile) => {
+          const backingAway = line.probability[profile.id] > 0.5;
+          const backed = backingAway ? line.awayTeam : line.homeTeam;
+          return (
+            <span key={profile.id} className="flex items-center gap-1">
+              <img
+                src={MEDIA_MARKS_SQUARE[profile.id]}
+                alt=""
+                aria-hidden="true"
+                className="h-3.5 w-3.5 object-contain"
+              />
+              <TeamLogo team={backed} sizeClass="h-5 w-5" />
+            </span>
+          );
+        })}
         <span className="t-caption text-[var(--color-ink-faint)]">
           house {formatAmerican(line.houseOdds)}
         </span>

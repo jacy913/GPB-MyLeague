@@ -2,9 +2,7 @@ import React from 'react';
 import { AlertTriangle, ChevronRight } from 'lucide-react';
 import type { MediaProfile } from '../../data/media';
 import { MEDIA_PROFILES } from '../../data/media';
-import type { Team } from '../../types';
 import { MEDIA_MARKS_SQUARE, MEDIA_WALLPAPERS } from './mediaImages';
-import { TeamLogo } from '../ui';
 
 /**
  * ============================================================================
@@ -29,41 +27,35 @@ import { TeamLogo } from '../ui';
  *
  * `profile.thesis` is two sentences of argument, and nine of them is a page. It was never what a
  * manager uses the rail for: they use the rail to answer "who, and who do I trust tonight". The
- * thesis, the weights, the stated weakness and the voice samples are all still one click away in
- * the details popup, which is the better home for an argument anyway -- it is the entire subject of
+ * thesis, the weights, the stated weakness and the voice samples are all still one click away in the
+ * details popup, which is the better home for an argument anyway -- it is the entire subject of
  * that dialog rather than a paragraph competing with eight others for a glance.
  *
  * ============================================================================
- * THE PICK CREST
+ * THERE IS NO PICK CREST ON THE RAIL
  * ============================================================================
  *
- * The rail tile carries the club that outlet is currently backing on the next slate, under the
- * mark. This is new information on the rail, not a repeat of the lines table: the table shows a
- * PRICE per outlet per game, and this shows a single club per outlet -- the answer to "who is
- * Sharply picking tonight", which the table answers only by making you compare nine columns.
+ * A crest sat here for a while -- one per outlet, the club it was most confident about -- and it was
+ * removed as wasted height. Two reasons, and the second is the one that decided it:
  *
- * Derived from the same `GameLine` the table uses, so the two cannot disagree: a crest here is
- * `probability > 0.5` for that outlet on that game, and the table prints the price from that same
- * number. An independent calculation would be a second source of truth for one question, which is
- * the class of bug this page has already collected once.
+ *   1. The rail tile is 123px tall and the crest was 24 of them, for a fact that changes every night
+ *      and is already printed at 32px in the table directly below. The same pick, twice, at two
+ *      different sizes, in two places 200px apart.
  *
- * Shown only when a slate exists and the outlet has a lean on any of its games. A rail of nine tiles
- * with eight crests and one blank would read as a missing image rather than as "no games yet".
+ *   2. More importantly it answered a question this row has no business answering. The rail is a
+ *      control -- you pick an outlet and everything under it changes. Putting a second, smaller,
+ *      per-outlet fact on the same tile makes the reader stop and read the control rather than use
+ *      it. And "which club is Sharply on tonight" is not a question about WHO Sharply is, which is
+ *      the only question a nine-across selector needs to survive being 140px wide.
+ *
+ * The pick is still reachable, and at a size worth looking at: it is the cell of the lines table in
+ * that outlet's column.
  */
 export const MediaRail: React.FC<{
   selectedId: MediaProfile['id'];
   onSelect: (id: MediaProfile['id']) => void;
   onOpenDetails: (id: MediaProfile['id']) => void;
-  /**
-   * The club each outlet is currently backing, by outlet id.
-   *
-   * An explicit map rather than a prop of `Team | undefined` per tile, so the rail has no opinion
-   * about where the picks come from and the page computes them once.
-   */
-  picksByMediaId: Partial<Record<MediaProfile['id'], Team>>;
-  /** False when there is no slate ahead, which suppresses the whole pick row. */
-  hasSlate: boolean;
-}> = ({ selectedId, onSelect, onOpenDetails, picksByMediaId, hasSlate }) => (
+}> = ({ selectedId, onSelect, onOpenDetails }) => (
   <div
     role="radiogroup"
     aria-label="Media outlets"
@@ -74,8 +66,6 @@ export const MediaRail: React.FC<{
         key={profile.id}
         profile={profile}
         selected={profile.id === selectedId}
-        pick={picksByMediaId[profile.id] ?? null}
-        showPick={hasSlate}
         onSelect={onSelect}
         onOpenDetails={onOpenDetails}
       />
@@ -86,11 +76,9 @@ export const MediaRail: React.FC<{
 const RailTile: React.FC<{
   profile: MediaProfile;
   selected: boolean;
-  pick: Team | null;
-  showPick: boolean;
   onSelect: (id: MediaProfile['id']) => void;
   onOpenDetails: (id: MediaProfile['id']) => void;
-}> = ({ profile, selected, pick, showPick, onSelect, onOpenDetails }) => {
+}> = ({ profile, selected, onSelect, onOpenDetails }) => {
   /*
     The wallpaper, as a faint tile ground.
 
@@ -169,21 +157,8 @@ const RailTile: React.FC<{
         src={MEDIA_MARKS_SQUARE[profile.id]}
         alt=""
         aria-hidden="true"
-        className="pointer-events-none relative h-7 w-7 object-contain"
+        className="pointer-events-none relative h-8 w-8 object-contain"
       />
-
-      {showPick && pick && (
-        <div className="pointer-events-none relative" title={`${profile.outlet} · backing ${pick.city} ${pick.name}`}>
-          {/*
-            TeamLogo rather than a raw <img src={team.crest}>: a Team has no crest field. The logo
-            primitive resolves the asset AND carries a labelled fallback for a club with no image, and
-            the text alternative is generated from the team rather than hand-written per outlet, so a
-            rename cannot leave a stale "is backing" string behind.
-          */}
-          <TeamLogo team={pick} sizeClass="h-6 w-6" />
-          <span className="sr-only">Backing {pick.city} {pick.name}</span>
-        </div>
-      )}
 
       <div className="pointer-events-none relative min-w-0">
         <p

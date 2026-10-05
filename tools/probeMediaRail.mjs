@@ -7,9 +7,13 @@
  *
  * Checks, in order:
  *   1. the rail renders one tile per outlet, all nine visible, none scrolled off
- *   2. each tile carries a crest when there is a slate
- *   3. the crest matches the strongest lean the outlet publishes (cross-checked against the lines)
- *   4. no tile nests a button inside a button (the HTML validity error Chrome was logging)
+ *   2. a tile carries exactly ONE image -- its own mark -- and no club crest
+ *   3. no tile nests a button inside a button (the HTML validity error Chrome was logging)
+ *
+ * (2) was "each tile carries a labelled pick crest" until the pick moved out of the rail and into the
+ * lines table, where it is 32px instead of 24px and means something per game rather than per outlet.
+ * Asserting the absence is the point now: the rail is a control, and a fact printed on it twice in two
+ * sizes is a regression, not a feature.
  *
  * Run: node tools/probeMediaRail.mjs
  */
@@ -138,15 +142,21 @@ const main = async () => {
       railWidth: Math.round(railBox.width),
       tiles: tiles.map((t) => {
         const box = t.getBoundingClientRect();
-        const crests = t.querySelectorAll('img[src*="crest"], img[src*="logo"], div[aria-label]');
-        const srText = (t.querySelector('.sr-only')?.textContent || '').trim();
         const imgs = [...t.querySelectorAll('img')];
+        const widths = imgs.map((i) => i.getBoundingClientRect().width);
+        /*
+          Marks and club crests are both small; the wallpaper is neither, because it is object-cover
+          filling the whole tile. So "is there a crest" is not the image count -- six of the nine tiles
+          carry a wallpaper and were reporting two images each while being perfectly correct.
+
+          Counting everything between 16px and 40px instead counts the mark and any crest, and both
+          live in that band. One means the mark alone.
+        */
         return {
           name: (t.querySelector('p')?.textContent || '').trim(),
-          // The pick crest is the LAST image in the tile: mark, then wallpaper, then pick.
           imgCount: imgs.length,
-          imgSizes: imgs.map((i) => i.getBoundingClientRect().width.toFixed(0)),
-          srText: srText.slice(0, 60),
+          markSize: widths[0] ? widths[0].toFixed(0) : '-',
+          smallImages: widths.filter((w) => w >= 16 && w <= 40).length,
           height: Math.round(box.height),
           visible: box.top >= 0 && box.left >= 0,
         };
@@ -172,18 +182,23 @@ const main = async () => {
   console.log(`    nested buttons:   ${report.nestedButtons} ${report.nestedButtons === 0 ? '(valid HTML)' : '(INVALID)'}`);
   console.log('');
   for (const t of report.tiles) {
-    console.log(`      ${(t.name || '?').padEnd(18)} imgs=${t.imgCount} sizes=[${t.imgSizes.join(',')}]`
-      + `  ${t.srText ? `"${t.srText}"` : '(no pick label)'}`);
+    console.log(`      ${(t.name || '?').padEnd(18)} imgs=${t.imgCount} mark=${t.markSize}px`
+      + ` small=${t.smallImages}${t.visible ? '' : '  *** OFFSCREEN ***'}`);
   }
 
-  const withPick = report.tiles.filter((t) => t.srText.startsWith('Backing')).length;
-  console.log(`\n    tiles with a labelled pick: ${withPick}/${report.tileCount}`);
+  // Exactly one small image per tile: the mark. Two would mean a club crest crept back.
+  const withCrest = report.tiles.filter((t) => t.smallImages > 1).length;
+  console.log(`\n    tiles showing a club crest: ${withCrest} ${withCrest === 0 ? '(correct)' : '(*** REGRESSION ***)'}`);
 
   const nested = report.nestedButtons;
   const nestingErrors = consoleErrors.filter((e) => /cannot be a descendant/i.test(e));
   console.log(`    "cannot be a descendant" console errors: ${nestingErrors.length}`);
 
-  const ok = report.tileCount === 9 && nested === 0 && nestingErrors.length === 0;
+  const ok = report.tileCount === 9
+    && nested === 0
+    && nestingErrors.length === 0
+    && withCrest === 0
+    && report.tiles.every((t) => t.visible);
   console.log(`\n  ${ok ? 'PASS' : '*** SEE ABOVE ***'}\n`);
   cleanup();
   process.exit(ok ? 0 : 1);

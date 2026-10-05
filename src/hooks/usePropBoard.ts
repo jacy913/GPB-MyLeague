@@ -17,18 +17,15 @@ export interface PropBoard {
 /**
  * The prop board, built once and shared.
  *
- * Extracted into a hook because The Media and Betting both need it and the whole
- * point of the betting page is that a bettor can never be shown a number The
- * Media does not also show. If each screen built its own board from its own copy
- * of the inputs, that guarantee would hold only as long as the two calls stayed
- * in step -- and the first place they would drift is a props board, because the
- * inputs are season aggregates, a slate date and a score spread, and any of the
- * three can move independently of the other.
+ * Extracted into a hook because The Media and Betting both need it and the point of the
+ * betting page is that a bettor can never be shown a number that DISAGREES with one from
+ * The Media. ("Disagrees", not "does not also show" -- The Media's lines table is a board
+ * of crests and no longer paints outlet prices, so the stronger wording stopped being true
+ * while the guarantee itself held. Both screens still call this one function on one input.)
  *
- * A single board also makes agreement mean something. Because the three outlets
- * choose from the same set of markets rather than each constructing their own, a
- * prop two outlets both picked is a prop they agree on. If they built their own,
- * the same prop appearing twice would be a coincidence instead.
+ * A single board also makes agreement mean something. Because the outlets choose from the same set of
+ * markets rather than each constructing their own, a prop two outlets both picked is a prop they agree
+ * on. If they built their own, the same prop appearing twice would be a coincidence instead.
  *
  * Deliberately takes the reads already computed by the caller rather than
  * rebuilding them. Both pages run buildMediaReads for their own tables, and

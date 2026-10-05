@@ -77,11 +77,20 @@ interface BettingPageProps extends MediaReadInput {
 /**
  * Betting.
  *
- * This is where the three outlets' numbers become stakes. It reads exactly the
- * same read module The Media page reads, and the same three forecasters post
- * every price here, so a bettor can never be shown a number the media page does
- * not also show. The split is intentional: The Media is their opinion, this is
- * your stake against it.
+ * This is where the outlets' numbers become stakes. It reads exactly the same read
+ * module The Media page reads, and the same nine forecasters post every price here.
+ *
+ * The guarantee is about the BUILD, not about what either screen paints: both call the
+ * same module on the same inputs, so a number cannot be different here without being
+ * different there. It is worth stating precisely because it is no longer true in the
+ * stronger form this comment used to claim. It said a bettor "can never be shown a
+ * number the media page does not also show", which was true while The Media printed
+ * every outlet's posted price in its lines table and stopped being true the moment that
+ * table became a board of crests. The prices now live here and only here. What survives is the
+ * part that mattered: a bettor cannot be shown a number that DISAGREES with one, because
+ * there is only one build.
+ *
+ * The split is intentional: The Media is their opinion, this is your stake against it.
  *
  * The wallet and the slip are NOT owned here. They belong to the shell, in
  * useBettingSlip, because a price added on this screen has to be reviewable
@@ -112,15 +121,14 @@ const BettingPage: React.FC<BettingPageProps> = ({
    * would agree until the inputs drifted, and the drift would be invisible: the
    * manager would have a receipt for a line that no longer appears anywhere.
    */
-  /*
+  /**
    * Win percentage per club, shared with the media page.
    *
-   * THE SAME FUNCTION, because the guarantee this page is built on is that a bettor
-   * is never shown a number The Media does not also show. `teamWinPct` feeds the
-   * prop board's editorial selection, so a betting page that computed it any
-   * differently from the media page would show a different SET of props for the
-   * same slate -- and that is precisely the drift the shared `usePropBoard` hook
-   * exists to prevent.
+   * THE SAME FUNCTION, because the guarantee this page is built on is that a bettor is never
+   * shown a number that DISAGREES with one from The Media. `teamWinPct` feeds the prop board's
+   * editorial selection, so a betting page that computed it any differently from the media page
+   * would show a different SET of props for the same slate -- and that is precisely the drift
+   * the shared `usePropBoard` hook exists to prevent.
    */
   const teamWinPct = useCallback(
     (teamId: string): number | null => {

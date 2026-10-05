@@ -1848,6 +1848,30 @@ previous session.
   type error cannot stop a build or a ship, and "fix the errors" is never a
   release blocker here.
 
+  ### `tsc` DOES NOT CHECK A SINGLE COMPONENT PROP IN THIS PROJECT
+
+  **`@types/react` is not installed.** Verified: `Test-Path node_modules/@types/react`
+  is `False`, and `const x: number = React` compiles clean in a `.tsx` file.
+
+  `React` therefore resolves to `any`, so `React.FC<Props>` is `any`, so **every
+  component's prop contract is unchecked**. All 7 diagnostics above are in plain
+  `.ts` logic files. `tsc` has never looked at a prop type in this codebase: not
+  `MediaReadInput`, not the 32-club ranking rows, not the betting slip, not the
+  season gate.
+
+  This is not theoretical. `MediaHub.clubsOf` handed `Game.awayTeam` — which
+  `types.ts` types as `string // Team ID` — back as a `Team`, and the renderer
+  passed a string into `TeamLogo`. It threw during render; with no error boundary
+  anywhere in `src/`, React unmounted the whole tree, and The Media rendered as a
+  **completely blank page**. Confirmed at runtime: `document.body.innerText` length
+  `0`, `#root` child count `0`.
+
+  A scratch file asserting `const away: Team = game.awayTeam` errors correctly, so
+  the rule works — it simply never ran against the component. **A clean `tsc` here
+  means the logic layer is clean and says nothing whatsoever about the component
+  tree.** Installing `@types/react` will surface a large batch of new diagnostics
+  and is a decision to make deliberately, not as part of a fix.
+
   | Diagnostic | Verdict |
   |---|---|
   | `Controls.tsx:50`, `SeasonCalendarStrip.tsx:41`, `TeamCalendar.tsx:53` — `localeCompare` on `unknown` | **Narrowing gap.** Values are strings at runtime; the compiler cannot see it. Lowest priority of the seven. |

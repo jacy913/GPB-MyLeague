@@ -129,52 +129,34 @@ export const MediaHub: React.FC<MediaHubProps> = ({
   const hasSeasonOutput = input.teams.some((team) => team.wins + team.losses > 0);
 
   /*
-    THE PICK EACH OUTLET IS CURRENTLY BACKING, for the rail.
+    THE PICK EACH OUTLET IS CURRENTLY BACKING -- REMOVED FROM THE RAIL, AND WITH IT THIS BLOCK.
 
-    One rule, and it is the simplest one that answers the question a crest implies: an outlet's pick is
-    the club it is most confident about tonight -- the single game on the slate where its own price is
-    furthest from a coin flip, and the side that price is on.
+    There was a `picksByMediaId` map here, scanning `lines` for each outlet's most confident call and
+    handing the rail one crest apiece. The rule was sound and still describes the table cell: an
+    outlet's pick is the club its own price was furthest from a coin flip on, and the side that price
+    was on. A vote-counting version was tried first and was worse -- four 51/49 calls and one 80/20
+    call "wins" on count, which is the opposite of what a manager asking who this reporter likes is
+    asking.
 
-    Derived from `lines`, the same array the Published Lines table renders, so a crest on a rail tile
-    and the price in that column cannot disagree about the same outlet's opinion. Deriving it a second
-    time from `scores` would be a second source of truth for one question, which is the class of bug
-    this page has collected once already.
+    It came off the rail because a selector should say who it is, not what it currently thinks. The
+    rail is a control -- nine tiles that change everything below them -- and the pick was printed
+    twice, at two sizes, two hundred pixels apart, with the table's copy the better of the two. It
+    also cost a `useMemo` over every line plus a lookup back through `input.teams` to feed it.
 
-    A vote-counting version was written first and was worse: an outlet with four 51/49 calls and one
-    80/20 call "wins" on vote count, which is the opposite of what a manager asking who this reporter
-    likes is asking. Confidence wins instead.
-
-    An outlet with no games on the slate is simply absent from the map and renders no crest --
-    deliberately, since a dashed placeholder in a 100px tile reads as a broken image rather than as
-    "nothing scheduled".
+    Kept as a record because the rule is not wrong, it is just answered in the wrong place. Anyone
+    reaching for "which club is this outlet on tonight" belongs in the lines table, not rebuilding
+    this.
   */
-  const picksByMediaId = useMemo(() => {
-    const best = new Map<MediaId, { lean: number; teamId: string }>();
-    for (const line of lines) {
-      for (const profile of MEDIA_PROFILES) {
-        const p = line.probability[profile.id];
-        const lean = Math.abs(p - 0.5) * 2;
-        const current = best.get(profile.id);
-        if (!current || lean > current.lean) {
-          best.set(profile.id, { lean, teamId: p > 0.5 ? line.awayTeam.id : line.homeTeam.id });
-        }
-      }
-    }
-    const out: Partial<Record<MediaId, Team>> = {};
-    best.forEach((entry, mediaId) => {
-      const team = input.teams.find((t) => t.id === entry.teamId);
-      if (team) out[mediaId] = team;
-    });
-    return out;
-  }, [lines, input.teams]);
 
   /*
    * The prop board.
    *
    * Shared with the betting page through usePropBoard rather than built here.
-   * That is the only way the guarantee the betting page makes in its own header
-   * -- that a bettor can never be shown a number The Media does not also show --
-   * can hold for props. The board is tilted by the outlets' score spreads and
+   * That is the only way the guarantee the betting page makes in its own header -- that a bettor can
+   * never be shown a number that DISAGREES with one from this page -- can hold for props. (Disagrees,
+   * not "does not also show": the lines table below is a board of crests and paints no outlet prices,
+   * so the guarantee is about one shared build rather than about two screens showing the same set.)
+   * The board is tilted by the outlets' score spreads and
    * shrunk off season aggregates, so two independent builds would agree only for
    * as long as two independent calls to buildMediaReads agreed, and the first
    * divergence would be invisible: the same prop, priced two ways, on two
@@ -207,30 +189,57 @@ export const MediaHub: React.FC<MediaHubProps> = ({
     teamWinPct,
   });
 
-  const teamCity = useCallback(
-    (teamId: string) => input.teams.find((team) => team.id === teamId)?.city ?? '-',
-    [input.teams],
-  );
   /*
-   * The club itself, for the crest on a prop card.
+   * The club itself, for the crest on a prop card AND on the board's group header.
    *
-   * `teamCity` stays for the matchup label, which genuinely wants a readable city and
-   * is the one place a name is clearer than a crest. The cards want the opposite: a
-   * fifteen-card board repeats the same handful of clubs, so a name on every card is
-   * fifteen repetitions of something the crest already says, and it costs a line.
+   * A `teamCity` helper sat here for the matchup label -- "Wingten at Alcondale" -- which was the one
+   * place on this page naming a club in letters rather than by its mark. That label is now two crests,
+   * so the helper had no callers left and was deleted rather than kept with a comment explaining why it
+   * was fine. The cards and the header both want the `Team`, which is what this returns.
    */
   const teamOf = useCallback(
     (teamId: string) => input.teams.find((team) => team.id === teamId),
     [input.teams],
   );
 
-  const matchupLabel = useCallback(
+  /*
+    THE TWO CLUBS IN A GAME, for the crests on the prop board's group headers.
+
+    Returns the `Team` objects rather than a label string, because the header draws crests.
+
+    THE LOOKUP IS NOT OPTIONAL, and getting this wrong blanked the entire page. `Game` does not carry
+    teams: `homeTeam` and `awayTeam` are `string // Team ID`, exactly as the comments in types.ts say.
+    A first version handed `game.awayTeam` straight back as if it were the club, and the renderer
+    passed a string into `TeamLogo`, which threw during render -- and with no error boundary in the app
+    that unmounted the whole tree, so The Media came up as an empty page with nothing in it.
+
+    It is worth being precise about why the compiler did not stop it, because that is the more
+    expensive half. `@types/react` is not installed, so `React` resolves to `any`, `React.FC<Props>`
+    is `any`, and **every component's prop contract in this project is unchecked** -- not just this
+    one. `npx tsc --noEmit` reports 7 errors and all of them are in plain `.ts` logic files. It has
+    never once looked at a prop type. The 32-club ranking table's shape, the media read input, the
+    slip, the season gate: none of it is verified. Do not read a clean tsc as a clean component tree.
+
+    So the resolution below is explicit rather than trusted, and `undefined` for a missing club is a
+    real branch rather than a thoughtless `!`.
+  */
+  const clubsOf = useCallback(
     (gameId: string) => {
       const game = games.find((entry) => entry.gameId === gameId);
-      if (!game) return '—';
-      return `${teamCity(game.awayTeam)} at ${teamCity(game.homeTeam)}`;
+      if (!game) return undefined;
+      const away = input.teams.find((team) => team.id === game.awayTeam);
+      const home = input.teams.find((team) => team.id === game.homeTeam);
+      /*
+        BOTH or NEITHER.
+
+        Returning a half-resolved pair would force `away: Team | undefined` onto the prop, and the
+        board would then need to draw one crest and a hole. A game naming a club that is not in the
+        league is not a real state -- it is a corrupt season -- so the honest answer is "no crests for
+        this group" and the header says so, rather than a pair the renderer has to defend against.
+      */
+      return away && home ? { away, home } : undefined;
     },
-    [games, teamCity],
+    [games, input.teams],
   );
 
   const openProp = useCallback(
@@ -293,8 +302,6 @@ export const MediaHub: React.FC<MediaHubProps> = ({
         selectedId={selectedId}
         onSelect={handleSelect}
         onOpenDetails={setDetailsMediaId}
-        picksByMediaId={picksByMediaId}
-        hasSlate={lines.length > 0}
       />
 
       {/*
@@ -340,7 +347,7 @@ export const MediaHub: React.FC<MediaHubProps> = ({
             markets={outletProps.get(selectedId) ?? []}
             mediaId={selectedId}
             slateDate={slateDate}
-            matchupLabel={matchupLabel}
+            clubsOf={clubsOf}
             teamOf={teamOf}
             onOpen={openProp}
           />
@@ -371,7 +378,7 @@ export const MediaHub: React.FC<MediaHubProps> = ({
                 {tableView === 'disagree'
                   ? 'Where They Disagree'
                   : tableView === 'lines'
-                    ? 'Published Lines'
+                    ? "Who They're On"
                     : `${profile.outlet} Club Ranking`}
               </h2>
             </div>
@@ -399,7 +406,7 @@ export const MediaHub: React.FC<MediaHubProps> = ({
             value={tableView}
             onChange={(value) => setTableView(value as TableView)}
             options={[
-              { value: 'lines', label: 'Published Lines' },
+              { value: 'lines', label: "Who They're On" },
               { value: 'ranking', label: `${profile.outlet} Ranking` },
               { value: 'disagree', label: 'Disagreement' },
             ]}

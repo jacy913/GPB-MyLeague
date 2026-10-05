@@ -143,16 +143,48 @@ export const MediaPropCard: React.FC<{
  * carries the two clubs, so a manager can see at a glance that Hollis's board is
  * concentrated on the game at Baltimore rather than spread over the night.
  */
+/**
+ * Columns per prop count, above `sm` only. Below it the grid is a single column.
+ *
+ * Keyed 1..3 because that is the range the board actually produces, and the largest group is capped at
+ * three rather than wrapping a fourth card onto a second row that would break the visual rhythm of
+ * every other group.
+ *
+ * ONE PROP STILL GETS TWO COLUMNS, which is the whole subtlety. A lone card in a one-column grid
+ * stretches the full 1280px panel and leaves its contents huddled against the left edge with the
+ * price and the Bet button marooned at the far end -- a card that looks broken rather than empty. At
+ * two columns it occupies one normal column and is exactly as wide as every other card on the board,
+ * so a game with a single prop reads as a game with a single prop.
+ */
+const PROP_COLUMNS: Record<number, string> = {
+  1: 'sm:grid-cols-2',
+  2: 'sm:grid-cols-2',
+  3: 'sm:grid-cols-3',
+};
+
 export const MediaPropBoard: React.FC<{
   markets: PropMarket[];
   mediaId: MediaId;
   slateDate: string | null;
-  /** Game id to its "Away at Home" label, in slate order. */
-  matchupLabel: (gameId: string) => string;
+  /**
+   * Game id to the two clubs in it, away first.
+   *
+   * The CRESTS rather than a name, which is the point of the prop existing. It used to take
+   * `matchupLabel` -- a function returning the string "Wingten at Alcondale" -- and paint that across
+   * the group header. Two cities of type was how you told apart two nearly identical matchups in a
+   * column of them, and it was the only text-only identifier left on a board that is otherwise
+   * crests, prices and player names. Both clubs already have a crest component that resolves the
+   * asset and falls back to a labelled abbreviation, so the header now says the same thing with the
+   * mark the reader will see again on the other side of the screen.
+   *
+   * The city names stay available, because a crest with no text at all is worse for a reader who does
+   * not recognise the artwork -- see the `aria-label` on each logo below.
+   */
+  clubsOf: (gameId: string) => { away: Team; home: Team } | undefined;
   /** Team id to the club itself, for the crest on each card. */
   teamOf: (teamId: string) => Team | undefined;
   onOpen: (propId: string, mediaId: MediaId) => void;
-}> = ({ markets, mediaId, slateDate, matchupLabel, teamOf, onOpen }) => {
+}> = ({ markets, mediaId, slateDate, clubsOf, teamOf, onOpen }) => {
   if (markets.length === 0) {
     return (
       <p className="p-4 t-body text-[var(--color-ink-dim)]">
@@ -172,46 +204,84 @@ export const MediaPropBoard: React.FC<{
 
   return (
     <div className="flex flex-col gap-4">
-      {[...byGame.entries()].map(([gameId, group]) => (
-        <div key={gameId}>
-          {/*
-            THE DATE, ON THE GROUP HEADER.
+      {[...byGame.entries()].map(([gameId, group]) => {
+        const clubs = clubsOf(gameId);
+        /*
+          THE GROUP HEADER, as two crests and an arrow.
 
-            The board is already grouped by game, so "which fixture" was answered by
-            this header. "When" was not answered anywhere: a card said a player, a stat
-            and a line, and a reader had no way to tell which night any of it resolved
-            on. `PropMarket.date` has been on the market since the family was built and
-            was simply never painted.
+          A prop is always about a player in a game, so the game is the context a card cannot carry
+          itself. It was a line of text -- "Wingten at Alcondale" -- and text in that slot was both the
+          slowest thing to read in a column of similar lines and the only place on the board where a
+          club was named by letters rather than by its own mark.
 
-            It goes here rather than on all fifteen cards because it is a fact about the
-            game, so one date per group says it fifteen times over at a fifteenth of the
-            cost. A prop resolves the moment its game is played, which makes this the
-            other half of what a prop bet IS.
-          */}
-          <div className="chrome-bar mb-2 flex items-center justify-between gap-3 px-3">
-            <span className="t-label truncate">{matchupLabel(gameId)}</span>
-            <span className="flex shrink-0 items-center gap-3">
-              <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
-                {group[0] ? formatResolutionDate(group[0].date) : ''}
+          The words are not gone, only demoted: each crest carries the club name in an aria-label, so a
+          screen reader announces "Wingten Generals at Alcondale Aerials" and the sighted reader gets
+          the two marks. Nothing is lost for anyone; the ambiguity of two similar city names is.
+        */
+        return (
+          <div key={gameId}>
+            <div className="chrome-bar mb-2 flex items-center justify-between gap-3 px-3">
+              <span
+                className="flex min-w-0 shrink items-center gap-2"
+                title={clubs ? `${clubs.away.city} at ${clubs.home.city}` : undefined}
+              >
+                {clubs ? (
+                  <>
+                    <TeamLogo team={clubs.away} sizeClass="h-7 w-7" />
+                    <span className="t-caption text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
+                    <TeamLogo team={clubs.home} sizeClass="h-7 w-7" />
+                    <span className="sr-only">{clubs.away.city} at {clubs.home.city}</span>
+                  </>
+                ) : (
+                  <span className="t-label truncate">Unscheduled game</span>
+                )}
               </span>
-              <span className="t-caption text-[var(--color-ink-faint)]">
-                {group.length} {group.length === 1 ? 'prop' : 'props'}
+              <span className="flex shrink-0 items-center gap-3">
+                <span className="t-caption tabular-nums text-[var(--color-ink-dim)]">
+                  {group[0] ? formatResolutionDate(group[0].date) : ''}
+                </span>
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  {group.length} {group.length === 1 ? 'prop' : 'props'}
+                </span>
               </span>
-            </span>
+            </div>
+
+            {/*
+              AS MANY COLUMNS AS THERE ARE CARDS, up to three -- but only above `sm`.
+
+              An outlet publishes at most two props per game, and the grid was fixed at
+              `xl:grid-cols-3`, so every group on the board drew two cards across a three-wide row and
+              the right-hand third of a 1280px panel stayed empty. Two thirds of the widest space on
+              the page was blank for the most common case, which is the case the board is mostly made
+              of.
+
+              The count comes from the data rather than a media query, so it is right at every width
+              instead of right at some.
+
+              The `sm:` prefix is load-bearing and is why this is not an inline template. An earlier
+              version set `gridTemplateColumns` straight from the group length, which gave a PHONE two
+              columns where it had one before -- trading a gap on a desktop for cramped cards on the
+              smallest screen. Filling the row is the goal on a wide panel; it is not a reason to
+              squeeze a 320px viewport.
+
+              The three counts are written out rather than interpolated because Tailwind's JIT only
+              emits a class it can see literally, which is the same constraint that forces
+              `OUTLET_COLUMNS` to be a map in MediaOddsSlate.
+            */}
+            <div className={`grid grid-cols-1 gap-2 ${PROP_COLUMNS[Math.min(group.length, 3)]}`}>
+              {group.map((market) => (
+                <MediaPropCard
+                  key={market.propId}
+                  market={market}
+                  mediaId={mediaId}
+                  team={teamOf(market.teamId)}
+                  onOpen={onOpen}
+                />
+              ))}
+            </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {group.map((market) => (
-              <MediaPropCard
-                key={market.propId}
-                market={market}
-                mediaId={mediaId}
-                team={teamOf(market.teamId)}
-                onOpen={onOpen}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

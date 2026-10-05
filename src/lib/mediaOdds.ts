@@ -59,9 +59,31 @@ export interface GameLine {
   overround: number;
   /** Widest probability gap between any two outlets, in points. */
   disagreement: number;
-  /** The outlet furthest from the other two on this game. */
+  /** The outlet furthest from the rest on this game. */
   outlier: MediaId;
 }
+
+/**
+ * How far apart two outlets have to be before a game counts as SPLIT.
+ *
+ * One number, defined once, because it had become three literals. `MediaOddsSlate` coloured a row's
+ * house price when `disagreement >= 0.12`, `BettingHub` warned on the same 0.12 twice, and the slate's
+ * outlier dot is only legible relative to the same bar -- so the three could disagree about what
+ * "split" meant and nothing would report it, because the code was correct in isolation each time.
+ *
+ * It is a wide bar on purpose. Nine forecasters include several that read the same inputs the same
+ * way, so a genuinely contested game has to be quite lopsided before anybody splits on it; at a
+ * tighter threshold the split rows would be most of the slate and the filter would mean nothing.
+ *
+ * Two other thresholds in the app look similar and are NOT this one, deliberately:
+ * `HeadlinePanel` gates at 0.10 because a news story is worth writing about slightly earlier than a
+ * wagering signal is worth taking, and `BettingHub` settles at 0.06 because by then the outcome is
+ * known and the question is how close it was. Same quantity, three questions, three answers.
+ */
+export const SPLIT_DISAGREEMENT = 0.12;
+
+/** True when the outlets are far enough apart for this game to count as contested. */
+export const isSplit = (disagreement: number): boolean => disagreement >= SPLIT_DISAGREEMENT;
 
 const clampProbability = (value: number): number => Math.max(0.02, Math.min(0.98, value));
 

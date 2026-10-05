@@ -14,6 +14,7 @@ import { AnchoredPanel } from './AnchoredPanel';
 import { OutletPack } from './OutletPack';
 import { formatResolutionDate, resolveDateFor, type ResolutionBasis, type SeasonCalendar } from '../../lib/marketDates';
 import type { GameLine } from '../../lib/mediaOdds';
+import { isSplit } from '../../lib/mediaOdds';
 import { MAX_PROPS_PER_OUTLET } from '../../lib/mediaProps';
 import type { PropMarket, PropStatKey, PropTemperament } from '../../lib/playerProps';
 import type { PlacedBet, BetKind, BetStatus, Selection } from '../../lib/wallet';
@@ -378,7 +379,7 @@ const GameBetCard: React.FC<{
           NO "outlets split" CHIP.
 
           It was two unexplained words sitting in the corner of the card, and a manager had no way to
-          turn it into a number. What it meant is `disagreement >= 0.12` -- the forecasters are at
+          turn it into a number. What it meant is `isSplit(disagreement)` -- the forecasters are at
           least twelve points apart on this game -- and that fact is now stated in the footer in the
           units it is actually measured in, with the outlier named. So the signal survives, it is just
           finally legible, and it lives next to the strip it belongs to rather than floating alone.
@@ -471,7 +472,7 @@ const GameBetCard: React.FC<{
           */}
           <span
             className="t-caption truncate"
-            style={{ color: game.disagreement >= 0.12 ? 'var(--color-warn)' : 'var(--color-ink-faint)' }}
+            style={{ color: isSplit(game.disagreement) ? 'var(--color-warn)' : 'var(--color-ink-faint)' }}
             title={
               `All ${MEDIA_PROFILES.length} forecasters price ${game.awayTeam.city} to win, and they`
               + ` disagree by ${Math.round(game.disagreement * 100)} points.`
