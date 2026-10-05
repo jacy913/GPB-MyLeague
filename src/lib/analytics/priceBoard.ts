@@ -340,8 +340,16 @@ export const marketFloorFor = (
   return { fair: previousBoard.fair, plain: plain.byId, leagueMean: plain.leagueMean };
 };
 
+/**
+ * `ledger` MAY BE `undefined` -- a universe that has never traded has no ledger, and pricing its
+ * first day has to start somewhere.
+ *
+ * Defaulted inside the signature rather than at the call sites, for the same reason as `latestClose`
+ * above: `undefined` is a real state and the defensive handling belongs with the function that knows
+ * it, once, rather than being repeated as `?? []` by each caller and forgotten by the next one.
+ */
 export const priceAndAppendDay = (
-  ledger: PriceSeries[],
+  ledger: PriceSeries[] | undefined,
   input: PriceBoardInput,
 ): { ledger: PriceSeries[]; board: PriceBoard } => {
   const board = priceBoardForDay(input);
@@ -478,8 +486,11 @@ export const priceBoardForDay = (input: PriceBoardInput): PriceBoard => {
  * "today" would be ambiguous. `readSharePriceLedger` collapses duplicates for the same reason; this
  * is the write-side half of that rule.
  */
-export const appendPriceDay = (ledger: PriceSeries[], board: PriceBoard): PriceSeries[] => {
-  const kept = ledger.filter((day) => day.date !== board.date);
+/** `undefined` accepted for the same reason as `priceAndAppendDay` above: never-priced is a state. */
+export const appendPriceDay = (ledger: PriceSeries[] | undefined, board: PriceBoard): PriceSeries[] => {
+  // The `?? []` lives here rather than at each call site, so a never-priced universe cannot throw on
+  // its first priced day.
+  const kept = (ledger ?? []).filter((day) => day.date !== board.date);
   /*
     THE FAIR LAYER IS RECORDED, NOT CACHED, and the distinction is the whole reason this is here.
 
@@ -500,6 +511,19 @@ export const appendPriceDay = (ledger: PriceSeries[], board: PriceBoard): PriceS
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 };
 
-/** The most recent close in a ledger, or undefined when it is empty. */
-export const latestClose = (ledger: PriceSeries[]): Record<string, number> | undefined =>
-  ledger.length > 0 ? ledger[ledger.length - 1].close : undefined;
+/**
+ * The most recent close in a ledger, or undefined when it is empty OR absent.
+ *
+ * `undefined` is accepted because it is a real ledger state, not a mistake. A universe that has
+ * never been priced holds no ledger at all, and `priceLedger` is `PriceSeries[] | undefined`
+ * precisely to say so. Reading it as "priced and empty" would be a lie in the other direction --
+ * it would claim the market traded and produced nothing.
+ *
+ * Terminate Universe now sets the ledger to `undefined` (a new universe has never traded), which is
+ * what surfaced this. The Exchange page passed the optional value straight in here and got a blank
+ * screen and a freeze, because `undefined.length` throws. Every call site that had already been
+ * careful wrote `priceLedger ?? []` at the call, so the defensiveness lived in the callers and this
+ * one caller had none. It belongs here instead, once.
+ */
+export const latestClose = (ledger: PriceSeries[] | undefined): Record<string, number> | undefined =>
+  ledger && ledger.length > 0 ? ledger[ledger.length - 1].close : undefined;

@@ -87,6 +87,8 @@ export interface UsePortfolio {
    * actually settled, so the caller can tell a real settlement from a skipped one.
    */
   settle: (closes: Record<string, number>, through: string) => boolean;
+  /** Reset portfolio to a brand new universe state (clears cash, holdings, realised, and persisted storage). */
+  reset: () => void;
 }
 
 export interface BuyRequest {
@@ -218,6 +220,14 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
     return true;
   }, [portfolio]);
 
+  const reset = React.useCallback(() => {
+    const fresh = createPortfolio();
+    setPortfolio(fresh);
+    savePortfolio(fresh);
+    setNotice(null);
+    setWarning(null);
+  }, []);
+
   return {
     portfolio,
     realisedCents: portfolio.realisedCents,
@@ -235,5 +245,6 @@ export const usePortfolio = (closes: Record<string, number>): UsePortfolio => {
     investedIn,
     capFor,
     settle,
+    reset,
   };
 };

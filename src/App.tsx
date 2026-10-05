@@ -1349,6 +1349,7 @@ function App() {
   const [isClearingHistory, setIsClearingHistory] = useState(false);
   const [isWipingPlayers, setIsWipingPlayers] = useState(false);
   const [isTerminatingUniverse, setIsTerminatingUniverse] = useState(false);
+  const [terminateProgress, setTerminateProgress] = useState<{ progress: number; label: string } | null>(null);
   const [isGeneratingPlayers, setIsGeneratingPlayers] = useState(false);
   const [seasonResetStatus, setSeasonResetStatus] = useState<SeasonResetStatus>(IDLE_SEASON_RESET_STATUS);
   const [draftCenter, setDraftCenter] = useState<DraftCenterState>({ activeClass: null, history: [] });
@@ -2467,19 +2468,49 @@ function App() {
     }
 
     setIsTerminatingUniverse(true);
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+    const updateProgress = (progressValue: number, label: string) => {
+      setTerminateProgress({ progress: Math.max(0, Math.min(100, progressValue)), label });
+    };
+    updateProgress(5, 'Preparing termination');
+    watchdogTimer = setTimeout(() => {
+      console.error('Terminate universe timed out after 20s');
+      setIsTerminatingUniverse(false);
+      setTerminateProgress(null);
+      pushNotice('Terminate Universe timed out. The operation was aborted.', 'error');
+      localOperationLockRef.current.release('universe_termination');
+    }, 20000);
+
+    /*
+      YIELD A FRAME BEFORE THE WORK, OR THE OVERLAY NEVER EXISTS.
+
+      `buildNewUniverse` is a long SYNCHRONOUS chain, and it used to start on the same tick that set
+      `isTerminatingUniverse`. React batches the whole tick, so it rendered once with the flag already
+      back to false -- the overlay was written, mounted, and never painted. Measured, not assumed:
+      the probe reported "overlay NOT shown" on every run while the termination itself worked.
+
+      Two frames, not one: the first lets React commit the overlay, the second lets the browser
+      actually paint it before the main thread is blocked. Without the second the frame is committed
+      but never shown, which looks identical to not having tried.
+
+      This costs ~32ms and is the entire difference between a transformation and a freeze. It cannot
+      loop and cannot hang -- it is two awaited frames, and the watchdog above still bounds the work.
+      No early return after the yield: the lock is released in `finally`, so bailing out here would
+      strand it and leave every later universe operation permanently blocked.
+    */
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
     const normalizedSeed = normalizeSeed(universeSeedInput);
 
     try {
+      updateProgress(15, 'Clearing simulation state');
       resetSimulationState();
       stopDraftAutoRun();
       offseasonRolloverAppliedRef.current.clear();
 
       const baselineTeams = INITIAL_TEAMS.map((team) => ({ ...team }));
       const baselineSettings = { ...DEFAULT_SETTINGS };
-      const baselineSeasonYear = resolveSeasonYear(
-        currentDate || games[0]?.date || getDefaultSeasonStartDate(new Date().getFullYear()),
-        games,
-      );
+      const baselineSeasonYear = new Date().getFullYear();
       const baselineSchedule = createMasterSchedule(baselineTeams, baselineSeasonYear);
       const firstDate = baselineSchedule[0]?.date ?? getDefaultSeasonStartDate(baselineSeasonYear);
       // A new universe begins immediately playable and immediately coherent:
@@ -2487,6 +2518,7 @@ function App() {
       // chain the offseason runs, so the development model and the roster
       // repair are already in force on day one instead of a season later.
       // Seeding it means the same universe can be rebuilt to A/B a model change.
+      // Termination is exempt from year inheritance; it must always start fresh in the current year.
       const built = buildNewUniverse({
         teams: baselineTeams,
         seasonYear: baselineSeasonYear,
@@ -2535,7 +2567,40 @@ function App() {
       localStorage.removeItem(OFFSEASON_WORKFLOW_STORAGE_KEY);
       localStorage.removeItem(OFFSEASON_ROLLOVER_MARKERS_STORAGE_KEY);
       setIsSeasonHistoryLoaded(true);
+      updateProgress(70, 'Resetting market state');
       setNewUniversePreview(null);
+      /*
+        THE HXSE GOES WITH THE UNIVERSE.
+
+        Terminate predates the exchange, so everything it cleared was league-shaped and the market
+        was never audited into it. Three things had to go, and setting React state alone was not
+        enough for any of them:
+
+        - `priceLedger` to `undefined`, not `[]`. `[]` would claim the new universe had traded and
+          produced nothing.
+        - `lastPriceBoard`, because the crowd prices a stepped day from the previous day's FAIR
+          values. A board left over from the old universe would have the new league's first day
+          priced against an assessment of a league that no longer exists.
+        - the portfolio, via `book.reset()`, or a "new universe" opens holding the last one's
+          positions and lifetime realised record.
+
+        THE STORED LEDGER IS CLEARED THROUGH `saveSharePriceLedger([])`, not a bare removeItem,
+        because it lives in BOTH stores and `loadLocalLeagueStateAsync` reads IndexedDB first. A
+        localStorage-only delete leaves the IndexedDB copy, so the old prices return on the next
+        reload. Measured, not assumed: the first version of this fix deleted localStorage directly
+        and the probe still read 1061 bytes of the old ledger after a successful termination. That
+        function already clears both and treats an empty ledger as absent rather than as an empty
+        price history, which is the claim we want.
+      */
+      saveSharePriceLedger([]);
+      setPriceLedger(undefined);
+      setLastPriceBoard(null);
+      book.reset();
+      updateProgress(85, 'Persisting new universe');
+      // Land on the dashboard rather than wherever the manager happened to be standing. The screen
+      // they were on belonged to the universe that just ended -- the old Simulate board, the old
+      // standings -- so staying put shows a page describing a league that no longer exists.
+      setView('dashboard');
 
       if (isSupabaseConfigured) {
         await clearSupabasePlayerState();
@@ -2560,6 +2625,10 @@ function App() {
       console.error('Failed to terminate universe:', error);
       pushNotice('Terminate Universe failed. Some data may still be present.', 'error');
     } finally {
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+      }
+      setTerminateProgress(null);
       setIsTerminatingUniverse(false);
       localOperationLockRef.current.release('universe_termination');
     }
@@ -2567,8 +2636,6 @@ function App() {
     clearSeasonAwardsSummary,
     acquireLocalOperation,
     createMasterSchedule,
-    currentDate,
-    games,
     isFinalizingSimulation,
     isSimulating,
     isTerminatingUniverse,
@@ -2580,6 +2647,7 @@ function App() {
     seasonResetStatus.isResetting,
     stopDraftAutoRun,
     universeSeedInput,
+    book,
   ]);
 
   // One path for making a universe, and one preview. "Generate Players" used to
@@ -3635,12 +3703,25 @@ function App() {
     return () => observer.disconnect();
   }, [leagueHasNoPlayers]);
 
-  if (isBootstrapping) {
+  if (isBootstrapping || isTerminatingUniverse) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-base)] text-[var(--color-ink)] font-[family-name:var(--font-body)]">
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-3 px-4">
           <img src={gpbLogo} alt="GPB" className="mx-auto h-24 w-24 object-contain" />
-          <p className="t-caption text-[var(--color-ink-dim)]">Loading league data...</p>
+          <p className="t-body text-[var(--color-ink)]">
+            {isTerminatingUniverse ? 'Terminating universe...' : 'Loading league data...'}
+          </p>
+          {isTerminatingUniverse && terminateProgress && (
+            <div className="mx-auto max-w-xs space-y-2">
+              <p className="t-caption text-[var(--color-ink-dim)]">{terminateProgress.label}</p>
+              <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--color-chrome-lo)]">
+                <div
+                  className="h-full bg-[var(--color-gold)] transition-all duration-300"
+                  style={{ width: `${terminateProgress.progress}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
