@@ -1701,6 +1701,49 @@ in a crowd check that compared a mid-run value against an end-of-run value on a
 fixture whose run *accelerated*, so two effects cancelled and the check could not
 distinguish a working term from a broken one.
 
+**5. Season history was being erased on every reload (`3dde3f7`).** Reported as "the
+History page only keeps the previous season". The page was innocent; the bug was a
+class. Three keys in `App.tsx` had a load effect followed by an **ungated** persist
+effect, and on mount the load queues a state update while the writer persists the value
+belonging to the render that just committed — the initial empty value. The empty value
+lands in localStorage while the real contents sit unused in a local variable. Under
+StrictMode the effects re-run immediately, so the load **re-reads what the first pass
+just overwrote**.
+
+Measured, three seasons seeded and then reloaded:
+
+    StrictMode on, ungated   [2023,2024,2025] -> []                n=3 -> n=0
+    StrictMode off, ungated  [2023,2024,2025] -> [2025,2024,2023] n=3 -> n=3
+    StrictMode on, gated     [2023,2024,2025] -> [2025,2024,2023] n=3 -> n=3
+
+**Three archived seasons reduced to none on every reload.** In production the ungated
+version self-corrects, because the re-render re-runs the writer with the loaded value.
+That is why this read as a dev-only ghost and survived for so long. The wallet and the
+portfolio are architecturally immune — the wallet uses a lazy `useState` initializer and
+the portfolio has no mount-time writer — which is why the bug was confined to three keys
+rather than being systemic.
+
+`tools/proveSeasonHistoryReloadGuard.mjs` is the permanent check. It drives real Chrome
+over CDP, and it **removes the gate and requires the measurement to notice** — two of the
+three gates, because the third cannot be asserted from a throwaway profile (below). One
+injection is deliberately an **expected survivor**, and it exists because writing the fix
+produced a claim that turned out to be false: the comment on `isLocalKeysLoaded` argued
+that one shared flag was required rather than convenient, since a per-key flag could
+"unblock a writer while an earlier sibling in the same commit is still mid-flight". The
+harness injects the per-key scheme and **requires the data to survive**, because all
+three loads are declared before all three writers and the claim never held. The comment
+was corrected.
+
+**The confound the harness exposed, which is worth more than the verdict:** the
+offseason workflow key gets clobbered on a fresh profile *regardless of the gate*, because
+`useSeasonLifecycle.ts:385` resets any non-idle stage to idle whenever the season is not
+complete — the app being right, since you cannot be at the lottery with an unfinished
+season. Only watching writes rather than reading the key at the end revealed it: the key is
+written with the correct value, then overwritten ~17 ms later. Reading only at the end would
+have attributed that to whichever writer ran last, and the ungated-writer injections would
+have looked as though they destroyed a key they never touched. That key is injected and
+reported, but never decides pass or fail.
+
 ## Current state
 
 `HEAD` is `e68dc29`, the working tree is clean, and `local` is **38 commits ahead of
@@ -1983,6 +2026,22 @@ previous session.
   explicit `decided` flag, so the suite structurally could not see how that flag was
   computed. Pass explicit values to reach a branch; assert the *derivation* separately,
   and assert the property that made the first version wrong.
+- **Do not write a key you have not read.** Added `3dde3f7`, after three `App.tsx`
+  localStorage writers each ran a load effect followed by an ungated persist effect: on
+  mount the writer persists the initial empty value while the real contents sit unused in
+  a local variable. **Gate the writer on the matching read.** Under StrictMode this loses
+  the data outright; in production it self-corrects on the re-render, which is why it
+  survived so long and why "it only happens in dev" is not a reason to leave it.
+  Use a lazy `useState` initializer (`useBettingSlip.ts:149`) where the value allows it —
+  that form is immune, because there is no window in which the writer can run before the
+  reader. Wallet and portfolio are both architecturally safe for this reason.
+- **Watch the writes, not just the final value.** Building the reload harness, the
+  offseason key read as "lost" in two of four runs. Only instrumenting `setItem` showed it
+  was written **correctly** and then overwritten ~17 ms later by
+  `useSeasonLifecycle.ts:385` repairing an inconsistent state. Reading the key at the end
+  attributes the loss to whichever writer ran last, which would have made the ungated
+  injections look as though they destroyed a key they never touched. **When a key is lost,
+  find out who wrote it before you name a culprit.**
 - **Constants must be measured or fitted, or labelled as chosen.** The 0.05 target
   SE that yields the 82-AB floor is a stated design choice; the 20-out pitching
   floor is a convention; `homeFieldAdvantage` is a model constant whose effect is

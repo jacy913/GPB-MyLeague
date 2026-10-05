@@ -1529,15 +1529,28 @@ function App() {
    * In production the ungated version self-corrects, because the re-render re-runs the writer with
    * the loaded value and puts it back. That is why this read as a dev-only ghost rather than a bug.
    *
-   * One flag rather than three because the three loads are adjacent and independent, so no single
-   * one of them can be finished before the others -- and a per-key flag would let a writer unblock on
-   * its own load finishing while an earlier sibling in the same commit is still mid-flight. The
-   * history flag already existed (`isSeasonHistoryLoaded`, `119fc53`, the day after the load landed)
-   * and gated two other things; it was simply never wired to the writer, which was the whole defect.
+   * ONE FLAG, NOT THREE -- and that is a tidiness choice, not a correctness one. This comment used
+   * to argue the opposite: that the loads being adjacent and independent meant a per-key flag could
+   * unblock a writer on its own load finishing while a sibling in the same commit was still in
+   * flight. That reasoning does not hold. All three loads are declared before all three writers, so
+   * every read completes inside the same effect flush that runs the writers, and a writer gated on
+   * its own read is already satisfied by the time it runs. `tools/proveSeasonHistoryReloadGuard.mjs`
+   * injects the per-key scheme and requires it to keep the data, precisely because that claim was
+   * never measured.
    *
-   * `gpb_season_history_v1` is the one that mattered. The other two lose an accumulated draft-class
-   * list and the offseason checklist position -- the second of which silently drops a manager back
-   * to step one of the offseason every time the page refreshes.
+   * The history flag already existed (`isSeasonHistoryLoaded`, `119fc53`, the day after the load
+   * landed) and gated two other things; it was simply never wired to the writer, which was the whole
+   * defect.
+   *
+   * `gpb_season_history_v1` is the one that mattered: three archived seasons to none, every reload,
+   * which reads as "it only remembers the last season". The other two lose an accumulated draft-class
+   * list, and the offseason checklist position.
+   *
+   * The offseason one is worth qualifying, since the harness found it. Losing the stage there is not
+   * only the writer clobbering it: `useSeasonLifecycle.ts:385` resets any non-idle stage back to idle
+   * whenever the season is not complete, which is the app being right -- you cannot be at the lottery
+   * with an unfinished season. So the gate is real, but a manager partway through an offseason is in
+   * a completed season, where that repair does not fire and the gate is what holds the stage.
    *
    * The rule, for the next key: do not write a key you have not read.
    */
