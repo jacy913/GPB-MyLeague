@@ -1,0 +1,57 @@
+{
+  "_comment": "Popularity: how many people care about each club, on 0-100. This is the authored ranking, hand-set once and never derived. It replaces a hash of the club's name, which made the most popular club in the league whichever of the thirty-two names happened to hash highest.",
+
+  "_schema": {
+    "rank": {
+      "type": "int",
+      "range": [1, 32],
+      "note": "Position in the authored popularity list, 1 most popular. All thirty-two are distinct: there are no ties in this list, and a tie would need two clubs at the same `size` rather than two clubs at the same `rank`. `rank` is display and ordering only -- NOTHING reads it to compute an effect. `size` is the value every consumer uses."
+    },
+    "size": {
+      "type": "int",
+      "range": [5, 98],
+      "note": "Popularity on 0-100, and the ONLY field here that drives anything. PLACED BY RANK, EVENLY: `98 - 3 * (rank - 1)`, so 98 for the most popular club and 5 for the least, three points apart at every step. Even spacing is a choice and it is the least interesting one available: no curve, no exponent, and no club hand-tuned away from its neighbours, so the ranking in `rank` is exactly the ranking you see on screen. To make the top of the league matter more, edit the individual numbers -- the file is the data, not a formula. Measured tier spread under `checkFanbase`: major 5, large 7, mid 8, small 8, marginal 4."
+    },
+    "_notAField": {
+      "type": "decision",
+      "note": "There is no `attendance`, no `viewership` and no `revenue` field here, and there is deliberately no formula from `size` to any of them in this file. Popularity is a property of a club; what a crowd does with it is a model, and that model belongs in `lib/` where its coefficients can be argued with rather than buried in data. The gate on all of it: `checkFanbase` asserts `size` does not correlate with `rating` or `previousBaselineWins`, because a popularity figure that tracks club quality stops being about popularity and becomes a strength proxy wearing a costume."
+    },
+    "_fallback": {
+      "type": "decision",
+      "note": "A club absent from this file gets a hash of its own identity, exactly as before this file existed. That is not a placeholder to be filled in -- a league built from custom or imported clubs will never be in here, and `marketSizeFor` must return a number for every one of them or `liquidityFor` and `gapRiskFor` go undefined for those clubs and the price path breaks with them. `checkFanbase` asserts all thirty-two are present anyway."
+    }
+  },
+
+  "bra": { "rank": 1, "size": 98 },
+  "bal": { "rank": 2, "size": 95 },
+  "fey": { "rank": 3, "size": 92 },
+  "alc": { "rank": 4, "size": 89 },
+  "des": { "rank": 5, "size": 86 },
+  "win": { "rank": 6, "size": 83 },
+  "sin": { "rank": 7, "size": 80 },
+  "loy": { "rank": 8, "size": 77 },
+  "urb": { "rank": 9, "size": 74 },
+  "val": { "rank": 10, "size": 71 },
+  "luf": { "rank": 11, "size": 68 },
+  "ock": { "rank": 12, "size": 65 },
+  "gra": { "rank": 13, "size": 62 },
+  "aub": { "rank": 14, "size": 59 },
+  "tru": { "rank": 15, "size": 56 },
+  "sta": { "rank": 16, "size": 53 },
+  "rei": { "rank": 17, "size": 50 },
+  "caf": { "rank": 18, "size": 47 },
+  "hou": { "rank": 19, "size": 44 },
+  "ara": { "rank": 20, "size": 41 },
+  "ars": { "rank": 21, "size": 38 },
+  "dwi": { "rank": 22, "size": 35 },
+  "suk": { "rank": 23, "size": 32 },
+  "niy": { "rank": 24, "size": 29 },
+  "fes": { "rank": 25, "size": 26 },
+  "gar": { "rank": 26, "size": 23 },
+  "rag": { "rank": 27, "size": 20 },
+  "geb": { "rank": 28, "size": 17 },
+  "and": { "rank": 29, "size": 14 },
+  "hui": { "rank": 30, "size": 11 },
+  "der": { "rank": 31, "size": 8 },
+  "cal": { "rank": 32, "size": 5 }
+}

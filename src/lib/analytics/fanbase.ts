@@ -60,6 +60,7 @@
  * thing to argue about rather than the number.
  */
 
+import popularityJson from '../../data/popularity.json';
 import type { Team } from '../../types';
 
 /** Market tiers, widest first. The names are for display and for the crowd's behaviour. */
@@ -152,9 +153,40 @@ const hashString = (value: string): number => {
   return (h ^ (h >>> 15)) >>> 0;
 };
 
-/** Market size on 0-100 for a club. Depends only on its identity, so it never changes. */
+/**
+ * The authored popularity table, keyed by team id.
+ *
+ * `size` is the only field read from here. `rank` exists so the file can be reviewed in the order it
+ * was written and so a display can say "third most popular" without re-deriving the order -- but no
+ * consumer reads `rank`, and the values are placed by hand rather than computed from it, so the two
+ * could disagree without anything noticing. That is deliberate: `size` is the data, and a formula
+ * would put the ranking somewhere it cannot be edited.
+ */
+const AUTHORED_SIZE: ReadonlyMap<string, number> = new Map(
+  Object.entries(popularityJson as Record<string, unknown>)
+    .filter(([key]) => !key.startsWith('_'))
+    .map(([id, value]) => [id, (value as { size: number }).size]),
+);
+
+/**
+ * Market size on 0-100 for a club. Depends only on its identity, so it never changes.
+ *
+ * THE AUTHORED TABLE FIRST, AND THE HASH ONLY AS A FALLBACK.
+ *
+ * This used to be the hash and nothing else, which meant the most popular club in the league was
+ * whichever of the thirty-two names happened to hash highest. That is not a popularity figure; it is
+ * a statement about the FNV hash. The table in `data/popularity.json` is a real ranking now.
+ *
+ * The fallback is kept rather than removed, and it is load-bearing rather than a placeholder: a
+ * league can be built from custom or imported clubs that will never appear in a file authored for the
+ * shipped thirty-two, and this function has to return a number for every one of them or
+ * `liquidityFor` and `gapRiskFor` produce `undefined` and the whole price path for those clubs breaks.
+ * `checkFanbase` asserts all thirty-two ARE in the table, so the fallback is a safety net for a case
+ * that does not arise in the shipped league rather than a hole in it.
+ */
 export const marketSizeFor = (team: Pick<Team, 'id' | 'city' | 'name'>): number =>
-  (hashString(`${team.id}|${team.city}|${team.name}`) % 10000) / 100;
+  AUTHORED_SIZE.get(team.id)
+  ?? (hashString(`${team.id}|${team.city}|${team.name}`) % 10000) / 100;
 
 export const tierFor = (size: number): MarketTier =>
   TIER_BOUNDS.find((bound) => size > bound.above)?.tier ?? 'marginal';
