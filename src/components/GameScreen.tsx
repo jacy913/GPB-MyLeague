@@ -26,6 +26,7 @@ import { Panel, RetroButton } from './ui';
 import { BaseDiamond, CountTile, LineScore, SidePanel } from './game/shared';
 import { GameClock, LineupList, MatchupCard, PlayLog } from './game/GamePanels';
 import { ParkPanel } from './game/ParkPanel';
+import { parkProfile } from '../lib/analytics/parkProfile';
 
 interface GameScreenProps {
   game: Game;
@@ -539,7 +540,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               The walls, the air and the grass on this ground — and what they do to the numbers above.
             </p>
             <RetroButton variant="ghost" size="sm" onClick={() => setIsParkOpen(true)}>
-              <MapPinned className="h-4 w-4" aria-hidden="true" /> {homeTeam.city} Park
+              <MapPinned className="h-4 w-4" aria-hidden="true" /> {parkProfile(homeTeam.id)?.parkCity ?? homeTeam.city} Park
             </RetroButton>
           </div>
 

@@ -130,6 +130,50 @@ file and it is correct.
 
 Newest first. `77fa260 Ver 0.0.10` is the last non-UX commit.
 
+### The park work - a survey sheet, then four corrections to it
+
+| Commit | Scope |
+|---|---|
+| `6de0036` | Re-spread the corners: LF ceiling 400→362, RF 400→355 |
+| `a508aae` | Park on `TEAMS → Rosters` too — two screens meant "the rosters section" |
+| `d7ebbab` | The park diagram: fence to scale, five floating distance boxes, the working beside it |
+| `7c1a090` | Error boundary: a render throw should cost one view, not the application |
+
+`d7ebbab` is the one that matters for anything downstream: it added
+`src/lib/parkGeometry.ts` (all the fence maths, pure and separately testable),
+`ParkField.tsx` (the SVG) and `ParkPanel.tsx` (the readouts), and mounted the
+panel from **two** screens. It reads `parkProfile()` and `parkFactorsFor()`, so
+it consumes the same functions the simulation does and changes none of them.
+
+**The diagram is a survey sheet, not a stadium** — a deliberate choice, defended
+at length in the component. Flat fills, one fixed scale for all 32 parks (fitting
+each to the frame would make every park draw the same size and turn the
+comparison into a lie told in geometry), and a 100-FT scale bar so the reader can
+check. Four entered dimensions are *drawn* rather than tabulated: wall colour and
+height, foul ground, roof.
+
+Later corrections to it, all in the working tree at the time of writing:
+
+- **Park names.** `parkCity` on all 32, from a supplied list. The Rogues (`rei`)
+  was the one club missing from that list and was given `Karkebo` on request.
+  `parkCity` is optional in the type and **required in the data**, asserted by
+  `checkParks` — otherwise a park could be added without a name and nothing
+  would complain.
+- **Infield dirt**, from a 95-ft arc struck off the pitcher's mound and tinted by
+  `soilType`, which is a real datum rather than scenery: `parkFactors` reads soil
+  as a third door into the same outcome `surface` and `grass` come through.
+- **`CORNER_INTERPOLATION` 0.125 → 0.35**, after trying 0.87 and 0.95 and seeing
+  both render. The constant's direction is genuinely counter-intuitive and is
+  documented at the constant: **more bow is a *smaller* number**, because
+  `derived = cf + (corner - cf) * k` and the corner is always shorter than centre.
+  Anything above 1.0 makes the fence concave, which no real park has.
+- **Per-park `meanTempC`**, so temperature stopped being a five-valued field
+  league-wide. Drawn once from a fixed seed and written into `parks.json` rather
+  than randomised at runtime — it reaches `airDensityRatio` and therefore every
+  park factor, so `Math.random()` there would re-roll thirty-two home-run rates
+  on every page load. See the unseeded-schedule limitation above; this field is
+  deliberately not a second instance of it.
+
 **Not pushed.** `local` is **39 commits ahead of `origin/local`**. Everything below
 is local only.
 

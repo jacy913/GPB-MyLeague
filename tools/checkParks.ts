@@ -75,8 +75,29 @@ const INTS: Record<string, { min: number; max: number }> = {
  */
 const FLAVOUR_MAX = 140;
 
+/**
+ * Cap on a park city name.
+ *
+ * Short, and it is a cap rather than a shape check because the longest current value is 11
+ * characters (`Borresurt`, `Lerkananger`). It exists so a pasted paragraph cannot silently become a
+ * dialog title that overflows its chrome bar -- the same reason `FLAVOUR_MAX` is there.
+ */
+const PARK_CITY_MAX = 28;
+
+/**
+ * Bounds on a park's annual mean temperature, in Celsius.
+ *
+ * Wider than the 0-36 the league actually uses, deliberately: this is a physical sanity band, not
+ * a style guide. The coldest inhabited annual mean is around -25 and a persistently tropical one
+ * tops out near 30, so -40 to 45 catches a typo (2500, or 4.5 typed without the decimal) without
+ * telling someone their desert is too hot.
+ */
+const MEAN_TEMP_MIN = -40;
+const MEAN_TEMP_MAX = 45;
+
 const main = (): void => {
   const problems: string[] = [];
+  const parkCities: string[] = [];
 
   let parsed: Record<string, unknown>;
   try {
@@ -134,6 +155,46 @@ const main = (): void => {
         problems.push(`${id} (${team.city}): ${field} = ${value}, outside ${range.min}-${range.max}`);
       }
     });
+    // --- parkCity: required in the data, optional in the type --------------------
+    //
+    // `ParkDimensions.parkCity` is optional so that a hypothetical park in a test needs no invented
+    // town, but every REAL park must have one -- without it the park popup cannot be titled and the
+    // diagram's aria label falls back to a bare club name. Optional-in-the-type only works if
+    // something asserts it at the data boundary, and this is that something: the split is invisible
+    // the moment a park is added without a city and nothing complains.
+    //
+    // Uniqueness is NOT enforced. Two parks sharing a town is plausible in the real world and is
+    // not a defect, so this checks presence and type only and says so.
+    const city = record.parkCity;
+    if (city === undefined) {
+      problems.push(`${id} (${team.city}): missing parkCity`);
+    } else if (typeof city !== 'string') {
+      problems.push(`${id} (${team.city}): parkCity = "${String(city)}", expected a string`);
+    } else if (city.trim().length === 0) {
+      problems.push(`${id} (${team.city}): parkCity is empty`);
+    } else if (city.length > PARK_CITY_MAX) {
+      problems.push(`${id} (${team.city}): parkCity is ${city.length} chars, over the ${PARK_CITY_MAX} cap`);
+    } else {
+      parkCities.push(city);
+    }
+
+    // --- meanTempC: optional, but validated when present ------------------------
+    //
+    // Optional because `CLIMATE_C[climate]` is a working fallback, and a hypothetical park built
+    // in a test should not have to invent a temperature to satisfy a data check. But it is RANGE
+    // checked, because this one is not inert: it feeds airDensityRatio and therefore every park
+    // factor, so a stray 2500 would re-roll a club's home-run rate rather than merely display oddly.
+    const meanTemp = record.meanTempC;
+    if (meanTemp !== undefined) {
+      if (typeof meanTemp !== 'number' || !Number.isInteger(meanTemp)) {
+        problems.push(`${id} (${team.city}): meanTempC = "${String(meanTemp)}", expected an integer`);
+      } else if (meanTemp < MEAN_TEMP_MIN || meanTemp > MEAN_TEMP_MAX) {
+        problems.push(
+          `${id} (${team.city}): meanTempC = ${meanTemp}, outside ${MEAN_TEMP_MIN}-${MEAN_TEMP_MAX}`,
+        );
+      }
+    }
+
     // Optional, but if it IS there it has to be a legal string. A non-string here would be
     // silently coerced by any consumer that used `String(record.flavour)`.
     if (record.flavour !== undefined) {

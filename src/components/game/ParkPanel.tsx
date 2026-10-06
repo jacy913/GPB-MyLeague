@@ -1,8 +1,14 @@
 import React from 'react';
 import { parkProfile } from '../../lib/analytics/parkProfile';
-import { ALL_PARK_FACTORS, parkFactorsFor, type ParkFactors } from '../../lib/analytics/parkFactors';
+import type { ParkProfile } from '../../lib/analytics/parkProfile';
+import { ALL_PARK_FACTORS, type ParkFactors } from '../../lib/analytics/parkFactors';
 import type { Team } from '../../types';
 import { FACTOR_BAR_RANGE, FATIGUE_BAR_RANGE } from '../../lib/parkGeometry';
+import {
+  CLIMATE_MONTHS,
+  climateMonthC,
+  CORNER_INTERPOLATION,
+  } from '../../lib/analytics/parkProfile';
 import { Modal } from '../ui';
 import { ParkField } from './ParkField';
 
@@ -146,6 +152,54 @@ const FatigueBar: React.FC<{ value: number }> = ({ value }) => {
   );
 };
 
+/**
+ * Seven months of temperature as a small bar chart.
+ *
+ * SCALED ACROSS THE SEASON, NOT FROM ZERO, and the reason is that the absolute range is the
+ * opposite of intuitive here. A cold park runs -5 to 6 C and a hot one 27 to 47 C, so a zero-based
+ * bar makes both look like small stubs in the bottom corner of a very tall empty chart, and the
+ * difference between a desert and a maritime north -- which is the entire point -- disappears.
+ *
+ * Every value is printed under its column, so the scaling never costs the reader the number. What
+ * it does cost is an absolute comparison BETWEEN parks, and that is a real limitation rather than
+ * an oversight: Desseldein at 34-47C and Houssen at -6 to 7C draw an identically-shaped chart,
+ * because each is scaled to its own season. The panel shows one park at a time and the common
+ * question is "what is this place like across the season", so shape wins and the printed numbers
+ * and the annual mean in the heading carry the absolutes. A shared league-wide scale would make
+ * the two comparable and would flatten each park's own curve to about a quarter of the chart.
+ */
+const MonthTemperatures: React.FC<{ profile: ParkProfile }> = ({ profile }) => {
+  const temps = climateMonthC(profile);
+  const coldest = Math.min(...temps);
+  const warmest = Math.max(...temps);
+  const span = Math.max(1, warmest - coldest);
+
+  return (
+    <div className="mt-3 flex items-end gap-1.5">
+      {CLIMATE_MONTHS.map((month, i) => {
+        const temp = temps[i];
+        const share = (temp - coldest) / span;
+        return (
+          <div key={month} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+            {/* `flex-1` height with a percentage child is how a column is anchored to the row's
+                floor without a fixed pixel height, so the row scales with whatever the panel is
+                given rather than being tuned once. */}
+            <div className="flex h-16 w-full items-end">
+              <span
+                className="block w-full bg-[var(--color-warn)]"
+                style={{ height: `${(share * 100).toFixed(1)}%`, opacity: 0.45 + share * 0.45 }}
+                aria-hidden="true"
+              />
+            </div>
+            <span className="t-caption text-[var(--color-ink-dim)] tabular-nums">{temp}&deg;</span>
+            <span className="t-caption text-[var(--color-ink-faint)]">{month}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 export const ParkPanel: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -160,7 +214,7 @@ export const ParkPanel: React.FC<{
       isOpen={isOpen}
       onClose={onClose}
       widthClass="max-w-6xl"
-      title={team ? `${team.city} ${team.name} Park` : 'Park'}
+      title={team ? `${profile?.parkCity ?? team.city} Park` : 'Park'}
       barRight={(
         <span className="t-caption text-[var(--color-ink-faint)]">
           {profile ? `${Math.round(profile.wallAreaSqFt).toLocaleString()} sq ft of wall` : ''}
@@ -186,10 +240,51 @@ export const ParkPanel: React.FC<{
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
           <div>
             <ParkField profile={profile} />
+            {/*
+              THE SUBTITLE, carrying the club whose park this is.
+
+              Necessary the moment the park had a name, because the title stopped naming the club:
+              "Greenpond Park" alone does not say whose ground it is, and this panel is reachable from
+              a game between two clubs where the reader has just been looking at both. The one case
+              where the two are the same word is `urb`, whose club city and park city are both
+              Urbington -- harmless, and not worth a special case that would only read as clever.
+            */}
+            <p className="t-label mt-3 text-[var(--color-ink-dim)]">
+              Home of the {team.city} {team.name}
+            </p>
             <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
               Drawn to scale against the bar. Left-centre and right-centre are interpolated from the
-              corners and centre at 12.5% and are not entered measurements; the other three are.
+              corners and centre at {Math.round(CORNER_INTERPOLATION * 100)}% and are not entered
+              measurements; the other three are.
             </p>
+
+            {/*
+              THE SEASON, April to October, in the space under the map.
+
+              It was the only large empty area left in the panel, and temperature is the one entered
+              dimension that had no picture of any kind -- altitude is on the wall label, wall height
+              is the thickness of the stroke, soil is the colour of the dirt, but a park's climate
+              existed only as a word in a list.
+
+              THE BAR IS DRAWN FROM THE SEASON'S OWN RANGE, not from zero, and that is a real
+              choice rather than a shortcut. A zero-based bar would make every park look mild --
+              Foulles at 28-36 C and Feyford at -5-6 C would both be short stubs off a shared
+              baseline, because the interesting range is 40 C wide and neither end is near zero.
+              Scaling to the coldest and warmest month ON SCREEN is what makes "this is a desert"
+              and "this is a maritime north" comparable at a glance, and the numbers are printed
+              beside every column so the reader can still read the absolute value. The one thing
+              this cannot do is show a park as warm or cool in absolute terms, and the annual mean
+              is printed under the row precisely so that comparison stays available.
+            */}
+            <div className="mt-5 border-t border-[var(--color-chrome-lo)] pt-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="t-label text-[var(--color-ink-faint)]">THE SEASON</p>
+                <p className="t-caption text-[var(--color-ink-faint)]">
+                  annual mean {profile.climateCUsed}&deg;C
+                </p>
+              </div>
+              <MonthTemperatures profile={profile} />
+            </div>
           </div>
 
           <div className="flex min-w-0 flex-col gap-4">
@@ -281,6 +376,7 @@ export const ParkPanel: React.FC<{
               <p className="t-label text-[var(--color-ink-faint)]">THE PARK</p>
               <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
                 {([
+                  ['Town', profile.parkCity ?? '—'],
                   ['Roof', humanise(profile.dimensions.roof)],
                   ['Wall', `${profile.dimensions.wallHeightFt} ft ${humanise(profile.dimensions.wallColor)}`],
                   ['Altitude', `${humanise(profile.dimensions.altitude)} · ${Math.round(profile.altitudeFtUsed).toLocaleString()} ft`],

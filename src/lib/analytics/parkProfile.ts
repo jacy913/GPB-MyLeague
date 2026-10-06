@@ -66,6 +66,34 @@ export type HumidityBand = 'arid' | 'moderate' | 'humid';
 export type FoulGround = 'small' | 'standard' | 'generous';
 
 export interface ParkDimensions {
+  /**
+   * The town the park stands in. NOT the club's city, and not read by any factor.
+   *
+   * OPTIONAL in the type, REQUIRED in the data. `parks.json` has it on all thirty-two and
+   * `checkParks` fails the build without it, but a hypothetical park built in a test -- the neutral
+   * reference park, an archetype -- genuinely has no town, and inventing "Testville" for those
+   * would be a fabricated fact in a file that treats hand-set values as authoritative. The same
+   * arrangement as `flavour`: optional to the type, asserted where it matters.
+   *
+   * It lives here rather than in a second file keyed by team id because a park with no name cannot
+   * be drawn or titled, and a second file is one more thing that can disagree with this one.
+   */
+  parkCity?: string;
+  /**
+   * This park's annual mean temperature, which overrides the regime's default.
+   *
+   * Optional, and the fallback is `CLIMATE_C[climate]` -- so every park that omits it behaves
+   * exactly as before this field existed. The regime is the band; this is the value, because five
+   * `hot_humid` parks are not the same temperature.
+   *
+   * HAND-SET DELIBERATELY, NOT RANDOMISED. This reaches `airDensityRatio`, and therefore
+   * `carryMultiplier` and every park factor, so generating it per load would make each park's
+   * home-run factor a different number on every page refresh -- unfixable sim results, and the
+   * league's standings would jitter as you read them. `generateSchedule` already has a version of
+   * this bug and it is documented as a known limitation; this field is deliberately not a second
+   * instance of it. If you want a park warmer or colder, edit the number.
+   */
+  meanTempC?: number;
   altitude: AltitudeBand;
   roof: RoofKind;
   lfFt: number;
@@ -86,11 +114,79 @@ export interface ParkDimensions {
 /**
  * How much of each gap the corner interpolation eats.
  *
- * The blueprint's own suggestion, taken verbatim: "derive LCF and RCF as 12.5% interpolations
+ * THE BLUEPRINT'S OWN SUGGESTION, taken verbatim: "derive LCF and RCF as 12.5% interpolations
  * of LF/CF and CF/RF, since real parks are usually roughly symmetric that way and it halves
  * the data entry."
+ *
+ * That puts LCF within a few feet of centre -- Andrard reads 404 against a 410 CF -- which is a
+ * fence with almost no bulge: the outfield is effectively a straight run from centre to each
+ * corner, and the league's whole spread in left-centre is 26ft. That reads as flat on the diagram,
+ * so this constant is the lever for changing it. See the direction note below before touching it.
+ *
+ * RAISED to 0.95, so the derived points sit much nearer their own corners and the fence bows.
+ * The top LCF ceiling falls from 410.75 to 364.4.
+ *
+ * WHY 0.95 AND NOT 0.99. The derived point must never come back INSIDE its own corner, or the
+ * fence goes concave and no park on earth has that. Measured margin is the derived value minus
+ * its corner: at 0.95 the tightest park is `luf` at 2.1ft, then `ara` and `aub` at 2.4ft. That
+ * is real headroom but not much, and it is the number to re-derive before deepening any of those
+ * three. 0.99 would leave under a foot on the same parks.
+ *
+ * CHOSEN OVER 0.87 AFTER SEEING IT RENDERED. 0.87 was correct by every measurement available --
+ * zero inversions, a comfortable 5.3ft worst margin -- and the diagram did bow properly. But it
+ * pulled LCF so close to LF that the derived point and its own corner read as the same place:
+ * Foulles showed a 333ft LCF above a 322ft LF, an 11ft difference on a 600ft field, and the
+ * left-hand curve lost the shoulder that makes the shape legible as a ballpark. 0.95 keeps the
+ * bow and restores the shoulder. The honest summary is that the safety margin was never the
+ * binding constraint on this number; how the shape reads was.
+ *
+ * WHAT MOVING IT UP ACTUALLY DOES, since two rounds of this have now gone the wrong way and the
+ * direction is the part that keeps being misread. The formula is `cf + (corner - cf) * k`, and
+ * because a corner is always SHORTER than centre, `corner - cf` is negative:
+ *
+ *   k = 0.125  derived sits almost at CENTRE.  LCF 410.75 at the ceiling.
+ *   k = 0.35   CURRENT. A visible bow, and a comfortable one.
+ *   k = 0.95   derived sits almost at the CORNER, bowing hard.
+ *   k = 1.0    derived EQUALS the corner -- a flat run, no bow at all.
+ *   k = 1.15   derived lands 15% PAST the corner, inside it: a concave notch, all 32 parks,
+ *              worst by 12.3ft. No real ballpark has this shape.
+ *
+ * So MORE bow is a SMALLER number. 1.15 is further from the original than 0.87 was, in the one
+ * direction that breaks the geometry. Anyone reaching for a bigger value here is trying to add
+ * bow and will add a dent instead.
+ *
+ * 0.35 AFTER SEEING 0.125, 0.87 AND 0.95 RENDER. 0.125 reads flat -- the derived point sits 6ft
+ * from centre out of a 48ft corner-to-centre gap, so the outfield is very nearly a straight run.
+ * 0.87 overshot the other way, leaving only 11ft between LCF and LF, so the derived point read as
+ * the same place as its own corner and flattened the shoulder instead. 0.35 sits between them:
+ * LCF moves 9-15ft out, and the LCF-to-LF gap stays between 26.7ft and 43.6ft, which is the range
+ * where the fence still has a curve you can see. Measured margin against the nearest corner is
+ * 26.7ft at `ara`, so this is nowhere near the concave boundary.
+ *
+ * WORTH KNOWING BEFORE CHASING VARIETY HERE. Raising k moves every park's derived point by a
+ * similar amount and barely widens the spread BETWEEN them -- 26.4ft across the league at 0.125,
+ * 28.9ft at 0.35. The constant changes the SHAPE, not the variety. Two parks look different
+ * because their corners differ, which is what the entered LF/CF/RF are for; this number cannot
+ * make one park's fence distinct from another's.
+ *
+ * THE CAP ALTERNATIVE WAS REJECTED, and the reason is worth keeping. Clamping the fifteen
+ * longest parks to 0.87 of the 15th value does not lower them 13% -- it collapses all fifteen
+ * onto one number, 344.41, because 0.87 of the 15th-longest is a cap and a cap has no spread.
+ * One constant produces fifteen distinct values and preserves their order; a cap produces one
+ * value repeated fifteen times and makes the 16th park depend on a sort that any corner edit
+ * reshuffles.
+ *
+ * Note the flat-shape consequence: any raise here lowers the SHORTEST parks exactly as much as
+ * the longest, because it scales the gap rather than the value. That is inherent to a single
+ * lever, and the alternative -- per-park values -- is the second source of truth this file does
+ * not have.
+ *
+ * WHAT THIS DOES AND DOES NOT MOVE. Nothing in the simulation. `hrFieldWeights` reads only
+ * `lfFt`, `cfFt` and `rfFt`, so every park factor is byte-identical across this change; the
+ * consumers of the derived pair are `meanWallFt`, `wallAreaSqFt` (the "sq ft of wall" in the
+ * park popup) and the diagram's five control points. Measured, not assumed.
  */
-export const CORNER_INTERPOLATION = 0.125;
+export const CORNER_INTERPOLATION = 0.35;
 
 /**
  * Representative height per altitude band, in FEET.
@@ -109,9 +205,19 @@ export const ALTITUDE_FT: Record<AltitudeBand, number> = {
  * Representative annual mean temperature per climate regime, in CELSIUS.
  *
  * Also a CHOICE. `cold` is a coastal or northern climate rather than a cold-month average,
- * and `hot_dry` is an annual mean of a desert rather than a July afternoon. Phase 3 will want
- * a seasonal curve instead; this is the single scalar that Phase 2 needs, and stating it is
- * better than pretending the data implies it.
+ * and `hot_dry` is an annual mean of a desert rather than a July afternoon.
+ *
+ * NOW A FALLBACK RATHER THAN THE ANSWER. `meanTempC` in `parks.json` overrides this per park and
+ * all 32 parks set it, so these five numbers are what a hypothetical park or a data file without
+ * the field would get. The neutrality check in `checkParkFactors` still depends on them, which is
+ * why they stay rather than being replaced by a computed average.
+ *
+ * WHY PER-PARK MATTERS FOR MORE THAN COSMETICS. Five `hot_humid` parks shared one 27 C before,
+ * so temperature was effectively a five-valued field across the whole league and two parks on the
+ * same regime were identical on both temperature-driven terms. They are not now. `airCarry` and
+ * `biteLoss` both move with temperature, so measured across 32 parks: `hrFactor` 0.860-1.213
+ * becomes 0.845-1.223, and `airCarry` 0.962-1.215 becomes 0.948-1.199. A small widening, in the
+ * right direction -- more parks that are individually distinguishable.
  */
 export const CLIMATE_C: Record<ClimateRegime, number> = {
   cold: 4,
@@ -120,6 +226,82 @@ export const CLIMATE_C: Record<ClimateRegime, number> = {
   hot_humid: 27,
   cool_coastal: 17,
 };
+
+/**
+ * The months of the season, April to October, and what each regime does across them.
+ *
+ * SEVEN MONTHS, NOT TWELVE, and that is the whole shape of the baseball season as this app models
+ * it: the league plays April to October and nothing outside that, so a January and a July column
+ * would be reporting weather for games that are not played.
+ *
+ * VALUES ARE THE ANNUAL MEAN PLUS A REGIME OFFSET, not twelve separate observations. April is the
+ * regemean MINUS 4 and August is the mean PLUS 8, which is a temperate-year shape, and every
+ * regime shares that curve with its own amplitude. This is a display of a plausible seasonal
+ * profile and NOTHING MORE -- see `climateMonthC` for why it must not be read back into the
+ * physics, which uses the annual mean only.
+ *
+ * Ordered April..October to match `CLIMATE_MONTHS`, and the two arrays are asserted to be the same
+ * length at module load rather than trusted, because a seasonal table that is one month out of step
+ * with its own header is the kind of thing nobody notices until the chart is wrong.
+ */
+export const CLIMATE_MONTHS = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'] as const;
+
+/**
+ * Seasonal offset per regime, in Celsius, relative to that regime's annual mean.
+ *
+ * AMPLITUDE IS THE ONLY THING THAT SEPARATES THE REGIMES HERE, because the mean is per-park and
+ * arrives separately in `meanTempC`. A maritime climate should have a shallow curve and a
+ * continental one a deep curve, and that -- not the mean -- is what `cold` and `temperate` really
+ * differ by.
+ *
+ * BUT THE SEPARATION IS SMALL, and it is worth being exact about rather than implying more than the
+ * table delivers. Measured April-to-August swing by `tools/reportParkSeasons.ts`: `cold` 13C,
+ * `hot_dry` 13C, `temperate` 12C, `cool_coastal` 10C, `hot_humid` 10C. Three distinct values across
+ * five regimes, a 3C spread. That is a real difference and it is the right direction -- the two
+ * maritime regimes are shallowest, the two continental/hot ones deepest -- but 3C is a subtle read
+ * on a chart, not a dramatic one. Widening it is a one-line change per regime if a future pass wants
+ * the curves further apart.
+ *
+ * A park's own mean does NOT affect its swing: `(mean + off[Aug]) - (mean + off[Apr])` cancels the
+ * mean, so every park sharing a regime has an identical curve shape, offset vertically. Two parks
+ * on `temperate` at 12C and 19C therefore draw the same shape 7C apart -- which is correct, since
+ * they are the same climate at different latitudes' worth of heat.
+ */
+export const CLIMATE_MONTH_OFFSET_C: Record<ClimateRegime, readonly number[]> = {
+  // Apr   May   Jun   Jul   Aug   Sep   Oct
+  cold: [-6, -3, 1, 5, 7, 4, -1],
+  temperate: [-4, -1, 3, 7, 8, 5, 1],
+  hot_dry: [-2, 2, 7, 10, 11, 8, 3],
+  hot_humid: [-1, 2, 6, 8, 9, 7, 4],
+  cool_coastal: [-4, -2, 1, 4, 6, 5, 2],
+};
+
+/**
+ * One park's temperature for each month of the season, April through October.
+ *
+ * THE ANNUAL MEAN, NOT THE MEAN OF THESE SEVEN. The simulation's temperature channel is an annual
+ * mean and this must not feed back into it: a park's annual mean is not the average of its
+ * baseball months, because the four months it does not play in are systematically colder. Feeding
+ * these back would double-count the season and quietly move every park factor again, which is
+ * exactly the kind of drift a display field must never introduce. Read-only, by construction.
+ */
+export const climateMonthC = (profile: ParkProfile): number[] => {
+  const mean = profile.climateCUsed;
+  return CLIMATE_MONTH_OFFSET_C[profile.dimensions.climate].map((offset) => mean + offset);
+};
+
+/**
+ * The month labels and the offset table must agree in length.
+ *
+ * A seasonal table one month out of step with its own header is invisible in review and obvious
+ * on screen -- September's temperature appearing under August. Asserted rather than trusted.
+ */
+if (CLIMATE_MONTHS.length !== Object.values(CLIMATE_MONTH_OFFSET_C)[0].length) {
+  throw new Error(
+    `CLIMATE_MONTHS has ${CLIMATE_MONTHS.length} labels but the offset table has `
+    + `${Object.values(CLIMATE_MONTH_OFFSET_C)[0].length} entries`,
+  );
+}
 
 /** Air density at sea level and 15 C, the reference every ratio is taken against. */
 export const REFERENCE_DENSITY = 1.225; // kg/m^3
@@ -182,8 +364,8 @@ export const barometricDensityRatioAtHeight = (feet: number): number =>
  * `T0 / T_local`. Exactly 1.000 for the `temperate` regime, which is the reference and the
  * only regime for which this is 1.
  */
-export const temperatureDensityRatio = (climate: ClimateRegime): number =>
-  T0_K / (CLIMATE_C[climate] + C_TO_K);
+export const temperatureDensityRatio = (climate: ClimateRegime, meanTempC?: number): number =>
+  T0_K / ((meanTempC ?? CLIMATE_C[climate]) + C_TO_K);
 
 /**
  * Air density as a ratio to sea level at 15 C, both channels combined.
@@ -211,10 +393,14 @@ export const temperatureDensityRatio = (climate: ClimateRegime): number =>
  * quotes. The 0.854 is the barometric channel alone, which is what that sentence is about.
  * Both figures are reported separately so neither can be mistaken for the other.
  */
-export const airDensityRatio = (altitude: AltitudeBand, climate: ClimateRegime): number => {
+export const airDensityRatio = (
+  altitude: AltitudeBand,
+  climate: ClimateRegime,
+  meanTempC?: number,
+): number => {
   const metres = ALTITUDE_FT[altitude] * FT_TO_M;
   const standardK = T0_K - LAPSE_K_PER_M * metres;
-  const localK = CLIMATE_C[climate] + C_TO_K;
+  const localK = (meanTempC ?? CLIMATE_C[climate]) + C_TO_K;
   return barometricDensityRatio(altitude) * (standardK / localK);
 };
 
@@ -226,6 +412,12 @@ export interface ParkProfile {
   teamId: string;
   /** The entered dimensions, unchanged. Carried so downstream never re-reads the JSON. */
   dimensions: ParkDimensions;
+  /**
+   * The park's name, hoisted off `dimensions` because a title and a dialog's aria label both want
+   * it and neither wants to reach through two levels for it. Optional for the same reason
+   * `parkCity` is: a hypothetical park has no town.
+   */
+  parkCity?: string;
 
   /**
    * The five wall distances, the shape `parkDataContract` in `GPBBook.tsx:539` calls
@@ -308,11 +500,12 @@ export const deriveParkProfile = (teamId: string, dimensions: ParkDimensions): P
   const { lfFt, cfFt, rfFt, wallHeightFt, altitude, climate } = dimensions;
   const { lcfFt, rcfFt } = interpolateCorners(lfFt, cfFt, rfFt);
   const meanWallFt = (lfFt + lcfFt + cfFt + rcfFt + rfFt) / 5;
-  const density = airDensityRatio(altitude, climate);
+  const density = airDensityRatio(altitude, climate, dimensions.meanTempC);
 
   return {
     teamId,
     dimensions,
+    parkCity: dimensions.parkCity,
     lfFt,
     lcfFt,
     cfFt,
@@ -328,7 +521,7 @@ export const deriveParkProfile = (teamId: string, dimensions: ParkDimensions): P
     temperatureRatio: density / barometricDensityRatio(altitude),
     carryMultiplier: 1 / density,
     altitudeFtUsed: ALTITUDE_FT[altitude],
-    climateCUsed: CLIMATE_C[climate],
+    climateCUsed: dimensions.meanTempC ?? CLIMATE_C[climate],
   };
 };
 

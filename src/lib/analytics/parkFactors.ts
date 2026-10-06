@@ -310,7 +310,12 @@ export const biteLossFactor = (profile: ParkProfile): number =>
 export const roofNeutralisedClimate = (profile: ParkProfile): number => {
   const roof = profile.dimensions.roof;
   const isClimateControlled = roof === 'dome' || roof === 'fixed_roof';
-  return isClimateControlled ? PARK_COEFFICIENTS.NEUTRAL_CLIMATE_C : CLIMATE_C[profile.dimensions.climate];
+  // The PARK's own temperature, not the regime's default: a 30 C open-air park is not neutralised
+  // by a 25 C one just because both are `hot_humid`. `climateCUsed` is the resolved value that
+  // already carries the per-park override, so this reads the same number the density channel does.
+  return isClimateControlled
+    ? PARK_COEFFICIENTS.NEUTRAL_CLIMATE_C
+    : (profile.climateCUsed ?? CLIMATE_C[profile.dimensions.climate]);
 };
 
 /**

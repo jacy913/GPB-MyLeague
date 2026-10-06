@@ -19,6 +19,7 @@ import { ClubHero, ClubSnapshot, DepthChart, SchedulePanel, TeamDirectory } from
 import { RosterPanel } from './teams/RosterPanel';
 import { ParkPanel } from './game/ParkPanel';
 import { RetroButton } from './ui';
+import { parkProfile } from '../lib/analytics/parkProfile';
 import {
   ROSTER_DISPLAY_ORDER,
   ROSTER_STRENGTH_SLOT_COUNT,
@@ -403,7 +404,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
           The ground this club plays on — the walls, the air, and what they do to its numbers.
         </p>
         <RetroButton variant="ghost" size="sm" onClick={() => setIsParkOpen(true)}>
-          <MapPinned className="h-4 w-4" aria-hidden="true" /> {selectedTeam.city} Park
+          <MapPinned className="h-4 w-4" aria-hidden="true" /> {parkProfile(selectedTeam.id)?.parkCity ?? selectedTeam.city} Park
         </RetroButton>
       </div>
 

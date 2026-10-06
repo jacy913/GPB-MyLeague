@@ -84,6 +84,9 @@
   },
 
   "alc": {
+    "parkCity": "Greenpond",
+    "meanTempC": 12,
+    "meanTempC": 12,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 348, "cfFt": 415, "rfFt": 344,
@@ -97,6 +100,9 @@
     "foulGround": "standard"
   },
   "val": {
+    "parkCity": "Corton",
+    "meanTempC": 16,
+    "meanTempC": 16,
     "altitude": "high",
     "roof": "open_air",
     "lfFt": 337, "cfFt": 402, "rfFt": 334,
@@ -110,6 +116,9 @@
     "foulGround": "standard"
   },
   "luf": {
+    "parkCity": "Borresurt",
+    "meanTempC": 16,
+    "meanTempC": 16,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 331, "cfFt": 398, "rfFt": 355,
@@ -123,6 +132,9 @@
     "foulGround": "small"
   },
   "hui": {
+    "parkCity": "Slattswig",
+    "meanTempC": 19,
+    "meanTempC": 19,
     "altitude": "moderate",
     "roof": "fixed_roof",
     "lfFt": 329, "cfFt": 401, "rfFt": 329,
@@ -136,6 +148,9 @@
     "foulGround": "standard"
   },
   "ara": {
+    "parkCity": "Bosta",
+    "meanTempC": 18,
+    "meanTempC": 18,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 361, "cfFt": 402, "rfFt": 352,
@@ -149,6 +164,9 @@
     "foulGround": "standard"
   },
   "des": {
+    "parkCity": "Bergum",
+    "meanTempC": 36,
+    "meanTempC": 36,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 336, "cfFt": 409, "rfFt": 333,
@@ -162,6 +180,9 @@
     "foulGround": "small"
   },
   "suk": {
+    "parkCity": "Cayenyan",
+    "meanTempC": 25,
+    "meanTempC": 25,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 322, "cfFt": 396, "rfFt": 326,
@@ -175,6 +196,9 @@
     "foulGround": "generous"
   },
   "gar": {
+    "parkCity": "Bartoba",
+    "meanTempC": 25,
+    "meanTempC": 25,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 341, "cfFt": 400, "rfFt": 338,
@@ -188,6 +212,9 @@
     "foulGround": "standard"
   },
   "gra": {
+    "parkCity": "Daster",
+    "meanTempC": 4,
+    "meanTempC": 4,
     "altitude": "sea",
     "roof": "retractable_open",
     "lfFt": 335, "cfFt": 405, "rfFt": 332,
@@ -201,6 +228,9 @@
     "foulGround": "standard"
   },
   "tru": {
+    "parkCity": "Jootsbrook",
+    "meanTempC": 6,
+    "meanTempC": 6,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 328, "cfFt": 394, "rfFt": 331,
@@ -214,6 +244,9 @@
     "foulGround": "small"
   },
   "caf": {
+    "parkCity": "Gabys",
+    "meanTempC": 1,
+    "meanTempC": 1,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 342, "cfFt": 401, "rfFt": 345,
@@ -227,6 +260,9 @@
     "foulGround": "standard"
   },
   "rag": {
+    "parkCity": "Kauping",
+    "meanTempC": 8,
+    "meanTempC": 8,
     "altitude": "high",
     "roof": "open_air",
     "lfFt": 355, "cfFt": 408, "rfFt": 352,
@@ -240,6 +276,9 @@
     "foulGround": "standard"
   },
   "win": {
+    "parkCity": "Lindestadt",
+    "meanTempC": 16,
+    "meanTempC": 16,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 330, "cfFt": 397, "rfFt": 333,
@@ -253,6 +292,9 @@
     "foulGround": "standard"
   },
   "aub": {
+    "parkCity": "Foulles",
+    "meanTempC": 15,
+    "meanTempC": 15,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 322, "cfFt": 403, "rfFt": 354,
@@ -266,6 +308,9 @@
     "foulGround": "standard"
   },
   "dwi": {
+    "parkCity": "Cathegor",
+    "meanTempC": 4,
+    "meanTempC": 4,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 339, "cfFt": 404, "rfFt": 336,
@@ -279,6 +324,9 @@
     "foulGround": "generous"
   },
   "hou": {
+    "parkCity": "Duccy",
+    "meanTempC": 0,
+    "meanTempC": 0,
     "altitude": "extreme",
     "roof": "open_air",
     "lfFt": 337, "cfFt": 412, "rfFt": 342,
@@ -293,6 +341,9 @@
   },
 
   "ock": {
+    "parkCity": "Vingross",
+    "meanTempC": 15,
+    "meanTempC": 15,
     "altitude": "sea",
     "roof": "fixed_roof",
     "lfFt": 334, "cfFt": 406, "rfFt": 331,
@@ -306,6 +357,9 @@
     "foulGround": "standard"
   },
   "bal": {
+    "parkCity": "Gauler",
+    "meanTempC": 13,
+    "meanTempC": 13,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 328, "cfFt": 410, "rfFt": 335,
@@ -319,6 +373,9 @@
     "foulGround": "standard"
   },
   "fes": {
+    "parkCity": "Wesdech",
+    "meanTempC": 5,
+    "meanTempC": 5,
     "altitude": "extreme",
     "roof": "open_air",
     "lfFt": 336, "cfFt": 415, "rfFt": 340,
@@ -332,6 +389,9 @@
     "foulGround": "small"
   },
   "urb": {
+    "parkCity": "Urbington",
+    "meanTempC": 16,
+    "meanTempC": 16,
     "altitude": "moderate",
     "roof": "open_air",
     "lfFt": 352, "cfFt": 412, "rfFt": 350,
@@ -345,6 +405,9 @@
     "foulGround": "generous"
   },
   "sin": {
+    "parkCity": "Cayervo",
+    "meanTempC": 26,
+    "meanTempC": 26,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 333, "cfFt": 401, "rfFt": 329,
@@ -358,6 +421,9 @@
     "foulGround": "standard"
   },
   "loy": {
+    "parkCity": "Bridgener",
+    "meanTempC": 19,
+    "meanTempC": 19,
     "altitude": "moderate",
     "roof": "open_air",
     "lfFt": 326, "cfFt": 395, "rfFt": 330,
@@ -371,6 +437,9 @@
     "foulGround": "small"
   },
   "niy": {
+    "parkCity": "Niyo",
+    "meanTempC": 25,
+    "meanTempC": 25,
     "altitude": "sea",
     "roof": "retractable_open",
     "lfFt": 330, "cfFt": 397, "rfFt": 334,
@@ -384,6 +453,9 @@
     "foulGround": "standard"
   },
   "ars": {
+    "parkCity": "Columnla",
+    "meanTempC": 28,
+    "meanTempC": 28,
     "altitude": "high",
     "roof": "open_air",
     "lfFt": 360, "cfFt": 418, "rfFt": 351,
@@ -397,6 +469,9 @@
     "foulGround": "generous"
   },
   "der": {
+    "parkCity": "Lerkanger",
+    "meanTempC": 4,
+    "meanTempC": 4,
     "altitude": "moderate",
     "roof": "retractable_open",
     "lfFt": 337, "cfFt": 408, "rfFt": 334,
@@ -410,6 +485,9 @@
     "foulGround": "standard"
   },
   "rei": {
+    "parkCity": "Karkebo",
+    "meanTempC": 0,
+    "meanTempC": 0,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 331, "cfFt": 400, "rfFt": 335,
@@ -423,6 +501,9 @@
     "foulGround": "standard"
   },
   "fey": {
+    "parkCity": "Hanax",
+    "meanTempC": 18,
+    "meanTempC": 18,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 324, "cfFt": 393, "rfFt": 344,
@@ -436,6 +517,9 @@
     "foulGround": "small"
   },
   "cal": {
+    "parkCity": "Yurnisch",
+    "meanTempC": 20,
+    "meanTempC": 20,
     "altitude": "sea",
     "roof": "dome",
     "lfFt": 336, "cfFt": 404, "rfFt": 336,
@@ -449,6 +533,9 @@
     "foulGround": "standard"
   },
   "sta": {
+    "parkCity": "Muhllug",
+    "meanTempC": 13,
+    "meanTempC": 13,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 335, "cfFt": 411, "rfFt": 355,
@@ -462,6 +549,9 @@
     "foulGround": "standard"
   },
   "bra": {
+    "parkCity": "Sundsby",
+    "meanTempC": 26,
+    "meanTempC": 26,
     "altitude": "moderate",
     "roof": "open_air",
     "lfFt": 329, "cfFt": 396, "rfFt": 333,
@@ -475,6 +565,9 @@
     "foulGround": "small"
   },
   "geb": {
+    "parkCity": "Rochiere",
+    "meanTempC": 18,
+    "meanTempC": 18,
     "altitude": "sea",
     "roof": "open_air",
     "lfFt": 340, "cfFt": 403, "rfFt": 337,
@@ -488,6 +581,9 @@
     "foulGround": "standard"
   },
   "and": {
+    "parkCity": "Lutzsche",
+    "meanTempC": 1,
+    "meanTempC": 1,
     "altitude": "high",
     "roof": "open_air",
     "lfFt": 362, "cfFt": 410, "rfFt": 353,

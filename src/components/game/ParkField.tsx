@@ -163,7 +163,7 @@ export const ParkField: React.FC<{ profile: ParkProfile }> = ({ profile }) => {
       className="block h-auto w-full"
       role="img"
       aria-label={[
-        `${profile.teamId} park diagram.`,
+        `${profile.parkCity ?? profile.teamId} park diagram.`,
         `Left field ${profile.lfFt} feet, left-centre ${Math.round(profile.lcfFt)}, centre ${profile.cfFt},`,
         `right-centre ${Math.round(profile.rcfFt)}, right field ${profile.rfFt}.`,
         `${dimensions.wallHeightFt} foot ${WALL_LABEL[dimensions.wallColor]} wall, ${dimensions.roof.replace(/_/g, ' ')}.`,

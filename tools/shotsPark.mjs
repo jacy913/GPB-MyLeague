@@ -297,26 +297,55 @@ const main = async () => {
     them identical and prove nothing at all.
   */
   /*
-    MATCHED ON THE THREE-LETTER TICKER, not the club name.
+    MATCHED ON THE HOME CLUB'S FULL NAME, READ OUT OF GameCard's aria-label.
 
-    The schedule's game buttons read "@DESAway0-0", so a search for "Desseldein" or "Muskets" finds
-    nothing at all and the sweep reports zero games at every park it was asked about -- which is the
-    failure mode where a probe correctly executes and reports nothing, having searched the wrong thing.
+    Three wrong approaches came before this one, and all three produced a confident wrong answer
+    rather than an error:
+
+      1. Matching club names against the button text found nothing, because the compact strip reads
+         "@DESAway0-0".
+      2. Matching the three-letter ticker then found things, but by SUBSTRING -- so `HOU` also
+         matched Houssen when Houdan was wanted, and `STA` opened a fixture whose home club was
+         Braasshoem. The sweep reported "3 parks screenshotted" and delivered the wrong three.
+      3. Asking for `DES` and getting Vallile again, the same bug a third time.
+
+    `GameCard` renders `aria-label="Open <away> at <home>, <status>"`, which names BOTH clubs in
+    full. So the wanted park is found by asking for a card whose aria-label ends that home club's
+    name, and the club's name is resolved from `INITIAL_TEAMS` in the page rather than guessed at
+    from a ticker. A miss now returns nothing instead of the wrong park, which is the property that
+    was missing all along.
   */
-  const wantedClubs = (process.env.GPB_PARK_CLUBS ?? 'AND,CAL,STA,HOU')
+  const wantedClubs = (process.env.GPB_PARK_CLUBS ?? 'and,cal,sta,hou')
     .split(',').map((s) => s.trim()).filter(Boolean);
-  console.log(`  looking for tickers: ${wantedClubs.join(', ')}\n`);
+  console.log(`  looking for parks of: ${wantedClubs.join(', ')}\n`);
 
-  const games = await evaluate(`(() => {
-    const wanted = ${JSON.stringify(wantedClubs.map((c) => c.toLowerCase()))};
-    const nodes = [...document.querySelectorAll('button, [role="button"]')]
-      .filter((b) => !b.disabled)
-      .map((b) => (b.getAttribute('aria-label') || b.textContent || '').trim())
-      .filter((t) => t.length > 4 && t.length < 70);
-    return [...new Set(nodes)].filter((t) => wanted.some((w) => t.toLowerCase().includes(w)));
+  const games = await evaluate(`(async () => {
+    const wanted = ${JSON.stringify(wantedClubs)};
+    const { INITIAL_TEAMS } = await import('/src/data/teams.ts');
+    const nameOf = Object.fromEntries(INITIAL_TEAMS.map((t) => [t.id, t.name]));
+
+    const found = [];
+    for (const id of wanted) {
+      const clubName = nameOf[id];
+      if (!clubName) { found.push({ id, error: 'no such club' }); continue; }
+      // The HOME club is the park in play, so match the name that follows " at ".
+      const card = [...document.querySelectorAll('button[aria-label]')]
+        .find((b) => !b.disabled
+          && new RegExp('\\\\bat ' + clubName.replace(/[.*+?^$()|[\\]{}\\\\]/g, '\\\\$&') + '\\\\s*,').test(b.getAttribute('aria-label') || ''));
+      if (!card) { found.push({ id, club: clubName, error: 'no scheduled home game' }); continue; }
+      found.push({ id, club: clubName, aria: (card.getAttribute('aria-label') || '').trim() });
+    }
+    return found;
   })()`);
-  console.log(`  ${games.length} games at those parks\n`);
-  console.log(`  found: ${games.slice(0, 8).join(' | ') || '(none)'}\n`);
+  const playable = games.filter((g) => !g.error);
+  console.log(
+    `  ${playable.length} of ${games.length} park${games.length === 1 ? '' : 's'} `
+    + `${playable.length === 1 ? 'has' : 'have'} a home game today\n`,
+  );
+  games.forEach((g) => console.log(
+    `    ${g.id.padEnd(4)} ${g.error ? `SKIPPED: ${g.error}` : g.aria}`,
+  ));
+  console.log('');
 
   /*
     NAVIGATE TO THE SCHEDULE FRESH, EVERY TIME.
@@ -352,21 +381,31 @@ const main = async () => {
 
   const seen = [];
   for (const game of games) {
+    if (game.error) {
+      console.log(`  ${game.id}: ${game.error}${game.club ? ` (${game.club})` : ''}`);
+      continue;
+    }
     if (seen.length >= 3) break;
     errors = [];
     exceptions = [];
 
     await gotoSchedule();
 
+    /*
+      Clicked BY THE SAME ARIA-LABEL THAT WAS MATCHED ABOVE, re-resolved in the page rather than by
+      replaying a label string through the node. Matching once to discover a game and then matching
+      again by text to open it is two chances to pick the wrong button, and this file has taken both.
+    */
     const opened = await evaluate(`(() => {
-      const w = ${JSON.stringify(game.toLowerCase())};
-      const n = [...document.querySelectorAll('button, [role="button"]')]
-        .find((x) => !x.disabled && (x.getAttribute('aria-label') || x.textContent || '').trim().toLowerCase() === w);
+      const clubName = ${JSON.stringify(game.club)};
+      const n = [...document.querySelectorAll('button[aria-label]')]
+        .find((b) => !b.disabled
+          && new RegExp('\\\\bat ' + clubName.replace(/[.*+?^$()|[\\]{}\\\\]/g, '\\\\$&') + '\\\\s*,').test(b.getAttribute('aria-label') || ''));
       if (!n) return 'GONE';
       n.click(); return 'clicked';
     })()`);
     if (opened !== 'clicked') {
-      console.log(`  ${game}: ${opened}`);
+      console.log(`  ${game.id} (${game.club}): ${opened}`);
       continue;
     }
     await sleep(2600);
@@ -378,7 +417,7 @@ const main = async () => {
       n.click(); return 'opened';
     })()`);
     if (parkClicked !== 'opened') {
-      console.log(`  ${game}: ${parkClicked}`);
+      console.log(`  ${game.id} (${game.club}): ${parkClicked}`);
       await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /back to schedule/i.test((x.textContent||'').trim())); if (b) b.click(); return 'ok'; })()`);
       await sleep(1400);
       continue;
@@ -405,9 +444,11 @@ const main = async () => {
       };
     })()`);
     if (info.hasDialog) {
-      const gameTicker = game.replace(/[^A-Za-z]/g, '').slice(0, 3).toLowerCase();
+      // Named by the club id we asked for, not by a ticker scraped out of a label -- which is the whole
+    // point of the change above.
+    const gameTicker = game.id;
       const file = await shot(`park-${tag}-${seen.length + 1}-${gameTicker}`);
-      console.log(`  ${game}`);
+      console.log(`  ${game.id} (${game.club})`);
       console.log(
         `    "${info.title}"  field ${info.svgWidth}x${info.svgHeight}px`
         + `  wall label: ${info.hasWallLabel ? 'yes' : '*** MISSING ***'}`
