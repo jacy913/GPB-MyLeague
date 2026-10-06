@@ -190,7 +190,7 @@ export const BettingHub: React.FC<BettingSlateProps> = ({
         )}
       </div>
 
-      <OpenBets bets={bets} moneyline={moneyline} />
+      <OpenBets bets={bets} moneyline={moneyline} teams={teams} />
 
       {view === 'slate' && <SlateView lines={lines} moneyline={moneyline} onPlace={onPlace} balance={balance} />}
       {view === 'props' && (
@@ -1742,9 +1742,12 @@ export const OpenBets: React.FC<{
   bets: PlacedBet[];
   /** The current slate's games, so a game bet can name its fixture. */
   moneyline: GameLine[];
-}> = ({ bets, moneyline }) => {
+  /** The clubs, so a prop bet can say whose player it is. */
+  teams: Team[];
+}> = ({ bets, moneyline, teams }) => {
   const open = bets.filter((bet) => bet.status === 'open');
   const fixtureById = useMemo(() => buildFixtureLookup(moneyline), [moneyline]);
+  const teamById = useTeamLookup(teams);
 
   if (open.length === 0) return null;
 
@@ -1779,7 +1782,7 @@ export const OpenBets: React.FC<{
                 one got the fixture and the date, the slip did not, and the slip is the
                 surface a manager opens precisely to check on money at risk.
               */}
-              <BetFixtureLine bet={bet} fixture={fixtureForBet(bet, fixtureById)} className="mt-0.5" />
+              <BetFixtureLine bet={bet} fixture={fixtureForBet(bet, fixtureById)} teamById={teamById} className="mt-0.5" />
             </div>
             <div className="flex items-center gap-2">
               {bet.backedMedia && (

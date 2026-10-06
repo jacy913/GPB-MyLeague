@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronRight, Flame, ShieldCheck } from 'lucide-react';
 import type { MediaId } from '../../data/media';
+import type { Team } from '../../types';
 import { MEDIA_BY_ID } from '../../data/media';
 import { MIN_STAKE } from '../../lib/wallet';
 import { RetroButton } from '../ui/RetroButton';
@@ -37,6 +38,7 @@ type PropPlaceInput = {
   resolvesOn: string;
   propStat: PropMarket['stat'];
   propPlayerId: string;
+  propTeamId: string;
   propPlayerName: string;
   propLine: number;
 };
@@ -106,6 +108,8 @@ interface PropCardProps {
   balance: number;
   /** The game this prop belongs to, resolved from the slate. Null when it has dropped off. */
   fixture: GameLine | null;
+  /** Club lookup, so the card can say whose player this is. */
+  teamById?: Map<string, Team>;
   onPlace: (input: PropPlaceInput) => void;
   registerRef: (node: HTMLDivElement | null) => void;
 }
@@ -115,6 +119,7 @@ export const PropCard: React.FC<PropCardProps> = ({
   focused,
   balance,
   fixture,
+  teamById,
   onPlace,
   registerRef,
 }) => {
@@ -132,6 +137,9 @@ export const PropCard: React.FC<PropCardProps> = ({
     */
   const temperament = TEMPERAMENT[propTemperamentFor(market.consensusProbability)];
   const TemperamentIcon = temperament.Icon;
+  // The player's own club, NOT one of the fixture's -- the market carries 	eamId and dropping it is
+  // what left the card unable to say which of the two teams this player belongs to.
+  const playerTeam = teamById?.get(market.teamId) ?? null;
 
   const place = (side: PropSide, price: number, backed: MediaId | null) => onPlace({
     kind: 'prop',
@@ -145,6 +153,7 @@ export const PropCard: React.FC<PropCardProps> = ({
     resolvesOn: market.date,
     propStat: market.stat,
     propPlayerId: market.playerId,
+      propTeamId: market.teamId,
     propPlayerName: market.playerName,
     propLine: market.line,
   });
@@ -199,7 +208,27 @@ export const PropCard: React.FC<PropCardProps> = ({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <span className="t-stat truncate">{market.playerName}</span>
+        {/*
+          WHOSE PLAYER, AND WHICH LINE -- THE TWO THINGS YOU ACTUALLY BET ON.
+
+          The card had the game, the date, the player's name and then the line, each in its own row at
+          its own weight, with the fixture crests one step larger than anything else on the card. So
+          the two facts a wager is made of -- whose player, and what number -- were the two smallest
+          things in it, and the club the player belongs to was not stated at all.
+
+          The crest here is the player's OWN club, not the fixture's, and it is paired with the line
+          rather than with the game. That is the correction: the opponent is context, the player and
+          the number are the proposition.
+        */}
+        <span className="flex min-w-0 items-center gap-2">
+          {playerTeam && (
+            <>
+              <TeamLogo team={playerTeam} sizeClass="h-5 w-5 shrink-0" />
+              <span className="sr-only">Plays for {playerTeam.city}</span>
+            </>
+          )}
+          <span className="t-stat truncate">{market.playerName}</span>
+        </span>
         <span
           className="inline-flex shrink-0 items-center gap-1 border px-1.5 py-0.5 t-caption"
           style={{ borderColor: temperament.border, color: temperament.border }}
@@ -209,10 +238,23 @@ export const PropCard: React.FC<PropCardProps> = ({
         </span>
       </div>
 
-      <p className="t-caption text-[var(--color-ink-dim)]">
+      {/*
+        THE LINE, PROMOTED.
+
+        It was `t-caption` below the fold of the card's own hierarchy, which is the same size as the
+        outlet count and about the same weight as a date. It is now the largest thing on the card
+        after the player's name, because "over or under 2.5" IS the question and everything else is
+        supporting information. The outlet count drops to its own line rather than trailing the number,
+        so it cannot be read as part of it.
+      */}
+      <p className="mt-1 t-h3 tabular-nums text-[var(--color-ink)]">
         O/U {market.line} {market.statPlural}
-        {row.publishedBy > 1 && ` · ${row.publishedBy} outlets published this`}
       </p>
+      {row.publishedBy > 1 && (
+        <p className="t-caption text-[var(--color-ink-faint)]">
+          {row.publishedBy} outlets published this
+        </p>
+      )}
 
       {/*
         HOUSE PRICE, then the strip. The two buttons sit on one row so the over/under decision --
@@ -319,6 +361,7 @@ export const PropOutletDisclosure: React.FC<{
       resolvesOn: market.date,
       propStat: market.stat,
       propPlayerId: market.playerId,
+      propTeamId: market.teamId,
       propPlayerName: market.playerName,
       propLine: market.line,
     });

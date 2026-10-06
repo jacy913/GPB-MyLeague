@@ -77,9 +77,10 @@ export const BettingSlip: React.FC<{
   balance, openBets, settledBets, games, teams, summary,
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
+  const teamById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const fixtureById = useMemo(
-    () => buildFixtureLookupFromGames(games, new Map(teams.map((team) => [team.id, team]))),
-    [games, teams],
+    () => buildFixtureLookupFromGames(games, teamById),
+    [games, teamById],
   );
 
   /*

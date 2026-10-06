@@ -57,6 +57,7 @@ export interface SlipEntry {
    */
   propStat?: PropStatKey;
   propPlayerId?: string;
+  propTeamId?: string;
   propPlayerName?: string;
   propLine?: number;
   /**
@@ -295,6 +296,7 @@ export const useBettingSlip = (): BettingSlipState & { settle: (input: Settlemen
         note: slip.line === undefined ? undefined : String(slip.line),
         propStat: slip.propStat,
         propPlayerId: slip.propPlayerId,
+    propTeamId: slip.propTeamId,
         propPlayerName: slip.propPlayerName,
         propLine: slip.propLine,
       });

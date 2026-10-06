@@ -54,24 +54,75 @@ export const BetFixtureLine: React.FC<{
    * still has one.
    */
   fixture: FixtureIdentity | undefined;
+  /** Club lookup, so a prop bet can name whose player it is. */
+  teamById?: Map<string, Team>;
   className?: string;
-}> = ({ bet, fixture, className = '' }) => (
-  <p
-    className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 t-caption text-[var(--color-ink-dim)] ${className}`}
-  >
-    {fixture && (
-      <span className="flex items-center gap-1">
-        <TeamLogo team={fixture.awayTeam} sizeClass="h-4 w-4" />
-        <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
-        <TeamLogo team={fixture.homeTeam} sizeClass="h-4 w-4" />
-        <span className="sr-only">{fixture.awayTeam.city} at {fixture.homeTeam.city}</span>
+}> = ({ bet, fixture, teamById, className = '' }) => {
+  /*
+    WHOSE PLAYER IT IS, ON A PROP.
+
+    A prop bet used to show the two clubs and the date and nothing else, which meant a reader looking
+    at "Over 2.5 Hits Allowed, -115, Calukan at Reinland, Apr 12" had no way to tell whether the player
+    was pitching for the away club or the home one. The complaint that produced this was "clicking open
+    bet takes me to the game screen and I still do not know which player the team has" -- and the
+    information was one field away the whole time, because `PropMarket` has carried `teamId` since the
+    prop market was built.
+
+    It is now STORED on the bet rather than looked up, so a mid-season trade cannot make the same bet
+    read as two different players on two different screens.
+
+    The player's club is repeated as text next to the crest rather than being left to the mark: this is
+    a settled-wager record and a bare logo three months later is an ambiguous one.
+  */
+  const propTeam = bet.kind === 'prop' && bet.propTeamId && teamById
+    ? teamById.get(bet.propTeamId)
+    : undefined;
+
+  /*
+    AND WHETHER THE BET IS WAITING ON A GAME AT ALL.
+
+    The fixture crests have always been here, and they have never said what they meant: a moneyline and
+    a World Series champion both rendered a row of text and a date, and the only thing distinguishing
+    them was whether a crest appeared. "Setts on tonight's game" and "settles whenever the season ends"
+    are different promises and a reader should not have to infer one from the presence of an image.
+
+    So the kind is named. Short, because it is a label and not a heading: GAME, SERIES or SEASON. It is
+    omitted for a bet whose own kind already says it -- an award bet titled "Batting MVP" does not need
+    the word SEASON stapled to it.
+  */
+  const settlesOn = isGameBet(bet) ? 'Game' : bet.kind === 'world_series' ? 'Series' : 'Season';
+  const kindIsRedundant = bet.kind === 'award' || bet.kind === 'division' || bet.kind === 'league';
+
+  return (
+    <p
+      className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 t-caption text-[var(--color-ink-dim)] ${className}`}
+    >
+      {fixture && (
+        <span className="flex items-center gap-1">
+          <TeamLogo team={fixture.awayTeam} sizeClass="h-4 w-4" />
+          <span className="text-[var(--color-ink-faint)]" aria-hidden="true">at</span>
+          <TeamLogo team={fixture.homeTeam} sizeClass="h-4 w-4" />
+          <span className="sr-only">{fixture.awayTeam.city} at {fixture.homeTeam.city}</span>
+        </span>
+      )}
+      {propTeam && (
+        <span className="flex items-center gap-1">
+          <span className="text-[var(--color-ink-faint)]" aria-hidden="true">&middot;</span>
+          <TeamLogo team={propTeam} sizeClass="h-4 w-4" />
+          <span>{propTeam.city}</span>
+        </span>
+      )}
+      {!kindIsRedundant && (
+        <span className="rounded-sm bg-[var(--color-sunken)] px-1 text-[var(--color-ink-faint)]">
+          settles on {settlesOn.toLowerCase()}
+        </span>
+      )}
+      <span className="tabular-nums">
+        {bet.resolvesOn ? formatResolutionDate(bet.resolvesOn) : 'No resolution date recorded'}
       </span>
-    )}
-    <span className="tabular-nums">
-      {bet.resolvesOn ? formatResolutionDate(bet.resolvesOn) : 'No resolution date recorded'}
-    </span>
-  </p>
-);
+    </p>
+  );
+};
 
 /**
  * Is this bet about a single game?

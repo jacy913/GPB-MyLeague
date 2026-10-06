@@ -77,6 +77,15 @@ export interface PlacedBet {
    */
   propStat?: PropStatKey;
   propPlayerId?: string;
+  /**
+   * The club the player belonged to WHEN THE BET WAS PLACED, not looked up at render time.
+   *
+   * Stored for the same reason `resolvesOn` is. A player can be traded mid-season, and a bet that
+   * reads "Reinland" on one screen and "Niyoli" on another -- or worse, resolves against whichever
+   * club the player happens to be on now -- is a bet that cannot be audited. The market carried
+   * `teamId` and it was being dropped on the floor; this keeps it.
+   */
+  propTeamId?: string;
   propPlayerName?: string;
   /** The posted line, kept because the displayed line is part of the record. */
   propLine?: number;
