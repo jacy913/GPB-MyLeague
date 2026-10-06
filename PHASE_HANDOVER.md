@@ -152,7 +152,7 @@ comparison into a lie told in geometry), and a 100-FT scale bar so the reader ca
 check. Four entered dimensions are *drawn* rather than tabulated: wall colour and
 height, foul ground, roof.
 
-Later corrections to it, all in the working tree at the time of writing:
+Later corrections to it, all since `d7ebbab`:
 
 - **Park names.** `parkCity` on all 32, from a supplied list. The Rogues (`rei`)
   was the one club missing from that list and was given `Karkebo` on request.
@@ -169,10 +169,34 @@ Later corrections to it, all in the working tree at the time of writing:
   Anything above 1.0 makes the fence concave, which no real park has.
 - **Per-park `meanTempC`**, so temperature stopped being a five-valued field
   league-wide. Drawn once from a fixed seed and written into `parks.json` rather
-  than randomised at runtime — it reaches `airDensityRatio` and therefore every
+  than randomised at runtime - it reaches `airDensityRatio` and therefore every
   park factor, so `Math.random()` there would re-roll thirty-two home-run rates
   on every page load. See the unseeded-schedule limitation above; this field is
   deliberately not a second instance of it.
+- **The season, April to October**, under the map - display-only by
+  construction. Bars are scaled to each park's own season rather than from zero,
+  so a 12-24C park and a 34-47C one do not both collapse into stubs; every value
+  is printed under its column and the annual mean is in the heading. The cost is
+  stated in the code: cross-park comparison is not possible from the bars.
+
+### A commit can pass every check and still not build
+
+| Commit | Scope |
+|---|---|
+| `714ce5b` | `checkEveryCommitBuilds` - a commit can pass every check and still not build |
+
+Two commits in the park work shipped a consumer of `ParkProfile.parkCity` while
+leaving the module that declares it in a **later** commit. Every gate was green
+at the tip - `tsc` 0, `vite build` clean, all 41 check tools, `qaSweep` 17/17,
+`qaClicks` no control threw - because all of them run against the tip. A bisect
+looking for the regression would have landed on a commit that never compiled.
+
+`tools/checkEveryCommitBuilds.ts` checks out each commit and builds it, restoring
+the branch in a `finally`. It reports **three** states, `ok` / `broken` /
+`unknown`, because it produced confident false positives twice before it produced
+a true result: `execFileSync('npx', ...)` returns empty output and never launches
+here, and `tsc` is silent on success. Both looked like real verdicts. It is proven
+to fail by re-injecting the original defect.
 
 **Not pushed.** `local` is **39 commits ahead of `origin/local`**. Everything below
 is local only.
