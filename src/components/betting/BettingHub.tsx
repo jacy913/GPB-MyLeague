@@ -1764,15 +1764,33 @@ export const OpenBets: React.FC<{
         {open.map((bet) => (
           <div
             key={bet.id}
-            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-x-3 border-l-[3px] border-l-[var(--color-gold)] bg-[var(--color-sunken)] px-3 py-1.5"
           >
             <div className="min-w-0">
-              <p className="t-stat-sm truncate">
-                {bet.selectionLabel} {formatAmerican(bet.price)}
-              </p>
-              <p className="t-caption text-[var(--color-ink-faint)]">
-                {bet.marketTitle}
-                {bet.note && ` · line ${Number(bet.note).toFixed(1)}`}
+              {/*
+                ONE LINE, BOLD, AND NOTHING REMOVED.
+
+                This row was three lines: the selection and price, then the market title, then the
+                fixture. For a prop the first two were the same sentence written twice -- `selectionLabel`
+                is "Yori Omori Over 0.5" and `marketTitle` is "Yori Omori · Total Bases", so the
+                player's name appeared twice in two consecutive lines and the row was twice as tall as
+                the information in it.
+
+                The literal fix -- delete the second line -- was rejected because it deletes the STAT.
+                "Total Bases" appears in `marketTitle` and nowhere else on the row; `selectionLabel`
+                carries the player, the side and the number but not what was being counted. So the
+                line is MERGED rather than cut, built from `marketTitle` for the player and the stat
+                and `selection`/`propLine` for the side and the number:
+
+                    Yori Omori · Total Bases · Over 0.5 · -110
+
+                which is one line, bold, and every fact the three lines carried.
+              */}
+              <p className="t-stat truncate">
+                {bet.kind === 'prop'
+                  ? `${bet.marketTitle} · ${bet.selection} ${bet.propLine}`
+                  : `${bet.selectionLabel} ${formatAmerican(bet.price)}`}
+                {bet.kind === 'prop' && ` · ${formatAmerican(bet.price)}`}
               </p>
               {/*
                 WHICH GAME, AND WHEN.

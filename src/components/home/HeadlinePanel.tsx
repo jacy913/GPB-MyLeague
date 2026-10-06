@@ -267,6 +267,19 @@ export const FeaturedGamePanel: React.FC<{
             </div>
             {side(home, line.homeOdds, 'right')}
           </div>
+          {/*
+            A CROWD, AND NO CROWD, USED TO BE SAID HERE.
+
+            The panel carried a line reading "Crowd and atmosphere are not modelled yet" underneath
+            the forecaster split, which was honest when the panel printed an audience figure but no
+            crowd figure at all. It stopped being useful the moment `crowdSize` gave it one -- a note
+            announcing the absence of a thing that is now present, on the same panel, four lines below
+            a viewer count.
+
+            Nothing is lost by removing it. `crowdSize.ts` still carries the note about `lib/
+            analytics/crowd.ts` meaning BETTORS rather than spectators, which is where a stadium crowd
+            would actually be built, and that is the place a reader of the code needs it.
+          */}
           {line.disagreement >= 0.10 && (
             <p className="t-caption mt-4 text-[var(--color-warn)]">
               {forecasterName(line.outlier)} is {Math.round(line.disagreement * 100)} points
@@ -293,9 +306,6 @@ export const FeaturedGamePanel: React.FC<{
             show a bookmaker's flow as though it were an atmosphere, which is the exact substitution
             this panel's own forecaster line above is careful not to make.
           */}
-          <p className="t-caption mt-4 text-[var(--color-ink-faint)]">
-            Crowd and atmosphere are not modelled yet. The split above is the forecasters&rsquo; only.
-          </p>
         </button>
       ) : (
         <p className="t-body text-[var(--color-ink-dim)]">
