@@ -63,6 +63,7 @@ import {
   type ParkFactors,
 } from '../src/lib/analytics/parkFactors';
 import { ALL_PARK_PROFILES } from '../src/lib/analytics/parkProfile';
+import { seededRandomStream } from '../src/lib/analytics/playoffMonteCarlo';
 import type { AtBatOutcome, Game, LeaguePlayerState, Team } from '../src/types';
 
 const YEAR = 2026;
@@ -402,7 +403,29 @@ const main = async (): Promise<void> => {
     );
     const manager = new SimulationManager({
       teams,
-      games: generateSchedule(teams, { seasonStartDate: getDefaultSeasonStartDate(YEAR), seasonDays: 180 }),
+      /*
+        A DIFFERENT SLATE PER REPLICATE, seeded rather than left to chance, and this is the third
+        version of this line.
+
+        `generateSchedule` used to draw from `Math.random`, so every replicate silently got its own
+        random 180-game slate -- twelve different fixture lists, which is what made the mean across
+        replicates mean anything. The thresholds below were calibrated against that averaging.
+
+        Making `generateSchedule` deterministic then quietly removed it: all twelve replicates
+        started sharing one fixture list, and the study stopped sampling the schedule distribution
+        it was written to sample. The visible symptom was checks 11 and 12 failing, but the honest
+        one was check 13 -- "ROAD production does NOT track any park factor" -- because with a single
+        pinned slate, whichever road trips that slate happens to contain read as a park effect.
+
+        So the sampling is restored explicitly and reproducibly. The seed is derived from the same
+        `rep` the universe seed already uses, so replicate N keeps the roster it had and simply gets
+        its slate back.
+      */
+      games: generateSchedule(teams, {
+        seasonStartDate: getDefaultSeasonStartDate(YEAR),
+        seasonDays: 180,
+        random: seededRandomStream(90210 + rep * 7919),
+      }),
       playerState: universe,
       settings: DEFAULT_SETTINGS,
       currentDate: getDefaultSeasonStartDate(YEAR),

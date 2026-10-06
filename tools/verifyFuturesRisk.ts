@@ -44,7 +44,6 @@ import { buildWorldSeriesMarkets } from '../src/lib/mediaMarkets';
 import { isPlayoffGame } from '../src/logic/playoffs';
 import {
   seededRandomStream,
-  withSeededRandom,
   withSeededRandomAsync,
 } from '../src/lib/analytics/playoffMonteCarlo';
 import { WORLD_SERIES_MARKET_KEY } from '../src/lib/markets';
@@ -126,23 +125,29 @@ const main = async (): Promise<void> => {
   );
 
   /*
-    THE SCHEDULE IS SEEDED TOO, and finding this was the second half of the flakiness fix.
+    THE SCHEDULE IS SEEDED TOO, and this comment has been rewritten once already because the fix it
+    described stopped being true.
 
-    Seeding only the 180-day loop was not enough. `generateSchedule` lives in `logic/simulation.ts`
-    and draws from the global `Math.random` -- Box-Muller normals for the breakers and a shuffle for
-    the ordering -- so every run built a DIFFERENT 180-game slate. A different slate is a different
-    season, and the leader's day-165 probability moved between 4.1% and 4.8% across identical runs.
+    The original version seeded the 180-day loop and found it was not enough: `generateSchedule`
+    drew from the global `Math.random` -- Box-Muller normals for the breakers and a shuffle for the
+    ordering -- so every run built a DIFFERENT 180-game slate, and the leader's day-165 probability
+    moved between 4.1% and 4.8% across identical runs. The workaround was to wrap the schedule call
+    in `withSeededRandom`, which replaced the global function for the duration.
 
-    That is why wrapping the loop alone changed nothing: the coin flip had already happened upstream.
+    `generateSchedule` now takes its randomness from an explicit `random` option and seeds itself
+    from the season start date when given none, so that global override became a NO-OP -- the call
+    still ran, still returned a schedule, and simply ignored the seed entirely. This tool went on
+    failing its two futures checks for a reason that had nothing to do with futures.
 
-    Two seeded regions from the same `SEASON_SEED` rather than one continuous stream, because
-    `manager` is constructed with the schedule and cannot be reassigned inside the loop closure.
-    Each region is independently deterministic, which is all reproducibility requires.
+    So the override is gone and the seed is passed as the argument it now has to be. Same intent,
+    and this time the call site says what it is doing instead of relying on a global being swapped
+    out from under a function three modules away.
   */
-  const schedule = withSeededRandom(seededRandomStream(SEASON_SEED), () => generateSchedule(teams, {
+  const schedule = generateSchedule(teams, {
     seasonStartDate: getDefaultSeasonStartDate(YEAR),
     seasonDays: 180,
-  }));
+    random: seededRandomStream(SEASON_SEED),
+  });
 
   const manager = new SimulationManager({
     teams,
@@ -153,10 +158,17 @@ const main = async (): Promise<void> => {
   });
 
   let state: LeaguePlayerState = universe;
-  let games: Game[] = generateSchedule(teams, {
-    seasonStartDate: getDefaultSeasonStartDate(YEAR),
-    seasonDays: 180,
-  });
+  /*
+    THE SAME SLATE, NOT A SECOND ONE. This used to call `generateSchedule` again, unseeded and
+    unwrapped, which meant the tool spent its season on a 180-game list that shared no dates with
+    the one it had just handed to `manager` two lines up. It was invisible because the checks it
+    feeds are about the futures board rather than the schedule, and a fixture list nobody inspects
+    is a fixture list nobody notices being wrong.
+
+    Now that the call is deterministic the two would happen to match -- but "would happen to" is
+    the reason to delete the duplicate rather than rely on it.
+  */
+  let games: Game[] = schedule;
 
   /** The title board as the betting page would build it on a given day. */
   const titleBoard = () => {
