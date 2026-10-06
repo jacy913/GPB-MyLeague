@@ -27,6 +27,8 @@ import { BaseDiamond, CountTile, LineScore, SidePanel } from './game/shared';
 import { GameClock, LineupList, MatchupCard, PlayLog } from './game/GamePanels';
 import { ParkPanel } from './game/ParkPanel';
 import { parkProfile } from '../lib/analytics/parkProfile';
+import { attendanceFor, formatCrowd, stadiumCapacityFor } from '../lib/analytics/crowdSize';
+import { isPlayoffGame } from '../logic/playoffs';
 
 interface GameScreenProps {
   game: Game;
@@ -545,18 +547,48 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           </div>
 
           {activeSession.participants && (
-            <div className="grid gap-3 lg:grid-cols-2">
-              <LineupList
-                title="AWAY LINEUP"
-                entries={activeSession.participants.awayLineup}
-                activePlayerId={isTopHalf ? currentBatter?.playerId ?? null : null}
-              />
-              <LineupList
-                title="HOME LINEUP"
-                entries={activeSession.participants.homeLineup}
-                activePlayerId={isTopHalf ? null : currentBatter?.playerId ?? null}
-              />
-            </div>
+            <>
+              {/*
+                THE GATE, ABOVE THE TWO LINEUPS AND BELOW THE PARK BUTTON.
+
+                Attendance belongs here rather than in a corner of the screen because the lineups are
+                the reason anyone is in the building. A manager reading tonight's batting orders is
+                asking "how many people will see this", and until now the answer was nowhere on the
+                page -- there was no attendance anywhere in the app.
+
+                It reads the HOME club only. `attendanceFor` takes one home and one away club because a
+                ground belongs to one of them, and putting the visitor's market size in there would
+                answer a different question -- total interest in the fixture, which is the number the
+                Primetime Game panel already shows.
+              */}
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <p className="t-caption text-[var(--color-ink-faint)]">EXPECTED ATTENDANCE</p>
+                <p className="t-stat tabular-nums text-[var(--color-gold-hi)]">
+                  {formatCrowd(attendanceFor({
+                    home: homeTeam,
+                    away: awayTeam,
+                    date: game.date,
+                    playoff: isPlayoffGame(game),
+                  }))}
+                </p>
+                <p className="t-caption text-[var(--color-ink-faint)]">
+                  of {stadiumCapacityFor(homeTeam).toLocaleString()} at {parkProfile(homeTeam.id)?.parkCity ?? homeTeam.city}
+                </p>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                <LineupList
+                  title="AWAY LINEUP"
+                  entries={activeSession.participants.awayLineup}
+                  activePlayerId={isTopHalf ? currentBatter?.playerId ?? null : null}
+                />
+                <LineupList
+                  title="HOME LINEUP"
+                  entries={activeSession.participants.homeLineup}
+                  activePlayerId={isTopHalf ? null : currentBatter?.playerId ?? null}
+                />
+              </div>
+            </>
           )}
 
           <div className="flex flex-wrap gap-2">

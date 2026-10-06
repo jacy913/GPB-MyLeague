@@ -37,6 +37,7 @@ import { isPlayoffGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
 import { buildAwardMarket, AWARD_RACE_SPECS } from '../lib/mediaMarkets';
+import { viewersFor } from '../lib/analytics/crowdSize';
 import { probabilityToAmerican } from '../lib/markets';
 import { buildMediaReads } from '../lib/mediaReads';
 import { buildGameLine, type GameLine } from '../lib/mediaOdds';
@@ -761,6 +762,28 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const featuredAwayTeam = featuredGame ? teamsById.get(featuredGame.game.awayTeam) ?? null : null;
   const featuredHomeTeam = featuredGame ? teamsById.get(featuredGame.game.homeTeam) ?? null : null;
 
+  /*
+    THE AUDIENCE FOR TONIGHT'S FEATURED FIXTURE.
+
+    Keyed on the two clubs rather than on the game, because `getFeaturedGame` decides which fixture
+    this is and the audience is a consequence of who is in it. Computed here rather than inside the
+    panel because the panel takes teams and a line and has no business reaching back into the
+    schedule.
+
+    Null rather than zero when either club is missing -- a 0 audience is a certainty nobody can sell,
+    and "we do not know yet" is what an absent club actually means.
+  */
+  const featuredViewers = useMemo(() => (
+    featuredGame && featuredAwayTeam && featuredHomeTeam
+      ? viewersFor({
+        home: featuredHomeTeam,
+        away: featuredAwayTeam,
+        date: featuredGame.game.date,
+        playoff: isPlayoffGame(featuredGame.game),
+      })
+      : null
+  ), [featuredAwayTeam, featuredGame, featuredHomeTeam]);
+
   const simActions: Array<{ label: string; run: () => void; disabled?: boolean }> = [
     { label: 'Sim Day', run: onSimulateDay, disabled: isSimulating },
     { label: 'Sim Week', run: onSimulateWeek, disabled: isSimulating },
@@ -868,6 +891,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             home={featuredHomeTeam}
             line={featuredLine}
             date={featuredGame ? featuredGame.game.date : null}
+            viewers={featuredViewers}
             onOpenGame={onOpenGame}
           />
         </div>

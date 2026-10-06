@@ -6,6 +6,7 @@ import gpbLogo from '../../assets/gpb.png';
 import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import type { GameLine } from '../../lib/mediaOdds';
 import { formatAmerican } from '../../lib/markets';
+import { formatCrowd } from '../../lib/analytics/crowdSize';
 import { Panel, StatValue, StripeDivider, TeamLogo } from '../ui';
 import { HomePanel, formatHeadlineDate, formatMiniDate } from './shared';
 
@@ -200,8 +201,10 @@ export const FeaturedGamePanel: React.FC<{
   home: Team | null;
   line: GameLine | null;
   date: string | null;
+  /** Expected television audience for this fixture. Null when there is no game or no club. */
+  viewers: number | null;
   onOpenGame: (gameId: string) => void;
-}> = ({ gameId, angle, away, home, line, date, onOpenGame }) => {
+}> = ({ gameId, angle, away, home, line, date, viewers, onOpenGame }) => {
   const hasGame = Boolean(gameId && away && home);
 
   const side = (team: Team | null, price: number, align: 'left' | 'right') => (
@@ -234,7 +237,28 @@ export const FeaturedGamePanel: React.FC<{
     >
       {hasGame && line ? (
         <button type="button" onClick={() => onOpenGame(gameId as string)} className="w-full text-left">
-          {angle && <p className="t-caption mb-3 text-[var(--color-gold)]">{angle}</p>}
+          {/*
+            THE AUDIENCE, WHERE THE `angle` USED TO BE.
+
+            "Division Rivalry" is a fact about the fixture and the panel already says something better
+            two lines below it -- the actual price. What the panel never said is the one number that
+            makes it a PRIMETIME game rather than a good one: how many people are going to watch it.
+
+            `angle` still exists and is still computed by `getFeaturedGame`, and it is passed here, but
+            it is now the secondary line: `viewers` leads because a reader deciding whether to care
+            about tonight's game cares first about whether anyone else will.
+
+            The figure comes from `crowdSize.viewersFor`, which is keyed on both clubs' market size and
+            only weakly on their form -- people watch a big club lose as readily as they watch it win,
+            which is the whole difference between an audience and a crowd. `checkCrowdSize` holds the
+            league's spread wider than attendance's for exactly that reason.
+          */}
+          {viewers !== null && (
+            <p className="t-stat-sm mb-3 tabular-nums text-[var(--color-gold)]">
+              {formatCrowd(viewers)} expected viewers
+            </p>
+          )}
+          {angle && <p className="t-caption mb-3 text-[var(--color-ink-dim)]">{angle}</p>}
           <div className="flex items-center gap-3">
             {side(away, line.houseOdds, 'left')}
             <div className="flex shrink-0 flex-col items-center gap-1">
