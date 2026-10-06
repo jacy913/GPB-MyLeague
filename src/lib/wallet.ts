@@ -86,6 +86,15 @@ export interface PlacedBet {
    * `teamId` and it was being dropped on the floor; this keeps it.
    */
   propTeamId?: string;
+  /**
+   * What the player ACTUALLY did, written when the wager settles.
+   *
+   * Absent on an open bet, and absent on a bet placed before this field existed -- there is nothing to
+   * recover it from, since the play log that holds it belongs to a game that has scrolled off the
+   * slate. So the record has to render its absence as "not recorded" rather than as a zero, which is
+   * the difference between "he went oh-for-four" and "we do not know".
+   */
+  propActual?: number;
   propPlayerName?: string;
   /** The posted line, kept because the displayed line is part of the record. */
   propLine?: number;
@@ -252,7 +261,7 @@ export interface SettlementContext {
 type BetVerdict =
   | { status: 'pending' }
   | { status: 'void' }
-  | { status: 'decided'; won: boolean };
+  | { status: 'decided'; won: boolean; propActual?: number };
 
 const resultFor = (bet: PlacedBet, context: SettlementContext): BetVerdict => {
   if (bet.kind === 'moneyline') {
@@ -298,7 +307,16 @@ const resultFor = (bet: PlacedBet, context: SettlementContext): BetVerdict => {
       return { status: 'void' };
     }
     const cleared = actual > bet.propLine;
-    return { status: 'decided', won: cleared === (bet.selection === 'over') };
+    /*
+      THE ACTUAL TRAVELS BACK OUT WITH THE VERDICT, so the record can print what the player did.
+
+      This is the fix for "I lost and never saw the player's performance that day". `propActualStat`
+      had the number in hand at the exact moment the wager was decided and returned only a boolean, so
+      the one figure that makes a settled prop legible was computed and thrown away. It is not
+      recoverable afterwards: the play log is the source, and by the time anyone opens the record the
+      game has usually scrolled off whatever slate the lookup reads from.
+    */
+    return { status: 'decided', won: cleared === (bet.selection === 'over'), propActual: actual };
   }
 
   if (bet.kind === 'total' || bet.kind === 'first5') {
@@ -394,10 +412,25 @@ export const settleWallet = (wallet: Wallet, context: SettlementContext): Wallet
       balance += bet.stake;
       return { ...bet, status: 'void' as BetStatus };
     }
-    if (!verdict.won) return { ...bet, status: 'lost' as BetStatus };
+    /*
+      THE ACTUAL IS WRITTEN ON EVERY SETTLED PROP, WIN OR LOSS.
+
+      On both branches, and deliberately. A win shows "went 3 for 4" as a reward and a loss shows
+      "went 0 for 4" as an explanation, and a manager who reads only the losing rows -- which is who
+      opens this screen -- is exactly the person who needs the second one. Writing it only on a win
+      would make the feature work for the case that did not need it.
+
+      `?? bet.propActual` rather than a bare spread, so a re-settlement cannot erase a figure that
+      an earlier pass already recorded.
+    */
+    const settled = {
+      ...bet,
+      ...(verdict.propActual === undefined ? {} : { propActual: verdict.propActual }),
+    };
+    if (!verdict.won) return { ...settled, status: 'lost' as BetStatus };
     const payout = settleReturn(bet.stake, bet.price, true);
     balance += payout;
-    return { ...bet, status: 'won' as BetStatus, payout };
+    return { ...settled, status: 'won' as BetStatus, payout };
   });
   // Identity is preserved when nothing settled, so the caller's effect comparing
   // by reference does not fire on every render of every game.

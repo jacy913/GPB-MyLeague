@@ -770,6 +770,8 @@ export const AppViewRouter = ({
         <BettingRecordScreen
           bets={bettingSlip.wallet.bets}
           balance={bettingSlip.wallet.balance}
+          teams={teams}
+          players={playerState.players}
           onBackToSlip={() => { setViewFallback(); bettingSlip.open(); }}
         />
       )}

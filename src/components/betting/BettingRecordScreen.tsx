@@ -5,7 +5,8 @@ import { formatResolutionDate } from '../../lib/marketDates';
 import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import { STARTING_BALANCE, type PlacedBet } from '../../lib/wallet';
 import { MEDIA_MARKS_SQUARE } from '../media/mediaImages';
-import { Panel, StatTable, StatValue, type StatTableColumn, type StatTableRow } from '../ui';
+import { Panel, StatTable, StatValue, type StatTableColumn, type StatTableRow } from '../ui'
+import type { Player, Team } from '../../types';;
 
 type Filter = 'all' | 'open' | 'settled';
 
@@ -26,8 +27,29 @@ type Filter = 'all' | 'open' | 'settled';
 export const BettingRecordScreen: React.FC<{
   bets: PlacedBet[];
   balance: number;
+  teams: Team[];
+  /*
+    Player id to club id, for prop bets placed BEFORE propTeamId was stored on the bet.
+
+    Without this the fallback is silent: a bet from an existing save has no propTeamId, so the player
+    renders with no club beside them, and the original complaint -- not knowing which team the player
+    is on -- persists for exactly the bets a reader already has. Reading it from the live roster is
+    wrong if the player has since been traded, which is why the STORED value wins whenever it exists;
+    for a bet that predates the field there is no stored value to be wrong.
+  */
+  players: Player[];
   onBackToSlip: () => void;
-}> = ({ bets, balance, onBackToSlip }) => {
+}> = ({ bets, balance, teams, players, onBackToSlip }) => {
+  /*
+    BUILT HERE rather than passed in, so the memo is stable across renders. The router's body is a bare
+    JSX expression with nowhere to declare a const, so a map built at the call site would be a NEW
+    object every render and would invalidate this screen's row memo on every parent render for no
+    reason at all.
+  */
+  const playerTeamById = useMemo(
+    () => new Map(players.filter((p) => p.teamId).map((p) => [p.playerId, p.teamId])),
+    [players],
+  );
   const [filter, setFilter] = useState<Filter>('all');
 
   const visible = useMemo(() => {
@@ -70,6 +92,18 @@ export const BettingRecordScreen: React.FC<{
     const profit = bet.status === 'void'
       ? 0
       : bet.status === 'won' ? bet.payout - bet.stake : -bet.stake;
+
+    /*
+      WHOSE PLAYER, AND WHICH CLUB.
+
+      The stored `propTeamId` first, because it was recorded at the moment the wager was made and is
+      therefore correct even for a player who has since been traded. The live roster second, and only
+      because a bet placed before that field existed has nothing stored -- which is precisely the bet
+      the person reading this screen is looking at when they report not knowing whose player it was.
+    */
+    const propTeamId = bet.propTeamId
+      ?? (bet.propPlayerId ? playerTeamById.get(bet.propPlayerId) : undefined);
+    const playerTeam = propTeamId ? teams.find((t) => t.id === propTeamId) : undefined;
     return {
       id: bet.id,
       cells: {
@@ -107,7 +141,43 @@ export const BettingRecordScreen: React.FC<{
             </span>
           </span>
         ),
-        pick: <span className="t-stat-sm">{bet.selectionLabel}</span>,
+        pick: (
+          <span className="flex min-w-0 flex-col">
+            {bet.kind === 'prop' ? (
+              /*
+                A PROP BET NAMES ITS PLAYER, ITS CLUB AND WHAT HE DID.
+
+                This cell was `bet.selectionLabel` and nothing else, which for a prop is the single
+                word "Over" or "Under". So a settled prop in this screen read:
+
+                    Over/Under Hits Allowed | Over | -115 | $50 | -$50
+
+                which does not say whose player, which club, what the line was, or how close it was --
+                and this is the screen a manager opens precisely to find out why they lost. The
+                complaint that produced this was "I lost and never saw the player's performance that
+                day", and every one of those facts was either stored on the bet already or is now.
+
+                `propActual` is ABSENT on a bet placed before it was recorded, and absent on a prop that
+                never settled. Both print "not recorded" rather than a zero, because "he went oh-for-
+                four" and "we do not know" are different sentences and a zero would claim the first.
+              */
+              <>
+                <span className="truncate t-stat-sm">
+                  {bet.propPlayerName ?? bet.selectionLabel}
+                </span>
+                <span className="truncate t-caption text-[var(--color-ink-faint)]">
+                  {playerTeam ? `${playerTeam.city} · ` : ''}
+                  O/U {typeof bet.propLine === 'number' ? bet.propLine : '?'}
+                  {bet.propActual !== undefined
+                    ? ` · went ${bet.propActual}`
+                    : ' · actual not recorded'}
+                </span>
+              </>
+            ) : (
+              <span className="t-stat-sm">{bet.selectionLabel}</span>
+            )}
+          </span>
+        ),
         price: formatAmerican(bet.price),
         stake: `$${bet.stake}`,
         result: (
@@ -119,7 +189,7 @@ export const BettingRecordScreen: React.FC<{
         ),
       },
     };
-  }), [visible]);
+  }), [visible, teams, playerTeamById]);
 
   const netClass = stats.profit > 0
     ? 'text-[var(--color-pos)]'
