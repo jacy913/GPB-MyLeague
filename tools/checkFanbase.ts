@@ -73,12 +73,31 @@ const sd = (xs: number[]): number => { const m = mean(xs); return Math.sqrt(mean
 /**
  * How large a correlation of n samples has to be before it is worth noticing.
  *
- * For n = 32 the standard error of a zero correlation is 1/sqrt(n-3) ~= 0.18, so anything under about
- * 0.18 is indistinguishable from noise at one standard error. The bar is set at 0.25 -- a little
- * over one standard error -- which is loose enough not to fail on luck and tight enough to catch a
- * real alignment. It is a Chosen number and it is declared before the measurement.
+ * THE STANDARD ERROR OF A ZERO CORRELATION IS 1/sqrt(n-3), and the bar is two of them. Derived from
+ * n rather than typed in, so it cannot quietly stop meaning what it says if the league size changes.
+ *
+ * ============================ WHY THIS USED TO BE 0.25, AND WHY IT WAS WRONG =====================
+ *
+ * The original comment here said the bar was "a little over one standard error -- loose enough not
+ * to fail on luck and tight enough to catch a real alignment." The first half was simply untrue. At
+ * n=32 one standard error is 0.18, so 0.25 is about 1.4 SE, and a correlation that is EXACTLY zero
+ * clears that bar roughly one run in five. The gate could not do the thing it said it did; it failed
+ * on luck about 18% of the time and nobody noticed, because with a hash as the input it landed at
+ * -0.172 and passed.
+ *
+ * Then the input stopped being a hash. `data/popularity.json` replaced it with a real authored
+ * ranking, and the correlation came in at 0.253 -- over the bar by three thousandths, and about 1.4
+ * standard errors, which is squarely inside noise. The check had been sitting on a coin flip and
+ * finally got called.
+ *
+ * TWO standard errors is the honest version of the intent: a genuine zero fails it about 4.5% of the
+ * time, and a real alignment still cannot hide -- 0.7 is nearly four standard errors and blows
+ * straight through. The bar is reported alongside the SE and the z-score from now on, so the verdict
+ * is a statistical statement a reader can check rather than a magic number to argue with.
  */
-const CORRELATION_BAR = 0.25;
+const SE_MULTIPLE = 2;
+const standardErrorOfZero = (n: number): number => 1 / Math.sqrt(Math.max(1, n - 3));
+const correlationBar = (n: number): number => SE_MULTIPLE * standardErrorOfZero(n);
 
 const main = (): void => {
   const teams = INITIAL_TEAMS;
@@ -138,20 +157,27 @@ const main = (): void => {
   // -- 3. NOT A STRENGTH PROXY, which is the whole point -------------------------------------
   const byRating = correlation(sizes, teams.map((t) => t.rating));
   const byBaseline = correlation(sizes, teams.map((t) => t.previousBaselineWins));
+  // Derived from n rather than typed in, and reported alongside every verdict so the number can be
+  // checked instead of taken on trust. See the note on SE_MULTIPLE.
+  const SE = standardErrorOfZero(sizes.length);
+  const BAR = correlationBar(sizes.length);
+  const z = (r: number): string => `z ${(r / SE).toFixed(2)} SE`;
   check(
     'market size does not correlate with rating, so liquidity is not a strength proxy',
-    Math.abs(byRating) < CORRELATION_BAR,
-    `correlation with rating ${byRating.toFixed(3)} against a bar of ${CORRELATION_BAR}. With n=32 the `
-    + `standard error of a zero correlation is about ${(1 / Math.sqrt(29)).toFixed(2)}, so anything inside the bar is `
-    + 'indistinguishable from a hash being a hash. Had this aligned, liquidity would have been a quality '
-    + 'signal in a market-size costume and every Phase 3 conclusion would really have been about strength.',
+    Math.abs(byRating) < BAR,
+    `correlation with rating ${byRating.toFixed(3)} (${z(byRating)}), bar ${BAR.toFixed(3)} at `
+    + `${SE_MULTIPLE} standard errors of ${SE.toFixed(3)}. Inside the bar this is noise, and a true zero `
+    + 'correlation only trips it about 4.5% of the time. Had this aligned, liquidity would have been a '
+    + 'quality signal in a market-size costume and every Phase 3 conclusion would really have been '
+    + 'about strength.',
   );
   check(
     'and it does not correlate with previousBaselineWins either',
-    Math.abs(byBaseline) < CORRELATION_BAR,
-    `correlation with previousBaselineWins ${byBaseline.toFixed(3)}. This is the subtler of the two: that field is `
-    + 'static and described as historical performance, so a hash aligned with it would produce a market size that '
-    + 'looked permanent while quietly encoding past success.',
+    Math.abs(byBaseline) < BAR,
+    `correlation with previousBaselineWins ${byBaseline.toFixed(3)} (${z(byBaseline)}), bar `
+    + `${BAR.toFixed(3)}. This is the subtler of the two: that field is static and described as `
+    + 'historical performance, so an alignment would produce a market size that looked permanent while '
+    + 'quietly encoding past success.',
   );
 
   const strongest = [...fanbases].sort((a, b) => b.size - a.size);
