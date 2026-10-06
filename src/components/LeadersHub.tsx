@@ -264,6 +264,68 @@ const BATTING_CATEGORIES: readonly BattingCategory[] = [
     meanFormat: (v) => v.toFixed(1),
     detail: (stat) => `${stat.doubles} 2B / ${stat.triples} 3B / ${stat.homeRuns} HR`,
   },
+
+  /*
+   * THE RATE CARD, FINISHED.
+   *
+   * `metrics.ts` derives about twenty-five rates. Ten had boards. These three were already computed
+   * and already verified in that file and simply never given a category, so each is a list entry
+   * and nothing else -- the cheapest kind of new number that exists.
+   *
+   * `K%` AND `BB%` ARE HERE BECAUSE A LOW STRIKEOUT RATE AND A HIGH WALK RATE ARE TWO DIFFERENT
+   * KINDS OF GOOD PLATE DISCIPLINE, and the existing `K - BB%` is a difference of two numbers. A
+   * summary cannot tell you which kind a hitter has; these are its components.
+   *
+   * DIRECTION IS NOT A MATTER OF TASTE. `K - BB%` shipped once with `direction: 'desc'` on a board
+   * where low is good, and the first render led with a player holding 42 K against 7 BB at rank 1.
+   * Nothing in the type system, the build, or the check suite could see it; it was caught by opening
+   * the browser. Both halves of every entry below are now asserted on screen by
+   * `tools/shotsLeaders.mjs`, which was verified to fail by deliberately flipping one of them.
+   */
+  {
+    key: 'kpct',
+    title: 'Strikeout Rate',
+    columnHeader: 'K%',
+    direction: 'asc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).kPct?.value ?? 0,
+    format: (stat) => {
+      const k = battingMetrics(toBattingCounts(stat)).kPct;
+      return k ? (k.value * 100).toFixed(1) : '—';
+    },
+    meanFormat: (v) => (v * 100).toFixed(1),
+    detail: (stat) => `${stat.strikeouts} K`,
+  },
+  {
+    key: 'bbpct',
+    title: 'Walk Rate',
+    columnHeader: 'BB%',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).bbPct?.value ?? 0,
+    format: (stat) => {
+      const b = battingMetrics(toBattingCounts(stat)).bbPct;
+      return b ? (b.value * 100).toFixed(1) : '—';
+    },
+    meanFormat: (v) => (v * 100).toFixed(1),
+    detail: (stat) => `${stat.walks} BB`,
+  },
+  {
+    key: 'bbk',
+    title: 'Walks per Strikeout',
+    columnHeader: 'BB/K',
+    direction: 'desc',
+    qualified: true,
+    value: (stat) => battingMetrics(toBattingCounts(stat)).bbPerStrikeout ?? 0,
+    format: (stat) => {
+      const ratio = battingMetrics(toBattingCounts(stat)).bbPerStrikeout;
+      // A hitter with no strikeouts has no walks-per-strikeout, and 0.00 or Infinity would each be
+      // a fabricated measurement rather than an absent one.
+      return ratio === null || ratio === undefined ? '—' : ratio.toFixed(2);
+    },
+    meanFormat: (v) => v.toFixed(2),
+    detail: (stat) => `${stat.walks} BB / ${stat.strikeouts} K`,
+  },
 ];
 
 interface CategoryBoard {
@@ -790,6 +852,35 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       { key: 'whip', title: 'WHIP', columnHeader: 'WHIP', direction: 'asc', qualified: true, count: qualified.length },
       { key: 'ip', title: 'Innings', columnHeader: 'IP', direction: 'desc', qualified: false, count: pitchingEntries.length },
       { key: 'k9', title: 'K/9', columnHeader: 'K/9', direction: 'desc', qualified: true, count: qualified.length },
+
+      /*
+       * THE PITCHING RATE CARD, FINISHED -- and it matters more here than on the batting side,
+       * because pitching had the thinner board: six categories, four of them raw counts. A board of
+       * counts tells you who has pitched a lot, which is not the question anyone opens it to ask.
+       *
+       * `K - BB/9` is the pitching mirror of the `K - BB%` batting board and the single most useful
+       * figure here: it weighs strikeouts against walks in one column, so a pitcher who induces
+       * contact but misses bats does not outrank one who misses both.
+       *
+       * `K + BB/9` is WHIP's standard companion and answers what WHIP cannot. WHIP treats an earned
+       * walk and an unearned one identically; K+BB/9 counts only the walk, so the pair separates a
+       * staff that strands runners from one that does not.
+       *
+       * `H/9` puts hits on the same per-inning scale as ERA and WHIP, so a pitcher whose ERA the
+       * board likes can be seen to be earning it on contact rather than on walks.
+       *
+       * SV/9 IS DELIBERATELY NOT HERE, and it is the only one of the twenty-five rates that would
+       * make this board WRONG. `savesPer9` is `saves / outs * 9`, so a starter with no saves in 240
+       * innings is a legitimate 0.00 and outranks a closer with eight saves in 63 -- the rate
+       * rewards the starter for pitching a lot, which is the opposite of the board's purpose.
+       * `tools/checkLeaderRateBoards.ts` asserts exactly this, because it is surprising enough that
+       * a reader would assume a bug rather than the definition. SV/9 belongs on a bullpen board
+       * restricted to pitchers with relief appearances, which is different work. An available
+       * number that answers a question badly is worse than an absent one.
+       */
+      { key: 'kbb9', title: 'K − BB per 9', columnHeader: 'K−BB/9', direction: 'desc', qualified: true, count: qualified.length },
+      { key: 'kbbplus', title: 'K + BB per 9', columnHeader: 'K+BB/9', direction: 'desc', qualified: true, count: qualified.length },
+      { key: 'h9', title: 'Hits per 9', columnHeader: 'H/9', direction: 'asc', qualified: true, count: qualified.length },
     ];
   }, [pitchingEntries]);
 
@@ -812,6 +903,9 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       const m = metricsOf(stat);
       if (category.key === 'era') return m.era ?? 0;
       if (category.key === 'whip') return m.whip ?? 0;
+      if (category.key === 'kbb9') return m.kMinusBbPer9 ?? 0;
+      if (category.key === 'kbbplus') return m.kbb ?? 0;
+      if (category.key === 'h9') return m.hitsPer9 ?? 0;
       return m.kPer9 ?? 0;
     };
     const formatValue = (entry: StatEntry): string => {
@@ -822,7 +916,14 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       const m = metricsOf(stat);
       if (category.key === 'era') return fmtEra(m.era ?? 0);
       if (category.key === 'whip') return fmtWhip(m.whip ?? 0);
-      return (m.kPer9 ?? 0).toFixed(2);
+      // All four rate boards print to two decimals like K/9, and all four are nullable, so an
+      // absent rate is a dash rather than a 0.00: a pitcher who never pitched is not the same row
+      // as one who was shelled for three runs.
+      const rate = category.key === 'kbb9' ? m.kMinusBbPer9
+        : category.key === 'kbbplus' ? m.kbb
+          : category.key === 'h9' ? m.hitsPer9
+            : m.kPer9;
+      return rate === null || rate === undefined ? '—' : rate.toFixed(2);
     };
     const detailOf = (entry: StatEntry): string => {
       const stat = entry.stat as PlayerSeasonPitching;
@@ -830,6 +931,12 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
       if (category.key === 'whip') return `${stat.hitsAllowed + stat.walks} baserunners`;
       if (category.key === 'ip') return `${stat.strikeouts} K`;
       if (category.key === 'k9') return `${stat.strikeouts} K`;
+      // The counts behind each new rate, so the board shows what produced the ratio rather than
+      // only the ratio: two pitchers at the same K+BB/9 from very different innings are not the
+      // same achievement, and one figure cannot say so.
+      if (category.key === 'kbb9') return `${stat.strikeouts} K / ${stat.walks} BB`;
+      if (category.key === 'kbbplus') return `${stat.strikeouts + stat.walks} in ${fmtIp(stat.inningsPitched)}`;
+      if (category.key === 'h9') return `${stat.hitsAllowed} H`;
       return fmtRecord(stat.wins, stat.losses);
     };
 
