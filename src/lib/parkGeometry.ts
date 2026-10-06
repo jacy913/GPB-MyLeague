@@ -43,9 +43,20 @@ export const PLATE = { x: 380, y: 600 } as const;
  * The viewBox, generously padded on all sides.
  *
  * The padding is not cosmetic: the distance labels float OUTSIDE the fence, and the corner labels sit
- * furthest out of anything on the diagram. At 1.2 px/ft a 400-foot corner puts its label centre near
- * x = 14, and a 62px-wide label centred there runs off the left edge. The left margin exists for the
- * label, not for the field.
+ * furthest out of anything on the diagram, so the margin exists for the labels rather than for the
+ * field.
+ *
+ * SIZED FOR THE OLD CEILING AND NOW OVER-PROVISIONED. This was set when the corner ceilings were
+ * 400 and the worst case put a 62px label centre near x = 14, close enough to the edge to matter. The
+ * caps are now LF 362 / RF 355, which moves the worst-case label centre out to x = 54 and leaves
+ * roughly 83px of unused margin on each side.
+ *
+ * It is left oversized deliberately. The binding constraint on this box is now the ROOF, not the
+ * labels: a roofed park pushes its outer arc out to `fence + 86px`, which at the old 400-foot corner
+ * reached x = -61 and x = 814 -- outside this box on both sides. No park currently combines a roof
+ * with a deep corner, so nothing is clipped today, but tightening the box to the new label extents
+ * would clip the first roofed park that does. If this is ever resized, re-check the roof arc, not
+ * the labels.
  */
 export const FIELD_VIEWBOX = '-60 20 860 640';
 

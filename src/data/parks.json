@@ -14,8 +14,8 @@
     },
     "lfFt": {
       "type": "int",
-      "range": [320, 400],
-      "note": "Left field, wall to centre of the wall. 320-330 is a short porch; 390-400 is deep."
+      "range": [320, 362],
+      "note": "Left field, wall to centre of the wall. 320-330 is a short porch; 350-362 is deep. CEILING LOWERED from 400 to 362: the corners were running away from the league, and a 398-foot corner read as a different sport from the 322-foot one. The range is the ceiling, not a description of it, so re-raising this number without re-picking the parks above it is the regression guard."
     },
     "cfFt": {
       "type": "int",
@@ -24,8 +24,8 @@
     },
     "rfFt": {
       "type": "int",
-      "range": [320, 400],
-      "note": "Right field, wall to centre of the wall. The mirror of lfFt."
+      "range": [320, 355],
+      "note": "Right field, wall to centre of the wall. The mirror of lfFt, with a slightly lower ceiling at 355. RF is the tighter of the two because the league's right-field porches are handed off to the short-corner parks, and pulling the deep end down is what leaves room for them to exist at all."
     },
     "_lcfRcf": {
       "type": "derived",
@@ -138,7 +138,7 @@
   "ara": {
     "altitude": "sea",
     "roof": "open_air",
-    "lfFt": 390, "cfFt": 402, "rfFt": 392,
+    "lfFt": 361, "cfFt": 402, "rfFt": 352,
     "wallHeightFt": 6,
     "wallColor": "dark",
     "surface": "grass",
@@ -255,7 +255,7 @@
   "aub": {
     "altitude": "sea",
     "roof": "open_air",
-    "lfFt": 322, "cfFt": 403, "rfFt": 396,
+    "lfFt": 322, "cfFt": 403, "rfFt": 354,
     "wallHeightFt": 4,
     "wallColor": "light",
     "surface": "grass",
@@ -386,7 +386,7 @@
   "ars": {
     "altitude": "high",
     "roof": "open_air",
-    "lfFt": 368, "cfFt": 418, "rfFt": 370,
+    "lfFt": 360, "cfFt": 418, "rfFt": 351,
     "wallHeightFt": 5,
     "wallColor": "light",
     "surface": "grass",
@@ -451,7 +451,7 @@
   "sta": {
     "altitude": "sea",
     "roof": "open_air",
-    "lfFt": 335, "cfFt": 411, "rfFt": 397,
+    "lfFt": 335, "cfFt": 411, "rfFt": 355,
     "wallHeightFt": 12,
     "wallColor": "dark",
     "surface": "grass",
@@ -490,7 +490,7 @@
   "and": {
     "altitude": "high",
     "roof": "open_air",
-    "lfFt": 398, "cfFt": 410, "rfFt": 394,
+    "lfFt": 362, "cfFt": 410, "rfFt": 353,
     "wallHeightFt": 32,
     "wallColor": "dark",
     "surface": "grass",

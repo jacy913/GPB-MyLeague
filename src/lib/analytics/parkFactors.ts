@@ -109,7 +109,29 @@ export const PARK_COEFFICIENTS = {
    * this engine, which records no batted-ball direction at all.
    */
   hrFieldWeights: { lf: 0.37, cf: 0.26, rf: 0.37 },
-  /** Wall distances either side of this get proportionally less and more effect. */
+  /**
+   * Wall distances either side of this get proportionally less and more effect.
+   *
+   * READ THIS BEFORE concluding the term is broken, because as of the corner re-spread NO PARK IN
+   * THE LEAGUE SITS AT OR BELOW IT, and that is expected rather than a bug.
+   *
+   * The corner ceilings in `parks.json` were lowered to LF 362 / RF 355, and centre field runs
+   * 393-418. Every one of the three distances is therefore either below 385 (both corners) or above
+   * it (centre), so `wallDistance` is one-sided: measured across the 32 parks it now spans
+   * 1.104-1.332 where it used to span 0.885-1.332. The term can no longer suppress a home run on
+   * distance; it can only inflate one.
+   *
+   * That was the intended trade. Before, the deepest park suppressed home runs by 0.885 on this
+   * term alone, which is a stronger park effect than most real ballparks manage. Now the term ranks
+   * the league instead of splitting it, and `hrFactor`'s spread narrowed from 0.484 to 0.354 --
+   * parks are about 27% less differentiated on home runs league-wide. The model renormalises so the
+   * mean stays exactly 1.000; nothing shifted on average, only the distance between extremes.
+   *
+   * If a two-sided term is wanted back, this constant is the single lever: dropping it to about 340
+   * puts the corners back on both sides of neutral. It is deliberately NOT changed here, because
+   * moving it moves every factor in the game and that is a design decision, not a consequence of a
+   * data edit.
+   */
   neutralWallFt: 385,
   /** The wall height at which height is worth nothing, in the height term below. */
   neutralWallHeightFt: 8,
