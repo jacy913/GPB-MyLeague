@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, FastForward, Play, SkipForward } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FastForward, MapPinned, Play, SkipForward } from 'lucide-react';
 import {
   CompletedGameResult,
   Game,
@@ -25,6 +25,7 @@ import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel 
 import { Panel, RetroButton } from './ui';
 import { BaseDiamond, CountTile, LineScore, SidePanel } from './game/shared';
 import { GameClock, LineupList, MatchupCard, PlayLog } from './game/GamePanels';
+import { ParkPanel } from './game/ParkPanel';
 
 interface GameScreenProps {
   game: Game;
@@ -236,6 +237,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [session, setSession] = useState<GameSessionState | null>(null);
   const [visibleLogCount, setVisibleLogCount] = useState(0);
   const [pendingCompletedGame, setPendingCompletedGame] = useState<CompletedGameResult | null>(null);
+  const [isParkOpen, setIsParkOpen] = useState(false);
   /*
     `<HTMLOListElement>`, because this ref is handed to the play-by-play `<ol>`.
 
@@ -407,6 +409,20 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   return (
     <section className="space-y-5">
+      {/*
+        The park dialog, mounted unconditionally and opened by state.
+
+        Deliberately outside the sections below rather than inside the rosters block: a Modal already
+        portals itself to document.body, and placing it inside a conditional subtree would mean it
+        mounts and unmounts with whatever it sits in — which is how a dialog ends up inheriting a
+        parent's key and remounting itself on every unrelated state change.
+      */}
+      <ParkPanel
+        isOpen={isParkOpen}
+        onClose={() => setIsParkOpen(false)}
+        team={homeTeam}
+      />
+
       <RetroButton variant="ghost" size="sm" onClick={onBack}>
         <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back to Schedule
       </RetroButton>
@@ -502,6 +518,29 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             <CountTile label="Home"><span className="t-stat-lg">{displayHomeRuns}</span></CountTile>
             <CountTile label="Outs"><span className="t-stat-lg">{displaySession.outs}</span></CountTile>
             <CountTile label="Active Half"><span className="t-stat-lg">{isTopHalf ? 'Top' : 'Bot'}</span></CountTile>
+          </div>
+
+          {/*
+            THE PARK, above the lineups rather than beside them.
+
+            It belongs here because of what it is: the park is a property of the GROUND this game is
+            being played on, and the lineups are the two clubs about to play on it. Putting the button
+            immediately above the lineups keeps the reading order right -- where we are, who is here,
+            then what the park is doing to both of them.
+
+            It says HOME PARK and not PARK because that is a real distinction and the alternative is
+            ambiguous. Only the home club's park is in play; `gameEngine` reads
+            `parkFactorsForTeam(homeTeam.id)` and nothing else, so a button labelled just "Park" would
+            invite the reader to assume the away club's park was being shown, or to wonder which of the
+            two they were looking at.
+          */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="t-caption text-[var(--color-ink-faint)]">
+              The walls, the air and the grass on this ground — and what they do to the numbers above.
+            </p>
+            <RetroButton variant="ghost" size="sm" onClick={() => setIsParkOpen(true)}>
+              <MapPinned className="h-4 w-4" aria-hidden="true" /> {homeTeam.city} Park
+            </RetroButton>
           </div>
 
           {activeSession.participants && (
