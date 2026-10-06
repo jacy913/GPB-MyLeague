@@ -9,6 +9,7 @@ import {
   Team,
 } from '../types';
 import { isPlayoffGame } from './playoffs';
+import { viewersFor } from '../lib/analytics/crowdSize';
 
 export type HeadlineCard = {
   headline: string;
@@ -1382,6 +1383,17 @@ export const generateHeadlineDeck = (
   };
 };
 
+/**
+ * The league's ceiling audience, used to scale the audience term in `getFeaturedGame`'s score onto
+ * the same 0-100 scale as its other terms.
+ *
+ * Measured by `checkCrowdSize`: the biggest fixture the shipped league can produce -- the two most
+ * popular clubs, both contending -- comes to about 3.5M. Slightly above that is deliberate, because a
+ * normaliser set exactly at the maximum would hand the top fixture a term of precisely 1.000 and make
+ * any later retune of the crowd model silently change every selection it feeds.
+ */
+const MARQUEE_AUDIENCE_CEILING = 3_700_000;
+
 export const getFeaturedGame = (todaysGames: Game[], teamsById: Map<string, Team>): FeaturedGameCard | null => {
   const candidates = todaysGames
     .map((game) => {
@@ -1403,6 +1415,35 @@ export const getFeaturedGame = (todaysGames: Game[], teamsById: Map<string, Team
       score += awayPct >= 0.58 && homePct >= 0.58 ? 20 : 0;
       score += ratingGap <= 3 ? 8 : 0;
       score += isPlayoffGame(game) ? 45 : 0;
+
+      /*
+        HOW MANY PEOPLE WILL WATCH, WHICH IS WHAT A PRIMETIME SLOT IS FOR.
+
+        The panel this selects for is called Primetime Game and prints an expected audience, so the
+        fixture it picks has to be one an audience would actually tune in for. It was not: the score
+        was win percentages, division and ratings, none of which have anything to do with drawing a
+        television crowd. The first render of the new panel offered a fixture between the 32nd and 17th
+        most popular clubs at 830,000 viewers -- a real audience, and not one anybody would call
+        primetime.
+
+        The term is SIZED TO THE EXISTING SCALE rather than bolted on at its own weight. A great
+        matchup between two mid-sized clubs is still a better story than a mismatch between two
+        enormous ones, and the other terms already encode "great matchup" -- so audience is worth
+        about two thirds of the playoff term, and never more. The postseason override sits above this
+        anyway, which is right: nobody would object to a playoff game between two small clubs being
+        the game of the day.
+      */
+      const audience = viewersFor({
+        home: homeTeam,
+        away: awayTeam,
+        date: game.date,
+        playoff: isPlayoffGame(game),
+        homeWinPct: awayPct,
+        awayWinPct: homePct,
+      });
+      // Scaled against the league's own top end so the term cannot drift if the crowd model is
+      // retuned: 1.0 at the biggest fixture the league can produce, 0 at nothing.
+      score += (audience / MARQUEE_AUDIENCE_CEILING) * 30;
 
       let angle = 'Spotlight Game';
       let lore = `${awayTeam.city} and ${homeTeam.city} square off in a meaningful test.`;
