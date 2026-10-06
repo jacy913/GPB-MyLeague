@@ -22,7 +22,20 @@ import { alphaBounds, decodePng, type DecodedImage } from './pngCodec';
 
 const DIR = 'src/assets/media/';
 
-const FILES = ['glorestpresslogo (2).png', 'glorestpresslogo.png'];
+/*
+ * `glorestpresslogo (2).png` WAS HERE AND NEVER EXISTED IN THIS REPO.
+ *
+ * It is the name a browser gives a second download of the same file, so it entered this list as a
+ * note-to-self about a local working copy and was committed by accident. The file was never added,
+ * so the tool died with an ENOENT stack trace on every run -- and it died on the FIRST entry,
+ * which meant it never printed a word about the real logo sitting second in the same array.
+ *
+ * That is the failure this repo keeps meeting: a tool that dies instead of reporting cannot tell
+ * you what is wrong, it just stops. It is worse here than it sounds, because this list was being
+ * run as part of the suite, where a crash is indistinguishable from a pass unless somebody reads
+ * the exit code -- and a crash has a louder exit code than a failure.
+ */
+const FILES = ['glorestpresslogo.png'];
 
 const pixelAt = (img: DecodedImage, x: number, y: number): string => {
   const i = (y * img.width + x) * 4;
@@ -32,8 +45,25 @@ const pixelAt = (img: DecodedImage, x: number, y: number): string => {
 const main = (): void => {
   console.log('\nLOGO ALPHA SURVEY\n');
 
+  /*
+    * A MISSING FILE IS A RESULT, NOT A CRASH. See the note on FILES: this used to throw ENOENT and
+    * take the whole run with it, so a survey that could not find its subject said nothing about any
+    * other logo either, and the suite saw a non-zero exit with no explanation attached to it.
+    */
+  const blocked: string[] = [];
+
   FILES.forEach((name) => {
-    const img = decodePng(readFileSync(DIR + name));
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(DIR + name);
+    } catch {
+      console.log(`  ${name}`);
+      console.log('    MISSING             not in the repo. Nothing below can be measured.');
+      console.log('');
+      blocked.push(`${name} is missing from ${DIR}`);
+      return;
+    }
+    const img = decodePng(bytes);
     const bounds = alphaBounds(img);
     const total = img.width * img.height;
 
@@ -119,7 +149,30 @@ const main = (): void => {
 
     console.log(`    verdict             ${verdict}`);
     console.log('');
+
+    /*
+     * EXIT NON-ZERO ON A BAD VERDICT.
+     *
+     * This tool printed "VEIL DETECTED -- do not trim this automatically" and then exited 0, so a
+     * logo that would have shipped with a visible white rectangle on every dark surface was
+     * reported to the suite as a pass. The two failing verdicts both carry an instruction to a
+     * human, and an instruction the suite cannot act on is not a check.
+     *
+     * The third verdict -- artwork touching a canvas edge -- stays a pass. It is a note, not a
+     * defect: a bbox crop that loses nothing is a correct outcome, and failing the build over it
+     * would train people to ignore this tool.
+     */
+    if (bboxFillsCanvas || veilMax > 8) {
+      blocked.push(`${name}: ${bboxFillsCanvas ? 'opaque to the edge' : 'veil over the margin'}`);
+    }
   });
+
+  if (blocked.length) {
+    console.log('  NOT USABLE AS SHIPPED');
+    blocked.forEach((b) => console.log(`    ${b}`));
+    console.log('');
+    process.exit(1);
+  }
 };
 
 main();
