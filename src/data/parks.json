@@ -467,8 +467,8 @@
   "ars": {
     "parkCity": "Columnla",
     "meanTempC": 28,
-    "altitude": "extreme",
-    "altitudeFt": 5280,
+    "altitude": "high",
+    "altitudeFt": 3793,
     "roof": "open_air",
     "lfFt": 360, "cfFt": 418, "rfFt": 351,
     "wallHeightFt": 5,

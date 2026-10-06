@@ -126,7 +126,21 @@ if (!ars) {
   }
   console.log(`\n  ars altitude ${ars.dimensions.altitude} at ${ars.altitudeFtShown} ft `
     + `(density from ${ars.altitudeFtUsed} ft)`);
-  if (ars.dimensions.altitude !== 'extreme') problems.push('ars is not in the extreme band');
+  /*
+    `high`, NOT `extreme`, and that is a decision with a cost rather than a default.
+
+    Arsagam was briefly moved to `extreme` because Denver sits at 5,280 ft, which is true. It was
+    moved back because `extreme` plus a 28C annual mean stacks BOTH air-density channels at once --
+    5,750 ft of thin air AND 28C of hot air, multiplied rather than offset -- which pushed its
+    home-run factor to 133.5 against a calibrated ceiling of 130. That was `checkParkFactors`
+    check 14 doing exactly its job: the ten archetypes the coefficients were fitted against do not
+    span it, and the tool was reporting an extrapolation rather than a crash.
+
+    So the seasonality is Denver's and the altitude is not. Asserted here so neither half can drift
+    silently: the override above is what makes the season read right, and this band is what keeps
+    the factor inside the range the model was fitted on.
+  */
+  if (ars.dimensions.altitude !== 'high') problems.push('ars is not in the high band');
 }
 
 // --- 4. the regime fallback still works ---------------------------------------
