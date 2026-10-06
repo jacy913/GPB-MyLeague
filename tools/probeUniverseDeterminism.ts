@@ -99,6 +99,24 @@ const datesStable = schedules.every((s) => s.length === schedules[0].length
 console.log(`\n  schedule length      ${schedules.map((s) => s.length).join(' / ')}`);
 console.log(`  schedule dates       ${datesStable ? 'identical across builds' : 'DIFFER'}`);
 console.log(`  schedule pairings    ${pairingsStable ? 'identical across builds' : '*** DIFFER ***'}`);
+
+  /*
+    * DETERMINISM MUST NOT COST THE SEASON ITS VARIETY.
+    *
+    * Seeding the shuffle off the season start date is only half the fix. The other half is that a
+    * different season must still get a DIFFERENT schedule, or the change has bought reproducibility
+    * by making every league in every year play the identical fixture list -- a quieter version of
+    * the same bug, and one that no determinism probe can catch on its own, because "identical" is
+    * exactly what a determinism probe is looking for.
+    *
+    * This assertion is what separates "seeded" from "constant".
+    */
+  const nextYear = generateSchedule(INITIAL_TEAMS, {
+    seasonStartDate: getDefaultSeasonStartDate(YEAR + 1),
+    seasonDays: 180,
+  });
+  const varies = sig(nextYear) !== sig(schedules[0]);
+  console.log(`  next year's slate    ${varies ? 'different, as it should be' : '*** IDENTICAL -- the slate never varies ***'}`);
 if (!pairingsStable) {
   const first = schedules[0];
   const diffs = schedules[1].map((x, i) => ({ x, i }))
@@ -116,10 +134,21 @@ if (strengthSpread.some((s) => s > 0)) {
   console.log(`\n  most affected clubs: ${names.slice(0, 4).map((id) => `${id} (${strengthSpread[teamIds.indexOf(id)].toFixed(3)})`).join(', ')}`);
 }
 
+/*
+ * `deterministic` ALONE IS NOT THE VERDICT, and that is the whole point of `varies`.
+ *
+ * A generator that returns a constant passes every reproducibility test ever written: same inputs,
+ * same output, every time. So "deterministic" cannot be the exit condition on its own, or the
+ * cheapest way to make this probe green is to delete the randomness -- which is a real possibility,
+ * because it would be faster and would make this file pass.
+ */
 const deterministic = sameIds && worstOverall === 0 && pairingsStable;
-console.log(`\n  VERDICT: ${deterministic
-  ? 'a seeded universe rebuilds identically -- rosters AND slate -- so the seed IS a usable A/B handle'
-  : '*** A SEEDED UNIVERSE DOES NOT REBUILD IDENTICALLY -- see which layer moved above ***'}`);
+const sound = deterministic && varies;
+console.log(`\n  VERDICT: ${sound
+  ? 'a seeded universe rebuilds identically -- rosters AND slate -- and a different season gets a different slate, so the seed IS a usable A/B handle'
+  : deterministic
+    ? '*** REPRODUCIBLE BUT DEGENERATE: every season produces the same schedule, so the slate is not varying at all ***'
+    : '*** A SEEDED UNIVERSE DOES NOT REBUILD IDENTICALLY -- see which layer moved above ***'}`);
 console.log('');
 
-process.exitCode = deterministic ? 0 : 1;
+process.exitCode = sound ? 0 : 1;

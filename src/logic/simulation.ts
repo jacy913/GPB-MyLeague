@@ -1,4 +1,21 @@
 import { Game, SimulationSettings, Team } from '../types';
+import { createSeededRandom } from '../lib/random';
+
+/**
+ * FNV-1a, so a string becomes a seed without `Math.random` anywhere in sight.
+ *
+ * The obvious one-liner is a character sum, and it is a bad one: `'2026-04-01'` and `'2026-10-01'`
+ * and every other permutation of the same digits collide, so two seasons that differ only in the
+ * order of their digits would get the identical schedule. A hash has no such structure to fall into.
+ */
+const hashString = (value: string): number => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+};
 
 // Constants (Defaults)
 export const DEFAULT_SETTINGS: SimulationSettings = {
@@ -26,6 +43,13 @@ const INTERLEAGUE_DIVISION_PAIRING: Record<Team['division'], Team['division']> =
 interface ScheduleOptions {
   seasonStartDate?: string; // YYYY-MM-DD
   seasonDays?: number;
+  /**
+   * The randomness source for the shuffle and the day-placement tiebreak.
+   *
+   * OPTIONAL, and the default is derived from the season start date rather than from
+   * `Math.random`, which is the entire point of adding it. See the note on `generateSchedule`.
+   */
+  random?: () => number;
 }
 
 interface GameTemplate {
@@ -190,10 +214,10 @@ const hashPair = (a: string, b: string): number => {
   return hash;
 };
 
-const shuffleArray = <T,>(items: T[]): T[] => {
+const shuffleArray = <T,>(items: T[], random: () => number): T[] => {
   const next = [...items];
   for (let i = next.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [next[i], next[j]] = [next[j], next[i]];
   }
   return next;
@@ -245,6 +269,7 @@ const pickBestDayForGame = (
   dayLoad: number[],
   seasonDays: number,
   allowSoftCapOverflow: boolean,
+  random: () => number,
 ): number => {
   const homeBusy = teamBusyByDay.get(template.homeTeam);
   const awayBusy = teamBusyByDay.get(template.awayTeam);
@@ -271,7 +296,7 @@ const pickBestDayForGame = (
 
     const prevPenalty =
       (day > 0 && homeBusy[day - 1] ? 1 : 0) + (day > 0 && awayBusy[day - 1] ? 1 : 0);
-    const score = dayLoad[day] * 1.5 + prevPenalty * 3 + Math.random() * 0.2;
+    const score = dayLoad[day] * 1.5 + prevPenalty * 3 + random() * 0.2;
 
     if (score < bestScore) {
       bestScore = score;
@@ -312,6 +337,29 @@ export const generateSchedule = (teams: Team[], options: ScheduleOptions = {}): 
   const seasonStartDate = options.seasonStartDate ?? getDefaultSeasonStartDate();
   const baseTemplates = buildGameTemplates(teams);
 
+  /*
+   * THE SCHEDULE IS A PURE FUNCTION OF ITS INPUTS, and this line is why.
+   *
+   * It used to shuffle with `Math.random()`, which made `generateSchedule` the only part of the
+   * universe that could not be rebuilt. `probeUniverseDeterminism` measured the cost: three builds
+   * from one seed agreed on 1,282 player ratings to the last decimal point, agreed on every roster
+   * and every club's strength, and then disagreed on 2,447 of 2,464 games. Everything expensive was
+   * deterministic and the cheapest thing in the chain was not.
+   *
+   * That matters beyond the probe because the product CLAIMS a seed is an A/B handle -- if the
+   * schedule reshuffles on reload then "the same universe" does not exist, and a model change
+   * cannot be compared against anything, because every run is measured against a different fixture
+   * list. `woba.ts` and `wrcPlus.ts` already carry comments about rates shifting by about 5% on
+   * schedule order alone, which is exactly this bug showing up in two other places.
+   *
+   * SEEDED FROM THE SEASON START DATE rather than from the universe seed: threading the universe
+   * seed down here would mean a dependency through a `useCallback` that deliberately closes over
+   * nothing, and the date is already unique per season. The result is what a real league has -- a
+   * fixed schedule for a given year, stable across reloads, and a different one next season because
+   * the year moved. A caller that wants a different arrangement passes `random` and gets one.
+   */
+  const random = options.random ?? createSeededRandom(hashString(`${seasonStartDate}|${seasonDays}`));
+
   for (let attempt = 0; attempt < 20; attempt++) {
     const teamBusyByDay = new Map<string, boolean[]>();
     teams.forEach((team) => {
@@ -320,13 +368,13 @@ export const generateSchedule = (teams: Team[], options: ScheduleOptions = {}): 
 
     const dayLoad = new Array<number>(seasonDays).fill(0);
     const dayBuckets: GameTemplate[][] = Array.from({ length: seasonDays }, () => []);
-    const templates = shuffleArray(baseTemplates);
+    const templates = shuffleArray(baseTemplates, random);
     let placementFailed = false;
 
     for (const template of templates) {
-      let day = pickBestDayForGame(template, teamBusyByDay, dayLoad, seasonDays, false);
+      let day = pickBestDayForGame(template, teamBusyByDay, dayLoad, seasonDays, false, random);
       if (day < 0) {
-        day = pickBestDayForGame(template, teamBusyByDay, dayLoad, seasonDays, true);
+        day = pickBestDayForGame(template, teamBusyByDay, dayLoad, seasonDays, true, random);
       }
 
       if (day < 0) {
