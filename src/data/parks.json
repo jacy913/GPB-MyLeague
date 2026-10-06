@@ -7,6 +7,18 @@
       "values": ["sea", "moderate", "high", "extreme"],
       "note": "Air density. The dominant single factor. 'high' is 3,000-4,500 ft, 'extreme' is 5,000-6,500 ft. At 5,280 ft the air is about 85% as dense, so the ball carries roughly 17% farther. Breaking balls also lose bite in thin air, so altitude hurts pitching through a second channel."
     },
+    "altitudeFt": {
+      "type": "int",
+      "required": false,
+      "note": "DISPLAY ONLY. This park's own height in feet, inside its band -- 'sea' is -10 to 100, 'moderate' 101 to 1,150, 'high' 3,000 to 4,500, 'extreme' 5,000 to 6,500. 'sea' is allowed below zero because below-sea-level cities are real and there is no reason to pretend otherwise; the band boundaries are NOT contiguous, so nothing in this league can be between 1,151 and 2,999 ft. THE PHYSICS STILL READS THE BAND, not this field: airDensityRatio is computed from ALTITUDE_FT[altitude], the band midpoint, exactly as before. The panel prints both numbers so the gap is visible instead of inferred. Hand-set, not derived at runtime -- a park's altitude that changed on refresh would not be a fact about the park. Generated once by tools/stampParkAltitude.ts from a hash of the team id, and now ordinary editable numbers."
+    },
+    "seasonOffsetC": {
+      "type": "array",
+      "items": "int",
+      "length": 7,
+      "required": false,
+      "note": "DISPLAY ONLY, and the strictest separation in this file. This park's own seasonal shape in Celsius from its own annual mean, April through October. The fallback is CLIMATE_MONTH_OFFSET_C[climate], so 31 of the 32 parks are unaffected by the field existing. Present on 'ars' alone, which is a Denver-shaped park: hot summer, genuinely cold spring and autumn, where the hot_dry regime's shallow curve [-2, 2, 7, 10, 11, 8, 3] would have drawn a place that barely changes across five months. NEVER read this back into airDensityRatio. The density figure uses the annual mean alone, because a park's annual mean is not the average of its seven baseball months -- the four it does not play in are systematically colder, and averaging only the played months would quietly move every park factor."
+    },
     "roof": {
       "type": "enum",
       "values": ["open_air", "fixed_roof", "retractable_open", "dome"],
@@ -86,8 +98,8 @@
   "alc": {
     "parkCity": "Greenpond",
     "meanTempC": 12,
-    "meanTempC": 12,
     "altitude": "sea",
+    "altitudeFt": 23,
     "roof": "open_air",
     "lfFt": 348, "cfFt": 415, "rfFt": 344,
     "wallHeightFt": 8,
@@ -102,8 +114,8 @@
   "val": {
     "parkCity": "Corton",
     "meanTempC": 16,
-    "meanTempC": 16,
     "altitude": "high",
+    "altitudeFt": 4250,
     "roof": "open_air",
     "lfFt": 337, "cfFt": 402, "rfFt": 334,
     "wallHeightFt": 7,
@@ -118,8 +130,8 @@
   "luf": {
     "parkCity": "Borresurt",
     "meanTempC": 16,
-    "meanTempC": 16,
     "altitude": "sea",
+    "altitudeFt": 54,
     "roof": "open_air",
     "lfFt": 331, "cfFt": 398, "rfFt": 355,
     "wallHeightFt": 6,
@@ -134,8 +146,8 @@
   "hui": {
     "parkCity": "Slattswig",
     "meanTempC": 19,
-    "meanTempC": 19,
     "altitude": "moderate",
+    "altitudeFt": 420,
     "roof": "fixed_roof",
     "lfFt": 329, "cfFt": 401, "rfFt": 329,
     "wallHeightFt": 7,
@@ -150,8 +162,8 @@
   "ara": {
     "parkCity": "Bosta",
     "meanTempC": 18,
-    "meanTempC": 18,
     "altitude": "sea",
+    "altitudeFt": 46,
     "roof": "open_air",
     "lfFt": 361, "cfFt": 402, "rfFt": 352,
     "wallHeightFt": 6,
@@ -159,15 +171,15 @@
     "surface": "grass",
     "grassLength": "standard",
     "soilType": "dry_hard",
-    "climate": "cool_coastal",
+    "climate": "hot_humid",
     "humidity": "humid",
     "foulGround": "standard"
   },
   "des": {
     "parkCity": "Bergum",
     "meanTempC": 36,
-    "meanTempC": 36,
     "altitude": "sea",
+    "altitudeFt": 85,
     "roof": "open_air",
     "lfFt": 336, "cfFt": 409, "rfFt": 333,
     "wallHeightFt": 24,
@@ -182,8 +194,8 @@
   "suk": {
     "parkCity": "Cayenyan",
     "meanTempC": 25,
-    "meanTempC": 25,
     "altitude": "sea",
+    "altitudeFt": 83,
     "roof": "open_air",
     "lfFt": 322, "cfFt": 396, "rfFt": 326,
     "wallHeightFt": 5,
@@ -198,8 +210,8 @@
   "gar": {
     "parkCity": "Bartoba",
     "meanTempC": 25,
-    "meanTempC": 25,
     "altitude": "sea",
+    "altitudeFt": 38,
     "roof": "open_air",
     "lfFt": 341, "cfFt": 400, "rfFt": 338,
     "wallHeightFt": 8,
@@ -214,8 +226,8 @@
   "gra": {
     "parkCity": "Daster",
     "meanTempC": 4,
-    "meanTempC": 4,
     "altitude": "sea",
+    "altitudeFt": 52,
     "roof": "retractable_open",
     "lfFt": 335, "cfFt": 405, "rfFt": 332,
     "wallHeightFt": 7,
@@ -230,8 +242,8 @@
   "tru": {
     "parkCity": "Jootsbrook",
     "meanTempC": 6,
-    "meanTempC": 6,
     "altitude": "sea",
+    "altitudeFt": 64,
     "roof": "open_air",
     "lfFt": 328, "cfFt": 394, "rfFt": 331,
     "wallHeightFt": 9,
@@ -246,8 +258,8 @@
   "caf": {
     "parkCity": "Gabys",
     "meanTempC": 1,
-    "meanTempC": 1,
-    "altitude": "sea",
+    "altitude": "moderate",
+    "altitudeFt": 1012,
     "roof": "open_air",
     "lfFt": 342, "cfFt": 401, "rfFt": 345,
     "wallHeightFt": 6,
@@ -262,8 +274,8 @@
   "rag": {
     "parkCity": "Kauping",
     "meanTempC": 8,
-    "meanTempC": 8,
     "altitude": "high",
+    "altitudeFt": 3043,
     "roof": "open_air",
     "lfFt": 355, "cfFt": 408, "rfFt": 352,
     "wallHeightFt": 7,
@@ -278,8 +290,8 @@
   "win": {
     "parkCity": "Lindestadt",
     "meanTempC": 16,
-    "meanTempC": 16,
     "altitude": "sea",
+    "altitudeFt": 27,
     "roof": "open_air",
     "lfFt": 330, "cfFt": 397, "rfFt": 333,
     "wallHeightFt": 8,
@@ -294,8 +306,8 @@
   "aub": {
     "parkCity": "Foulles",
     "meanTempC": 15,
-    "meanTempC": 15,
     "altitude": "sea",
+    "altitudeFt": 88,
     "roof": "open_air",
     "lfFt": 322, "cfFt": 403, "rfFt": 354,
     "wallHeightFt": 4,
@@ -310,8 +322,8 @@
   "dwi": {
     "parkCity": "Cathegor",
     "meanTempC": 4,
-    "meanTempC": 4,
     "altitude": "sea",
+    "altitudeFt": 84,
     "roof": "open_air",
     "lfFt": 339, "cfFt": 404, "rfFt": 336,
     "wallHeightFt": 7,
@@ -324,10 +336,10 @@
     "foulGround": "generous"
   },
   "hou": {
-    "parkCity": "Duccy",
-    "meanTempC": 0,
+    "parkCity": "Ducchy",
     "meanTempC": 0,
     "altitude": "extreme",
+    "altitudeFt": 5698,
     "roof": "open_air",
     "lfFt": 337, "cfFt": 412, "rfFt": 342,
     "wallHeightFt": 6,
@@ -343,8 +355,8 @@
   "ock": {
     "parkCity": "Vingross",
     "meanTempC": 15,
-    "meanTempC": 15,
     "altitude": "sea",
+    "altitudeFt": 99,
     "roof": "fixed_roof",
     "lfFt": 334, "cfFt": 406, "rfFt": 331,
     "wallHeightFt": 8,
@@ -359,8 +371,8 @@
   "bal": {
     "parkCity": "Gauler",
     "meanTempC": 13,
-    "meanTempC": 13,
     "altitude": "sea",
+    "altitudeFt": 31,
     "roof": "open_air",
     "lfFt": 328, "cfFt": 410, "rfFt": 335,
     "wallHeightFt": 7,
@@ -375,8 +387,8 @@
   "fes": {
     "parkCity": "Wesdech",
     "meanTempC": 5,
-    "meanTempC": 5,
     "altitude": "extreme",
+    "altitudeFt": 5496,
     "roof": "open_air",
     "lfFt": 336, "cfFt": 415, "rfFt": 340,
     "wallHeightFt": 9,
@@ -391,8 +403,8 @@
   "urb": {
     "parkCity": "Urbington",
     "meanTempC": 16,
-    "meanTempC": 16,
     "altitude": "moderate",
+    "altitudeFt": 1021,
     "roof": "open_air",
     "lfFt": 352, "cfFt": 412, "rfFt": 350,
     "wallHeightFt": 6,
@@ -407,8 +419,8 @@
   "sin": {
     "parkCity": "Cayervo",
     "meanTempC": 26,
-    "meanTempC": 26,
     "altitude": "sea",
+    "altitudeFt": 60,
     "roof": "open_air",
     "lfFt": 333, "cfFt": 401, "rfFt": 329,
     "wallHeightFt": 7,
@@ -423,8 +435,8 @@
   "loy": {
     "parkCity": "Bridgener",
     "meanTempC": 19,
-    "meanTempC": 19,
     "altitude": "moderate",
+    "altitudeFt": 382,
     "roof": "open_air",
     "lfFt": 326, "cfFt": 395, "rfFt": 330,
     "wallHeightFt": 8,
@@ -439,8 +451,8 @@
   "niy": {
     "parkCity": "Niyo",
     "meanTempC": 25,
-    "meanTempC": 25,
     "altitude": "sea",
+    "altitudeFt": 10,
     "roof": "retractable_open",
     "lfFt": 330, "cfFt": 397, "rfFt": 334,
     "wallHeightFt": 6,
@@ -455,8 +467,8 @@
   "ars": {
     "parkCity": "Columnla",
     "meanTempC": 28,
-    "meanTempC": 28,
-    "altitude": "high",
+    "altitude": "extreme",
+    "altitudeFt": 5280,
     "roof": "open_air",
     "lfFt": 360, "cfFt": 418, "rfFt": 351,
     "wallHeightFt": 5,
@@ -466,13 +478,14 @@
     "soilType": "dry_hard",
     "climate": "hot_dry",
     "humidity": "arid",
-    "foulGround": "generous"
+    "foulGround": "generous",
+    "seasonOffsetC": [-14, -8, 0, 6, 8, 2, -9]
   },
   "der": {
     "parkCity": "Lerkanger",
     "meanTempC": 4,
-    "meanTempC": 4,
     "altitude": "moderate",
+    "altitudeFt": 431,
     "roof": "retractable_open",
     "lfFt": 337, "cfFt": 408, "rfFt": 334,
     "wallHeightFt": 7,
@@ -487,8 +500,8 @@
   "rei": {
     "parkCity": "Karkebo",
     "meanTempC": 0,
-    "meanTempC": 0,
     "altitude": "sea",
+    "altitudeFt": 65,
     "roof": "open_air",
     "lfFt": 331, "cfFt": 400, "rfFt": 335,
     "wallHeightFt": 8,
@@ -503,8 +516,8 @@
   "fey": {
     "parkCity": "Hanax",
     "meanTempC": 18,
-    "meanTempC": 18,
     "altitude": "sea",
+    "altitudeFt": 96,
     "roof": "open_air",
     "lfFt": 324, "cfFt": 393, "rfFt": 344,
     "wallHeightFt": 26,
@@ -519,8 +532,8 @@
   "cal": {
     "parkCity": "Yurnisch",
     "meanTempC": 20,
-    "meanTempC": 20,
     "altitude": "sea",
+    "altitudeFt": 59,
     "roof": "dome",
     "lfFt": 336, "cfFt": 404, "rfFt": 336,
     "wallHeightFt": 7,
@@ -535,8 +548,8 @@
   "sta": {
     "parkCity": "Muhllug",
     "meanTempC": 13,
-    "meanTempC": 13,
     "altitude": "sea",
+    "altitudeFt": 46,
     "roof": "open_air",
     "lfFt": 335, "cfFt": 411, "rfFt": 355,
     "wallHeightFt": 12,
@@ -551,8 +564,8 @@
   "bra": {
     "parkCity": "Sundsby",
     "meanTempC": 26,
-    "meanTempC": 26,
     "altitude": "moderate",
+    "altitudeFt": 943,
     "roof": "open_air",
     "lfFt": 329, "cfFt": 396, "rfFt": 333,
     "wallHeightFt": 7,
@@ -567,8 +580,8 @@
   "geb": {
     "parkCity": "Rochiere",
     "meanTempC": 18,
-    "meanTempC": 18,
     "altitude": "sea",
+    "altitudeFt": 53,
     "roof": "open_air",
     "lfFt": 340, "cfFt": 403, "rfFt": 337,
     "wallHeightFt": 6,
@@ -583,8 +596,8 @@
   "and": {
     "parkCity": "Lutzsche",
     "meanTempC": 1,
-    "meanTempC": 1,
     "altitude": "high",
+    "altitudeFt": 4063,
     "roof": "open_air",
     "lfFt": 362, "cfFt": 410, "rfFt": 353,
     "wallHeightFt": 32,

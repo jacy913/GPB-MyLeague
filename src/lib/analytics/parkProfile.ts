@@ -95,6 +95,23 @@ export interface ParkDimensions {
    */
   meanTempC?: number;
   altitude: AltitudeBand;
+  /**
+   * This park's own height in feet, inside its band. DISPLAY ONLY -- see `altitudeFtShown`.
+   *
+   * Optional, and the fallback is the band midpoint, so a hypothetical park built in a test needs
+   * no value and behaves exactly as before this field existed. Same arrangement as `meanTempC`.
+   *
+   * The reason it exists at all: the four bands are wide, so a park's altitude used to read as
+   * whichever midpoint its band happened to carry. `high` is 3,000-4,500 ft and every one of them
+   * said 3,750. Per-park values inside the band make the label a fact about the park rather than
+   * about the band.
+   *
+   * HAND-SET, NOT DERIVED AT RUNTIME. Display-only does not mean load-only: a value that changed
+   * on refresh would mean the park's own altitude was not a fixed property of the park, which is
+   * the same defect `meanTempC` was hand-set to avoid. `tools/stampParkAltitude.ts` generated
+   * these once from a hash of the team id and they are now ordinary editable numbers.
+   */
+  altitudeFt?: number;
   roof: RoofKind;
   lfFt: number;
   cfFt: number;
@@ -107,6 +124,21 @@ export interface ParkDimensions {
   climate: ClimateRegime;
   humidity: HumidityBand;
   foulGround: FoulGround;
+  /**
+   * This park's own seasonal shape, Celsius from its own annual mean, April..October.
+   *
+   * Optional; the fallback is `CLIMATE_MONTH_OFFSET_C[climate]`, so 31 of the 32 parks are
+   * untouched by this field existing. It exists for `ars`, which is a Denver-shaped park in an
+   * ocean of regime-shaped ones.
+   *
+   * DISPLAY ONLY, and more firmly than `altitudeFt` is. `climateMonthC` already cannot reach the
+   * physics -- the density figure is computed from the annual mean alone -- but this field makes
+   * the separation load-bearing, so it is worth being blunt: reading a per-park curve back into
+   * `airDensityRatio` would make seven hand-set numbers decide a home-run factor. `checkParks`
+   * asserts this field is seven finite numbers, and `climateMonthC` asserts its length against
+   * `CLIMATE_MONTHS`, but nothing asserts the absence of a code path that should not be there.
+   */
+  seasonOffsetC?: readonly number[];
   /** Optional prose. Never read by anything here, and must never be. */
   flavour?: string;
 }
@@ -287,8 +319,15 @@ export const CLIMATE_MONTH_OFFSET_C: Record<ClimateRegime, readonly number[]> = 
  */
 export const climateMonthC = (profile: ParkProfile): number[] => {
   const mean = profile.climateCUsed;
-  return CLIMATE_MONTH_OFFSET_C[profile.dimensions.climate].map((offset) => mean + offset);
+  // A park's own curve wins over its regime's. Present on one park today; the fallback keeps the
+  // other thirty-one reading exactly as they did before the field was added.
+  const offsets = profile.dimensions.seasonOffsetC
+    ?? CLIMATE_MONTH_OFFSET_C[profile.dimensions.climate];
+  return offsets.map((offset) => mean + offset);
 };
+
+/** Celsius to Fahrenheit. Used for display only -- nothing in the physics is converted. */
+export const toF = (c: number): number => (c * 9) / 5 + 32;
 
 /**
  * The month labels and the offset table must agree in length.
@@ -302,6 +341,7 @@ if (CLIMATE_MONTHS.length !== Object.values(CLIMATE_MONTH_OFFSET_C)[0].length) {
     + `${Object.values(CLIMATE_MONTH_OFFSET_C)[0].length} entries`,
   );
 }
+
 
 /** Air density at sea level and 15 C, the reference every ratio is taken against. */
 export const REFERENCE_DENSITY = 1.225; // kg/m^3
@@ -457,6 +497,20 @@ export interface ParkProfile {
   carryMultiplier: number;
   /** The height the density figure was computed at, so it can be checked. */
   altitudeFtUsed: number;
+  /**
+   * This park's own height in feet, for the label. Falls back to `altitudeFtUsed`.
+   *
+   * KEPT SEPARATE FROM `altitudeFtUsed` AND IT MATTERS THAT THEY CAN DIFFER. The density figure is
+   * computed from the band midpoint, so a park labelled 4,120 ft has an `altitudeFtUsed` of 3,750
+   * and an air density that corresponds to 3,750. Both numbers are honest and they answer different
+   * questions -- one is what the park is, the other is what the simulation assumed -- and the panel
+   * prints both so the reader can see the gap instead of inferring it.
+   *
+   * Collapsing them would be the tidier-looking mistake: it would make the label agree with the
+   * physics by making the physics per-park, which is a simulation change nobody asked for dressed
+   * up as a display fix.
+   */
+  altitudeFtShown: number;
   /** The temperature the density figure was computed at, for the same reason. */
   climateCUsed: number;
 }
@@ -521,6 +575,7 @@ export const deriveParkProfile = (teamId: string, dimensions: ParkDimensions): P
     temperatureRatio: density / barometricDensityRatio(altitude),
     carryMultiplier: 1 / density,
     altitudeFtUsed: ALTITUDE_FT[altitude],
+    altitudeFtShown: dimensions.altitudeFt ?? ALTITUDE_FT[altitude],
     climateCUsed: dimensions.meanTempC ?? CLIMATE_C[climate],
   };
 };
@@ -539,3 +594,64 @@ export const ALL_PARK_PROFILES: ReadonlyMap<string, ParkProfile> = new Map(
 );
 
 export const parkProfile = (teamId: string): ParkProfile | null => ALL_PARK_PROFILES.get(teamId) ?? null;
+
+/*
+ * Everything below needs all thirty-two parks to exist, which is why it is here and not beside the
+ * seasonal constants it depends on. `climateMonthC` and `CLIMATE_MONTHS` are defined three hundred
+ * lines up and are perfectly usable on their own; these two are only meaningful once the data has
+ * been read.
+ */
+
+/**
+ * Same length assertion for a park's OWN curve as the one beside `CLIMATE_MONTH_OFFSET_C`, and it
+ * has to be per park rather than once at module load: the override lives in the data, so this is the
+ * first place all thirty-two are visible. Asserted rather than trusted, because a six-month
+ * override on one park produces a chart where October sits under June and nothing says so.
+ */
+for (const profile of ALL_PARK_PROFILES.values()) {
+  const own = profile.dimensions.seasonOffsetC;
+  if (own && own.length !== CLIMATE_MONTHS.length) {
+    throw new Error(
+      `${profile.teamId} has a seasonOffsetC of ${own.length} entries but there are `
+      + `${CLIMATE_MONTHS.length} months`,
+    );
+  }
+}
+
+/**
+ * THE COLDEST AND WARMEST BASEBALL MONTH ANYWHERE IN THE LEAGUE, and the reason the season chart is
+ * drawn on a shared scale instead of each park's own.
+ *
+ * This exists because the per-park scaling was wrong, and it was wrong in a way that only became
+ * visible once somebody opened two parks in a row. Each park's bars were scaled to that park's own
+ * coldest and warmest month, so a park running -1C to 14C and a park running 27C to 47C both drew
+ * columns that used the full height of the box and had the same silhouette. They looked like the
+ * same climate. They are 40 degrees apart, which is the entire difference between a maritime north
+ * and a desert.
+ *
+ * A shared scale costs each park its own curve filling the box, and that cost is real: the coldest
+ * park in the league now draws short bars, which reads as less information until you notice the
+ * bars are comparable to every other park's -- which is the only thing a bar chart is for. A park's
+ * own shape is still legible from the printed number under each column, so nothing is actually lost
+ * except the illusion, which was the thing that was wrong.
+ *
+ * COMPUTED FROM THE DATA, not typed in, so it cannot drift out of agreement with the thirty-two
+ * charts it scales. It moves whenever a mean, a regime, or an override moves.
+ *
+ * IT SPANS THE WHOLE LEAGUE, including parks not currently on screen, and that is deliberate: a
+ * park in the middle of the distribution should get a chart that looks unremarkable, because it is.
+ */
+export const LEAGUE_SEASON_TEMP_C = ((): { min: number; max: number } => {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const profile of ALL_PARK_PROFILES.values()) {
+    for (const t of climateMonthC(profile)) {
+      if (t < min) min = t;
+      if (t > max) max = t;
+    }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    throw new Error('no park produced a finite monthly temperature');
+  }
+  return { min, max };
+})();
