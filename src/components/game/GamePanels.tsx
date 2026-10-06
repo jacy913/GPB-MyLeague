@@ -101,17 +101,25 @@ export const LineupList: React.FC<{
   title: string;
   entries: Array<{ playerId: string; fullName: string; primaryPosition: string }>;
   activePlayerId: string | null;
-}> = ({ title, entries, activePlayerId }) => (
+  /**
+   * What each player actually did, once the game is over.
+   *
+   * Absent while the game is live, and the list is then a batting order and nothing else -- which is
+   * correct, because a number for an inning that has not been played is a fabrication.
+   */
+  gameLines?: Map<string, string>;
+}> = ({ title, entries, activePlayerId, gameLines }) => (
   <Panel variant="sunken" className="p-3">
     <p className="t-caption text-[var(--color-ink-faint)]">{title}</p>
     <ol className="mt-2 flex flex-col">
       {entries.map((participant, index) => {
         const active = participant.playerId === activePlayerId;
+        const line = gameLines?.get(participant.playerId);
         return (
           <li
             key={participant.playerId}
             aria-current={active ? 'true' : undefined}
-            className={`flex items-center justify-between border-l-[3px] px-2 py-1 ${
+            className={`flex flex-wrap items-center justify-between gap-x-2 border-l-[3px] px-2 py-1 ${
               active ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
             }`}
           >
@@ -119,6 +127,22 @@ export const LineupList: React.FC<{
               {index + 1}. {participant.fullName}
             </span>
             <span className="t-caption text-[var(--color-ink-faint)]">{participant.primaryPosition}</span>
+            {/*
+              THE GAME, UNDER THE NAME.
+
+              The batting order was a list of who is coming up, and stayed a list of who is coming up
+              after the game finished -- which is the one screen where "what did he do" is the only
+              question left. This is the box score line the manager wants, per player, in the place
+              they already read the order.
+
+              A PLAYER WHO DID NOT APPEAR HAS NO ROW AT ALL, rather than a row of zeroes. A bench
+              player did not go 0 for 4; they did not bat, and printing the former would put nine
+              zeroes on screen for a game where six men played. That distinction is why this is a
+              lookup on the reconstructed lines rather than a default.
+            */}
+            {line && (
+              <span className="w-full tabular-nums t-caption text-[var(--color-ink-dim)]">{line}</span>
+            )}
           </li>
         );
       })}

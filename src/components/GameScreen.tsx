@@ -28,6 +28,8 @@ import { GameClock, LineupList, MatchupCard, PlayLog } from './game/GamePanels';
 import { ParkPanel } from './game/ParkPanel';
 import { parkProfile } from '../lib/analytics/parkProfile';
 import { attendanceFor, formatCrowd, stadiumCapacityFor } from '../lib/analytics/crowdSize';
+import { gameLineFor } from '../lib/analytics/boxScoreLine';
+import { reconstructPlayerGameLines } from '../lib/playerProps';
 import { isPlayoffGame } from '../logic/playoffs';
 
 interface GameScreenProps {
@@ -392,6 +394,37 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     setVisibleLogCount(logs.length);
   };
 
+  /*
+    THE BOX SCORE LINES, BUILT ONLY ONCE THE GAME IS OVER.
+
+    Reconstructed from the stored play log by exactly the function the betting record's prop
+    settlement uses -- `reconstructPlayerGameLines` -- so a box score on this screen and a settled
+    player's line on the record are reading the same source and cannot disagree. That matters more
+    than it sounds: the prop market sells a number derived from this reconstruction, and if the screen
+    that shows you what happened read a different source, the settlement would look wrong whenever the
+    two did not match.
+
+    GATED ON `status === 'completed'`. While the game is live this is undefined and the lineup is a
+    batting order, which is the correct thing for it to be. A partial line -- "1 for 2" after the
+    third at-bat of the first inning -- is a fact about an inning that has not finished, and printing
+    it on the same line as a finished one would make a live game and a finished game read identically.
+  */
+  const { awayGameLines, homeGameLines } = useMemo(() => {
+    if (game.status !== 'completed') return { awayGameLines: undefined, homeGameLines: undefined };
+    const { batting, pitching } = reconstructPlayerGameLines(game);
+    const forTeam = (ids: string[]): Map<string, string> => {
+      const out = new Map<string, string>();
+      for (const id of ids) {
+        const line = gameLineFor(id, batting, pitching);
+        if (line) out.set(id, line);
+      }
+      return out;
+    };
+    const awayIds = session?.participants?.awayLineup.map((p) => p.playerId) ?? [];
+    const homeIds = session?.participants?.homeLineup.map((p) => p.playerId) ?? [];
+    return { awayGameLines: forTeam(awayIds), homeGameLines: forTeam(homeIds) };
+  }, [game, session]);
+
   if (!awayTeam || !homeTeam || !session) {
     return (
       <section className="space-y-3">
@@ -581,11 +614,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   title="AWAY LINEUP"
                   entries={activeSession.participants.awayLineup}
                   activePlayerId={isTopHalf ? currentBatter?.playerId ?? null : null}
+                  gameLines={awayGameLines}
                 />
                 <LineupList
                   title="HOME LINEUP"
                   entries={activeSession.participants.homeLineup}
                   activePlayerId={isTopHalf ? null : currentBatter?.playerId ?? null}
+                  gameLines={homeGameLines}
                 />
               </div>
             </>
