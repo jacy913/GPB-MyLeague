@@ -101,6 +101,34 @@ if (log.length === 0) {
   process.exit(1);
 }
 
+/*
+  REFUSE TO RUN ON A DIRTY TREE, BEFORE ANY CHECKOUT HAPPENS.
+
+  This block used to walk the history with `git checkout` and finish with `git reset --hard` on the
+  original commit. Correct for a tool whose job is to walk history on a clean tree; CATASTROPHIC on
+  a dirty one, because returning to the original branch restores every TRACKED file to its committed
+  state. It did exactly that twice on this machine, silently, after printing a cheerful
+  "restored to local @ <hash>". The second time it destroyed several hours of work that existed in no
+  commit and no stash -- and the check tool that had verified that work kept passing, because it had
+  no way to know its subject had been deleted.
+
+  The guard is HERE, before the loop, not in the `finally`: a check that runs after the checkouts has
+  already missed the only moment it could have helped.
+*/
+const dirty = gitRun(['status', '--porcelain']).out.trim();
+if (dirty) {
+  const paths = dirty.split('\n');
+  console.log('\n  REFUSING TO RUN: the working tree has uncommitted changes.\n');
+  console.log('  This tool checks out every commit in turn. Returning to the original branch restores');
+  console.log('  every TRACKED file to its committed state, so anything edited but not committed is');
+  console.log('  lost. It has already done that twice on this machine, silently, after printing a');
+  console.log('  successful-looking restore message.\n');
+  paths.slice(0, 12).forEach((l) => console.log(`    ${l}`));
+  if (paths.length > 12) console.log(`    ... and ${paths.length - 12} more`);
+  console.log(`\n  ${paths.length} changed path(s). Commit or stash, then re-run.\n`);
+  process.exit(2);
+}
+
 console.log(`\nDOES EVERY COMMIT BUILD? (${log.length} back from ${branch})\n`);
 const failures: string[] = [];
 const unknown: string[] = [];
@@ -119,11 +147,16 @@ try {
     console.log(`  ${mark} ${hash}  tsc:${tsc}  build:${build}  ${subject}`);
   }
 } finally {
-  // Restore unconditionally. A mid-run failure that skipped this would leave the working tree on a
-  // random commit with the user's uncommitted work nowhere, which is the worst outcome available.
+  /*
+    Return to the branch. Deliberately NOT `reset --hard`.
+
+    `git checkout` back to the original branch already restores every tracked file, because each
+    intermediate commit left the worktree at that commit. The hard reset's only remaining effect
+    would be to delete anything the checkout left alone -- which is precisely how this tool destroyed
+    two rounds of uncommitted work while printing a successful-looking restore line.
+  */
   gitRun(['checkout', '-q', branch]);
-  gitRun(['reset', '--hard', '-q', head]);
-  console.log(`\n  restored to ${branch} @ ${gitRun(['rev-parse', '--short', 'HEAD']).out.trim()}`);
+  console.log(`\n  returned to ${branch} @ ${gitRun(['rev-parse', '--short', 'HEAD']).out.trim()}`);
 }
 
 if (unknown.length > 0) {
