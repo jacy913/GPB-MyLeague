@@ -8,6 +8,7 @@ import { buildMediaReads, type MediaReadInput } from '../../lib/mediaReads';
 import { buildGameLine, getNextSlateDate, type GameLine } from '../../lib/mediaOdds';
 import {
   buildTotalMarkets, buildDivisionMarkets, buildLeagueMarkets, buildWorldSeriesMarkets, buildAwardMarket,
+  AWARD_RACE_SPECS,
 } from '../../lib/mediaMarkets';
 import type { FieldMarket } from '../../lib/markets';
 import { leagueSeriesLosers, playoffEliminations, lockedRaces, remainingRegularSeasonGames } from '../../lib/futuresRisk';
@@ -17,7 +18,7 @@ import { getTeamRosterStrength } from '../../logic/teamStrength';
 import {
   getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId,
 } from '../../logic/playerStats';
-import { buildAwardsForBoard, type AwardEntry } from '../../lib/awardRace';
+import { buildAwardsForBoard, type AwardEntry, type MvpBoard } from '../../lib/awardRace';
 import { usePropBoard } from '../../hooks/usePropBoard';
 import type { BettingSlipState } from '../../hooks/useBettingSlip';
 import { BettingHub } from './BettingHub';
@@ -374,10 +375,16 @@ const BettingPage: React.FC<BettingPageProps> = ({
       battingRatings: latestBattingRatings(input.playerState.battingRatings),
       pitchingRatings: latestPitchingRatings(input.playerState.pitchingRatings),
     };
-    const built: Array<[string, string, AwardEntry[]]> = [
-      ['batting_mvp', 'Batting MVP', buildAwardsForBoard('batting', awardInputs, 8)],
-      ['pitching_mvp', 'Pitching MVP', buildAwardsForBoard('pitching', awardInputs, 8)],
-    ];
+    const built: Array<[string, string, AwardEntry[]]> = (
+      Object.entries(AWARD_RACE_SPECS) as Array<[MvpBoard, typeof AWARD_RACE_SPECS[MvpBoard]]>
+    ).map(([board, spec]) => [
+      spec.key,
+      spec.title,
+      // The FULL field, no `take`. This used to be a literal 8 here and a literal 3 on the dashboard,
+      // and the two produced different prices for the same player with nothing reporting it. See
+      // `AWARD_RACE_SPECS`.
+      buildAwardsForBoard(board, awardInputs),
+    ]);
     /*
      * `decided` is the whole point of computing `regularSeasonOver` above.
      *

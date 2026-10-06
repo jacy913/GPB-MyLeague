@@ -229,7 +229,7 @@ export const FeaturedGamePanel: React.FC<{
 
   return (
     <HomePanel
-      title="Featured Odds"
+      title="Primetime Game"
       aside={date ? <span className="t-caption text-[var(--color-ink-faint)]">{formatMiniDate(date)}</span> : undefined}
     >
       {hasGame && line ? (
@@ -249,6 +249,29 @@ export const FeaturedGamePanel: React.FC<{
               away from the other two
             </p>
           )}
+
+          {/*
+            FANS, NOT YET.
+
+            The panel is called Primetime Game and a primetime game is partly about who is watching,
+            so a crowd belongs here. There is nothing to put in this slot yet, and the honest thing
+            is to say so rather than print a number.
+
+            THE USEFUL THING TO KNOW IS THAT THE NAME IS ALREADY TAKEN. `lib/analytics/crowd.ts`
+            has five archetypes and they are BETTORS -- momentum chasers, value buyers,
+            news-reactive, analyst-followers, passive -- whose net flow becomes the day's price shock.
+            They are market participants, not spectators, and `crowdShocksById` feeds
+            `priceBoardForDay` rather than anything on this panel.
+
+            So when this becomes real it is new data, and calling it "fans" next to a module called
+            "crowd" that means bettors is a naming decision worth making on purpose rather than by
+            default. The alternative -- reusing `crowd.ts` here because the words look similar -- would
+            show a bookmaker's flow as though it were an atmosphere, which is the exact substitution
+            this panel's own forecaster line above is careful not to make.
+          */}
+          <p className="t-caption mt-4 text-[var(--color-ink-faint)]">
+            Crowd and atmosphere are not modelled yet. The split above is the forecasters&rsquo; only.
+          </p>
         </button>
       ) : (
         <p className="t-body text-[var(--color-ink-dim)]">

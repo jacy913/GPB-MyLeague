@@ -494,6 +494,29 @@ const AWARD_REGRESSION: Record<MediaId, number> = {
   scintilla: 0.42,
 };
 
+/**
+ * ONE race, keyed and titled in one place, because two call sites were inventing them separately and
+ * that is a silent way to publish two different prices for one player.
+ *
+ * The dashboard and MacroBet both need the batting and pitching MVP races. Each built its own:
+ *
+ *   - `BettingPage` hardcoded `['batting_mvp', 'Batting MVP', buildAwardsForBoard(..., 8)]` and
+ *     hardcoded the `8`.
+ *   - `HomeDashboard` called `buildAwardsForBoard(board, inputs, 3)` for its three visible rows.
+ *
+ * Nothing threw. The dashboard simply posted the leader at ~34% where the book posted him at ~13%,
+ * because `buildAwardMarket` normalises over whatever field it is handed -- and a normalised share
+ * is exactly the kind of number that looks right. `tools/checkAwardRacePrice.ts` measures that gap:
+ * 21.1 percentage points on the same day, from the same players.
+ *
+ * So the field size, the key and the title now live here, and the only remaining difference between
+ * the two surfaces is `decided` -- which sets sellability and never touches the price.
+ */
+export const AWARD_RACE_SPECS = {
+  batting: { key: 'batting_mvp', title: 'Batting MVP' },
+  pitching: { key: 'pitching_mvp', title: 'Pitching MVP' },
+} as const;
+
 export const buildAwardMarket = (
   key: string,
   title: string,

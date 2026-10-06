@@ -36,6 +36,8 @@ import { EMPTY_HEADLINER_LEDGER, type HeadlinerLedger } from '../logic/localUniv
 import { isPlayoffGame } from '../logic/playoffs';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
+import { buildAwardMarket, AWARD_RACE_SPECS } from '../lib/mediaMarkets';
+import { probabilityToAmerican } from '../lib/markets';
 import { buildMediaReads } from '../lib/mediaReads';
 import { buildGameLine, type GameLine } from '../lib/mediaOdds';
 import { resolveSeasonYear } from '../lib/seasonYear';
@@ -604,9 +606,40 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     pitchingRatings: pitchingRatingsByPlayerId,
   }), [battingRatingsByPlayerId, players, preferredBattingStatsByPlayerId, preferredPitchingStatsByPlayerId, pitchingRatingsByPlayerId, teamsById]);
 
-  // Top three for the front page. The full eight-candidate field with the
-  // component breakdown is on the Leaders screen.
-  const mvpAwards = useMemo(() => buildAwardsForBoard(mvpBoard, awardInputs, 3), [awardInputs, mvpBoard]);
+  /*
+    THE FULL CANDIDATE FIELD IS BUILT HERE AND THE TOP THREE ARE TAKEN AFTERWARDS.
+
+    It used to be `buildAwardsForBoard(mvpBoard, awardInputs, 3)`, which was right for a panel that
+    showed raw normalised shares and wrong the moment the panel started showing a MacroBet price.
+    `buildAwardMarket` normalises over whatever field it is handed, so passing three entries posts
+    the leader at roughly 85% -- a confident, plausible, wrong number, and nothing anywhere reports
+    that it is wrong. Building the full field is what makes this panel's price the SAME price the
+    book is selling, which is the entire reason for putting a MacroBet number on it.
+
+    The field size matches `BettingPage.tsx:398` deliberately. Two call sites building the same race
+    with two different field sizes would produce two different prices for the same player on the same
+    day, and neither would know about the other.
+
+    `decided` is deliberately NOT passed. It only sets `locked`, the sellability flag, and never
+    touches the probability -- so omitting it cannot move the price, and `checkAwardRacePrice`
+    asserts that rather than trusting it. The dashboard does not sell this market; MacroBet does,
+    with the real closure computed there from the schedule. Guessing at a closure here would be
+    inventing a fact this component has no business knowing.
+  */
+  const mvpAwards = useMemo(() => {
+    const spec = AWARD_RACE_SPECS[mvpBoard];
+    const field = buildAwardsForBoard(mvpBoard, awardInputs);
+    if (field.length === 0) return [];
+    const market = buildAwardMarket(spec.key, spec.title, field);
+    // Keyed by playerId because `buildFieldMarket` keys outcomes by it. Matching on a display name
+    // would silently drop a player whose club changed mid-season, which is the one moment a race is
+    // most worth reading.
+    const priceBy = new Map(market.outcomes.map((o) => [o.key, o.consensusProbability]));
+    return field.slice(0, 3).map((entry) => ({
+      ...entry,
+      houseProbability: priceBy.get(entry.playerId) ?? null,
+    }));
+  }, [awardInputs, mvpBoard]);
 
   const milestones = useMemo(() => getMilestones(games), [games]);
   const nextMilestone = useMemo(
@@ -791,14 +824,42 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             space beneath it. The award race is three rows. It fits in a narrow column next to a
             story; it does not need a whole wide one to itself.
 
-            So the right column carries the two panels that are genuinely narrow -- the award race
-            and the featured odds -- and the wide column carries the two that are genuinely wide,
-            the headline and the column about it. Nothing is stretched to fill anything.
+            So the right column carries the two panels that are genuinely narrow -- the power
+            rankings strip and the featured game -- and the wide column carries the two that are
+            genuinely wide, the headline and the column about it. Nothing is stretched to fill
+            anything.
+
+            THE AWARD RACE IS NOT HERE ANYMORE. It moved down to sit with the division snapshot and
+            the daily slate, all three reading the same "where the season stands" question; the
+            reasoning is on it, where it moved to. The second grid's right column was widened from
+            320px to 360px to match this one, because the award race is about to carry a 48px crest
+            and a name beside it and asking that of a narrower box than the one it left would be
+            setting the redesign up to fail on arrival.
           */}
         </div>
 
         <div className="flex min-w-0 flex-col gap-5">
-          <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
+          {/*
+            THE POWER RANKINGS MOVE UP, AND THE REASON THEY NOW CARRY IS STRONGER THAN THE ONE THEY
+            REPLACED.
+
+            They spent this grid's right column second down, below the simulation desk and the action
+            centre, on the argument that they are a summary of the standings and so belong with them.
+            That argument was about adjacency and it was not about height, and it put the one panel
+            that is computable on a freshly rebuilt universe below two panels that cannot be: the
+            division snapshot reads a 0-0 record on day one and the MVP race reads season stats that
+            do not exist yet. On a new league the top of the page was where the empty states went,
+            and the one panel with something to say was underneath them.
+
+            Above the featured game, beside the day's story. Nothing is stretched: the strip is the
+            narrow panel it was always built to be.
+          */}
+          <PowerRankingsStrip
+            rankings={powerRankings}
+            teamsById={teamsById}
+            onOpenPowerRankings={onOpenPowerRankings}
+            onSelectTeamId={onSelectTeamId}
+          />
 
           <FeaturedGamePanel
             gameId={featuredGame ? featuredGame.game.gameId : null}
@@ -820,7 +881,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         onOpenSimulation={onOpenSimulation}
       />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
         <div className="flex flex-col gap-5">
           <HomePanel title="Simulation Desk">
             <div className="flex flex-wrap gap-2">
@@ -853,24 +914,20 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
         <div className="flex flex-col gap-5">
           {/*
-            THE POWER RANKINGS STRIP, above the division snapshots and for a specific reason.
+            THE AWARD RACE MOVES DOWN, BESIDE THE TWO PANELS THAT READ THE SAME SEASON NUMBERS IT
+            DOES.
 
-            It is first in this column because it is the only panel here that is computable on a
-            freshly rebuilt universe. The division snapshot reads the win-loss record, which is 0-0
-            across the board on day one; the slate reads the schedule for the active date; the MVP race
-            reads season stats. Every one of them is legitimately empty at the start of a season, and
-            this is the panel that is not -- which is the entire point of putting it on the dashboard.
+            It sat above the featured odds in the top grid for a commit, argued at length: three rows
+            of stat comparison want width, so it went under the newsroom in a wide column. That left
+            the right-hand 360px holding one short matchup card and about 600px of nothing, which is
+            the layout fault the argument was supposed to prevent.
 
-            It renders nothing at all when there are no rankings, which is deliberate: a panel reading
-            "power rankings unavailable" on a fresh league would be a worse lie than the empty page it
-            was added to fix.
+            Down here it is beside the division snapshot and the daily slate, and all three are
+            reading the same thing -- where the season stands right now. The featured game above is
+            the outlier in the old arrangement: it is a single priced fixture, and the award race was
+            never going to be near it.
           */}
-          <PowerRankingsStrip
-            rankings={powerRankings}
-            teamsById={teamsById}
-            onOpenPowerRankings={onOpenPowerRankings}
-            onSelectTeamId={onSelectTeamId}
-          />
+          <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
 
           <DivisionSnapshotPanel
             snapshots={divisionSnapshots}
