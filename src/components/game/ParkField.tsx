@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ParkProfile } from '../../lib/analytics/parkProfile';
-import type { WallColor } from '../../lib/analytics/parkProfile';
+import type { SoilType, WallColor } from '../../lib/analytics/parkProfile';
 import {
   diamond,
   distanceLabels,
@@ -10,6 +10,8 @@ import {
   fenceRadiusFt,
   foulGroundWedge,
   FIELD_VIEWBOX,
+  infieldDirt,
+  mound,
   PLATE,
   polar,
   PX_PER_FT,
@@ -59,6 +61,25 @@ const WALL_LABEL: Record<WallColor, string> = {
   light: 'pale brick',
   dark: 'dark',
   glass: 'glass',
+};
+
+/**
+ * The infield dirt, coloured by SOIL rather than by a fixed brown.
+ *
+ * `soilType` is one of the eleven entered dimensions and it is not scenery: `parkFactors` reads it
+ * as a third door into the same outcome `surface` and `grass` come through, and `damp_heavy` clay
+ * killing a hop is the reason a ground-ball park suppresses scoring. So the dirt is the one place on
+ * this diagram where a fill colour IS a datum, and painting all four soils the same tan would throw
+ * away the park's most legible character for free.
+ *
+ * Four tints of one hue, separated by lightness alone so they survive a greyscale print and do not
+ * introduce a palette the app does not have. Ordered wet-to-dry to match the enum's own spread.
+ */
+const DIRT_FILL: Record<SoilType, string> = {
+  damp_heavy: '#4a3a28',
+  standard_clay: '#5c4630',
+  sandy_loose: '#6b5339',
+  dry_hard: '#7a6042',
 };
 
 /**
@@ -168,6 +189,19 @@ export const ParkField: React.FC<{ profile: ParkProfile }> = ({ profile }) => {
       />
 
       {/*
+        THE INFIELD DIRT, over the outfield fill and under every mark on the field.
+
+        Drawn second so it sits inside the teal rather than beside it, which is what makes the arc
+        read as a boundary instead of as another shape competing with the fence. The bases, the
+        mound and the foul lines all go on top of it, so this is the first of the infield marks and
+        the only large fill that is not the field or the wall.
+      */}
+      <polygon
+        points={toPointsAttr(infieldDirt())}
+        fill={DIRT_FILL[dimensions.soilType]}
+      />
+
+      {/*
         FOUL GROUND, drawn as a wedge hanging off each foul pole.
 
         It is out here rather than inside the fence, which is the whole correction from the first
@@ -211,6 +245,9 @@ export const ParkField: React.FC<{ profile: ParkProfile }> = ({ profile }) => {
           />
         </>
       )}
+
+      {/* The pitcher's mound, on the dirt where it belongs. */}
+      <circle cx={mound().x} cy={mound().y} r={4} fill="var(--color-ink-dim)" opacity={0.55} />
 
       {/* Foul lines, home plate through the bases and out to the foul poles. */}
       <line x1={PLATE.x} y1={PLATE.y} x2={leftCorner.x} y2={leftCorner.y} stroke="var(--color-ink-faint)" strokeWidth={1.2} />

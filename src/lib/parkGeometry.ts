@@ -66,6 +66,86 @@ const SECOND_BASE_FT = BASE_PATH_FT * Math.SQRT2;
 
 const deg = (d: number): number => (d * Math.PI) / 180;
 
+/**
+ * Real infield geometry, for the dirt.
+ *
+ * The infield skin is not a circle around home plate. It is a 95-foot arc struck from the PITCHER'S
+ * MOUND, clipped by the two foul lines -- which is why its top edge bows back toward the plate at
+ * the corners instead of being a circle centred on the batter. Draw it as a circle round home plate
+ * and every ballpark in the game looks wrong in the same specific way, which is the hardest kind of
+ * wrong to notice.
+ *
+ * Constants are real: the mound is 60 ft 6 in from the plate and the arc is 95 ft from it.
+ */
+const MOUND_FT = 60.5;
+const INFIELD_ARC_RADIUS_FT = 95;
+
+/**
+ * The infield dirt, as a closed point list: home plate, out along the first-base line, around the
+ * arc, back down the third-base line.
+ *
+ * The two arc endpoints are FOUND, not placed. They are wherever the 95-foot arc crosses the foul
+ * lines, which solves to 71.76 degrees either side of straight-out-from-the-mound, at 127.6 feet
+ * from home plate. Hardcoding 71.76 would be the same decision with less evidence attached; solving
+ * it means changing the mound distance moves the dirt with it.
+ *
+ * Sampled 26 times across the 143.5-degree span the arc covers, which is 5.5 degrees a segment and
+ * about 11px on the diagram -- smooth at any size the panel is drawn at, without carrying a
+ * redundant vertex for every degree.
+ */
+export const infieldDirt = (): { x: number; y: number }[] => {
+  const u = Math.SQRT1_2;
+  // (t*u)^2 + (t*u - MOUND_FT)^2 = ARC^2, i.e. a quadratic in t along the base line.
+  const a = 2 * u * u;
+  const b = -2 * u * MOUND_FT;
+  const c = MOUND_FT * MOUND_FT - INFIELD_ARC_RADIUS_FT * INFIELD_ARC_RADIUS_FT;
+  const disc = b * b - 4 * a * c;
+  // Two roots, one behind the plate and one out past first base. Take the forward one.
+  const t = (-b + Math.sqrt(disc)) / (2 * a);
+
+  const arcEndX = t * u;
+  const arcEndY = t * u;
+  // Bearing of that point seen from the mound, which is where the arc starts and stops.
+  const endBearing = Math.atan2(arcEndX, arcEndY - MOUND_FT);
+
+  const arc: { x: number; y: number }[] = [];
+  const steps = 26;
+  for (let i = 0; i <= steps; i += 1) {
+    const bearing = -endBearing + ((2 * endBearing) * i) / steps;
+    arc.push({
+      // Rotate the mound offset onto the bearing. Straight-out-from-the-mound is bearing 0, which
+      // is straight up the screen, so y is plus and x is the signed tangent.
+      x: INFIELD_ARC_RADIUS_FT * Math.sin(bearing),
+      y: MOUND_FT + INFIELD_ARC_RADIUS_FT * Math.cos(bearing),
+    });
+  }
+
+  // Home plate first, then the arc from the third-base side round to the first-base side.
+  //
+  // EVERY POINT IS CONVERTED TO PIXELS HERE, INCLUDING THE PLATE. The first version returned the
+  // plate as `{x: 0, y: 0}` -- correct in FEET, since the arc is computed in feet -- and mapped only
+  // the arc on the way out. SVG has no idea which coordinate space a point is in, so the polygon
+  // got one vertex at the viewBox origin and 26 in the right place: a brown spike from the top-left
+  // corner across the whole field. It rendered, it threw nothing, and it looked like a rendering
+  // bug rather than a unit bug, which is the expensive kind to find by reading.
+  const toPx = (pt: { x: number; y: number }) => ({
+    x: PLATE.x + pt.x * PX_PER_FT,
+    y: PLATE.y - pt.y * PX_PER_FT,
+  });
+  return [{ x: PLATE.x, y: PLATE.y }, ...arc.map(toPx)];
+};
+
+/**
+ * The pitcher's mound.
+ *
+ * Small, but it is the one mark that explains why the arc is not centred on the plate, and anyone
+ * who has watched baseball will look for its absence.
+ */
+export const mound = (): { x: number; y: number } => ({
+  x: PLATE.x,
+  y: PLATE.y - MOUND_FT * PX_PER_FT,
+});
+
 /** The five control points, in the order they appear along the arc. */
 export interface FenceControl {
   /** Field label, LF / LCF / CF / RCF / RF. */
