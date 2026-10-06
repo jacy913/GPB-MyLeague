@@ -3835,18 +3835,36 @@ const { resetWallet } = bettingSlip;
                 <span className="t-caption">{currentTimelineTimeLabel}</span>
               </div>
               {/*
-                Parlays. Replaces the notification bell and the storage-mode
-                readout, both of which lived here and neither of which earned
-                it: the bell was a second inbox for a product with one, and
-                "LOCAL" told a manager something they cannot act on.
-
-                This one carries a count, so it earns the position -- the count
-                is money.
+                * WAGERS, AND THE NAME WAS WRONG.
+                *
+                * This button said "Parlays" and there are no parlays. It opens the betting slip, whose
+                * own header comment says it is "deliberately NOT a parlay" -- parlays were rejected on
+                * measured grounds, because multiplying legs against three forecasters whose calibration
+                * has been fitted makes the combined bet strictly worse value than the same money flat.
+                *
+                * The button's own `aria-label` has always said "Betting slip", so it has been
+                * contradicting itself in the DOM for as long as it has existed, and a reader who took
+                * the visible word at face value would have gone looking for a parlay builder that does
+                * not exist.
+                *
+                * The accessible name is now "Wagers slip" rather than "Betting slip", so both names
+                * lead with the same word. A richer accessible name is normally good practice, but two
+                * different names for one control is not richness -- a sighted reader and a screen
+                * reader were being told two different things about what pressing it does. `tools/
+                * checkSlipButtonName` asserts the first word matches, and it caught this.
+                *
+                * "Wagers" names what the badge actually counts -- money at risk -- and it sits correctly
+                * beside "Portfolio", which counts positions. "Betting" would have collided with
+                * MacroBet, the bookmaker, which is a different thing in the nav.
+                *
+                * The position itself still earns its place, for the reason the old comment gave and
+                * which is unchanged: it replaced a notification bell and a storage-mode readout, and it
+                * carries a count, and the count is money.
               */}
               <button
                 type="button"
                 onClick={bettingSlip.toggle}
-                aria-label="Betting slip"
+                aria-label="Wagers slip"
                 aria-expanded={bettingSlip.isOpen}
                 className={`gold-sweep gold-edge relative flex items-center gap-2 border-l-[3px] px-3 py-2 t-caption uppercase focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] ${
                   bettingSlip.isOpen
@@ -3855,7 +3873,7 @@ const { resetWallet } = bettingSlip;
                 }`}
               >
                 <Receipt className="h-4 w-4" aria-hidden="true" />
-                <span className="hidden sm:inline">Parlays</span>
+                <span className="hidden sm:inline">Wagers</span>
                 {openBetCount > 0 && (
                   <span className="flex h-5 min-w-5 items-center justify-center bg-[var(--color-gold)] px-1 tabular-nums text-[var(--color-ink-invert)]">
                     {openBetCount}

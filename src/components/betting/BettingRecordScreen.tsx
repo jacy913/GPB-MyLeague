@@ -16,7 +16,7 @@ type Filter = 'all' | 'open' | 'settled';
  * A screen rather than a panel, and deliberately NOT in the nav rail. It is a
  * ledger: most managers open it twice a season to see whether they are up, and
  * giving it a permanent leaf in a twenty-item sidebar would claim it is a place
- * you live. The slip links here, and the header's Parlays button brings you
+ * you live. The slip links here, and the header's Wagers button brings you
  * back.
  *
  * The profit figure is running balance against the starting stake, not a sum of
@@ -276,7 +276,7 @@ export const BettingRecordScreen: React.FC<{
         {rows.length === 0 ? (
           <p className="t-body p-5 text-[var(--color-ink-dim)]">
             {bets.length === 0
-              ? 'No bets placed yet. Open the slip from the Parlays button in the header to add one.'
+              ? 'No bets placed yet. Open the slip from the Wagers button in the header to add one.'
               : `No ${filter} bets.`}
           </p>
         ) : (
