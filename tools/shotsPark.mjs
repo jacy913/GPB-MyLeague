@@ -183,12 +183,95 @@ const main = async () => {
     has already done.
   */
   await evaluate(`(() => {
-    ['SCORES'].forEach((f) => {
-      const n = [...document.querySelectorAll('button')].find((x) => (x.textContent||'').trim().toUpperCase() === f);
-      if (n) n.click();
-    });
+    const tree = document.querySelector('[role="tree"][aria-label="League navigation"]');
+    const findLeaf = () => [...document.querySelectorAll('button, [role="button"]')]
+      .find((x) => (x.getAttribute('aria-label') || x.textContent || '').trim().toLowerCase() === 'rosters');
+    if (!findLeaf()) {
+      ['TEAMS','LEAGUE','SCORES','COMMISSIONER','PLAYOFFS','SYSTEM'].forEach((f) => {
+        const n = [...document.querySelectorAll('button')]
+          .find((x) => (x.getAttribute('aria-label') || x.textContent || '').trim().toUpperCase() === f);
+        if (n) n.click();
+      });
+    }
+    const leaf = findLeaf();
+    if (leaf) leaf.click();
     return 'ok';
   })()`);
+  await sleep(3000);
+
+  const readDialog = () => evaluate(`(() => {
+    const dialog = document.querySelector('[role="dialog"]');
+    if (!dialog) return { open: false };
+    const field = [...dialog.querySelectorAll('svg')]
+      .find((s) => (s.getAttribute('aria-label') || '').includes('park diagram'));
+    return {
+      open: true,
+      title: (dialog.querySelector('h2')?.textContent || '').trim(),
+      fieldWidth: field ? Math.round(field.getBoundingClientRect().width) : 0,
+      hasWallLabel: field ? /FT WALL/.test(field.textContent || '') : false,
+      overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    };
+  })()`);
+
+  // -- 1. THE ROSTERS VIEW, which is where the request actually meant. ---------
+  console.log('\n  A. TEAMS -> Rosters');
+
+  /*
+    A CLUB HAS TO BE SELECTED FIRST.
+
+    `TeamsHub` opens with `if (!selectedTeam) return null`, so the whole screen renders nothing until
+    a club is chosen -- which the probe reported as "NO PARK BUTTON" on a fresh universe and would
+    have reported as a missing feature rather than as a screen that had not been told what to show.
+
+    That guard is pre-existing and correct (there is no roster to show without a club), but it means a
+    walk to this screen has to go through the team directory.
+  */
+  const picked = await evaluate(`(() => {
+    const hasPark = () => [...document.querySelectorAll('button')]
+      .some((b) => /\\bpark\\b/i.test((b.getAttribute('aria-label') || b.textContent || '').trim()));
+    if (hasPark()) return 'already showing';
+    const dirToggle = [...document.querySelectorAll('button')]
+      .find((b) => /directory|all clubs|select club|teams/i.test((b.getAttribute('aria-label') || b.textContent || '').trim()));
+    if (dirToggle) { dirToggle.click(); return 'opened directory'; }
+    return 'no directory toggle';
+  })()`);
+  console.log(`     club selection: ${picked}`);
+  await sleep(1400);
+  if (picked === 'opened directory') {
+    const chosen = await evaluate(`(() => {
+      const clubs = [...document.querySelectorAll('button')]
+        .filter((b) => {
+          const t = (b.getAttribute('aria-label') || b.textContent || '').trim();
+          return t.length > 3 && t.length < 34 && /\\b\\w+ \\w+\\b/.test(t);
+        });
+      if (!clubs.length) return 'no clubs listed';
+      clubs[0].click();
+      return 'chose ' + (clubs[0].textContent || '').trim().slice(0, 24);
+    })()`);
+    console.log(`     ${chosen}`);
+    await sleep(2600);
+  }
+
+  const rosterHit = await evaluate(`(() => {
+    const n = [...document.querySelectorAll('button')]
+      .find((b) => /\\bpark\\b/i.test((b.getAttribute('aria-label') || b.textContent || '').trim()));
+    if (!n) return 'NO PARK BUTTON';
+    n.click(); return 'opened';
+  })()`);
+  console.log(`     park button: ${rosterHit}`);
+  await sleep(1800);
+  const rosterDialog = await readDialog();
+  if (rosterDialog.open) {
+    console.log(`     "${rosterDialog.title}"  field ${rosterDialog.fieldWidth}px  wall label ${rosterDialog.hasWallLabel ? 'yes' : 'MISSING'}  overflowX ${rosterDialog.overflowX}`);
+    console.log(`     -> ${await shot(`park-rosters-${tag}`)}`);
+  } else {
+    console.log('     *** NO DIALOG OPENED ***');
+  }
+  await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /close/i.test(x.getAttribute('aria-label')||'')); if (b) b.click(); return 'ok'; })()`);
+  await sleep(800);
+
+  // -- 2. THE GAME SCREEN, which is where it already was. ----------------------
+  console.log('\n  B. Schedule -> a game');
   await sleep(900);
   console.log('  ', await evaluate(`(() => {
     const tree = document.querySelector('[role="tree"][aria-label="League navigation"]');

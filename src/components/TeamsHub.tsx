@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { MapPinned } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
@@ -16,6 +17,8 @@ import {
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { ClubHero, ClubSnapshot, DepthChart, SchedulePanel, TeamDirectory } from './teams/ClubPanels';
 import { RosterPanel } from './teams/RosterPanel';
+import { ParkPanel } from './game/ParkPanel';
+import { RetroButton } from './ui';
 import {
   ROSTER_DISPLAY_ORDER,
   ROSTER_STRENGTH_SLOT_COUNT,
@@ -66,6 +69,7 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   onOpenGame,
 }) => {
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
+  const [isParkOpen, setIsParkOpen] = useState(false);
   const [selectedRosterPlayerId, setSelectedRosterPlayerId] = useState<string | null>(null);
 
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
@@ -347,6 +351,9 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
 
   return (
     <section className="space-y-5">
+      {/* The dialog, first in source order and mounted unconditionally. */}
+      <ParkPanel isOpen={isParkOpen} onClose={() => setIsParkOpen(false)} team={selectedTeam} />
+
       <TeamDirectory
         selectedTeam={selectedTeam}
         byLeague={sortedTeamsByLeague}
@@ -375,6 +382,30 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
         selectedPlayerId={selectedRosterPlayerId}
         onSelectPlayer={setSelectedRosterPlayerId}
       />
+
+      {/*
+        THE PARK, directly above the roster.
+
+        THE SAME PANEL AS THE GAME SCREEN, mounted twice, and that is the point rather than an
+        accident. The two answer different questions: the game screen asks "what is this park doing to
+        the game in front of me", keyed to `homeTeam.id` exactly as `gameEngine` does, and the rosters
+        view asks "what is this club's park like" while you are already looking at this club's
+        players. `ParkPanel` takes a club and a `Team`, and `selectedTeam` is resolved above, so
+        there is nothing to look up and nothing to keep in sync.
+
+        It was built on the game screen first and could not be found here, because "the rosters
+        section" meant this screen to the person asking for it -- the nav has an item literally
+        labelled "Rosters" -- and the game screen's two lineup columns. Two screens named the same
+        word, and only one of them was built on.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="t-caption text-[var(--color-ink-faint)]">
+          The ground this club plays on — the walls, the air, and what they do to its numbers.
+        </p>
+        <RetroButton variant="ghost" size="sm" onClick={() => setIsParkOpen(true)}>
+          <MapPinned className="h-4 w-4" aria-hidden="true" /> {selectedTeam.city} Park
+        </RetroButton>
+      </div>
 
       <RosterPanel
         team={selectedTeam}
