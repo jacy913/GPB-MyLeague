@@ -1359,6 +1359,7 @@ function App() {
 
   // Declared here, after the state it settles against. See the note above.
   const bettingSlip = useBettingSlip();
+const { resetWallet } = bettingSlip;
   const { openBets: openBetList, wallet: bettingWallet, settle: settleBets } = bettingSlip;
   const openBetCount = openBetList.length;
 
@@ -2598,6 +2599,17 @@ function App() {
       setPriceLedger(undefined);
       setLastPriceBoard(null);
       book.reset();
+      /*
+        AND THE BETTING WALLET, which was the one thing this list left out.
+
+        `book.reset()` covers the exchange portfolio and always did. The money you stake at MacroBet
+        lives in a different hook entirely, on the same shape, and nothing here touched it -- so a
+        terminated universe came back with whatever balance you happened to be holding and a betting
+        record full of wagers on players that no longer exist. `resetWallet` clears both, and clears
+        the slip with them so a half-assembled wager cannot be confirmed against a balance that has
+        just been restored.
+      */
+      resetWallet();
       updateProgress(85, 'Persisting new universe');
       // Land on the dashboard rather than wherever the manager happened to be standing. The screen
       // they were on belonged to the universe that just ended -- the old Simulate board, the old
@@ -2650,6 +2662,7 @@ function App() {
     stopDraftAutoRun,
     universeSeedInput,
     book,
+    resetWallet,
   ]);
 
   // One path for making a universe, and one preview. "Generate Players" used to
