@@ -2,14 +2,24 @@
  * How long does the betting page actually take, and where does the time go?
  *
  * EVERYTHING HERE IS MEASURED on a real league, because the alternative -- reading the code and
- * declaring it slow -- is how this repo documents most of its mistakes. Three things were believed
- * slow before this file existed:
+ * declaring it slow -- is how this repo documents most of its mistakes.
  *
- *   1. `buildMediaReads` running on every render, because `BettingPage` builds its memo key with a
- *      rest spread and therefore hands React a new object every time.
- *   2. `outletProbability` re-summing all thirty-two club scores on each of roughly 285,000 calls,
- *      to produce nine numbers that never change during a slate rebuild.
- *   3. `buildPropMarkets` filtering all 1,282 players inside its per-game loop.
+ * These measurements are from AFTER the performance pass. The three defects that pass fixed, each
+ * measured here first:
+ *
+ *   1. `buildMediaReads` ran on EVERY render, because `BettingPage` and `MediaHub` built their
+ *      memo key with a rest spread and therefore handed React a new object every time. Fixed by
+ *      assembling the key from the stable input fields.
+ *   2. `outletProbability` re-summed all thirty-two club scores on every call, to produce nine
+ *      numbers that never change during a slate rebuild. Fixed by measuring the nine means once
+ *      in `buildPropMarkets` and passing them in.
+ *   3. `buildPropMarkets` filtered all 1,285 players inside its per-game loop, and
+ *      `selectOutletProps` recomputed each market's score inside its sort comparator. Fixed with
+ *      a club -> players index and a decorate-sort-undecorate.
+ *
+ * The run that motivated the pass read ~215 ms on EVERY render -- because (1) fed fresh identities
+ * to every memo keyed on the read result, the prop board included -- against ~218 ms for a single
+ * slate change. After the pass the per-render cost is gone and the build is cheaper.
  *
  * Run: npx tsx tools/measureBettingCost.ts
  */
@@ -122,8 +132,9 @@ const propInput = {
 const reads = time(() => buildMediaReads(readInput));
 console.log('  1. buildMediaReads -- one call');
 console.log(`       ${reads.ms.toFixed(1)} ms`);
-console.log('       This is the memo that does not hit. Every render of the betting page pays it.');
-console.log('       At 60 renders a second of pointer movement that is real, continuous work.\n');
+console.log('       The memo key is built from the stable input fields now, so this holds across');
+console.log('       renders and is paid once per data change. It used to rebuild on every render, and');
+console.log('       everything keyed on its result -- the prop board included -- rebuilt with it.\n');
 
 // ---------------------------------------------------------------------------
 // 2. buildPropMarkets, and what is inside it
@@ -147,20 +158,23 @@ const markets = propMarkets;
 const calls = markets.length * MEDIA_PROFILES.length;
 const iterations = calls * teams.length;
 
-console.log('  3. THE SUMMING THAT SHOULD NOT BE REPEATED');
+console.log('  3. THE SUMMING THAT USED TO BE REPEATED');
 console.log(`       outletProbability calls   ${calls.toLocaleString()}`);
 console.log(`       x ${teams.length} club scores each      ${iterations.toLocaleString()} iterations`);
 console.log(`       distinct sums actually needed          ${MEDIA_PROFILES.length}`);
-console.log(`       so ${((1 - MEDIA_PROFILES.length / iterations) * 100).toFixed(2)}% of that work is redundant\n`);
+console.log('       Every one of those iterations was redundant. This is the shape of the work the');
+console.log(`       pass removed: the ${MEDIA_PROFILES.length} means are measured once now, for`);
+console.log(`       ${MEDIA_PROFILES.length * teams.length} iterations in total.\n`);
 
 // ---------------------------------------------------------------------------
 // 4. the players.filter inside the game loop
 // ---------------------------------------------------------------------------
 const filtersPerRebuild = slateGames.length * 2;
-console.log('  4. THE PLAYER FILTER INSIDE THE GAME LOOP');
+console.log('  4. THE PLAYER FILTER THAT USED TO SIT INSIDE THE GAME LOOP');
 console.log(`       ${filtersPerRebuild} filters x ${playerState.players.length} players`
   + `   ${(filtersPerRebuild * playerState.players.length).toLocaleString()} comparisons`);
-console.log('       A Map built once would be 32 entries.\n');
+console.log('       Replaced by one club -> players index, built once: '
+  + `${playerState.players.length} pushes plus ${filtersPerRebuild} lookups.\n`);
 
 // ---------------------------------------------------------------------------
 // 5. the award markets the dashboard now builds
@@ -217,10 +231,8 @@ console.log(`       ----------------------------`);
 console.log(`       TOTAL                ${oneOpen.toFixed(1).padStart(7)} ms`);
 console.log(`       for ${rows.value.length} cards on screen.\n`);
 
-console.log('  AND ON EVERY RENDER, BECAUSE THE MEMO KEY IS A REST SPREAD:\n');
-console.log(`       buildMediaReads      ${reads.ms.toFixed(1).padStart(7)} ms   re-run on every render of the page\n`);
-
-const interactive = oneOpen * 3;
-console.log('  AND IT IS NOT ONLY ONCE. `readInput` is a new object every render, so the media');
-console.log('  read is rebuilt on every one. Three navigations or hovers in, that is:');
-console.log(`       ${interactive.toFixed(0)} ms of pure recomputation for data that did not change.\n`);
+console.log('  AND NONE OF IT RUNS ON RENDER ANY MORE.\n');
+console.log('       Before the pass `readInput` was a rest-spread object, so buildMediaReads ran on');
+console.log('       every render and every memo keyed on its result -- the prop board included --');
+console.log('       rebuilt with it. Three navigations or hovers in, that was ~650 ms of pure');
+console.log('       recomputation for data that had not changed. It is now once per data change.\n');

@@ -118,10 +118,8 @@ interface AppViewRouterProps {
   /**
    * The player's HXSE book, owned by App rather than by the Exchange view.
    *
-   * Passed in rather than created here because settlement has to fire at a season rollover whether
-   * or not this component is mounted. A book living inside the Exchange would sit unsettled for a
-   * player who never once opened the page, and would then settle against the NEW season's opening
-   * prices instead of the close that ended the season they traded through.
+   * Passed in rather than created here because the drawer and the Exchange desk must read one ledger,
+   * and because the book outlives any single page: positions and cash carry across seasons.
    */
   book: UsePortfolio;
   offseasonStage: OffseasonStage;

@@ -24,14 +24,25 @@
  * Top five rather than all thirty-two: this is a strip, not a second board. The full ranking is one
  * click away on the LEAGUE rail, and repeating all thirty-two here would push the panels that a
  * manager actually needs during a season off the bottom of the page.
+ *
+ * ===========================================================================
+ * THE VALUATION IS GONE; THE MOVEMENT IS THE COLUMN NOW
+ * ===========================================================================
+ *
+ * A row reads rank, crest, city, then an arrow -- green up, red down, white for unmoved -- measured
+ * against the last board this manager saw. The 0-100 valuation that used to sit before the arrow is
+ * dropped: it is a second reading of the club the rank already orders, and the movement is the thing
+ * the order cannot tell you. The storage that remembers the previous board, and why rebuilding a past
+ * `buildPowerRankings` is the wrong way to get it, are in `powerRankMovement.ts`.
  */
 
-import React from 'react';
-import { TrendingUp } from 'lucide-react';
+import React, { useEffect, useMemo } from 'react';
+import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import type { Team } from '../../types';
 import type { PowerRankings } from '../../lib/analytics/powerRankings';
 import { TeamLogo } from '../ui';
 import { HomePanel } from './shared';
+import { rankMovementLabel, resolveRankMovement, writeRankMovement } from './powerRankMovement';
 
 const STRIP_SIZE = 5;
 
@@ -48,6 +59,12 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
   onOpenPowerRankings,
   onSelectTeamId,
 }) => {
+  const resolved = useMemo(() => resolveRankMovement(rankings), [rankings]);
+
+  useEffect(() => {
+    if (resolved.next) writeRankMovement(resolved.next);
+  }, [resolved]);
+
   /*
     RENDERS ITS OWN EMPTY STATE, and this is deliberate rather than defensive.
 
@@ -81,6 +98,13 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
       <ul>
         {top.map((row) => {
           const team = teamsById.get(row.teamId);
+          const places = resolved.movement.get(row.teamId) ?? 0;
+          const MovementIcon = places > 0 ? ArrowUp : places < 0 ? ArrowDown : Minus;
+          const movementClass = places > 0
+            ? 'text-[var(--color-pos)]'
+            : places < 0
+              ? 'text-[var(--color-neg)]'
+              : 'text-[var(--color-ink)]';
           return (
             <li key={row.teamId} className="border-b border-[var(--color-chrome-lo)]/40 last:border-0">
               <div className="flex items-center gap-3 px-4 py-2">
@@ -94,22 +118,14 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
                     ? <TeamLogo team={team} sizeClass="h-7 w-7 shrink-0" />
                     : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
                   <span className="t-body min-w-0 truncate">{team?.city ?? row.teamId}</span>
-                  <span className="t-caption shrink-0 text-[var(--color-ink-faint)]">
-                    {row.division}
-                  </span>
                 </button>
-                {/*
-                  The stray-from-fair figure, because it is the one number on this strip that is not
-                  a valuation: it says how far the market's opinion sits from the League Office's, and
-                  a club that is expensive relative to its own worth is the most actionable row here.
-                */}
-                <span className="t-caption shrink-0 tabular-nums text-[var(--color-ink-dim)]">
-                  {row.valuation.toFixed(0)}
+                <span
+                  className={`inline-flex shrink-0 items-center justify-center ${movementClass}`}
+                  role="img"
+                  aria-label={rankMovementLabel(places)}
+                >
+                  <MovementIcon className="h-4 w-4" aria-hidden="true" />
                 </span>
-                <TrendingUp
-                  className="h-3.5 w-3.5 shrink-0 text-[var(--color-chrome-hi)]"
-                  aria-hidden="true"
-                />
               </div>
             </li>
           );

@@ -453,7 +453,10 @@ Fixed a headline showing one club's crest over another club's score; crest
 176→240px. **Featured Matchup became Featured Odds**, carrying the house
 moneyline with 96px crests, city names, and a split warning where the two sides
 disagree. This is a deliberate substitution — the old panel was the least
-informative thing on the front page and it was above the fold.
+informative thing on the front page and it was above the fold. **REVERSED
+(2026-10-07):** the panel (now Primetime Game) carries each club's season record
+and its expected audience, and the split warning is gone; the moneyline stayed on
+the Betting page.
 
 ### Simulation fixes (pre-UX baseline work)
 
@@ -812,6 +815,54 @@ staked through the slip was accepted, deducted, shown as pending, and then **voi
 at completion** — silently refunding a bet the manager thought they were on, with no
 error anywhere. `resultFor` treats a prop with no stat, no player or no line as
 unresolvable.
+
+### The board was rebuilt on every render, which was the lag
+
+The prop board was not slow because pricing is heavy. It was slow because a memo never
+hit, and the cost that mattered was per **render**, not per slate.
+
+`BettingPage` and `MediaHub` both destructured their props with a rest spread and then
+used the rest object as a `useMemo` dependency:
+
+    const { games, currentDate, slip, ...input } = props;
+    const readInput = input as MediaReadInput;
+    const { scores, spread } = useMemo(() => buildMediaReads(readInput), [readInput]);
+
+`input` is a fresh object every render, so `[readInput]` never matched. `buildMediaReads`
+ran on every render, and because its result is the memo key for the moneyline, the totals
+and the whole prop board, those rebuilt with it. Measured on a real league
+(`tools/measureBettingCost.ts`): ~218 ms for one slate change — 66.5 ms building 9,171
+markets, 145.5 ms sorting them nine times to keep 135 (72 of which reach the screen), 2.7 ms
+of media reads — and **all of it was paid on every render**, so three hovers in was ~650 ms
+of recomputation for data that had not changed.
+
+The fix is to assemble the memo key from the stable input fields instead of the rest object,
+in both files. After it, the per-render cost is gone and the build reads ~130–145 ms:
+`buildPropMarkets` ~40 ms, outlet selection ~80–100 ms. Three micro-optimisations ride along in
+`src/lib/mediaProps.ts`, all behaviour-preserving:
+
+- `outletProbability` re-summed all 32 club scores on each of ~82,500 calls to produce nine
+  numbers that never change during a rebuild. The nine means are now measured once in
+  `buildPropMarkets` and passed in — ~2.6m iterations removed.
+- `buildPropMarkets` filtered all ~1,285 players inside its per-game loop. A club → players
+  index is built once.
+- `selectOutletProps` called `score()` inside its sort comparator, so a comparison sort
+  recomputed each market's score O(log n) times — ~1.07m calls against the 82,500 distinct
+  scores that exist. It now decorates each market with its score once, sorts, and undecorates.
+  The comparator itself, including the `1e-9` epsilon and the `propId` tiebreak, is unchanged.
+
+Behaviour preservation was shown, not asserted: a full fingerprint of the board — every
+probability, consensus, spread, outlier and temperament, plus each outlet's selected propIds
+in order — hashed identically before and after. `tools/measureBettingCost.ts` now reports the
+after-costs and records the defects it first measured, rather than carrying its own
+"this memo does not hit" claims as verbal tradition.
+
+**A pre-existing failure this pass did not cause and did not fix.**
+`verifyPropCardDiversity` check 2 already failed on `HEAD` before the refactor, and fails
+identically after it — 16 of 2,304 outlet pairs publish byte-identical cards (`sallow ==
+mussad`, `sallow == boyle`). Confirmed by stashing the change and re-running: same count, same
+pairs, same slates. It is about the five newer outlets' selection affinity, not about pricing
+or the build, and it deserves its own pass.
 
 ### `strictFunctionTypes` is off — pass objects, not positional arguments
 
@@ -1569,7 +1620,8 @@ than no check*, because it teaches a reader to ignore it.
 5. **The media and betting modules have no proposal.** They were built to a
    different standard — calibrated against settled games, with a guard per claim.
 6. **Featured Matchup became Featured Odds** on the dashboard, carrying the house
-   moneyline rather than restating the fixture.
+   moneyline rather than restating the fixture. **REVERSED (2026-10-07):** the
+   panel shows the two clubs' season records again, and the price lives on Betting.
 7. **Completion does not always return to the dashboard.** See Open Questions 1.
 8. **A media prop card navigates rather than betting.** The brief asked for a card
    that takes the manager to the betting page, and that turned out to be the only
@@ -1676,6 +1728,17 @@ closed. What matters to a reader who did not build it:
    touches cash. This was chosen to keep cash-moving events to a small, auditable
    set — `wallet.ts` has already shipped two ledger bugs, and positions are a larger
    surface than slips.
+
+**Positions and cash carry across seasons.** An earlier version settled the whole book
+at the end of every season — positions closed at the last printed close and the next
+season reopened on the opening balance — to bound the measured fade edge that would
+otherwise compound without horizon. The bound cost more than it bought: shares vanished
+at a season boundary, and because settlement keyed off `seasonComplete` (true for the
+whole offseason) with only an in-memory guard, a reload during the offseason could
+liquidate the book a second time and wipe positions opened after the first settlement.
+The settlement was removed (reversing `137a4de`). `realisedCents` is now a running total,
+`lib/portfolio.ts` has no settlement function and no `settledThrough` stamp, and the
+position cap is the concentration limit that remains.
 
 ### The crowd, and why the fade edge is NEGATIVE
 

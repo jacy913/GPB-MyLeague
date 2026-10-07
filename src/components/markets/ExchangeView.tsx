@@ -73,10 +73,8 @@ export interface ExchangeViewProps {
   /**
    * The player's book, owned by App rather than created here.
    *
-   * Taken as a prop for one specific reason: season settlement has to fire at a rollover whether or
-   * not anybody is looking at this page. A book held inside the Exchange would sit unsettled for a
-   * player who never once opened it, and would then be settled against the NEW season's opening
-   * prices rather than the close that ended the season they actually traded through.
+   * Taken as a prop because the book outlives this page: the header drawer reads the same state, and
+   * positions and cash carry across seasons rather than being reset here.
    */
   book: UsePortfolio;
   /**
@@ -628,7 +626,7 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
             <p className="t-caption text-[var(--color-ink-faint)]">Portfolio</p>
             <p className="t-stat-lg text-[var(--color-gold-hi)]">{dollars(book.totalCents)}</p>
             {/*
-              THE SEASON LINE, which is a WORD and not a signed number.
+              THE STANDING LINE, which is a WORD and not a signed number.
 
               This was `{signedDollars(delta)} this season`, and `signedDollars(0)` returns "-" by
               design -- it is meant to sit next to a figure that already gives the scale. Here it
@@ -638,16 +636,17 @@ export const ExchangeView: React.FC<ExchangeViewProps> = ({ priceLedger, teams, 
 
               Zero reads as "level with the start", which is the true statement, and the direction
               words ("up"/"down") are signed dollars rather than a plus or minus sign so the number
-              is legible without being decoded.
+              is legible without being decoded. The line is no longer a SEASON figure: positions and
+              cash carry across seasons, so this is the total against the original stakes.
 
               Colour: teal when level or up, red only when down. One colour, one meaning.
             */}
             <p className={`t-caption mt-0.5 ${book.totalCents < STARTING_CASH_CENTS ? 'text-[var(--color-media-glorest)]' : 'text-[var(--color-neutral)]'}`}>
               {book.totalCents === STARTING_CASH_CENTS
-                ? 'level with the start this season'
+                ? 'level with the start'
                 : book.totalCents > STARTING_CASH_CENTS
-                  ? `up ${signedDollars(book.totalCents - STARTING_CASH_CENTS).slice(1)} this season`
-                  : `down ${dollars(STARTING_CASH_CENTS - book.totalCents)} this season`}
+                  ? `up ${signedDollars(book.totalCents - STARTING_CASH_CENTS).slice(1)}`
+                  : `down ${dollars(STARTING_CASH_CENTS - book.totalCents)}`}
             </p>
           </div>
         </div>

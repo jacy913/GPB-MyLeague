@@ -95,7 +95,27 @@ export const MediaHub: React.FC<MediaHubProps> = ({
   const [detailsMediaId, setDetailsMediaId] = useState<MediaId | null>(null);
   const profile = MEDIA_BY_ID[selectedId];
 
-  const readInput = input as MediaReadInput;
+  /*
+   * THE MEMO KEY WAS A REST SPREAD, SO THIS MEMO NEVER HIT.
+   *
+   * Same defect as BettingPage, same fix: `input` is a fresh object every render, so
+   * `buildMediaReads` -- and every table and prop board derived from its result -- rebuilt on
+   * every render for data that had not changed. See the longer note in BettingPage.tsx and
+   * tools/measureBettingCost.ts.
+   */
+  const readInput = useMemo<MediaReadInput>(() => ({
+    teams: input.teams,
+    players: input.players,
+    battingRatings: input.battingRatings,
+    pitchingRatings: input.pitchingRatings,
+    battingStats: input.battingStats,
+    pitchingStats: input.pitchingStats,
+    playerState: input.playerState,
+    seasonYear: input.seasonYear,
+  }), [
+    input.teams, input.players, input.battingRatings, input.pitchingRatings,
+    input.battingStats, input.pitchingStats, input.playerState, input.seasonYear,
+  ]);
   const { reads, scores, spread, disagreements } = useMemo(() => buildMediaReads(readInput), [readInput]);
 
   const slateDate = useMemo(() => getNextSlateDate(games, currentDate), [currentDate, games]);

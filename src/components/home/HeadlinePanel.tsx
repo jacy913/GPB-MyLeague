@@ -3,9 +3,7 @@ import { Newspaper } from 'lucide-react';
 import type { Game, Team } from '../../types';
 import { isPlayoffGame } from '../../logic/playoffs';
 import gpbLogo from '../../assets/gpb.png';
-import { MEDIA_BY_ID, forecasterName } from '../../data/media';
 import type { GameLine } from '../../lib/mediaOdds';
-import { formatAmerican } from '../../lib/markets';
 import { formatCrowd } from '../../lib/analytics/crowdSize';
 import { Panel, StatValue, StripeDivider, TeamLogo } from '../ui';
 import { HomePanel, formatHeadlineDate, formatMiniDate } from './shared';
@@ -181,18 +179,21 @@ export const HeadlinePanel: React.FC<{
 };
 
 /**
- * The featured matchup, priced.
+ * The featured matchup.
  *
- * This used to show both clubs' records and the run differential between them,
- * which is a stat comparison and not a reason to care about tonight. It now
- * shows the house moneyline for the game instead, built by the same
- * buildGameLine the Betting page uses, so the two screens can never disagree
- * about what the house thinks.
+ * Each side carries its crest, its city and the club's SEASON RECORD. The record
+ * was here once, then gave way to the house moneyline; it is back because the
+ * card already prints the fixture's angle and its expected audience, and a reader
+ * deciding whether tonight matters wants the two clubs' form before their price
+ * -- which still has a home on the Betting page.
  *
- * The club's nickname is gone and the city carries the side on its own. With
- * the record and the differential removed there was room for exactly one line
- * of identity, and the city is the one a manager recognises at a glance; the
- * nickname was the more decorative of the two.
+ * The club's nickname is gone and the city carries the side on its own. There is
+ * room for exactly one line of identity, and the city is the one a manager
+ * recognises at a glance.
+ *
+ * `line` stays in the panel's gate. It is null exactly when the fixture has no
+ * clubs to show, so it still marks a real matchup even though nothing on the card
+ * displays a price now.
  */
 export const FeaturedGamePanel: React.FC<{
   gameId: string | null;
@@ -207,18 +208,14 @@ export const FeaturedGamePanel: React.FC<{
 }> = ({ gameId, angle, away, home, line, date, viewers, onOpenGame }) => {
   const hasGame = Boolean(gameId && away && home);
 
-  const side = (team: Team | null, price: number, align: 'left' | 'right') => (
+  const side = (team: Team | null, align: 'left' | 'right') => (
     <div className={`flex min-w-0 flex-1 flex-col items-center gap-2 ${align === 'right' ? 'text-right' : 'text-left'}`}>
       {team ? (
         <>
           <TeamLogo team={team} sizeClass="h-24 w-24" />
           <p className="t-h2 truncate">{team.city}</p>
-          <p
-            className={`t-stat-lg tabular-nums ${
-              price < 0 ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink-dim)]'
-            }`}
-          >
-            {formatAmerican(price)}
+          <p className="t-stat-lg tabular-nums text-[var(--color-ink-dim)]">
+            {team.wins}-{team.losses}
           </p>
         </>
       ) : (
@@ -240,9 +237,9 @@ export const FeaturedGamePanel: React.FC<{
           {/*
             THE AUDIENCE, WHERE THE `angle` USED TO BE.
 
-            "Division Rivalry" is a fact about the fixture and the panel already says something better
-            two lines below it -- the actual price. What the panel never said is the one number that
-            makes it a PRIMETIME game rather than a good one: how many people are going to watch it.
+            "Division Rivalry" is a fact about the fixture, and the panel already prints the two clubs
+            and their records below it. What the panel never said is the one number that makes it a
+            PRIMETIME game rather than a good one: how many people are going to watch it.
 
             `angle` still exists and is still computed by `getFeaturedGame`, and it is passed here, but
             it is now the secondary line: `viewers` leads because a reader deciding whether to care
@@ -260,12 +257,12 @@ export const FeaturedGamePanel: React.FC<{
           )}
           {angle && <p className="t-caption mb-3 text-[var(--color-ink-dim)]">{angle}</p>}
           <div className="flex items-center gap-3">
-            {side(away, line.houseOdds, 'left')}
+            {side(away, 'left')}
             <div className="flex shrink-0 flex-col items-center gap-1">
               <span className="t-h2 text-[var(--color-gold)]" aria-hidden="true">VS</span>
               <StripeDivider bars={3} height={4} depth={6} />
             </div>
-            {side(home, line.homeOdds, 'right')}
+            {side(home, 'right')}
           </div>
           {/*
             A CROWD, AND NO CROWD, USED TO BE SAID HERE.
@@ -280,12 +277,6 @@ export const FeaturedGamePanel: React.FC<{
             analytics/crowd.ts` meaning BETTORS rather than spectators, which is where a stadium crowd
             would actually be built, and that is the place a reader of the code needs it.
           */}
-          {line.disagreement >= 0.10 && (
-            <p className="t-caption mt-4 text-[var(--color-warn)]">
-              {forecasterName(line.outlier)} is {Math.round(line.disagreement * 100)} points
-              away from the other two
-            </p>
-          )}
 
           {/*
             FANS, NOT YET.
@@ -304,7 +295,7 @@ export const FeaturedGamePanel: React.FC<{
             "crowd" that means bettors is a naming decision worth making on purpose rather than by
             default. The alternative -- reusing `crowd.ts` here because the words look similar -- would
             show a bookmaker's flow as though it were an atmosphere, which is the exact substitution
-            this panel's own forecaster line above is careful not to make.
+            this panel is careful not to make.
           */}
         </button>
       ) : (

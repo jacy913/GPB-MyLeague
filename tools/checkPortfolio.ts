@@ -53,7 +53,6 @@ import {
   rejectionOf,
   savePortfolio,
   sellAmount,
-  settlePortfolio,
   valueOf,
   centsFor,
   loadPortfolio,
@@ -381,74 +380,92 @@ check(
   `${dollars(virgin.cashCents)}, no positions, no realised P&L, total value ${dollars(virginMark.totalCents)}.`,
 );
 
-// -- 13. SETTLEMENT CLOSES THE BOOK AND HANDS OVER A FRESH BUDGET ------------------------------------
-const seasonOne = unwrap(buyAmount(createPortfolio(), {
+// -- 13. A HELD POSITION IS UNAFFECTED BY THE CALENDAR, SO IT CARRIES ACROSS A SEASON ---------------
+const carried = unwrap(buyAmount(createPortfolio(), {
   teamId: 'alp', cents: 25_000, price: 250, date: '2026-05-01', marketSize: 100,
 }));
-const settled = settlePortfolio(seasonOne, { alp: 500 }, '2026-09-28');
-const settledGain = valueOf(seasonOne.positions[0], 500) - seasonOne.positions[0].costCents;
+const carriedBefore = JSON.stringify(carried);
+const heldIntoNextSeason = markValue(carried, { alp: 500 });
 check(
-  'settlement closes every position at the last close and banks the gain',
-  settled.positions.length === 0
-  && settled.cashCents === STARTING_CASH_CENTS
-  && settled.settledThrough === '2026-09-28'
-  && settled.lifetimeRealisedCents === settledGain
-  && settledGain === 25000,
-  `$250.00 invested at $250.00 is exactly one unit; marked at $500.00 it is $500.00, a gain of
-  ${dollars(settledGain)}. Settlement leaves `
-  + `${settled.positions.length} positions and ${dollars(settled.cashCents)} of cash -- the opening `
-  + `balance, not ${dollars(settled.cashCents + settledGain)} -- and books the gain to a LIFETIME `
-  + `figure of ${dollars(settled.lifetimeRealisedCents)}.`,
+  'holding a position across a season boundary changes neither the position nor the cash',
+  JSON.stringify(carried) === carriedBefore
+  && carried.positions.length === 1
+  && carried.positions[0].costCents === 25_000
+  && carried.cashCents === STARTING_CASH_CENTS - 25_000
+  && carried.realisedCents === 0
+  && heldIntoNextSeason.totalCents === (STARTING_CASH_CENTS - 25_000) + 50_000,
+  `$250.00 invested at $250.00 is one unit. Marking it at $500.00 the next season shows a total of `
+  + `${dollars(heldIntoNextSeason.totalCents)} with the position still held, but books nothing: `
+  + `realised stays ${dollars(carried.realisedCents)} and the basis stays `
+  + `${dollars(carried.positions[0].costCents)}. A mark is a display number, so simply continuing to `
+  + 'hold cannot realise anything -- and nothing resets the book at the turnover.',
 );
 
-// -- 14. THE RESET IS WHAT ACTUALLY BOUNDS IT ---------------------------------------------------------
-const seasonTwo = unwrap(buyAmount(settled, {
-  teamId: 'bra', cents: 20_000, price: 500, date: '2027-04-02', marketSize: 100,
-}));
-const seasonTwoIfCarried = STARTING_CASH_CENTS + settled.lifetimeRealisedCents;
+// -- 14. REALISED P&L IS A RUNNING TOTAL, NEVER RESET BY A SEASON BOUNDARY ---------------------------
+const firstSale = sellAmount(carried, { teamId: 'alp', cents: 10_000, price: 500 });
+if (!firstSale.ok) throw new Error(`expected the first sale to be accepted, got: ${firstSale.error}`);
+const firstLegCents = firstSale.realisedCents;
+const firstExit = firstSale.portfolio;
+const secondSale = sellAmount(firstExit, { teamId: 'alp', cents: 15_000, price: 300 });
+if (!secondSale.ok) throw new Error(`expected the second sale to be accepted, got: ${secondSale.error}`);
+const secondLegCents = secondSale.realisedCents;
+const secondExit = secondSale.portfolio;
 check(
-  'the next season starts on the OPENING budget, not on last season\'s profit',
-  settled.cashCents === STARTING_CASH_CENTS
-  && seasonTwo.cashCents === STARTING_CASH_CENTS - 20_000
-  && seasonTwo.cashCents < seasonTwoIfCarried,
-  `after a ${dollars(settledGain)} season the player holds ${dollars(settled.cashCents)}, exactly the `
-  + `opening balance. Investing $50.00 into season two leaves ${dollars(seasonTwo.cashCents)}; had the `
-  + `profit carried over it would have been ${dollars(seasonTwoIfCarried - 20_000)}. The lifetime `
-  + 'figure is kept for the record and is deliberately not an input to `derivedCashCents`.',
+  'realised P&L accumulates across sales in a running total that nothing resets',
+  firstExit.realisedCents === firstLegCents
+  && secondExit.realisedCents === firstLegCents + secondLegCents
+  && secondExit.realisedCents !== firstExit.realisedCents
+  && secondExit.cashCents === derivedCashCents(secondExit),
+  `two exits booked ${signedDollars(firstLegCents)} then ${signedDollars(secondLegCents)}, and the `
+  + `book reports the running SUM ${signedDollars(secondExit.realisedCents)} rather than restarting at `
+  + `the second leg. Cash ${dollars(secondExit.cashCents)} still derives from it, which is what keeps `
+  + 'the carry-over honest.',
 );
 
-// -- 15. SETTLEMENT IS IDEMPOTENT, GUARDED BY A DATE AND NOT BY AN EMPTY BOOK -------------------------
-const twice = settlePortfolio(settled, { alp: 400 }, '2026-09-28');
-const backwards = settlePortfolio(settled, { alp: 400 }, '2026-01-01');
-const forwards = settlePortfolio(settled, { alp: 400 }, '2027-09-28');
+// -- 15. AN OLD SAVE'S SETTLEMENT FIELDS ARE IGNORED, NOT ACTED ON -----------------------------------
+/*
+  A save written before settlement was removed still carries `settledThrough` and
+  `lifetimeRealisedCents`. Reading them would be the same class of bug as acting on them, so the loader
+  must ignore them and preserve the position and realised total that ARE part of the book.
+*/
+const legacyStore = new Map<string, string>();
+const legacyStorage = {
+  getItem: (k: string): string | null => (legacyStore.has(k) ? (legacyStore.get(k) as string) : null),
+  setItem: (k: string, v: string): void => { legacyStore.set(k, v); },
+  removeItem: (k: string): void => { legacyStore.delete(k); },
+};
+const storageBeforeLegacy = (globalThis as unknown as { localStorage: unknown }).localStorage;
+(globalThis as unknown as { localStorage: unknown }).localStorage = legacyStorage;
+legacyStore.set('gpb_hxse_portfolio_v1', JSON.stringify({
+  cashCents: STARTING_CASH_CENTS - 25_000,
+  positions: [{ teamId: 'alp', units: 1, costCents: 25_000, openedOn: '2026-05-01' }],
+  realisedCents: 0,
+  settledThrough: '2026-09-28',
+  lifetimeRealisedCents: 25_000,
+}));
+const migrated = loadPortfolio();
+(globalThis as unknown as { localStorage: unknown }).localStorage = storageBeforeLegacy;
 check(
-  'the same date is a no-op, an earlier date is refused, and a LATER date re-settles',
-  twice === settled && backwards === settled && forwards !== settled
-  && forwards.settledThrough === '2027-09-28' && forwards.lifetimeRealisedCents === settled.lifetimeRealisedCents,
-  `re-settling ${settled.settledThrough} and settling the earlier 2026-01-01 both returned the SAME `
-  + 'OBJECT, so a caller can detect the no-op by identity. Settling 2027-09-28 correctly did NOT: it '
-  + 'is a new season, so the guard must let it through and advance the stamp. That was my error when '
-  + 'this check was first written -- I asserted it returned the same object, which would have meant a '
-  + 'second season could never settle at all.',
+  'a save written before settlement was removed keeps its position and drops the dead fields',
+  loadPortfolioLastWarning === null
+  && migrated.positions.length === 1
+  && migrated.positions[0].costCents === 25_000
+  && migrated.cashCents === derivedCashCents(migrated)
+  && !('settledThrough' in migrated)
+  && !('lifetimeRealisedCents' in migrated),
+  'a legacy save carrying `settledThrough` and `lifetimeRealisedCents` loads with the position intact, '
+  + 'no warning, and neither dead field resurrected. The next save writes the new three-field shape.',
 );
 
-// -- 16. A POSITION THE MARKET NEVER PRICED IS CLOSED AT COST ----------------------------------------
-const mixed = unwrap(buyAmount(createPortfolio(), {
-  teamId: 'dwi', cents: 12_000, price: 300, date: '2026-05-01', marketSize: 50,
-}));
-const withGhost = unwrap(buyAmount(mixed, {
-  teamId: 'gone', cents: 8_000, price: 100, date: '2026-05-01', marketSize: 50,
-}));
-const settledMixed = settlePortfolio(withGhost, { dwi: 450 }, '2026-09-28');
-const dwiGain = valueOf(withGhost.positions[0], 450) - withGhost.positions[0].costCents;
+// -- 16. AN UNPRICED POSITION IS HELD, NEVER WRITTEN OFF ---------------------------------------------
+const ghost = markValue(carried, {});
 check(
-  'a position the market never priced is closed at COST, not written off',
-  settledMixed.positions.length === 0 && settledMixed.cashCents === STARTING_CASH_CENTS
-  && settledMixed.lifetimeRealisedCents === dwiGain,
-  `a club with no close contributes ZERO -- neither a gain nor a loss -- while the priced position `
-  + `books its ${dollars(dwiGain)}. Booked at zero the other club would have taken 8,000 cents off a `
-  + 'season the player did not lose. Liquidating at zero books a loss for a price nobody quoted, and '
-  + 'keeping it open strands it forever because a sell needs a price.',
+  'a position the market never priced is HELD at cost, so a missing quote cannot invent a loss',
+  ghost.unpriced === 1 && ghost.holdingsCents === carried.positions[0].costCents
+  && ghost.unrealisedCents === 0 && carried.positions[0].costCents === 25_000,
+  `a club with no close contributes its ${dollars(carried.positions[0].costCents)} basis and is flagged `
+  + 'unpriced -- neither a gain nor a loss. With settlement gone there is no path that closes it at '
+  + 'zero either; it stays held until the market prints a price or the player exits.',
 );
 
 /* ------------------------------------------------------------------ *
@@ -567,12 +584,13 @@ check(
  * ------------------------------------------------------------------ */
 
 /*
-  Settlement only bounds the compounding if it actually fires, and WHERE it is called from decides
-  whether it fires at all. A book owned by the Exchange view settles only for a player who opens the
-  Exchange, so the players who never trade would be the ones who never settle.
+  THE BOOK IS OWNED BY APP, and the reason is no longer settlement -- it is that the header drawer and
+  the Exchange desk read one ledger, and the book must survive navigation between views. What used to be
+  asserted here was WHERE settlement fired; now the property worth protecting is the opposite: NOTHING
+  at a season boundary touches the book.
 
-  This asserts the SOURCE rather than the behaviour, which is the same lesson as the price ledger,
-  which sat at 16/16 green while two of its three boot paths were broken.
+  This asserts the SOURCE rather than the behaviour, which is the same lesson as the price ledger, which
+  sat at 16/16 green while two of its three boot paths were broken.
 */
 const readSrc = (...parts: string[]): string =>
   readFileSync(resolve(process.cwd(), ...parts), 'utf8')
@@ -583,18 +601,25 @@ const appSrc = readSrc('src', 'App.tsx');
 const routerSrc = readSrc('src', 'components', 'AppViewRouter.tsx');
 const viewSrc = readSrc('src', 'components', 'markets', 'ExchangeView.tsx');
 const deskSrc = readSrc('src', 'components', 'markets', 'ExchangeDesk.tsx');
+const bookSrc = readSrc('src', 'hooks', 'usePortfolio.ts');
+const portfolioSrc = readSrc('src', 'lib', 'portfolio.ts');
 
 check(
-  'App OWNS the book, so settlement fires whether or not the Exchange is ever opened',
+  'App OWNS the book, so the drawer and the desk share one ledger',
   /usePortfolio\(/.test(appSrc) && !/usePortfolio\(/.test(viewSrc) && !/usePortfolio\(/.test(deskSrc),
   'App.tsx creates the book; neither view does.',
 );
 
 check(
-  'the settlement effect is keyed on seasonComplete, not on a calendar guess',
-  /seasonComplete/.test(appSrc) && /book\.settle\(/.test(appSrc),
-  'A season starting in October would cross a calendar year boundary mid-season, so inferring the '
-  + 'boundary from dates would settle half way through a season nobody had finished playing.',
+  'NOTHING settles or liquidates the book at a season boundary',
+  !/settlePortfolio/.test(portfolioSrc)
+  && !/settlePortfolio/.test(bookSrc)
+  && !/settlePortfolio/.test(appSrc)
+  && !/book\.settle\(/.test(appSrc),
+  'positions and cash carry across seasons. A refactor that reintroduced a season settlement would '
+  + 'have to add `settlePortfolio` or `book.settle` back, and this check fails first. Note this asserts '
+  + 'the absence of the OLD design, not the presence of a new one: the carry-over needs no runtime code '
+  + 'because it is simply the default.',
 );
 
 check(

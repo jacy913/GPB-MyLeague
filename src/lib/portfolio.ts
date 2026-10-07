@@ -75,27 +75,14 @@ export interface Position {
 export interface Portfolio {
   cashCents: number;
   positions: Position[];
-  /** Realised profit or loss for the CURRENT SEASON, in cents. Reset by settlement. */
+  /**
+   * Realised profit or loss, in cents, carried across seasons.
+   *
+   * A RUNNING TOTAL, not a season figure: it moves only when a sale books a gain or a loss, and it is
+   * never reset at a season boundary. The book is a brokerage rather than a season budget -- positions
+   * and cash roll over, so a profit earned last year is still yours to invest this year.
+   */
   realisedCents: number;
-  /**
-   * The date through which settlement has run, or null if it never has.
-   *
-   * This is what makes settlement idempotent. Without it, anything that re-runs the settlement
-   * effect -- a reload, a second render, a second rollover with no new prices -- would liquidate the
-   * book again. The book is empty after the first pass so the damage would be small, but "small and
-   * invisible" is exactly the failure mode this file exists to avoid, so the guard is explicit and
-   * checked rather than implied by the state happening to be empty.
-   */
-  settledThrough: string | null;
-  /**
-   * Realised profit or loss across every season played, in cents.
-   *
-   * DISPLAY ONLY, and deliberately NOT part of `derivedCashCents`. It is the season record; cash is
-   * the season budget. Conflating them is how "start fresh with $1,000" quietly becomes "start fresh
-   * with whatever you made last year", which is the same compounding the settlement rule exists to
-   * bound.
-   */
-  lifetimeRealisedCents: number;
 }
 
 /**
@@ -150,7 +137,7 @@ export const signedDollars = (cents: number): string =>
  * §6.3 gives this cap two jobs -- realism, and stopping the player exploiting the market -- and the
  * second matters more now than it did when the plan was written. `checkShareEdge` measures a
  * fade-the-dislocation edge at +13.41% over twenty days, in five leagues out of five. Unbounded, that
- * compounds; the season settlement rule now caps the horizon, and this caps the concentration.
+ * compounds; with the season settlement removed this cap is the concentration limit that remains.
  *
  * LINEAR, and linear on purpose: `liquidityFromSize` in `fanbase.ts` is linear for the same reason and
  * with the same caveat -- a curve would be one more shape to justify with no data behind it. $25 in
@@ -171,8 +158,6 @@ export const createPortfolio = (): Portfolio => ({
   cashCents: STARTING_CASH_CENTS,
   positions: [],
   realisedCents: 0,
-  settledThrough: null,
-  lifetimeRealisedCents: 0,
 });
 
 export const positionIn = (portfolio: Portfolio, teamId: string): Position | undefined =>
@@ -261,8 +246,6 @@ export const buyAmount = (
       cashCents: portfolio.cashCents - cents,
       positions,
       realisedCents: portfolio.realisedCents,
-      settledThrough: portfolio.settledThrough,
-      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     },
   };
 };
@@ -322,8 +305,6 @@ export const sellAmount = (
       cashCents: portfolio.cashCents + proceeds,
       positions,
       realisedCents: portfolio.realisedCents + realised,
-      settledThrough: portfolio.settledThrough,
-      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     },
   };
 };
@@ -358,46 +339,20 @@ export const markValue = (
 };
 
 /**
- * SETTLEMENT: close the book at the end of a season and hand the player a fresh budget.
+ * SETTLEMENT IS GONE, DELIBERATELY.
  *
- * `checkShareEdge` measures a fade-the-dislocation edge at +13.41% over twenty days, in five leagues
- * out of five. The position cap limits concentration within one club rather than exposure across
- * time, so the horizon is imposed directly: positions close at the last price the market printed, and
- * the next season starts on the opening balance.
+ * This module used to liquidate the whole book at the end of every season and reopen on the opening
+ * balance, to bound a measured +13.41% fade-the-dislocation edge that would otherwise compound without
+ * horizon. The bound came at a cost the player named: shares vanished at a season boundary and the
+ * portfolio stopped behaving like a portfolio.
  *
- * The reset is the load-bearing part. If cash were carried over as `STARTING + lifetime realised`, a
- * player would begin the new season richer than the last one and the compounding would continue
- * across the boundary -- a settlement rule that settles nothing.
+ * So positions and cash now CARRY ACROSS SEASONS. There is no settlement function, no `settledThrough`
+ * stamp and no season-vs-lifetime split, because there is no longer a boundary event that touches the
+ * book. `realisedCents` is the running total and `derivedCashCents` keeps cash reconciled against it.
  *
- * Idempotent on `settledThrough`: anything can re-run the effect that calls this, so the guard is an
- * explicit date comparison rather than an assumption that the state happens to be empty.
- *
- * A position with no printed price is closed AT COST. Liquidating at zero would book a total loss for
- * a price nobody quoted, and keeping it open would strand it forever.
+ * The compounding the old rule bounded is now bounded only by the position cap and by player choice;
+ * that is the trade the player asked for, and it is a product decision rather than a bug.
  */
-export const settlePortfolio = (
-  portfolio: Portfolio,
-  closes: Record<string, number>,
-  through: string,
-): Portfolio => {
-  if (portfolio.settledThrough !== null && portfolio.settledThrough >= through) return portfolio;
-
-  let gainCents = 0;
-  for (const p of portfolio.positions) {
-    const close = closes[p.teamId];
-    gainCents += typeof close === 'number' && Number.isFinite(close) && close > 0
-      ? valueOf(p, close) - p.costCents
-      : 0;
-  }
-
-  return {
-    cashCents: STARTING_CASH_CENTS,
-    positions: [],
-    realisedCents: 0,
-    settledThrough: through,
-    lifetimeRealisedCents: portfolio.lifetimeRealisedCents + gainCents,
-  };
-};
 
 /* ------------------------------------------------------------------ *
  * Persistence
@@ -481,7 +436,6 @@ export const loadPortfolio = (): Portfolio => {
     const survivors = [...deduped.values()];
     const cashCents = derivedCashCents({
       cashCents: 0, positions: survivors, realisedCents: candidate.realisedCents,
-      settledThrough: null, lifetimeRealisedCents: 0,
     });
 
     if (isWholeCents(candidate.cashCents) && candidate.cashCents !== cashCents) {
@@ -490,25 +444,15 @@ export const loadPortfolio = (): Portfolio => {
     }
 
     /*
-      THE TWO SETTLEMENT FIELDS ARE OPTIONAL, because a save written before settlement existed has
-      neither. `settledThrough` defaults to null, which is the SAFE direction: "never settled" means the
-      next rollover will settle rather than skip. `lifetimeRealisedCents` defaults to this season's
-      realised figure rather than zero, so carrying an old save forward loses no history.
+      A SAVE WRITTEN BEFORE SETTLEMENT WAS REMOVED may still carry `settledThrough` and
+      `lifetimeRealisedCents` on disk. Both are ignored rather than read: neither is part of the book
+      any more. `realisedCents` is now the running total and positions and cash carry across seasons,
+      so there is nothing to migrate -- the extra JSON keys are simply dropped on the next save.
     */
-    const settledThrough = typeof candidate.settledThrough === 'string'
-      && /^\d{4}-\d{2}-\d{2}$/.test(candidate.settledThrough)
-      ? candidate.settledThrough
-      : null;
-    const lifetimeRealisedCents = isWholeCents(candidate.lifetimeRealisedCents)
-      ? candidate.lifetimeRealisedCents
-      : candidate.realisedCents;
-
     return {
       cashCents,
       positions: survivors,
       realisedCents: candidate.realisedCents,
-      settledThrough,
-      lifetimeRealisedCents,
     };
   } catch {
     loadPortfolioLastWarning = 'save would not parse; started a fresh portfolio';
@@ -523,8 +467,6 @@ export const savePortfolio = (portfolio: Portfolio): void => {
       cashCents: derivedCashCents(portfolio),
       positions: portfolio.positions,
       realisedCents: portfolio.realisedCents,
-      settledThrough: portfolio.settledThrough,
-      lifetimeRealisedCents: portfolio.lifetimeRealisedCents,
     }));
   } catch {
     // A full or blocked localStorage should not take the page down. The portfolio becomes

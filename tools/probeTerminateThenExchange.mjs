@@ -225,8 +225,8 @@ const main = async () => {
     }
     localStorage.setItem('glb_share_price_ledger', JSON.stringify(ledger));
     localStorage.setItem('gpb_hxse_portfolio_v1', JSON.stringify({
-      positions: [{ teamId: 'bos-nighthawks', costCents: 25000, shares: 0.5 }],
-      cashCents: 75000, realisedCents: 0, lifetimeRealisedCents: 5000, settledThrough: null,
+      positions: [{ teamId: 'bos-nighthawks', units: 0.5, costCents: 25000, openedOn: '2026-01-01' }],
+      cashCents: 75000, realisedCents: 0,
     }));
     return 'seeded ledger(' + ledger.length + ' days) + portfolio';
   })()`));

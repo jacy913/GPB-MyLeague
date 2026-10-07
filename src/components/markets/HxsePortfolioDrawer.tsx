@@ -57,10 +57,10 @@ export interface HxsePortfolioDrawerProps {
    * The book, as the real `Portfolio`.
    *
    * This was an inline re-declaration of the shape, written out field by field. It had already drifted:
-   * `markValue` takes a `Portfolio`, and `Portfolio` carries `settledThrough`, which the inline copy
-   * did not. The call site passes `book.portfolio`, a genuine `Portfolio`, so nothing was ever wrong
-   * at runtime -- but a hand-copied interface is a snapshot that stops being true the first time the
-   * type gains a field, and this one had.
+   * `markValue` takes a `Portfolio`, and `Portfolio` had gained a field the inline copy did not. The
+   * call site passes `book.portfolio`, a genuine `Portfolio`, so nothing was ever wrong at runtime --
+   * but a hand-copied interface is a snapshot that stops being true the first time the type gains a
+   * field, and this one had.
    */
   portfolio: Portfolio;
   /** Date of the closes being marked against, or null if the market has never printed. */
@@ -177,17 +177,17 @@ export const HxsePortfolioDrawer: React.FC<HxsePortfolioDrawerProps> = ({
               {/*
                 THE HEADLINE BLOCK.
 
-                Total value leads because it is the number the drawer exists to deliver, and the season
-                gain sits directly under it rather than at the foot of a list of positions. Cash and
-                holdings split the difference underneath, and the mark's date is stated rather than
-                implied: "as of" is what tells the reader these figures move with the market while the
-                cash figure does not.
+                Total value leads because it is the number the drawer exists to deliver, and the gain
+                against the original stakes sits directly under it rather than at the foot of a list of
+                positions. Cash and holdings split the difference underneath, and the mark's date is
+                stated rather than implied: "as of" is what tells the reader these figures move with
+                the market while the cash figure does not.
               */}
               <div className="border-b border-[var(--color-chrome-lo)] px-4 py-3">
                 <div className="t-label text-[var(--color-ink-faint)]">Total value</div>
                 <div className="t-stat-hero mt-1 text-[var(--color-ink)]">{dollars(mark.totalCents)}</div>
                 <div className={`t-caption mt-0.5 ${pnlClass(gain)}`}>
-                  {signedDollars(gain)} this season
+                  {signedDollars(gain)}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <div>
@@ -266,17 +266,15 @@ export const HxsePortfolioDrawer: React.FC<HxsePortfolioDrawerProps> = ({
             </div>
 
             {/*
-              THE FOOTER carries the lifetime record, and it is the one number that survives settlement.
-
-              Season settlement resets cash to the opening balance every season, which is what bounds
-              the compounding -- and it also means the season figure starts again. Without a lifetime
-              line the drawer would look like the player had lost everything each April.
+              THE FOOTER carries the realised record, and with settlement removed it is simply the
+              running total: positions and cash roll across seasons, so gains banked last year are still
+              reflected here and still yours to invest.
             */}
             <div className="shrink-0 border-t border-[var(--color-chrome-lo)] px-4 py-3">
               <div className="flex items-baseline justify-between">
-                <span className="t-label text-[var(--color-ink-faint)]">Lifetime realised</span>
-                <span className={`t-stat ${pnlClass(portfolio.lifetimeRealisedCents)}`}>
-                  {signedDollars(portfolio.lifetimeRealisedCents)}
+                <span className="t-label text-[var(--color-ink-faint)]">Realised</span>
+                <span className={`t-stat ${pnlClass(portfolio.realisedCents)}`}>
+                  {signedDollars(portfolio.realisedCents)}
                 </span>
               </div>
               {/*

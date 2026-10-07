@@ -104,7 +104,29 @@ const BettingPage: React.FC<BettingPageProps> = ({
   const { wallet, openBets, summary, select, isOpen, open, close, focusedProp } = slipState;
   const [view, setView] = useState<'slate' | 'props' | 'futures' | 'awards'>('slate');
 
-  const readInput = input as MediaReadInput;
+  /*
+   * THE MEMO KEY WAS A REST SPREAD, SO THIS MEMO NEVER HIT.
+   *
+   * `input` is rebuilt by the destructuring above on every render, so `[readInput]` was a fresh
+   * object identity every time and `buildMediaReads` ran on every render. Its result is in turn
+   * the memo key for the moneyline, the run totals and the whole prop board, so those ran on
+   * every render too -- measured at ~215ms of synchronous work per render on a real league
+   * (tools/measureBettingCost.ts). Every field read here is a stable prop, so building the key
+   * explicitly from them lets the memo actually hold: once per data change, not once per render.
+   */
+  const readInput = useMemo<MediaReadInput>(() => ({
+    teams: input.teams,
+    players: input.players,
+    battingRatings: input.battingRatings,
+    pitchingRatings: input.pitchingRatings,
+    battingStats: input.battingStats,
+    pitchingStats: input.pitchingStats,
+    playerState: input.playerState,
+    seasonYear: input.seasonYear,
+  }), [
+    input.teams, input.players, input.battingRatings, input.pitchingRatings,
+    input.battingStats, input.pitchingStats, input.playerState, input.seasonYear,
+  ]);
   const { scores, spread } = useMemo(() => buildMediaReads(readInput), [readInput]);
   const seasonYear = useMemo(
     () => resolveSeasonYear(currentDate, games),

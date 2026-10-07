@@ -23,7 +23,7 @@ import {
   SimulationTarget,
 } from './types';
 import type { PriceSeries } from './lib/analytics/sharePrice';
-import { latestClose, leaguePriceSeed, marketFloorFor, priceAndAppendDay, type PriceBoard } from './lib/analytics/priceBoard';
+import { clearFairLayerCache, latestClose, leaguePriceSeed, marketFloorFor, priceAndAppendDay, type PriceBoard } from './lib/analytics/priceBoard';
 import { crowdEventShocksFor } from './lib/analytics/crowd';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
@@ -74,6 +74,7 @@ import { buildPowerRankings } from './lib/analytics/powerRankings';
 import { useBettingSlip } from './hooks/useBettingSlip';
 import { usePortfolio } from './hooks/usePortfolio';
 import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
+import { clearPowerRankMovement } from './components/home/powerRankMovement';
 import { BettingSlip } from './components/betting/BettingSlip';
 import { useBroadcastFlair } from './hooks/useBroadcastFlair';
 import { useLeagueBootstrap } from './hooks/useLeagueBootstrap';
@@ -1268,12 +1269,10 @@ function App() {
   /*
     THE HXSE BOOK LIVES HERE, NOT IN THE EXCHANGE VIEW.
 
-    Settlement has to fire at a season rollover whether or not the player has the Exchange open. If the
-    book were component state, a player who never once visited the page would reach the next season
-    with an unsettled position book -- and would then be settled against the NEW season's opening
-    prices rather than the close that ended the one they traded through. Owning it here makes the
-    rollover event unconditional, which is the only arrangement where "settled at the last printed
-    price" is actually true.
+    The book is owned at App level so the header drawer and the Exchange desk read the same state, and
+    so it survives navigation between views. It no longer settles at a season boundary: positions and
+    cash carry across seasons, so there is no rollover event that has to fire whether or not a page is
+    open.
 
     `latestLedgerClose` is the marking source for the same reason it is for the desk: a mark belongs
     against the most recent printed close, not the last day of whatever range the view happens to be
@@ -1296,34 +1295,6 @@ function App() {
   const [hxseClubSelection, setHxseClubSelection] = useState<string | null>(null);
   const book = usePortfolio(latestLedgerClose);
   const [hxsePortfolioOpen, setHxsePortfolioOpen] = useState(false);
-
-  /*
-    SETTLEMENT, ONCE PER SEASON, AT THE LAST PRICE THE MARKET PRINTED.
-
-    The trigger is `seasonComplete` rather than a calendar guess. A season starting in October would
-    cross a year boundary mid-season, so inferring the boundary from dates would settle half way
-    through a season nobody had finished playing.
-
-    The effect watches `priceLedger` as well as the flag, because the close a position settles at has
-    to be the LAST one printed before the rollover -- and at the moment the flag flips that is the most
-    recent day in the ledger, which may be an offseason day. That is deliberate and is what the desk
-    will show as the settlement price, so the two cannot disagree.
-
-    `settle` is idempotent on `settledThrough`, so this firing twice -- a re-render, a second rollover
-    with no new prices -- cannot liquidate the book again.
-  */
-  const settledSeasonRef = useRef(false);
-  useEffect(() => {
-    if (!seasonComplete) {
-      // A new season has begun, so the next rollover is allowed to settle again.
-      settledSeasonRef.current = false;
-      return;
-    }
-    if (settledSeasonRef.current) return;
-    const last = priceLedger && priceLedger.length > 0 ? priceLedger[priceLedger.length - 1] : undefined;
-    if (!last) return;
-    if (book.settle(last.close, last.date)) settledSeasonRef.current = true;
-  }, [seasonComplete, priceLedger, book.settle]);
   const [view, setView] = useState<AppView>('dashboard');
 
   /*
@@ -2586,6 +2557,17 @@ const { resetWallet } = bettingSlip;
           priced against an assessment of a league that no longer exists.
         - the portfolio, via `book.reset()`, or a "new universe" opens holding the last one's
           positions and lifetime realised record.
+        - the power-ranking movement snapshot, via `clearPowerRankMovement()`. The strip measures a
+          club against the last board it stored, and a rebuilt league shares its team ids with the
+          one it replaced -- without this, the new universe would open with the old league's arrows
+          pointing at clubs that are only nominally the same.
+        - the fair-layer cache in `priceBoard.ts`, via `clearFairLayerCache()`. That Map is keyed by
+          the caller's `fairCacheKey`, and the dashboard's is `rankings|<seasonHistory.length>|<date>`
+          -- which carries no universe identity at all. Terminate part-way through a first season and
+          the rebuilt league has the same `seasonHistory.length` (0); play it forward to the same date
+          and the key matches, so the new league is served power rankings, fair prices and playoff
+          odds computed from rosters that no longer exist. Two universes cannot share a process-local
+          cache, so the cache goes with the universe like everything else here.
 
         THE STORED LEDGER IS CLEARED THROUGH `saveSharePriceLedger([])`, not a bare removeItem,
         because it lives in BOTH stores and `loadLocalLeagueStateAsync` reads IndexedDB first. A
@@ -2599,6 +2581,8 @@ const { resetWallet } = bettingSlip;
       setPriceLedger(undefined);
       setLastPriceBoard(null);
       book.reset();
+      clearPowerRankMovement();
+      clearFairLayerCache();
       /*
         AND THE BETTING WALLET, which was the one thing this list left out.
 
@@ -2799,6 +2783,13 @@ const { resetWallet } = bettingSlip;
        * the wrong crowd is not.
        */
       setLastPriceBoard(null);
+      /*
+       * And the fair-layer cache goes with it. Its key is the caller's `fairCacheKey` -- a date and
+       * a season count -- not an identity of the imported universe, so an entry left behind by the
+       * league that was open before this import can answer for the one being imported. Same defect,
+       * same fix as termination.
+       */
+      clearFairLayerCache();
       setPlayerState(bundle.players);
       setSeasonHistory(bundle.seasonHistory);
       setOffseasonWorkflow(bundle.offseasonWorkflow);

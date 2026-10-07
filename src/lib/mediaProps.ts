@@ -61,6 +61,15 @@ import {
 } from './playerProps';
 
 /**
+ * The outlet ids, in profile order.
+ *
+ * Resolved once, at module load, rather than inside `buildPropLadder`. That function rebuilt the
+ * same nine-element array on every market -- 9,171 allocations per measured slate -- purely as
+ * loop bookkeeping.
+ */
+const MEDIA_IDS: MediaId[] = MEDIA_PROFILES.map((profile) => profile.id);
+
+/**
  * How hard each outlet tilts a prop away from the fitted base rate.
  *
  * Inherited from the moneylines, on the same logit scale. The moneylines were
@@ -212,24 +221,26 @@ const logistic = (value: number): number => 1 / (1 + Math.exp(-value));
  * method's raw score, and it is essential rather than cosmetic -- each method
  * produces scores on a different scale, and dividing by a shared number would let
  * whichever method happens to be widest drive every prop on the board.
+ *
+ * The league mean arrives as a parameter rather than a local sum. It is constant for an outlet
+ * across a whole rebuild, so recomputing it here repeated the same ~2.6m iterations on a measured
+ * slate to produce nine numbers that never changed; `buildPropMarkets` now measures it once.
  */
 const outletProbability = (
   baseProbability: number,
   teamId: string,
   mediaId: MediaId,
   input: PropBoardInput,
+  leagueMean: number,
 ): number => {
   const scores = input.teamScores[mediaId];
   const own = scores?.get(teamId);
   const spread = input.scoreSpread[mediaId];
   if (own === undefined || !spread || spread <= 0) return baseProbability;
+  // A non-finite mean is the empty-map case the old inline count used to guard.
+  if (!Number.isFinite(leagueMean)) return baseProbability;
 
-  let sum = 0;
-  let count = 0;
-  scores.forEach((value) => { sum += value; count += 1; });
-  if (count === 0) return baseProbability;
-
-  const z = (own - sum / count) / spread;
+  const z = (own - leagueMean) / spread;
   // Capped at one and a half standard deviations. Past that the club is either
   // the best or the worst in the league and the ordering carries no more
   // information; allowing it to run would let one outlier club reshape a
@@ -390,12 +401,43 @@ export const buildPropMarkets = (input: PropBoardInput): PropMarket[] => {
   const maps = propStatMaps(input.playerState);
   const measured = leaguePropBaselines(maps.batting, maps.pitching);
 
+  /*
+   * The mean of each outlet's club scores, measured once.
+   *
+   * `outletProbability` needs it to standardise a raw score into a z-score, and it is the same
+   * number for every market that outlet prices -- so summing it inside that function repeated the
+   * work thousands of times for nine values that never move during a rebuild.
+   */
+  const leagueMeanByOutlet = new Map<MediaId, number>();
+  for (const profile of MEDIA_PROFILES) {
+    const outletScores = input.teamScores[profile.id];
+    let sum = 0;
+    let count = 0;
+    outletScores?.forEach((value) => { sum += value; count += 1; });
+    leagueMeanByOutlet.set(profile.id, count === 0 ? Number.NaN : sum / count);
+  }
+
+  /*
+   * Players grouped by club, once.
+   *
+   * The per-game loop used to filter the entire player list for each team it visited -- two scans
+   * of ~1,285 players per game, ~38,500 comparisons on a measured slate. Club membership does not
+   * change during the build, so the index is built here. Order within a club is the order of
+   * `input.playerState.players`, which is what the filter preserved.
+   */
+  const playersByTeam = new Map<string, Player[]>();
+  for (const player of input.playerState.players) {
+    const list = playersByTeam.get(player.teamId);
+    if (list) list.push(player);
+    else playersByTeam.set(player.teamId, [player]);
+  }
+
   const slateGames = input.games.filter((game) => game.date === input.slateDate);
   const markets: PropMarket[] = [];
 
   for (const game of slateGames) {
     for (const teamId of [game.awayTeam, game.homeTeam]) {
-      const teamPlayers = input.playerState.players.filter((player) => player.teamId === teamId);
+      const teamPlayers = playersByTeam.get(teamId) ?? [];
       for (const player of teamPlayers) {
         const row = maps.batting.get(player.playerId);
         const mound = maps.pitching.get(player.playerId);
@@ -420,7 +462,7 @@ export const buildPropMarkets = (input: PropBoardInput): PropMarket[] => {
           for (const stat of BATTING_PROP_STATS) {
             markets.push(...buildPropLadder({
               stat, role: 'batting', player, name, teamId, game,
-              maps, measured, input,
+              maps, measured, input, leagueMeanByOutlet,
             }));
           }
         }
@@ -428,7 +470,7 @@ export const buildPropMarkets = (input: PropBoardInput): PropMarket[] => {
           for (const stat of PITCHING_PROP_STATS) {
             markets.push(...buildPropLadder({
               stat, role: 'pitching', player, name, teamId, game,
-              maps, measured, input,
+              maps, measured, input, leagueMeanByOutlet,
             }));
           }
         }
@@ -451,8 +493,10 @@ const buildPropLadder = (options: {
   maps: ReturnType<typeof propStatMaps>;
   measured: Record<PropStatKey, number>;
   input: PropBoardInput;
+  /** Each outlet's mean club score, measured once in `buildPropMarkets`. */
+  leagueMeanByOutlet: Map<MediaId, number>;
 }): PropMarket[] => {
-  const { stat, role, player, name, teamId, game, maps, measured, input } = options;
+  const { stat, role, player, name, teamId, game, maps, measured, input, leagueMeanByOutlet } = options;
   const constants = propModelFor(stat);
   const rate = playerPropRate(stat, player.playerId, maps.batting, maps.pitching);
   if (rate.gamesPlayed <= 0) return [];
@@ -470,7 +514,9 @@ const buildPropLadder = (options: {
     const probability = {} as Record<MediaId, number>;
     const temperament = {} as Record<MediaId, PropTemperament>;
     for (const profile of MEDIA_PROFILES) {
-      const value = outletProbability(base, teamId, profile.id, input);
+      const value = outletProbability(
+        base, teamId, profile.id, input, leagueMeanByOutlet.get(profile.id) ?? Number.NaN,
+      );
       probability[profile.id] = value;
       temperament[profile.id] = propTemperamentFor(value);
     }
@@ -478,9 +524,8 @@ const buildPropLadder = (options: {
     const consensus = consensusProbability(probability);
     let widest = 0;
     let outlier: MediaId = 'hollis';
-    const ids = MEDIA_PROFILES.map((profile) => profile.id);
-    for (const a of ids) {
-      for (const b of ids) {
+    for (const a of MEDIA_IDS) {
+      for (const b of MEDIA_IDS) {
         const gap = Math.abs(probability[a] - probability[b]);
         if (gap > widest) { widest = gap; outlier = probability[a] > probability[b] ? a : b; }
       }
@@ -599,14 +644,27 @@ export const selectOutletProps = (
     market.probability[mediaId] +
     selectionAffinity({ market, mediaId, teamWinPct: winPctFor(market.teamId) });
 
-  const ranked = [...markets].sort((a, b) => {
-    const own = score(b) - score(a);
-    if (Math.abs(own) > 1e-9) return own;
-    // Deterministic tiebreak. Two props at the same score must not swap places
-    // between renders, or a card the manager had already read would change
-    // underneath them.
-    return a.propId.localeCompare(b.propId);
-  });
+  /*
+   * DECORATE, SORT, UNDECORATE.
+   *
+   * The comparator used to call `score()` on both operands, so a comparison sort recomputed each
+   * market's score O(log n) times -- about 1.07m calls to rank a measured slate, against the
+   * 82,500 distinct (market, outlet) scores that actually exist. `selectionAffinity` is a pure
+   * function of the market and the outlet alone, so scoring each market once up front and sorting
+   * the decorated pairs is the same ordering for a fraction of the work. The comparison itself --
+   * including the `1e-9` epsilon and the `propId` tiebreak -- is unchanged.
+   */
+  const ranked = markets
+    .map((market) => ({ market, score: score(market) }))
+    .sort((a, b) => {
+      const own = b.score - a.score;
+      if (Math.abs(own) > 1e-9) return own;
+      // Deterministic tiebreak. Two props at the same score must not swap places
+      // between renders, or a card the manager had already read would change
+      // underneath them.
+      return a.market.propId.localeCompare(b.market.propId);
+    })
+    .map((entry) => entry.market);
 
   // Hottest-first, for the tail pass. Derived from the same ranking so the two
   // passes cannot disagree about which prop is the outlet's boldest pick.

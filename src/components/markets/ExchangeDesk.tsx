@@ -161,8 +161,7 @@ export const ExchangeDesk: React.FC<ExchangeDeskProps> = ({
       {/*
         THE FOUR FIGURES. Total first and largest because it is the one being played for; the other
         three explain it. Gain-versus-starting sits with the total rather than being buried in the
-        positions table, because a player who cannot see their season score will not know they have
-        one.
+        positions table, because a player who cannot see their standing will not know they have one.
       */}
       <div className="grid grid-cols-4 gap-px border-b border-[var(--color-chrome-lo)] bg-[var(--color-chrome-lo)]">
         <Stat label="Total value" value={dollars(book.totalCents)} emphasis sub={pnlText(gain)} subClass={pnlClass(gain)} />
