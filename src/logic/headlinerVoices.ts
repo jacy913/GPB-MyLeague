@@ -210,6 +210,24 @@ export const pickTitleWithTemplate = (
  */
 const PEREZ: VoiceBank = {
   titles: {
+    /*
+     * Postseason. His register is the game as it was lived, and the postseason is the stretch
+     * where that is most true -- so these are written as scenes rather than as results. `{FIGURE}`
+     * is the winning series total and is deliberately the only number in any of them, because a
+     * title that leads with a count is a scoreboard, and this is not one.
+     */
+    series_clinched: [
+      '{TEAM} Are Through',
+      'They Walked Off {OPPONENT}',
+      'The Last Game of This One',
+      'Somebody Had To Stay',
+    ],
+    championship: [
+      '{TEAM} Win It',
+      'The Last Game of the Year',
+      'They Carried It to the End',
+      'That Is the Last One You Get to Win',
+    ],
     walk_off: [
       '{TEAM} Turns It Up in the Ninth',
       'Ninety Minutes in {ARENA}',
@@ -272,6 +290,21 @@ const PEREZ: VoiceBank = {
     ],
   },
   decks: {
+    /*
+     * Postseason decks. The through-line is that these are the games people will remember, and the
+     * figures are stated once and plainly rather than celebrated -- he is in the seats, not writing
+     * a eulogy, and a person who was there does not usually announce that a moment was important.
+     */
+    series_clinched: [
+      'They went at it for {FIGURE} games and at the end of the last one it was over. {OPPONENT} got up and left and did not wait around, which tells you they already knew.',
+      'Somebody in the fourth row of the visiting section told me it had been over since the sixth inning of the fourth game. I did not believe him until the last out.',
+      '{TEAM} are through and the field is one game smaller. That is the whole report. It is just that nobody tells you it feels like that from four rows back.',
+    ],
+    championship: [
+      'It ended the way these things end, with everybody still in their seats and the season over. {TEAM} won it and about half the park went quiet before it went loud.',
+      'A year of baseball came down to the last out of the last game. I have seen a lot of last outs and there is no way to get ready for that one.',
+      '{TEAM} are champions and I would like to say something clever about it. I cannot. It was {FIGURE} games of the thing and then one more.',
+    ],
     no_hitter: [
       '{PLAYER} retired {OPPONENT} in order and by the time it was over nobody had made much of it, which is the way it always goes. The next person to hit will make much of it.',
       'Nine innings without a hit is not a thing you watch, it is a thing you find out afterwards and then wish you had been paying attention. {PLAYER} did it to {OPPONENT} in front of a crowd that had nothing to do at the end.',
@@ -426,6 +459,16 @@ const SOO: VoiceBank = {
  */
 const GATZ: VoiceBank = {
   titles: {
+    /*
+     * He played a postseason, and going home is the other half of what that is. ALL CAPS is this
+     * bank's register throughout -- he shouts in headline type whether or not the moment earns it.
+     */
+    eliminated: [
+      '{TEAM} ARE DONE. THAT IS THE REPORT.',
+      'I HAVE SEEN THIS ONE BEFORE',
+      'YOU CAN PLAY ALL YEAR AND IT ENDS IN ONE NIGHT',
+      'THE SERIES WENT TO {OPPONENT}. GOOD NIGHT.',
+    ],
     blowout: [
       'THAT IS HOW YOU WIN IT',
       "{TEAM} Believed. {OPPONENT} Didn't.",
@@ -584,6 +627,19 @@ const GATZ: VoiceBank = {
  */
 const TOMBUCCELLI: VoiceBank = {
   titles: {
+    /*
+     * `eliminated` is the one event in the app where his sourness is the correct register rather
+     * than a fault. He is negative-only by gate, and an elimination is the single postseason story
+     * that is legitimately a loss -- so a chastened headline here is the character working, not the
+     * character misfiring. What he may NOT do is gloat. The lines below are disappointed, not
+     * triumphant, because the difference is the whole reason the character is interesting.
+     */
+    eliminated: [
+      '{TEAM} Go Home. Say the Rest of It.',
+      'I Watched All {FIGURE} Games and That Is the Summary',
+      'End of the Line and Nobody Blinked',
+      'They Have Until November to Think About It',
+    ],
     meltdown: [
       'Another {TEAM} Offense. Spectacularly Bad.',
       'Forty Years and They Still Have Not Fixed It',
@@ -660,6 +716,11 @@ const TOMBUCCELLI: VoiceBank = {
     ],
   },
   decks: {
+    eliminated: [
+      '{TEAM} lost {FIGURE} of them and that is the report. They will go home and the season will go on without them, which is what happens to about half of the field every October.',
+      'I do not enjoy this. I want to be honest about that before the column implies otherwise. {TEAM} are finished and the people who paid to watch them did not get what they came for.',
+      'It took {FIGURE} games and the thing I keep coming back to is that {OPPONENT} were not especially good. They were just there at the end, which is most of what winning a series requires.',
+    ],
     losing_streak: [
       '{FIGURE} in a row is not a run of bad luck at that point, it is a run of something. {TEAM} have stopped being the team that wins the close one and started being the team it happens to.',
       'The wins will come back. That is what a streak is. What does not come back on its own is why it started.',

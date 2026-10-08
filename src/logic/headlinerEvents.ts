@@ -22,7 +22,8 @@
  * headline" and "what makes a good event" is a choice rather than an accident.
  */
 
-import type { Game, Player, Team } from '../types';
+import type { Game, PlayoffLeague, PlayoffRoundKey, Player, Team } from '../types';
+import { seriesStandingForGame, type SeriesStanding } from '../lib/seriesStanding';
 import type { DerivedGameLines, GameShape } from './headlineEngine';
 import { SEVERITY_BAND, type GameEvent, type GameEventKind, type HeadlineSlots } from './headliners';
 
@@ -787,6 +788,140 @@ const detectExpectedDivergence = (input: HeadlinerEventInput): Detection | null 
 // The detector table
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Postseason detectors
+// ---------------------------------------------------------------------------
+
+/**
+ * Games one side must win to take the series, and the standing for this game's series.
+ *
+ * Both now live in `src/lib/seriesStanding.ts`, shared with the postseason slate panel. The count is
+ * by club, participants are tracked separately from the win map so a swept-out loser is not dropped,
+ * and the scan is bounded by the caller passing `completedGamesDesc` -- which is scoped to games on
+ * or before this one. Each of those is load-bearing and is documented at its definition.
+ */
+const seriesStandingFor = (input: HeadlinerEventInput): SeriesStanding | null =>
+  seriesStandingForGame(input.game, input.completedGamesDesc);
+
+/**
+ * The decisive game of a series, or null.
+ *
+ * The guard is `this game is the one that ended it`, not merely "the series is over". Without it,
+ * every game of a decided series would fire the event, because `completedGamesDesc` includes the
+ * series' later games and the tally still shows a winner -- so a Game 4 that ended a sweep would
+ * also fire on a Game 7 replay. Anchoring to the winning club's final needed win is what makes the
+ * story attach to the game that actually decided it.
+ */
+const decidedSeriesFor = (
+  input: HeadlinerEventInput,
+): { standing: SeriesStanding; decidedInThisGame: boolean } | null => {
+  const standing = seriesStandingFor(input);
+  if (!standing || !standing.winnerId) return null;
+
+  // Did the winner reach the threshold on THIS game? True when this game was won by the club that
+  // took the series, and that club's tally including this game is exactly the threshold.
+  const thisGameWinner =
+    input.game.score.away > input.game.score.home ? input.game.awayTeam : input.game.score.home;
+  const tally = standing.winsByTeamId.get(standing.winnerId) ?? 0;
+  const decidedInThisGame = thisGameWinner === standing.winnerId && tally === standing.winsNeeded;
+
+  return { standing, decidedInThisGame };
+};
+
+/**
+ * A club advanced past another one.
+ *
+ * Severity scales with the round, because a Wild Card upset and a league-clinching Game 7 are not
+ * the same size of story and one flat number would let the lesser one win the slot.
+ */
+const detectSeriesClinched = (input: HeadlinerEventInput): Detection | null => {
+  const decided = decidedSeriesFor(input);
+  if (!decided || !decided.decidedInThisGame) return null;
+  const { standing } = decided;
+  const winnerId = standing.winnerId;
+  const loserId = standing.loserId;
+  if (!winnerId) return null;
+
+  const roundLift: Record<PlayoffRoundKey, number> = {
+    wild_card: 0,
+    divisional: 6,
+    league_series: 12,
+    world_series: 18,
+  };
+
+  return {
+    kind: 'series_clinched',
+    severity: Math.min(100, SEVERITY_BAND.significant + 10 + roundLift[standing.round]),
+    valence: 'positive',
+    teamId: winnerId,
+    slots: {
+      TEAM: clubName(input, winnerId),
+      OPPONENT: loserId ? cityOf(input, loserId) : 'the field',
+      LEAGUE: standing.league,
+      FIGURE: `${standing.winsByTeamId.get(winnerId) ?? 0}`,
+      ARENA: cityOf(input, winnerId),
+    },
+  };
+};
+
+/**
+ * A club went home.
+ *
+ * Negative valence, which is the haters' fuel by design -- an elimination is somebody's worst night
+ * and the newsroom should have a reporter who says so. Severity is high but deliberately BELOW the
+ * clinch event for the same game: both are true, and one slot cannot carry two cards, so the club
+ * that is still playing takes the lead.
+ */
+const detectEliminated = (input: HeadlinerEventInput): Detection | null => {
+  const decided = decidedSeriesFor(input);
+  if (!decided || !decided.decidedInThisGame) return null;
+  const loserId = decided.standing.loserId;
+  if (!loserId) return null;
+
+  return {
+    kind: 'eliminated',
+    severity: Math.min(100, SEVERITY_BAND.significant + 2),
+    valence: 'negative',
+    teamId: loserId,
+    slots: {
+      TEAM: clubName(input, loserId),
+      OPPONENT: decided.standing.winnerId ? cityOf(input, decided.standing.winnerId) : 'the field',
+      LEAGUE: decided.standing.league,
+      FIGURE: `${decided.standing.winsByTeamId.get(loserId) ?? 0}`,
+    },
+  };
+};
+
+/**
+ * Somebody won the GPB.
+ *
+ * Only the final series produces this, so it is the rarest event in the app and the only one that
+ * fires exactly once per season. Severity sits in the `historic` band, above every other kind --
+ * there is no argument that a championship outranks a no-hitter in a newsroom.
+ */
+const detectChampionship = (input: HeadlinerEventInput): Detection | null => {
+  const decided = decidedSeriesFor(input);
+  if (!decided || !decided.decidedInThisGame) return null;
+  const { standing } = decided;
+  if (standing.round !== 'world_series') return null;
+  const winnerId = standing.winnerId;
+  if (!winnerId) return null;
+
+  return {
+    kind: 'championship',
+    severity: SEVERITY_BAND.historic + 5,
+    valence: 'positive',
+    teamId: winnerId,
+    slots: {
+      TEAM: clubName(input, winnerId),
+      OPPONENT: standing.loserId ? cityOf(input, standing.loserId) : 'the field',
+      LEAGUE: 'GPB',
+      FIGURE: `${standing.winsByTeamId.get(winnerId) ?? 0}`,
+      ARENA: cityOf(input, winnerId),
+    },
+  };
+};
+
 /**
  * Detector to kind, stated beside the detectors rather than recovered from their
  * names. `Function.prototype.name` is a property of the compiled output, not of the
@@ -820,6 +955,11 @@ const DETECTORS: ReadonlyArray<{ kind: GameEventKind; detect: Detector }> = [
   { kind: 'anomaly', detect: detectAnomaly },
   { kind: 'sustained_rate', detect: detectSustainedRate },
   { kind: 'expected_divergence', detect: detectExpectedDivergence },
+  // Postseason. Last in the list deliberately: they are the rarest events in the app, and the
+  // registry order is the tiebreak the pipeline falls back on when two candidates score equally.
+  { kind: 'championship', detect: detectChampionship },
+  { kind: 'series_clinched', detect: detectSeriesClinched },
+  { kind: 'eliminated', detect: detectEliminated },
 ];
 
 /**

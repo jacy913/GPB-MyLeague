@@ -39,7 +39,7 @@ import { SimulationManager } from '../src/logic/simulationManager';
 import { buildNewUniverse } from '../src/logic/universeBootstrap';
 import { recalculateTeamRatingsFromRosters } from '../src/logic/teamStrength';
 import { extractGameEvents, buildLeagueRateBaselines } from '../src/logic/headlinerEvents';
-import { deriveGameLines, deriveGameShape } from '../src/logic/headlineEngine';
+import { buildGameIndexes, deriveGameLines, deriveGameShape } from '../src/logic/headlineEngine';
 import { HEADLINERS, type GameEvent, type GameEventKind } from '../src/logic/headliners';
 import type { Game, LeaguePlayerState, Player, Team } from '../src/types';
 
@@ -135,6 +135,15 @@ const main = async (): Promise<void> => {
       if (!derivedByGameId.has(g.gameId)) derivedByGameId.set(g.gameId, deriveGameLines(g));
     });
     history = [...completedToday, ...history].slice(0, 400);
+    /*
+     * Built through `buildGameIndexes` rather than slicing `history` by hand.
+     *
+     * The per-game "history ends here" boundary is a rule, and this tool was previously passing the
+     * whole descending list -- the same leak the dashboard had. Reimplementing the boundary here
+     * would be a second copy of the rule that could disagree with the one in `headlineEngine`, which
+     * is exactly how a measurement starts disagreeing with the thing it measures.
+     */
+    const indexes = buildGameIndexes(history);
 
     const teamsById = new Map(r.teams.map((t) => [t.id, t]));
     const playersById = new Map(r.playerState.players.map((p) => [p.playerId, p]));
@@ -154,7 +163,7 @@ const main = async (): Promise<void> => {
           derived,
           teamsById,
           playersById,
-          completedGamesDesc: history,
+          completedGamesDesc: indexes.completedGamesUpTo(game.gameId),
           baselines,
         }).forEach((event) => { note(event); total += 1; });
       });

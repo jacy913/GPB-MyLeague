@@ -55,7 +55,14 @@ export interface HeadlinerDetailsModalProps {
   headlinerId: HeadlinerId | null;
 }
 
-/** Event-kind labels, so a beat reads as English rather than as an enum. */
+/**
+ * Event-kind labels, so a beat reads as English rather than as an enum.
+ *
+ * Typed as a complete `Record` on purpose. Every other kind in this app is exhaustively mapped in
+ * at least one place, so adding an event kind cannot compile until somebody writes down what it is
+ * called -- which is how the postseason kinds turned a two-second omission into a type error rather
+ * than a card reading "series_clinched" in the reporter dossier.
+ */
 const KIND_LABEL: Record<GameEventKind, string> = {
   no_hitter: 'no-hitter',
   perfect_game: 'perfect game',
@@ -72,6 +79,9 @@ const KIND_LABEL: Record<GameEventKind, string> = {
   momentum_swing: 'momentum swing',
   blowout: 'blowout',
   shutout: 'shutout',
+  series_clinched: 'series clinched',
+  eliminated: 'eliminated',
+  championship: 'championship',
   scrap_heap: 'scrap heap',
   one_run_game: 'one-run game',
   underdog_win: 'underdog win',

@@ -79,6 +79,19 @@ export type GameEventKind =
   // narrative
   | 'underdog_win' | 'meltdown' | 'big_debut' | 'young_player'
   | 'losing_streak' | 'winning_streak'
+  // postseason
+  //
+  // Added because the newsroom had NOTHING to say about October. Every other kind is a single
+  // game's statistical achievement or a season trend, which meant a 3-2 walk-off that ended a
+  // seven-game series produced at best a generic walk-off story -- the series consequence, which is
+  // the part anyone actually remembers, was invisible. These fire on SERIES STATE rather than on a
+  // game's box score.
+  //
+  // A separate group rather than more names on 'walk_off', because these are decided by
+  // `seriesId` bookkeeping across games and not by anything in the play log. Reusing a single-game
+  // kind would have meant the two could not be told apart downstream, and a persona covering
+  // `walk_off` would silently inherit the postseason too.
+  | 'series_clinched' | 'eliminated' | 'championship'
   // analytic
   | 'anomaly' | 'sustained_rate' | 'expected_divergence';
 
@@ -256,6 +269,10 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       // listed. A one-run game and a streak are on-the-ground material -- the game
       // as it was lived rather than as it was won -- which is his register.
       'one_run_game', 'winning_streak',
+      // The postseason is the part of the calendar he is credentialed for: a club
+      // walking off the field at the end of a seven-game series is exactly "the game
+      // happened to people before it happened to a box score".
+      'series_clinched', 'championship',
     ],
     /*
      * Perez files from the seats, on the ground, in the room. He is not interested in
@@ -323,6 +340,10 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
       'blowout', 'multi_homer', 'pitching_dome', 'complete_game',
       'staff_wins', 'walk_off', 'meltdown', 'shutout',
       'cycle', 'perfect_game', 'rbi_barrage', 'hit_fury',
+      // He played a postseason. Somebody going home in October is the other half of
+      // his register, and `eliminated` is the only negative-valued event he covers
+      // that is decided by a season rather than by one bad night.
+      'eliminated',
     ],
     /*
      * Gatz played. His standing position is that the parts of the game nobody
@@ -417,6 +438,11 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     covers: [
       'walk_off', 'no_hitter', 'extra_innings', 'one_run_game',
       'winning_streak', 'multi_homer', 'rbi_barrage', 'big_debut',
+      // Her `eligible` gate is `valence === 'positive'`, so these hand her only the
+      // advancing half of the postseason. A fan cannot be given the elimination and
+      // there is no code path that would try: the kind is positive, she is not
+      // negative, and the two never meet.
+      'series_clinched', 'championship',
     ],
     /*
       SHE CANNOT WRITE A BAD GAME, so nothing in these beats is a criticism. They are what she is
@@ -441,7 +467,7 @@ export const HEADLINERS: readonly HeadlinerProfile[] = [
     outlet: 'The Booth',
     portraitKey: 'tombuccelli',
     accentToken: 'sour',
-    covers: ['meltdown', 'shutout', 'losing_streak', 'anomaly', 'underdog_win'],
+    covers: ['meltdown', 'shutout', 'losing_streak', 'anomaly', 'underdog_win', 'eliminated'],
     // Negative only. Praise is routed through a separate rarity budget in
     // `headlinerPipeline`, not through this predicate, because the whole character is
     // the scarcity. He is meant to be silent during a good week.

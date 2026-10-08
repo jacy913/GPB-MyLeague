@@ -114,7 +114,7 @@ const cardsForDate = (args: {
       shape,
       teamsById,
       playersById,
-      completedGamesDesc: indexes.completedGamesDesc,
+      completedGamesDesc: indexes.completedGamesUpTo(game.gameId),
       baselines,
     });
   });
@@ -287,7 +287,7 @@ for (let season = 0; season < SEASONS; season += 1) {
       if (!derived || !shape) return [];
       return extractGameEvents({
         game, derived, shape, teamsById, playersById,
-        completedGamesDesc: indexes.completedGamesDesc, baselines,
+        completedGamesDesc: indexes.completedGamesUpTo(game.gameId), baselines,
       });
     });
     totalUncoverable += diagnosePersonaDeck({

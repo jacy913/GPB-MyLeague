@@ -61,6 +61,15 @@ const event = (over: Partial<GameEvent> & { kind: GameEventKind }): GameEvent =>
 
 // --- 1. every declared kind is emittable, and every emittable kind is covered ---
 
+/*
+ * The third hand-maintained copy of this list.
+ *
+ * `checkHeadlinerCoverage.ts` and this file both transcribe the `GameEventKind` union rather than
+ * deriving it, because TypeScript will not enumerate a union into a value. Adding the postseason
+ * kinds meant editing both, and this one caught the omission rather than letting it through -- which
+ * is the argument for a redundant check. If a fourth copy ever appears, the right answer is to
+ * export one list from `headliners.ts` and import it in both, not to add a third transcription.
+ */
 const DECLARED_KINDS: readonly GameEventKind[] = [
   'no_hitter', 'perfect_game', 'cycle', 'multi_homer', 'rbi_barrage',
   'on_base_machine', 'hit_fury', 'walk_off', 'pitching_dome',
@@ -68,6 +77,7 @@ const DECLARED_KINDS: readonly GameEventKind[] = [
   'shutout', 'scrap_heap', 'one_run_game', 'underdog_win', 'meltdown',
   'big_debut', 'young_player', 'losing_streak', 'winning_streak', 'anomaly',
   'sustained_rate', 'expected_divergence',
+  'series_clinched', 'eliminated', 'championship',
 ];
 
 const missingEmitters = DECLARED_KINDS.filter((kind) => !EMITTABLE_KINDS.includes(kind));

@@ -37,6 +37,24 @@ export type GameIndexes = {
   gamesByDate: Map<string, Game[]>;
   completedGamesDesc: Game[];
   completedGamesByDate: Map<string, Game[]>;
+  /**
+   * The completed games on or before `gameId`, newest first, INCLUDING it.
+   *
+   * `HeadlinerEventInput.completedGamesDesc` has always been documented as exactly this -- "on or
+   * before this one" -- but every caller passed `completedGamesDesc`, which is every completed game
+   * in the league with no upper bound. Detectors therefore saw the FUTURE.
+   *
+   * It was invisible until a detector needed a series standing. `detectWinningStreak` on April 5th
+   * was computing that club's streak as of the end of September rather than as of that night, which
+   * is wrong in the same direction and much easier to miss because a streak is a vague noun and a
+   * wrong streak still reads as a streak. A playoff detector asked "has this club taken the series"
+   * got the answer from games that had not been played, and so filed a story on every game of every
+   * series rather than on the one that decided it.
+   *
+   * The fix is here rather than in the detectors: two implementations of "how far back does history
+   * go" would be a second copy to disagree, which is the shape of every quiet bug in this file.
+   */
+  completedGamesUpTo: (gameId: string) => Game[];
 };
 
 export type TransactionIndexes = {
@@ -207,10 +225,43 @@ export const buildGameIndexes = (games: Game[]): GameIndexes => {
     gamesForDate.sort((left, right) => compareGameOrder(right, left));
   }
 
+  /*
+   * Where each game's history ends.
+   *
+   * `completedGamesDesc` is newest-first, so everything at or after a given game's own index is
+   * older than it or is it. That makes the answer one contiguous `slice` from the game's own index,
+   * with no date handling at all: same-date games that came earlier in the day sit AFTER it and are
+   * correctly included, and same-date games that came later sit BEFORE it and are correctly dropped.
+   *
+   * The first version of this reasoned about date blocks and widened the slice to the block start,
+   * which handed a game's detector the results of games it had not been played against yet. The
+   * block reasoning was solving a problem the sort had already solved.
+   *
+   * Cached, because a doubleheader asks twice and a dashboard render asks once per game.
+   */
+  const descIndexByGameId = new Map<string, number>();
+  completedGamesDesc.forEach((game, index) => descIndexByGameId.set(game.gameId, index));
+
+  const upToCache = new Map<string, Game[]>();
+
+  const completedGamesUpTo = (gameId: string): Game[] => {
+    const cached = upToCache.get(gameId);
+    if (cached) return cached;
+
+    const index = descIndexByGameId.get(gameId);
+    // Not a completed game, or not in this index. Falling back to the whole list would hand the
+    // detector the future again, which is the bug being fixed; an empty list is the honest answer
+    // for a game that has not been played.
+    const slice = index === undefined ? [] : completedGamesDesc.slice(index);
+    upToCache.set(gameId, slice);
+    return slice;
+  };
+
   return {
     gamesByDate,
     completedGamesDesc,
     completedGamesByDate,
+    completedGamesUpTo,
   };
 };
 

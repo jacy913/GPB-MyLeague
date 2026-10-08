@@ -58,6 +58,10 @@ const ALL_KINDS: readonly GameEventKind[] = [
   'scrap_heap', 'one_run_game',
   'underdog_win', 'meltdown', 'big_debut', 'young_player',
   'losing_streak', 'winning_streak',
+  // Postseason. Transcribed here as well as in the union, because this list is hand-maintained
+  // and a kind added to the type but forgotten here would make this check blind to it rather than
+  // red. `verifyHeadlinerPipeline` catches that from the EMITTABLE side.
+  'series_clinched', 'eliminated', 'championship',
   'anomaly', 'sustained_rate', 'expected_divergence',
 ];
 
