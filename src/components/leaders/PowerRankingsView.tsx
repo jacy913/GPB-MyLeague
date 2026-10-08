@@ -21,7 +21,7 @@ import React from 'react';
 import { TrendingUp } from 'lucide-react';
 import type { Team } from '../../types';
 import type { DivisionStrengthTag, PowerRankings } from '../../lib/analytics/powerRankings';
-import { Panel, StatValue, TeamLogo } from '../ui';
+import { LeagueBadge, Panel, StatValue, TeamLogo } from '../ui';
 
 /** soft | even | deep, coloured so the strongest division reads at a glance. */
 const TAG_STYLE: Record<DivisionStrengthTag, string> = {
@@ -149,9 +149,12 @@ export const PowerRankingsView: React.FC<PowerRankingsViewProps> = ({
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <span className="t-caption block text-[var(--color-ink-dim)]">
-                      {row.league} {row.division}
-                    </span>
+                    {teamsById.get(row.teamId) && (
+                      <span className="flex items-center gap-1.5">
+                        <LeagueBadge variant={row.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
+                        <span className="t-caption text-[var(--color-ink-dim)]">{row.division}</span>
+                      </span>
+                    )}
                     <DivisionTag tag={row.divisionTag} />
                   </td>
                   <td className="px-2 py-2 text-right">
@@ -192,8 +195,10 @@ export const PowerRankingsView: React.FC<PowerRankingsViewProps> = ({
             {divisions.map((division) => (
               <div key={`${division.league}-${division.division}`} className="px-4 py-3">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="t-body">{division.division}</span>
-                  <span className="t-caption text-[var(--color-ink-faint)]">{division.league}</span>
+                  <span className="flex items-center gap-1.5">
+                    <LeagueBadge variant={division.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
+                    <span className="t-body">{division.division}</span>
+                  </span>
                 </div>
                 <div className="mt-1 flex items-baseline justify-between gap-2">
                   <span className="t-stat tabular-nums">{division.meanValuation.toFixed(1)}</span>
