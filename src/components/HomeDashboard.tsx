@@ -868,7 +868,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         />
       )}
 
-      <div className={`grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]${isPostseason ? ' xl:grid-rows-[auto_auto]' : ''}`}>
+      <div
+          className={`${isPostseason ? 'xl:grid-rows-[auto_auto] ' : ''}grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]`}
+        >
         {/*
           THE COLUMNS ARE WRAPPED, AND THEY HAVE TO BE.
 

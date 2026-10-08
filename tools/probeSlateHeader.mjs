@@ -150,6 +150,28 @@ const READ_HEADER = `(() => {
         wrapW: Math.round(w.width), wrapH: Math.round(w.height),
         imgW: Math.round(r.width), imgH: Math.round(r.height),
         fit: cs.objectFit,
+        // Ancestor chain, because "the wrapper is 1280x0" does not say WHY. Each level reports the
+        // box it occupies and the three properties that decide it: display, aspect-ratio, height.
+        // A percentage height that fails to resolve because its parent has no definite height looks
+        // exactly like a height of 0, and the chain is the only way to see which link broke.
+        chain: (() => {
+          const out = [];
+          let node = img.parentElement;
+          for (let i = 0; i < 5 && node; i += 1) {
+            const c = getComputedStyle(node);
+            const r = node.getBoundingClientRect();
+            out.push(
+              (node.tagName + '.' + String(node.className).split(' ').slice(0, 4).join('.'))
+              + ' [' + Math.round(r.width) + 'x' + Math.round(r.height) + ']'
+              + ' display=' + c.display
+              + ' aspect=' + c.aspectRatio
+              + ' height=' + c.height
+              + ' alignSelf=' + c.alignSelf,
+            );
+            node = node.parentElement;
+          }
+          return out;
+        })(),
         natural: img.naturalWidth + 'x' + img.naturalHeight,
         renderedRatio: (r.width / r.height).toFixed(2),
         naturalRatio: (img.naturalWidth / img.naturalHeight).toFixed(2),
@@ -238,9 +260,14 @@ try {
    * regeneration of every roster and its duration is not bounded by anything this probe can reason
    * about, so a fixed wait races it -- and when it loses, the desk button is simply not there yet and
    * the click reports NOT FOUND, which reads exactly like a missing feature rather than a race.
+   *
+   * 150 seconds rather than 60. The rebuild is CPU-bound and this machine accumulates dev servers
+   * over a session; on a loaded box 60s was not enough, and the symptom is indistinguishable from a
+   * broken app. tools/checkRenders.mjs exists to separate those two cases -- it confirmed zero console
+   * errors while this probe was reporting that nothing rendered at all.
    */
   let deskReady = false;
-  for (let i = 0; i < 60 && !deskReady; i += 1) {
+  for (let i = 0; i < 150 && !deskReady; i += 1) {
     await sleep(1000);
     deskReady = await evaluate(`(() => {
       const b = [...document.querySelectorAll('button')]
@@ -343,6 +370,9 @@ try {
           + `\n        tools/measureMastheadArt.ts trimmed 31% empty above and 23% below off a`
           + `\n        1200x1200 square; the sponsor line at the foot was what that crop took`
         : 'masthead not found');
+    if (m?.chain) {
+      for (const line of m.chain) console.log(`        ${line}`);
+    }
     const a = header.alignment;
     report(!!a && a.delta !== null && Math.abs(a.delta) <= 2,
       'the Primetime Game starts on the same line as Sideline Reports',
