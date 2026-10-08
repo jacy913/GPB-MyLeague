@@ -53,10 +53,17 @@ import playoffDashboard from '../../assets/playoffdashboard.png';
  */
 export const PlayoffMasthead: React.FC = () => (
   <div className="relative aspect-[16/10] w-full overflow-hidden xl:aspect-auto xl:h-full">
+    {/* Subtle glow behind the logo area */}
+    <div
+      className="absolute inset-0 flex items-center justify-center pointer-events-none"
+      aria-hidden="true"
+    >
+      <div className="h-1/2 w-1/2 max-w-[300px] rounded-full bg-[var(--color-gold)]/15 blur-[80px] opacity-60" />
+    </div>
     <img
       src={playoffDashboard}
       alt="Playoffs, presented by MacroBet"
-      className="absolute inset-0 block h-full w-full object-contain"
+      className="absolute inset-0 block h-full w-full object-contain scale-[0.88] transition-transform duration-500 hover:scale-[0.92]"
       loading="eager"
       decoding="async"
     />
