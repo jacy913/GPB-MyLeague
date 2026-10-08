@@ -40,7 +40,7 @@ import React, { useEffect, useMemo } from 'react';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import type { Team } from '../../types';
 import type { PowerRankings } from '../../lib/analytics/powerRankings';
-import { LeagueBadge, TeamLogo } from '../ui';
+import { TeamLogo } from '../ui';
 import { HomePanel } from './shared';
 import { rankMovementLabel, resolveRankMovement, writeRankMovement } from './powerRankMovement';
 
@@ -118,12 +118,6 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
                     ? <TeamLogo team={team} sizeClass="h-7 w-7 shrink-0" />
                     : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
                   <span className="t-body min-w-0 truncate">{team?.city ?? row.teamId}</span>
-                  {team && (
-                    <span className="flex items-center gap-1.5">
-                      <LeagueBadge variant={team.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
-                      <span className="t-caption text-[var(--color-ink-dim)]">{team.division}</span>
-                    </span>
-                  )}
                 </button>
                 <span
                   className={`inline-flex shrink-0 items-center justify-center ${movementClass}`}
