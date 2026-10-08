@@ -144,7 +144,21 @@ const READ = `(() => {
    */
   const boxes = [...document.querySelectorAll('button')].filter((b) => {
     const t = (b.textContent || '').trim();
-    return b.querySelector('svg, img') && /@/.test(t) && /\d/.test(t);
+    /*
+     * BACKSLASHES ARE DOUBLED THROUGHOUT THIS BLOCK, and that is not optional.
+     *
+     * This whole READ is a template literal, and inside one a backslash-d is a string escape that
+     * collapses to the plain letter d. Written with a single backslash it reached the browser as a
+     * regex looking for the LETTER d in the button's text. A game box reads
+     * "@Game 1Bergum | 12:05 PM", which contains no d at all, so the locator matched nothing and the
+     * probe reported that the slate panel was absent while a screenshot taken at the same moment
+     * plainly showed four game boxes on screen.
+     *
+     * The sibling probe doubles its backslashes and has always worked, which is the only reason this was
+     * findable: the two probes locate the same boxes with near-identical code and only one of them
+     * was lying. The letter-s, letter-w and digit escapes below are doubled for the same reason.
+     */
+    return b.querySelector('svg, img') && /@/.test(t) && /\\d/.test(t);
   });
 
   /*
@@ -252,8 +266,8 @@ const bars = [...document.querySelectorAll('.chrome-bar')]
       .filter((b) => Math.abs(b.height - 38) > 0.5)
       .map((b) => b.title + '=' + b.height.toFixed(1) + 'px')
       .join('  '),
-    today: /Today\s+([A-Z][a-z]{2,8}\w* \d{1,2}, \d{4})/.exec(document.body.innerText)?.[1] ?? null,
-    todayIso: /Today\s+(\d{4}-\d{2}-\d{2})/.exec(document.body.innerText)?.[1] ?? null,
+    today: /Today\\s+([A-Z][a-z]{2,8}\\w* \\d{1,2}, \\d{4})/.exec(document.body.innerText)?.[1] ?? null,
+    todayIso: /Today\\s+(\\d{4}-\\d{2}-\\d{2})/.exec(document.body.innerText)?.[1] ?? null,
   };
 })()`;
 
