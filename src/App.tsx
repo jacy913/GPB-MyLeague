@@ -73,6 +73,8 @@ import { useSimulationEngine } from './hooks/useSimulationEngine';
 import { buildPowerRankings } from './lib/analytics/powerRankings';
 import { useBettingSlip } from './hooks/useBettingSlip';
 import { usePortfolio } from './hooks/usePortfolio';
+import { useAltHold } from './hooks/useAltHold';
+import { TeamLogoGrid } from './components/ui/TeamLogoGrid';
 import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
 import { clearPowerRankMovement } from './components/home/powerRankMovement';
 import { BettingSlip } from './components/betting/BettingSlip';
@@ -1308,6 +1310,8 @@ function App() {
    * Declared after the league state it settles against, below.
    */
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isLogoGridOpen, setIsLogoGridOpen] = useState(false);
+  const altHeld = useAltHold(2000);
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const [pendingTrades, setPendingTrades] = useState<PendingTradeProposal[]>([]);
@@ -1346,6 +1350,12 @@ const { resetWallet } = bettingSlip;
     if (openBetList.length === 0) return;
     settleBets({ games, teams, currentDate, seasonHistory });
   }, [currentDate, games, openBetList.length, seasonHistory, settleBets, teams]);
+
+  // Sync logo grid with Alt hold
+  useEffect(() => {
+    setIsLogoGridOpen(altHeld);
+  }, [altHeld]);
+
   const [isSeasonHistoryLoaded, setIsSeasonHistoryLoaded] = useState(false);
   const [offseasonWorkflow, setOffseasonWorkflow] = useState<OffseasonWorkflowState>(IDLE_OFFSEASON_WORKFLOW_STATE);
   const [isDraftProcessing, setIsDraftProcessing] = useState(false);
@@ -4096,6 +4106,17 @@ const { resetWallet } = bettingSlip;
         closes={latestLedgerClose}
         portfolio={book.portfolio}
         markedOn={latestLedgerDate}
+      />
+
+      {/* Team Logo Grid — Alt hold to open */}
+      <TeamLogoGrid
+        teams={teams}
+        isOpen={isLogoGridOpen}
+        onClose={() => setIsLogoGridOpen(false)}
+        onSelectTeam={(teamId) => {
+          setView('teams');
+          setSelectedTeamId(teamId);
+        }}
       />
 
       {/*

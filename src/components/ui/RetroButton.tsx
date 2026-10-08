@@ -42,7 +42,7 @@ export const RetroButton: React.FC<RetroButtonProps> = ({
   chevron,
   ...props
 }) => {
-  const base = 'relative inline-flex items-center justify-center transition-all duration-[var(--dur-fast)] ease-[var(--ease-snap)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none';
+  const base = 'relative inline-flex items-center justify-center transition-all duration-[var(--dur-fast)] ease-[var(--ease-snap)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none';
 
   const variantClasses: Record<RetroButtonVariant, string> = {
     primary: `

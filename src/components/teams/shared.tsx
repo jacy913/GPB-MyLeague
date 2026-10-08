@@ -43,7 +43,12 @@ export const ROSTER_DISPLAY_ORDER = [
   ...RESERVE_ROSTER_SLOTS,
 ];
 
-export const ROSTER_STRENGTH_SLOT_COUNT = BATTING_ROSTER_SLOTS.length + STARTING_PITCHER_SLOTS.length;
+/** Full roster: batting (9) + starting rotation (5) + bullpen (5) + bench (10) = 29 slots */
+export const ROSTER_STRENGTH_SLOT_COUNT =
+  BATTING_ROSTER_SLOTS.length +
+  STARTING_PITCHER_SLOTS.length +
+  BULLPEN_ROSTER_SLOTS.length +
+  RESERVE_ROSTER_SLOTS.length;
 
 export const formatRosterSlotLabel = (slotCode: string): string =>
   slotCode.startsWith('BN') ? `Bench ${slotCode.slice(2)}` : slotCode;
@@ -177,9 +182,10 @@ export const generateBattingOrder = (startingNine: TeamRosterEntry[]): TeamRoste
 
 export const getRosterStrengthTier = (overall: number | null): string => {
   if (overall === null) return 'Awaiting Data';
-  if (overall >= 88) return 'Elite Core';
-  if (overall >= 82) return 'Strong Core';
-  if (overall >= 76) return 'Competitive';
+  if (overall >= 83.5) return 'Dynasty';
+  if (overall >= 82) return 'Elite';
+  if (overall >= 80.5) return 'Competitive';
+  if (overall >= 79) return 'Fringe';
   return 'Rebuilding';
 };
 

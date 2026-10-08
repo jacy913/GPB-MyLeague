@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, CalendarClock, ChevronDown, ChevronUp, Star } from 'lucide-react';
+import { BarChart3, CalendarClock, ChevronDown, ChevronUp, MapPinned, Star } from 'lucide-react';
 import type { Game, Team } from '../../types';
 import { getScheduledGameTimeLabel } from '../../logic/gameTimes';
 import { LeagueBadge, Panel, RatingRing, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
@@ -89,53 +89,46 @@ export const ClubHero: React.FC<{
   hitRank: number;
   teamHits: number;
   rosterStrength: { overall: number | null; filledSlots: number };
-}> = ({ team, divisionRank, leagueRank, runRank, hitRank, teamHits, rosterStrength }) => {
+  parkName: string;
+  onOpenPark: () => void;
+}> = ({ team, divisionRank, leagueRank, runRank, hitRank, teamHits, rosterStrength, parkName, onOpenPark }) => {
   const diff = runDiffOf(team);
   return (
     <Panel variant="hero" className="overflow-hidden">
       <div className="grid gap-4 p-4 xl:grid-cols-[200px_minmax(0,1fr)_260px]">
-        {/*
-          The crest plate.
-
-          The city and the club name used to sit under the logo here, which left
-          112px for a crest on a 200px column and printed the club name three
-          times on one screen -- once under the logo, once as the page heading,
-          and once in the directory bar above.
-
-          With both lines gone the plate is a crest in a frame, so the frame can
-          stop competing with it: 160px of logo on a 200px column, and the
-          column is now visibly holding a crest rather than a name card.
-        */}
-        <div className="flex items-center justify-center border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-3">
-          <TeamLogo team={team} sizeClass="h-40 w-40" />
+        {/* The crest plate - no dark box, bigger logo */}
+        <div className="flex items-center justify-center">
+          <TeamLogo team={team} sizeClass="h-48 w-48" />
         </div>
 
         <div className="min-w-0">
-          {/*
-            No "Prestige · Central" eyebrow above the name. The Division and
-            League tiles below already carry both, with the same words, and an
-            eyebrow that repeats a tile two rows down is decoration.
-          */}
           <h1 className="t-h1">{team.city} {team.name}</h1>
           <p className="t-body mt-2 text-[var(--color-ink-dim)]">{describeTeam(team, divisionRank, leagueRank)}</p>
           <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-            <StatTile label="Runs Rank" value={`#${runRank}`} detail={`${team.runsScored} RS`} />
-            <StatTile label="Hits Rank" value={`#${hitRank}`} detail={`${teamHits} H`} />
             <StatTile label="Division" value={`#${divisionRank}`} detail={team.division} />
             <StatTile label="League" value={`#${leagueRank}`} detail={team.league} />
+          </div>
+          {/* Explore Park button - next to division rank */}
+          <div className="mt-3">
+            <RetroButton variant="default" size="md" onClick={onOpenPark} className="w-full sm:w-auto border-2 border-[var(--color-gold)] gold-sweep">
+              <MapPinned className="h-4 w-4 mr-2" aria-hidden="true" /> Explore {parkName}
+            </RetroButton>
           </div>
         </div>
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] p-3">
-            <RatingRing value={rosterStrength.overall} label="AVG" caption={getRosterStrengthTier(rosterStrength.overall)} />
+            <RatingRing
+              value={rosterStrength.overall}
+              label="AVG"
+              floor={0}
+              ceiling={100}
+              caption={getRosterStrengthTier(rosterStrength.overall)}
+            />
             <div className="min-w-0">
               <p className="t-caption text-[var(--color-ink-faint)]">ROSTER STRENGTH</p>
-              <p className="t-stat-sm mt-1">
-                {rosterStrength.filledSlots}/{ROSTER_STRENGTH_SLOT_COUNT}
-              </p>
               <p className="t-caption mt-0.5 text-[var(--color-ink-faint)]">
-                Lineup and rotation, backups excluded
+                {rosterStrength.filledSlots}/{ROSTER_STRENGTH_SLOT_COUNT} players
               </p>
             </div>
           </div>

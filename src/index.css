@@ -728,6 +728,12 @@ body {
   outline-offset: 2px;
 }
 
+/* Default pointer cursor for all interactive button elements */
+button:not(:disabled),
+[role="button"]:not(:disabled) {
+  cursor: pointer;
+}
+
 /* Skewed elements need inset focus to avoid clip-path clipping */
 .skew-r:focus-visible,
 .skew-l:focus-visible,

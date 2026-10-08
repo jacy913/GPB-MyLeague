@@ -1,18 +1,22 @@
 import React from 'react';
 
 export interface RatingRingProps {
-  /** 0-100. Clamped to the 60-100 band the ratings actually occupy. */
+  /** 0-100. Clamped to the floor/ceiling band. Default 60-100 for player ratings. */
   value: number | null;
   label: string;
   size?: number;
   strokeWidth?: number;
+  /** Minimum value for the scale. Default 60. */
+  floor?: number;
+  /** Maximum value for the scale. Default 100. */
+  ceiling?: number;
   /** Rendered under the value. */
   caption?: string;
   className?: string;
 }
 
-const RATING_FLOOR = 60;
-const RATING_CEILING = 100;
+const DEFAULT_FLOOR = 60;
+const DEFAULT_CEILING = 100;
 
 /**
  * RatingRing — a single dial for a 60-100 rating.
@@ -29,15 +33,20 @@ export const RatingRing: React.FC<RatingRingProps> = ({
   label,
   size = 96,
   strokeWidth = 7,
+  floor = DEFAULT_FLOOR,
+  ceiling = DEFAULT_CEILING,
   caption,
   className = '',
 }) => {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const clamped = value === null ? null : Math.max(RATING_FLOOR, Math.min(RATING_CEILING, value));
-  const progress = clamped === null ? 0 : (clamped - RATING_FLOOR) / (RATING_CEILING - RATING_FLOOR);
+  const clamped = value === null ? null : Math.max(floor, Math.min(ceiling, value));
+  const progress = clamped === null ? 0 : (clamped - floor) / (ceiling - floor);
   const offset = circumference * (1 - progress);
   const filled = clamped !== null && clamped >= 88;
+
+  // Display the actual value (not clamped) but use clamped for progress
+  const displayValue = value === null ? '---' : typeof value === 'number' ? value.toFixed(1) : value;
 
   return (
     <div className={`relative flex shrink-0 flex-col items-center ${className}`} style={{ width: size }}>
@@ -48,7 +57,7 @@ export const RatingRing: React.FC<RatingRingProps> = ({
           viewBox={`0 0 ${size} ${size}`}
           className="-rotate-90"
           role="img"
-          aria-label={`${label}: ${clamped ?? 'unavailable'}`}
+          aria-label={`${label}: ${displayValue}`}
         >
           <circle
             cx={size / 2}
@@ -73,7 +82,7 @@ export const RatingRing: React.FC<RatingRingProps> = ({
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="t-caption text-[var(--color-ink-faint)]">{label}</span>
           <span className={`t-stat-lg mt-0.5 ${filled ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink)]'}`}>
-            {clamped ?? '---'}
+            {displayValue}
           </span>
         </div>
       </div>

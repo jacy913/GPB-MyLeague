@@ -2,11 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
+  BULLPEN_ROSTER_SLOTS,
   type Player,
   type PlayerBattingRatings,
   type PlayerPitchingRatings,
   type PlayerSeasonBatting,
   type PlayerSeasonPitching,
+  RESERVE_ROSTER_SLOTS,
   STARTING_PITCHER_SLOTS,
   type Team,
   type TeamRosterSlot,
@@ -44,7 +46,7 @@ interface TeamStandingRow {
   rosterStrength: number | null;
 }
 
-const rosterStrengthSlots = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS];
+const rosterStrengthSlots = [...BATTING_ROSTER_SLOTS, ...STARTING_PITCHER_SLOTS, ...BULLPEN_ROSTER_SLOTS, ...RESERVE_ROSTER_SLOTS];
 const LEAGUES = ['Prestige', 'Platinum'] as const;
 type LeagueName = (typeof LEAGUES)[number];
 const RANK_OPTIONS: Array<{ key: StandingsRankKey; label: string }> = [
@@ -108,7 +110,7 @@ const getMetricValue = (row: TeamStandingRow, rankKey: StandingsRankKey) => {
   if (rankKey === 'team_era') return row.teamEra === null ? '—' : fmtEra(row.teamEra);
   if (rankKey === 'team_whip') return row.teamWhip === null ? '—' : fmtWhip(row.teamWhip);
   if (rankKey === 'team_rbi') return String(row.teamRbi);
-  return row.rosterStrength === null ? '—' : String(row.rosterStrength);
+  return row.rosterStrength === null ? '—' : row.rosterStrength.toFixed(1);
 };
 
 const getGamesBack = (leader: TeamStandingRow, row: TeamStandingRow) =>
@@ -237,7 +239,7 @@ export const StandingsHub: React.FC<StandingsHubProps> = ({ teams, players, batt
         teamRbi: rbiByTeam.get(team.id) ?? 0,
         runsScored: team.runsScored,
         runsAllowed: team.runsAllowed,
-        rosterStrength: strengthCount ? Math.round(strengthTotal / strengthCount) : null,
+        rosterStrength: strengthCount ? Number((strengthTotal / strengthCount).toFixed(1)) : null,
       };
     });
   }, [battingRatingsByPlayerId, pitchingRatingsByPlayerId, playersById, preferredBattingByPlayerId, preferredPitchingByPlayerId, rosterSlots, teams]);

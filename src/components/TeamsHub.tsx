@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { MapPinned } from 'lucide-react';
 import {
   BATTING_ROSTER_SLOTS,
   BULLPEN_ROSTER_SLOTS,
@@ -298,11 +297,12 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
   const selectedRosterOverall = selectedRosterPlayer?.battingRatings?.overall ?? selectedRosterPlayer?.pitchingRatings?.overall ?? null;
 
   const rosterStrength = useMemo(() => {
-    const contributors = [...battingOrder, ...startingRotation];
+    // Include all rostered players: batting order + starting rotation + bullpen + bench
+    const contributors = teamRosterBySlot.filter((entry) => entry.overall > 0);
     if (contributors.length === 0) return { overall: null as number | null, filledSlots: 0 };
     const totalOverall = contributors.reduce((sum, entry) => sum + entry.overall, 0);
-    return { overall: Math.round(totalOverall / contributors.length), filledSlots: contributors.length };
-  }, [battingOrder, startingRotation]);
+    return { overall: totalOverall / contributors.length, filledSlots: contributors.length };
+  }, [teamRosterBySlot]);
 
   const selectedRosterAttributePoints = useMemo(() => {
     if (selectedRosterPlayer?.player.playerType === 'batter' && selectedRosterPlayer.battingRatings) {
@@ -374,6 +374,8 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
         hitRank={hitRanks.get(selectedTeam.id) ?? 0}
         teamHits={teamHits}
         rosterStrength={rosterStrength}
+        parkName={parkProfile(selectedTeam.id)?.parkCity ?? selectedTeam.city}
+        onOpenPark={() => setIsParkOpen(true)}
       />
 
       <DepthChart
@@ -399,14 +401,6 @@ export const TeamsHub: React.FC<TeamsHubProps> = ({
         labelled "Rosters" -- and the game screen's two lineup columns. Two screens named the same
         word, and only one of them was built on.
       */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="t-caption text-[var(--color-ink-faint)]">
-          The ground this club plays on — the walls, the air, and what they do to its numbers.
-        </p>
-        <RetroButton variant="ghost" size="sm" onClick={() => setIsParkOpen(true)}>
-          <MapPinned className="h-4 w-4" aria-hidden="true" /> {parkProfile(selectedTeam.id)?.parkCity ?? selectedTeam.city} Park
-        </RetroButton>
-      </div>
 
       <RosterPanel
         team={selectedTeam}

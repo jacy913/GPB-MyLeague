@@ -71,6 +71,65 @@ const TERM_LABELS: Record<keyof ParkFactors['terms'], string> = {
 /** Human-facing chip text for the entered dimensions. */
 const humanise = (value: string): string => value.replace(/_/g, ' ');
 
+/** Plain-language labels for the 10 factor terms. */
+const TERM_PLAIN_LABELS: Record<keyof ParkFactors['terms'], string> = {
+  airCarry: 'Thin air',
+  biteLoss: 'Less break on pitches',
+  wallDistance: 'Short walls',
+  wallHeight: 'Low walls',
+  wallColor: 'Dark walls',
+  foulGround: 'Generous foul territory',
+  roofCarry: 'Open roof',
+  surface: 'Turf surface',
+  grass: 'Short grass',
+  soil: 'Hard soil',
+};
+
+/** Group terms into intuitive categories for display. */
+const TERM_GROUPS: Array<{ label: string; keys: Array<keyof ParkFactors['terms']> }> = [
+  { label: 'Air & Altitude', keys: ['airCarry', 'biteLoss'] },
+  { label: 'Walls', keys: ['wallDistance', 'wallHeight', 'wallColor'] },
+  { label: 'Roof', keys: ['roofCarry'] },
+  { label: 'Ground Game', keys: ['foulGround', 'surface', 'grass', 'soil'] },
+];
+
+/** Compute a park personality sentence from its factors. */
+const getParkPersonality = (factors: ParkFactors): string => {
+  const { hrFactor, runFactor, fbFactor, gbFactor } = factors;
+  const hrIdx = Math.round(hrFactor * 100);
+  const runIdx = Math.round(runFactor * 100);
+  
+  let personality = '';
+  if (hrFactor >= 1.15) personality = 'A hitter\'s paradise — expect far more home runs than average. ';
+  else if (hrFactor >= 1.05) personality = 'Friendly to hitters — home runs come easier here. ';
+  else if (hrFactor <= 0.85) personality = 'A pitcher\'s haven — home runs are suppressed. ';
+  else if (hrFactor <= 0.95) personality = 'Tough on hitters — the ball doesn\'t carry as far. ';
+  else personality = 'Neutral on home runs — plays close to league average. ';
+
+  if (runFactor >= 1.1) personality += 'Overall scoring runs well above average. ';
+  else if (runFactor >= 1.03) personality += 'Slightly elevated scoring overall. ';
+  else if (runFactor <= 0.9) personality += 'Scoring is notably suppressed. ';
+  else if (runFactor <= 0.97) personality += 'Slightly lower scoring than average. ';
+  else personality += 'Overall scoring near league average. ';
+
+  if (fbFactor >= 1.1) personality += 'Fly balls carry well. ';
+  else if (fbFactor <= 0.9) personality += 'Fly balls die at the track. ';
+
+  if (gbFactor >= 1.08) personality += 'Ground balls find holes — lots of singles. ';
+  else if (gbFactor <= 0.92) personality += 'Ground balls turn into outs. ';
+
+  return personality.trim();
+};
+
+/** Get the top N driving terms by absolute deviation from 1.0. */
+const getTopDrivers = (factors: ParkFactors, n = 3): Array<{ key: keyof ParkFactors['terms']; value: number; label: string }> => {
+  const entries = Object.entries(factors.terms) as Array<[keyof ParkFactors['terms'], number]>;
+  return entries
+    .map(([key, value]) => ({ key, value, label: TERM_PLAIN_LABELS[key] }))
+    .sort((a, b) => Math.abs(b.value - 1) - Math.abs(a.value - 1))
+    .slice(0, n);
+};
+
 /**
  * A bar centred on neutral, for the four factors.
  *
@@ -323,6 +382,11 @@ export const ParkPanel: React.FC<{
           </div>
 
           <div className="flex min-w-0 flex-col gap-4">
+            {/* Park personality summary — plain language first */}
+            <div className="bg-[var(--color-panel-2)] border border-[var(--color-chrome-lo)] p-3">
+              <p className="t-body text-[var(--color-ink)]">{getParkPersonality(factors)}</p>
+            </div>
+
             {/*
               THE FOUR OUTCOME FACTORS, which are what the park actually changes.
 
@@ -341,53 +405,40 @@ export const ParkPanel: React.FC<{
             </div>
 
             {/*
-              THE WORKING. All ten terms, each on its own league-relative scale, with the largest
-              deviation from neutral picked out in gold.
-
-              The highlight is the same gesture the app already makes on the leaderboards, where the
-              column a reader is meant to follow is the one lit up. Here it answers "what is this park
-              actually about" in one glance: a big park with thin air leads on wall distance and air
-              carry, and the two rows that explain it are the two that glow.
+              WHAT'S DRIVING IT — only the top 3 drivers, with plain labels.
+              All bars use a unified league-percentile scale (0-100%, 50% = league average).
             */}
             <div className="border-t border-[var(--color-chrome-lo)] pt-4">
-              <p className="t-label text-[var(--color-ink-faint)]">WHAT'S DRIVING IT</p>
-              <div className="mt-2 flex flex-col gap-1.5">
-                {(Object.keys(factors.terms) as (keyof ParkFactors['terms'])[]).map((key) => {
-                  const value = factors.terms[key];
-                  const range = TERM_RANGES[key];
-                  const span = Math.max(1e-6, range.max - range.min);
-                  const share = (value - range.min) / span;
-                  const dominant = Math.abs(value - 1) === Math.max(
-                    ...(Object.keys(factors.terms) as (keyof ParkFactors['terms'])[])
-                      .map((k) => Math.abs(factors.terms[k] - 1)),
-                  );
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="t-label text-[var(--color-ink-faint)]">WHAT'S DRIVING IT</p>
+                <span className="t-caption text-[var(--color-ink-faint)]">Top 3 factors</span>
+              </div>
+              <div className="mt-2 flex flex-col gap-2">
+                {getTopDrivers(factors, 3).map(({ key, value, label }) => {
+                  // League percentile: where this park sits among all 32 (0-100%)
+                  const allValues = [...ALL_PARK_FACTORS.values()].map(f => f.terms[key]);
+                  const sorted = [...allValues].sort((a, b) => a - b);
+                  const rank = sorted.findIndex(v => v >= value);
+                  const percentile = sorted.length > 1 ? (rank / (sorted.length - 1)) * 100 : 50;
+                  const aboveAvg = value >= 1;
                   return (
                     <div key={key} className="flex items-center gap-2">
-                      {/*
-                        `w-[12ch]`, not `w-[9ch]`. At nine characters "Wall distance", "Wall height",
-                        "Wall colour" and "Foul ground" all rendered as "Wall dist…", so the four
-                        terms that describe the wall itself were the four whose names were cut off.
-                      */}
-                      <span
-                        className="w-[12ch] shrink-0 t-caption truncate"
-                        style={{ color: dominant ? 'var(--color-gold-hi)' : 'var(--color-ink-faint)' }}
-                      >
-                        {TERM_LABELS[key]}
+                      <span className="w-[14ch] shrink-0 t-caption" style={{ color: 'var(--color-ink-faint)' }}>
+                        {label}
                       </span>
-                      <span className="relative h-1.5 min-w-0 flex-1 bg-[var(--color-sunken)]">
+                      <span className="relative h-2 min-w-0 flex-1 bg-[var(--color-sunken)]">
+                        <span className="absolute inset-y-0 left-1/2 w-px bg-[var(--color-chrome-hi)]" aria-hidden="true" />
                         <span
-                          className="absolute inset-y-0 left-0"
+                          className="absolute inset-y-0"
                           style={{
-                            width: `${(share * 100).toFixed(1)}%`,
-                            background: dominant ? 'var(--color-gold)' : 'var(--color-chrome-mid)',
+                            background: aboveAvg ? 'var(--color-gold)' : 'var(--color-neutral)',
+                            left: aboveAvg ? '50%' : `${50 - percentile / 2}%`,
+                            width: `${percentile / 2}%`,
                           }}
                           aria-hidden="true"
                         />
                       </span>
-                      <span
-                        className="w-[5ch] shrink-0 text-right t-stat-sm tabular-nums"
-                        style={{ color: dominant ? 'var(--color-gold-hi)' : 'var(--color-ink-dim)' }}
-                      >
+                      <span className="w-[5ch] shrink-0 text-right t-stat-sm tabular-nums" style={{ color: aboveAvg ? 'var(--color-gold-hi)' : 'var(--color-neutral-hi)' }}>
                         {value.toFixed(2)}
                       </span>
                     </div>
@@ -395,56 +446,33 @@ export const ParkPanel: React.FC<{
                 })}
               </div>
               <p className="t-caption mt-2 text-[var(--color-ink-faint)]">
-                Bars show where this park sits on each dimension against the other thirty-one. The
-                number is the multiplier itself.
+                Bars show league percentile (50% = average). Number is the multiplier.
               </p>
             </div>
 
             {/*
-              THE PARK ITSELF: the eleven hand-entered dimensions, as readouts.
-
-              These are the only fields in the whole model that a human chose. Everything above is
-              computed from them, which is what `parks.json` insists on in its own header -- a
-              hand-set factor would silently disagree with the dimensions above it.
+              THE PARK ITSELF: key dimensions as readouts. Full list collapsed by default.
             */}
             <div className="border-t border-[var(--color-chrome-lo)] pt-4">
-              <p className="t-label text-[var(--color-ink-faint)]">THE PARK</p>
-              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="t-label text-[var(--color-ink-faint)]">THE PARK</p>
+                <button
+                  type="button"
+                  onClick={() => {}}
+                  className="t-caption text-[var(--color-gold)] hover:underline"
+                  aria-expanded="false"
+                  aria-controls="park-dimensions-full"
+                >
+                  Show all 13 dimensions
+                </button>
+              </div>
+              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1" id="park-dimensions-full">
                 {([
                   ['Town', profile.parkCity ?? '—'],
                   ['Roof', humanise(profile.dimensions.roof)],
                   ['Wall', `${profile.dimensions.wallHeightFt} ft ${humanise(profile.dimensions.wallColor)}`],
-                  /*
-                    ALTITUDE, WITH BOTH NUMBERS, because they are different questions.
-
-                    The first is the park: its own height, per-park inside its band. The second is
-                    what the simulation used, which is the band midpoint, because that is what
-                    `airDensityRatio` is computed from. For `hou`, a 5,803 ft park, those read
-                    5,803 and 5,750 and the gap is small; for a park near the edge of its band the
-                    gap is over 1,000 ft, which is the difference between a measurable air density
-                    and a wrong one.
-
-                    Printing both rather than quietly swapping the physics to use the per-park
-                    value is the honest option: `altitudeFt` is display-only by instruction, and
-                    making the label agree with the air density would have been a simulation
-                    change wearing a display fix's clothes. The mismatch is now visible instead.
-                  */
-                  [
-                    'Altitude',
-                    `${humanise(profile.dimensions.altitude)} · ${profile.altitudeFtShown.toLocaleString()} ft`
-                      + (profile.altitudeFtShown === profile.altitudeFtUsed
-                        ? ''
-                        : ` (density from ${profile.altitudeFtUsed.toLocaleString()})`),
-                  ],
+                  ['Altitude', `${profile.altitudeFtShown.toLocaleString()} ft`],
                   ['Climate', `${humanise(profile.dimensions.climate)} · ${Math.round(toF(profile.climateCUsed))}°F`],
-                  ['Humidity', humanise(profile.dimensions.humidity)],
-                  ['Foul ground', humanise(profile.dimensions.foulGround)],
-                  ['Surface', humanise(profile.dimensions.surface)],
-                  ['Grass', humanise(profile.dimensions.grassLength)],
-                  ['Soil', humanise(profile.dimensions.soilType)],
-                  ['Air density', `${profile.airDensityRatio.toFixed(3)}`],
-                  ['Porch', `${profile.porchFt >= 0 ? '+' : ''}${profile.porchFt.toFixed(0)} ft ${profile.porchFt > 0 ? 'left' : profile.porchFt < 0 ? 'right' : 'even'}`],
-                  ['Mean wall', `${Math.round(profile.meanWallFt)} ft`],
                 ]).map(([label, value]) => (
                   <div key={label} className="flex min-w-0 items-baseline justify-between gap-2">
                     <dt className="t-caption truncate text-[var(--color-ink-faint)]">{label}</dt>
@@ -452,6 +480,28 @@ export const ParkPanel: React.FC<{
                   </div>
                 ))}
               </dl>
+              <details className="mt-2 group">
+                <summary className="t-caption text-[var(--color-gold)] cursor-pointer select-none">
+                  Show remaining dimensions
+                </summary>
+                <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+                  {([
+                    ['Humidity', humanise(profile.dimensions.humidity)],
+                    ['Foul ground', humanise(profile.dimensions.foulGround)],
+                    ['Surface', humanise(profile.dimensions.surface)],
+                    ['Grass', humanise(profile.dimensions.grassLength)],
+                    ['Soil', humanise(profile.dimensions.soilType)],
+                    ['Air density', `${profile.airDensityRatio.toFixed(3)}`],
+                    ['Porch', `${profile.porchFt >= 0 ? '+' : ''}${profile.porchFt.toFixed(0)} ft ${profile.porchFt > 0 ? 'left' : profile.porchFt < 0 ? 'right' : 'even'}`],
+                    ['Mean wall', `${Math.round(profile.meanWallFt)} ft`],
+                  ]).map(([label, value]) => (
+                    <div key={label} className="flex min-w-0 items-baseline justify-between gap-2">
+                      <dt className="t-caption truncate text-[var(--color-ink-faint)]">{label}</dt>
+                      <dd className="truncate t-stat-sm text-[var(--color-ink-dim)]">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
             </div>
           </div>
         </div>
