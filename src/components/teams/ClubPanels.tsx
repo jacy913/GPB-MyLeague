@@ -115,7 +115,9 @@ export const ClubHero: React.FC<{
           <p className="t-body mt-2 text-[var(--color-ink-dim)]">{describeTeam(team, divisionRank, leagueRank)}</p>
           <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
             <StatTile label="Division" value={`#${divisionRank}`} detail={team.division} />
-            <StatTile label="League" value={`#${leagueRank}`} detail={team.league} />
+            <StatTile label="League" value={`#${leagueRank}`} detail={
+              <LeagueBadge variant={team.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
+            } />
           </div>
           {/* Explore Park button - next to division rank */}
           <div className="mt-3">

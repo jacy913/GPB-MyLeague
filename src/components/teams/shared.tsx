@@ -237,7 +237,7 @@ export const ClubPanel: React.FC<{
 export const StatTile: React.FC<{
   label: string;
   value: string | number;
-  detail?: string;
+  detail?: React.ReactNode;
   accent?: boolean;
 }> = ({ label, value, detail, accent }) => (
   <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2">

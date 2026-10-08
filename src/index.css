@@ -34,7 +34,8 @@
   --color-gold-dim:    rgba(212,187,106,0.35);
 
   /* League identity — role-clamped, never chrome */
-  --color-prestige:    #a79b00;
+  --color-prestige:    #c8a65e;  /* warm brass/copper — distinct from teal, better AA on dark */
+  --color-prestige-hi: #e8c97a;  /* lighter accent for hover/focus */
   --color-platinum:    #17b690;
   /* Brightest tier of the Platinum ramp, mirroring gold-hi. Chosen to sit at
      1.56:1 from --color-platinum, matching the 1.55:1 that gold-hi sits from

@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowRightLeft, Users, X } from 'lucide-react';
 import type { Player, Team } from '../../types';
-import { Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
+import { LeagueBadge, Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
 import { DivisionSnapshot as DivisionSnapshotType, HomePanel, Milestone, formatHeadlineDate, recordOf, winPctOf } from './shared';
 
 /**
@@ -177,7 +177,8 @@ export const DivisionSnapshotPanel: React.FC<{
     >
       {active ? (
         <>
-          <p className="t-caption border-b border-[var(--color-chrome-lo)] px-4 py-2 text-[var(--color-ink-faint)]">
+          <p className="t-caption border-b border-[var(--color-chrome-lo)] px-4 py-2 text-[var(--color-ink-faint)] flex items-center gap-2">
+            <LeagueBadge variant={active.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
             {active.league} {active.division}
           </p>
           <StatTable columns={divisionColumns} rows={rows} density="dense" aria-label={`${active.league} ${active.division} leaders`} />
