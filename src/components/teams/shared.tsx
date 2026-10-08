@@ -197,15 +197,35 @@ export const overallVariant = (overall: number | null): 'accent' | 'default' | '
   return 'neg';
 };
 
-/** Single-line header. No eyebrow, for the same reason as HomePanel. */
+/**
+ * Single-line header. No eyebrow, for the same reason as HomePanel.
+ *
+ * `accent` paints a club-colour rule down the panel's left edge. Two deliberate properties:
+ *
+ * It is OUTSIDE the panel box, not inside it, so it takes no space from the content and cannot
+ * shift a column -- the standing "decoration must never go inside a table" guardrail and the 38px
+ * chrome-bar rule are both untouched by it.
+ *
+ * It is drawn with a `::before` on the panel's own box rather than as a child element, because the
+ * panel carries `overflow-hidden` and a positioned child would be a second thing to keep inside the
+ * clip. One box, one pseudo-element.
+ *
+ * The colour must arrive already resolved -- `clubInk(team.id).hex`, never the raw hex from
+ * `teamColors`. Three clubs' primaries sit below 1.2:1 on this surface and would draw nothing.
+ */
 export const ClubPanel: React.FC<{
   title: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
   bodyClassName?: string;
   className?: string;
-}> = ({ title, aside, children, bodyClassName = 'p-4', className = '' }) => (
-  <Panel className={`overflow-hidden ${className}`}>
+  /** Resolved club colour from `clubInk`, not a raw palette hex. */
+  accent?: string | null;
+}> = ({ title, aside, children, bodyClassName = 'p-4', className = '', accent }) => (
+  <Panel
+    className={`overflow-hidden ${accent ? 'club-accent' : ''} ${className}`}
+    {...(accent ? { style: { '--club-accent': accent } as React.CSSProperties } : {})}
+  >
     <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
       <h2 className="t-h3 min-w-0 truncate">{title}</h2>
       {aside}

@@ -55,6 +55,15 @@ export const TeamDirectory: React.FC<{
                   key={team.id}
                   type="button"
                   onClick={() => onSelect(team.id)}
+                  // A stable hook so a probe can name a club from outside the app.
+                  //
+                  // Matching on text instead is a trap this probe walked into: the club id `and`
+                  // is a substring of "Grandland Cobalts", so a text match picks whichever club
+                  // appears first in the DOM rather than the one asked for. Same shape as the
+                  // `data-prop-row` hook recorded in the handover, added for the same reason --
+                  // a probe that cannot reliably name the element it is measuring measures the
+                  // wrong thing and reports it as a pass.
+                  data-team-id={team.id}
                   aria-pressed={team.id === selectedTeam.id}
                   className={`flex w-full items-center gap-3 border-l-[3px] px-2 py-2 text-left transition-colors ${
                     team.id === selectedTeam.id

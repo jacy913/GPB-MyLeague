@@ -3,7 +3,22 @@ import React from 'react';
 export type RetroButtonVariant = 'primary' | 'default' | 'ghost' | 'danger';
 export type RetroButtonSize = 'sm' | 'md' | 'lg';
 
-interface RetroButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export type RetroButtonShape = 'rect' | 'chevron' | 'parallelogram';
+
+/**
+ * How the box is cut.
+ *
+ * `chevron` cuts the right edge only and is the default for the primary variant, because a pointed
+ * action is the era's strongest signal and applying it everywhere would be a rash of arrowheads that
+ * says nothing.
+ *
+ * `parallelogram` cuts both top corners the other way, the shape of a racing stripe. Both are
+ * `clip-path`, which is why the padding for the cut has to be handled here rather than left to the
+ * call site -- see the padding note below.
+ *
+ * `rect` forces the square, for a caller that wants the primary variant's weight without its point.
+ */
+export interface RetroButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: RetroButtonVariant;
   size?: RetroButtonSize;
   children: React.ReactNode;
@@ -11,12 +26,13 @@ interface RetroButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
   /**
    * Cut the right edge into a chevron.
    *
-   * On by default for the primary variant only. A pointed action is the era's
-   * strongest signal and it means "this is the one to press" -- applying it to
-   * every button in the product would be a rash of arrowheads and would say
-   * nothing. Default and ghost stay square.
+   * Retained as an explicit override. Defaults to `true` for the primary variant only, and is now
+   * redundant with `shape="chevron"`; kept because existing callers pass it and because an explicit
+   * opt-out of the variant default is a real need.
    */
   chevron?: boolean;
+  /** Box geometry. Defaults to the variant's own convention when `chevron` is not given. */
+  shape?: RetroButtonShape;
 }
 
 /**
@@ -40,11 +56,12 @@ export const RetroButton: React.FC<RetroButtonProps> = ({
   className = '',
   disabled,
   chevron,
+  shape,
   ...props
 }) => {
   const base = 'relative inline-flex items-center justify-center transition-all duration-[var(--dur-fast)] ease-[var(--ease-snap)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none';
 
-  const variantClasses: Record<RetroButtonVariant, string> = {
+  const variantClassesByName: Record<RetroButtonVariant, string> = {
     primary: `
       bg-gradient-to-b from-[var(--color-gold-hi)] via-[var(--color-gold)] to-[var(--color-gold-lo)]
       border border-[var(--color-gold-lo)]
@@ -77,26 +94,52 @@ export const RetroButton: React.FC<RetroButtonProps> = ({
     `,
   };
 
-  const pointed = chevron ?? variant === 'primary';
+  /*
+   * The shape decides both the clip and the padding, and the padding is not optional.
+   *
+   * A `clip-path` cuts the painted box, but the CONTENT is still centred across the whole box, so
+   * the wedge shears through the last few characters. That shipped once on the chevron: "Quick Sim"
+   * rendered as "Quick| Sim" with the m half gone. The fix is padding on the cut side, not a
+   * narrower cut -- a shallower angle stops reading as a chevron at all, and the wedge is what
+   * carries the era.
+   *
+   * A parallelogram cuts BOTH top corners, so it needs symmetric room, which is why this is keyed
+   * on shape rather than handled per call site: a caller adding a parallelogram button and forgetting
+   * the padding would get a sheared label that still looked correct in code review.
+   *
+   * The pads are a fraction of `--chev` (10px) so the diagonal stays visibly sharp rather than
+   * becoming a chamfer.
+   */
+  const resolvedShape: RetroButtonShape = shape ?? (chevron ?? variant === 'primary' ? 'chevron' : 'rect');
+  const cutRight = resolvedShape === 'chevron';
+  const cutBoth = resolvedShape === 'parallelogram';
+
+  const sizeClass: Record<RetroButtonSize, string> = {
+    sm: cutBoth ? 't-caption px-5 py-1.5' : cutRight ? 't-caption pl-3 pr-5 py-1.5' : 't-caption px-3 py-1.5',
+    md: cutBoth ? 't-label px-6 py-2' : cutRight ? 't-label pl-4 pr-7 py-2' : 't-label px-4 py-2',
+    lg: cutBoth ? 't-h3 px-9 py-3' : cutRight ? 't-h3 pl-6 pr-10 py-3' : 't-h3 px-6 py-3',
+  };
 
   /*
-   * The chevron cut removes a wedge from the RIGHT of the box, and the content
-   * is centred in the whole box, so the last few characters ended up underneath
-   * the cut -- "Quick Sim" rendered as "Quick| Sim" with the m sheared off.
+   * The bevel shadow is dropped on a cut shape.
    *
-   * The fix is padding on the cut side, not a narrower cut: a shallower angle
-   * stops reading as a chevron at all, and the wedge is what carries the era.
-   * The padding is a fraction of the cut so the point stays sharp.
+   * `clip-path` clips box-shadow along with everything else, so keeping the bevel would mean
+   * silently losing it -- a button that looks flat in one state and not another. The shape carries
+   * the era on its own; the shadow was doing supporting work. Recorded here because the failure mode
+   * is the shadow vanishing with no error and no way to tell from the code that it was ever asked
+   * for.
    */
-  const sizeClass: Record<RetroButtonSize, string> = {
-    sm: pointed ? 't-caption pl-3 pr-5 py-1.5' : 't-caption px-3 py-1.5',
-    md: pointed ? 't-label pl-4 pr-7 py-2' : 't-label px-4 py-2',
-    lg: pointed ? 't-h3 pl-6 pr-10 py-3' : 't-h3 px-6 py-3',
-  };
+  const flatShadow = cutRight || cutBoth;
+
+  const variantClasses = (raw: string): string =>
+    (flatShadow ? raw.replace(/\s*(hover|active):[^\s]+/g, '') : raw).replace(/\s+/g, ' ').trim();
+
+  const shapeClass =
+    resolvedShape === 'parallelogram' ? 'parallelogram' : resolvedShape === 'chevron' ? 'chev' : '';
 
   return (
     <button
-      className={`${base} ${pointed ? 'chev gold-sweep' : 'gold-sweep'} ${sizeClass[size]} ${variantClasses[variant].replace(/\s+/g, ' ').trim()} ${className}`}
+      className={`${base} ${shapeClass} gold-sweep ${sizeClass[size]} ${variantClasses(variantClassesByName[variant])} ${className}`}
       disabled={disabled}
       {...props}
     >

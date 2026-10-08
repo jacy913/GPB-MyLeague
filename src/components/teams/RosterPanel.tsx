@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { UserRound, Users } from 'lucide-react';
 import type { Team } from '../../types';
 import { RESERVE_ROSTER_SLOTS, TEAM_ACTIVE_ROSTER_SIZE } from '../../types';
 import type { LeagueBaseline } from '../../lib/analytics/wrcPlus';
+import { clubInk, clubWash } from '../../lib/clubColour';
+import type { TeamId } from '../../data/teamColors';
 import { Panel, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
 import { PlayerCard } from './PlayerCard';
 import {
@@ -36,6 +38,28 @@ export const RosterPanel: React.FC<{
   team, entries, bySlotCount, backups, backupBatters, backupPitchers,
   activeRosterSeasonYear, selected, selectedOverall, attributePoints, leagueBaseline, onSelectPlayer,
 }) => {
+  /**
+   * The club's identity colour, resolved.
+   *
+   * `clubInk` and not `teamColors[id].primary`, and the difference is not cosmetic: measured against
+   * `--color-panel`, three clubs' primaries are below 1.2:1 and would be invisible as a rule. It
+   * lifts a colour into the legible band while holding its hue, so `ock` stays recognisably a navy
+   * club and `urb` becomes the grey it actually is. `checkClubInk` gates all 32 against all four
+   * surfaces the club colour is actually drawn on.
+   *
+   * The `as TeamId` cast is because `Team.id` is a plain `string` in `types.ts`. Widening that is a
+   * change to a type every team in the app reads, and `checkClubInk` asserts the `TeamId` union is
+   * exactly the set of ids in `INITIAL_TEAMS` -- so a cast to a wrong club fails the check rather
+   * than rendering a blank.
+   *
+   * Memoised on the id because this panel re-renders on every row hover and the derivation is a
+   * colour-space conversion. Cheap either way, but the prop board in this repo was rebuilt on
+   * every render once and cost 650ms of work for data that had not changed.
+   */
+  const ink = useMemo(() => clubInk(team.id as TeamId), [team.id]);
+
+  const selectedRowId = selected?.player.playerId ?? null;
+
   const columns: StatTableColumn[] = [
     { key: 'slot', header: 'SLOT', align: 'right', isNumeric: true, width: '8ch' },
     { key: 'name', header: 'PLAYER' },
@@ -47,6 +71,11 @@ export const RosterPanel: React.FC<{
 
   const rows: StatTableRow[] = entries.map((entry) => ({
     id: entry.player.playerId,
+    // Only the selected row gets the club rule. A rule on every row would be 29 identical stripes
+    // carrying no information -- the same reasoning that removed the per-row crest, recorded at the
+    // name cell below. The class itself paints an INSET box-shadow on the first cell, so it adds
+    // no width and cannot shift a column.
+    className: selectedRowId === entry.player.playerId ? 'club-row-selected' : undefined,
     cells: {
       slot: formatRosterSlotLabel(entry.slotCode),
       // No crest on each row. This list is every player at one club, so the crest
@@ -73,6 +102,7 @@ export const RosterPanel: React.FC<{
   return (
     <ClubPanel
       title="Roster"
+      accent={ink?.hex ?? null}
       aside={
         <span className="t-caption text-[var(--color-ink-faint)]">
           {bySlotCount}/{TEAM_ACTIVE_ROSTER_SIZE} assigned · {backups.length}/{RESERVE_ROSTER_SLOTS.length} backups
@@ -81,8 +111,31 @@ export const RosterPanel: React.FC<{
       }
       bodyClassName="p-0"
     >
-      <div className="grid gap-0 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)]">
-        <aside className="flex flex-col border-b border-[var(--color-chrome-lo)] p-4 xl:border-b-0 xl:border-r">
+      <div
+          className="grid gap-0 xl:grid-cols-[minmax(360px,0.85fr)_minmax(0,1.15fr)]"
+          /*
+           * No `--club-accent` here, and that is deliberate rather than an oversight.
+           *
+           * `ClubPanel` sets it on its own box for the identity bar, and CSS custom properties
+           * INHERIT, so the table below already sees it -- which is what paints the selected row's
+           * rule. An earlier version also set it here, on the reasoning that the rule should be
+           * scoped to the table's own container. That was the same value written twice in two
+           * places, and the second one is a place to be wrong: it could disagree with the panel's
+           * and nothing would say so. `probeClubColour` reads the rendered rule for all 32 clubs,
+           * so a break here fails a check rather than looking fine.
+           */
+        >
+        <aside
+          className="flex flex-col border-b border-[var(--color-chrome-lo)] p-4 xl:border-b-0 xl:border-r"
+          // The card/list divider carries the club tertiary rather than the neutral chrome line.
+          // Tertiary is used HERE specifically because 12 of 32 tertiary values are darker than
+          // this surface (`des` and `fes` are #000000, `val` is #060606) and 20 are lighter, so it
+          // cannot be one consistent weight -- but a 1px structural divider is exactly the kind of
+          // line where "the club's own shade, at whatever strength it lands" is correct and a
+          // forced-to-be-visible colour would not be. Measured, and it is why tertiary is a wash
+          // or a hairline and never a mark.
+          style={ink ? { borderRightColor: clubWash(team.id as TeamId, 0.28, 'panel') } : undefined}
+        >
           <PlayerCard
             player={selected?.player ?? null}
             team={team}
@@ -116,7 +169,19 @@ export const RosterPanel: React.FC<{
                     key={`bench-${entry.player.playerId}`}
                     type="button"
                     onClick={() => onSelectPlayer(entry.player.playerId)}
-                    className="flex items-center gap-2 border-l-[3px] border-l-transparent bg-[var(--color-base-2)] px-2 py-1 text-left transition-colors hover:border-l-[var(--color-gold)]"
+                    // The rule was already here and already turned gold on hover. Swapping the hover
+                    // target to the club's own ink is the whole change -- the rule, its width and its
+                    // transition are untouched, so no layout moves.
+                    //
+                    // Resting state is the club tertiary at low alpha, hover is the resolved ink.
+                    // Primary rather than the resting tertiary because hover is attention, and the
+                    // plan's rule is that colour never carries meaning -- so this stays a decorative
+                    // edge and never the only thing telling you a row is interactive.
+                    className="club-bench-row flex items-center gap-2 border-l-[3px] bg-[var(--color-base-2)] px-2 py-1 text-left transition-colors"
+                    style={{
+                      borderLeftColor: clubWash(team.id as TeamId, 0.22, 'base2'),
+                      ...(ink ? { '--bench-hover': ink.hex } : {}),
+                    } as React.CSSProperties}
                   >
                     <span className="w-[7ch] shrink-0 t-caption text-[var(--color-ink-faint)]">
                       {formatRosterSlotLabel(entry.slotCode)}
