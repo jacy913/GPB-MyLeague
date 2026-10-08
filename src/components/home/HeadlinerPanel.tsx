@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { PenLine } from 'lucide-react';
+
 import { ACCENT_VAR, HEADLINER_BY_ID, eventSeed, type HeadlineCandidate, type HeadlinerId } from '../../logic/headliners';
 import { pickBeat } from '../../logic/headlinerVoices';
 import { HeadlinerDetailsModal } from '../media/HeadlinerDetailsModal';
@@ -71,10 +71,7 @@ export const HeadlinerPanel: React.FC<{
     <>
     <Panel className="overflow-hidden">
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <div className="flex items-center gap-2">
-          <PenLine className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
-          <h2 className="t-label">Sideline Reports</h2>
-        </div>
+        <h2 className="t-label">Sideline Reports</h2>
         <div className="flex items-center gap-3">
           {slideCount > 1 && (
             <div className="flex items-center gap-1.5" role="tablist" aria-label="Columns">

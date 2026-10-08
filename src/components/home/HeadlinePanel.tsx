@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Newspaper } from 'lucide-react';
+
 import type { Game, Team } from '../../types';
 import { isPlayoffGame } from '../../logic/playoffs';
 import gpbLogo from '../../assets/gpb.png';
@@ -95,10 +95,7 @@ export const HeadlinePanel: React.FC<{
   return (
     <Panel variant="hero" className="overflow-hidden">
       <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
-        <div className="flex items-center gap-2">
-          <Newspaper className="h-4 w-4 text-[var(--color-gold)]" aria-hidden="true" />
-          <h2 className="t-label">Headline Of The Day</h2>
-        </div>
+        <h2 className="t-label">Headline Of The Day</h2>
         <div className="flex items-center gap-3">
           {slideCount > 1 && (
             <div className="flex items-center gap-1.5" role="tablist" aria-label="Headlines">

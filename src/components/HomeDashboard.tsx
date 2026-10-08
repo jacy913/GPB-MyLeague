@@ -42,7 +42,10 @@ import { probabilityToAmerican } from '../lib/markets';
 import { buildMediaReads } from '../lib/mediaReads';
 import { buildGameLine, type GameLine } from '../lib/mediaOdds';
 import { resolveSeasonYear } from '../lib/seasonYear';
-import { HomePanel, getMilestones, sortStandings, type DivisionSnapshot, type Milestone } from './home/shared';
+import { HomePanel, getMilestones, nextSeasonStop, sortStandings, type DivisionSnapshot, type Milestone } from './home/shared';
+import { PostseasonSlate } from './home/PostseasonSlate';
+import { PlayoffMasthead } from './home/PlayoffMasthead';
+import { isPostseasonWindow } from '../lib/seasonPhase';
 import { HeadlinerPanel } from './home/HeadlinerPanel';
 import { FeaturedGamePanel, HeadlinePanel } from './home/HeadlinePanel';
 import { MvpRacePanel } from './home/MvpRacePanel';
@@ -104,6 +107,12 @@ interface HomeDashboardProps {
    */
   onOpenPowerRankings: () => void;
   /**
+   * Opens the playoff bracket. A route switch for the same reason as the power rankings: the
+   * bracket is a real nav destination and the postseason section's button should reach it the way a
+   * manager would from the rail, not through a private route change inside this component.
+   */
+  onOpenBracket: () => void;
+  /**
    * The League Office board, or null when it could not be computed.
    *
    * Passed in rather than built here for one reason: the strip and the full board must read the SAME
@@ -111,14 +120,21 @@ interface HomeDashboardProps {
    * expensive term twice and let the two surfaces disagree about a club.
    */
   powerRankings: PowerRankings | null;
-  onSimulateToSelectedDate: () => void;
   onSimulateToEndOfRegularSeason: () => void;
   onSimulateDay: () => void;
   onSimulateWeek: () => void;
   onSimulateMonth: () => void;
-  onSimulateNextGame: () => void;
-  onQuickSimSeason: () => void;
-  onResetSeason: () => void;
+  /**
+   * Advance to the next season milestone. Replaces the desk's "Quick Sim".
+   *
+   * `onSimulateToSelectedDate` and `onResetSeason` were removed from this panel rather than left
+   * disabled. The first depended on a `selectedDate` prop that the dashboard never offers a way to
+   * set, so it silently clamped to today and ran a single day -- the same thing Sim Day does. It
+   * still exists on the Simulation screen, where a date field sits directly above the button that
+   * uses it. The second is reachable where it makes sense, on the offseason panel, labelled for what
+   * it does there.
+   */
+  onSimulateToNextMilestone: () => void;
   onSimulateToDate: (date: string) => void;
   onProposeTrade: (trade: TradeProposal) => void;
   /**
@@ -168,15 +184,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenFreeAgency,
   onOpenStandings,
   onOpenPowerRankings,
+  onOpenBracket,
   powerRankings,
-  onSimulateToSelectedDate,
   onSimulateToEndOfRegularSeason,
   onSimulateDay,
   onSimulateWeek,
   onSimulateMonth,
-  onSimulateNextGame,
-  onQuickSimSeason,
-  onResetSeason,
+  onSimulateToNextMilestone,
   onSimulateToDate,
   onProposeTrade,
   /*
@@ -262,6 +276,20 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     () => gameIndexes.gamesByDate.get(timelineDate) ?? [],
     [gameIndexes, timelineDate],
   );
+  /*
+    THE POSTSEASON GATE.
+
+    Derived from the schedule, not stored, and it opens on the first SCHEDULED playoff game -- so the
+    front page says October is coming while it is still September, rather than on the morning after
+    a result. It closes when the last scheduled playoff game is played, which is what returns the app
+    to navy and is also what makes the section's `Go to Bracket` button stop pointing at an empty
+    bracket.
+
+    Keyed on the BOOLEAN, not on `games`. Keyed on `games` it would re-evaluate -- and re-run the
+    effect in App that sets the palette attribute -- on every simulation, which is a DOM mutation per
+    simulated day for a value that changes twice a season.
+  */
+  const isPostseason = useMemo(() => isPostseasonWindow(games), [games]);
   const headlineTransactionDate = timelineDate || transactionIndexes.spotlightTransactionsDesc[0]?.effectiveDate || '';
   const headlineTransactionStories = useMemo(
     () =>
@@ -426,7 +454,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           shape,
           teamsById,
           playersById,
-          completedGamesDesc: gameIndexes.completedGamesDesc,
+          completedGamesDesc: gameIndexes.completedGamesUpTo(game.gameId),
           baselines: personaBaselines,
         });
       });
@@ -784,19 +812,63 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       : null
   ), [featuredAwayTeam, featuredGame, featuredHomeTeam]);
 
-  const simActions: Array<{ label: string; run: () => void; disabled?: boolean }> = [
+  /**
+ * The long run's destination, named on the button.
+   *
+   * "Quick Sim" said how fast and nothing about how far, and what it actually did was regular-season
+   * end plus seventy days -- the postseason and into the offseason -- from one press. The button now
+   * says which event it stops at, read from the same `nextSeasonStop` the date plan uses, so the
+   * label and the scope cannot disagree.
+   */
+  const seasonStop = useMemo(() => nextSeasonStop(games, timelineDate), [games, timelineDate]);
+
+  /**
+   * The desk's buttons.
+   *
+   * "Next Game" was removed rather than repaired. The scope behind it resolves a club's next fixture
+   * as "today's game or later", and all 32 clubs have a fixture on the current slate, so it was
+   * always Sim Day under a different name -- two buttons on one panel doing the same thing with no
+   * way to tell from the UI which was which. The scope itself is untouched and still reachable from
+   * the Simulation screen; only this copy of the button is gone.
+   */
+  const simActions: Array<{ label: string; run: () => void; disabled?: boolean; primary?: boolean }> = [
     { label: 'Sim Day', run: onSimulateDay, disabled: isSimulating },
     { label: 'Sim Week', run: onSimulateWeek, disabled: isSimulating },
     { label: 'Sim Month', run: onSimulateMonth, disabled: isSimulating },
-    { label: 'Next Game', run: onSimulateNextGame, disabled: isSimulating },
-    { label: 'To Date', run: onSimulateToSelectedDate, disabled: isSimulating },
-    { label: 'End Season', run: onSimulateToEndOfRegularSeason, disabled: isSimulating },
-    { label: 'Quick Sim', run: onQuickSimSeason, disabled: isSimulating },
+    {
+      label: seasonStop ? `To ${seasonStop.label}` : 'To Season End',
+      run: onSimulateToNextMilestone,
+      disabled: isSimulating || !seasonStop,
+      primary: true,
+    },
+    { label: 'To Reg Finale', run: onSimulateToEndOfRegularSeason, disabled: isSimulating },
   ];
 
   return (
     <section className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]">
+      {/*
+        THE POSTSEASON SECTION, at the top, and only during the postseason.
+
+        ABOVE THE HEADLINE, not below it, because during October the bracket is the story and the
+        day's story is one game of it. The headline keeps its position inside the regular layout --
+        this section is a sibling of the grid, not a child of it, so nothing about the two-column
+        composition below changes when it appears.
+
+        GATED ON SCHEDULED PLAYOFF GAMES. It appears on the morning the bracket is drawn, not after a
+        result, and it disappears once the last one is played -- which is also when `Go to Bracket`
+        would stop pointing at anything.
+      */}
+      {isPostseason && (
+        <PostseasonSlate
+          games={games}
+          currentDate={timelineDate}
+          teamsById={teamsById}
+          onOpenGame={onOpenGame}
+          onOpenBracket={onOpenBracket}
+        />
+      )}
+
+      <div className={`grid gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.9fr)]${isPostseason ? ' xl:grid-rows-[auto_auto]' : ''}`}>
         {/*
           THE COLUMNS ARE WRAPPED, AND THEY HAVE TO BE.
 
@@ -815,7 +887,31 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           headline, then the newsroom under it, then the award race -- all wide -- with the featured
           odds alone on the right, which is where a priced matchup belongs anyway.
         */}
-        <div className="flex min-w-0 flex-col gap-5">
+        {/*
+          THE TWO COLUMNS SHARE ROW TRACKS DURING THE POSTSEASON.
+
+          Below, the right column's second panel -- the Primetime Game -- was asked to start on the same
+          line as this column's second panel, the newsroom. Sized by hand that is a magic number: the
+          headline panel is a carousel whose height CHANGES with the slide, so a masthead tuned to one
+          story's height is wrong by the height of the next one. Measured, the miss was exactly the
+          20px column gap, which is the tell that this is a row-track problem and not a sizing one.
+
+          So the grid is given two explicit row tracks and both columns span both of them with
+          `grid-rows-subgrid`, which makes each column's first child share a track with the other's.
+          The masthead then fills the track the headline defines, whatever that turns out to be, and
+          the alignment holds across carousel rotations, across headlines of different lengths, and
+          across viewport widths -- none of which a fixed height survives.
+
+          `auto auto` and not `1fr 1fr`: the tracks must be free to grow with the content in them, and
+          the postseason masthead has an aspect ratio of its own. Forcing equal halves would fight
+          both.
+
+          Chrome 117+ for subgrid. Below that the classes do nothing and the two columns revert to
+          independent flex columns, which is the previous behaviour and still a working layout.
+        */}
+        <div
+          className={`flex min-w-0 flex-col gap-5${isPostseason ? ' xl:col-span-1 xl:row-span-2 xl:grid xl:grid-rows-subgrid' : ''}`}
+        >
           <HeadlinePanel
             deck={headlineDeck}
             timelineDate={timelineDate}
@@ -861,7 +957,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           */}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-5">
+        {/* The subgrid counterpart to the left column; see the note there for why. */}
+        <div
+          className={`flex min-w-0 flex-col gap-5${isPostseason ? ' xl:col-span-1 xl:row-span-2 xl:grid xl:grid-rows-subgrid' : ''}`}
+        >
           {/*
             THE POWER RANKINGS MOVE UP, AND THE REASON THEY NOW CARRY IS STRONGER THAN THE ONE THEY
             REPLACED.
@@ -877,12 +976,30 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             Above the featured game, beside the day's story. Nothing is stretched: the strip is the
             narrow panel it was always built to be.
           */}
-          <PowerRankingsStrip
-            rankings={powerRankings}
-            teamsById={teamsById}
-            onOpenPowerRankings={onOpenPowerRankings}
-            onSelectTeamId={onSelectTeamId}
-          />
+          {isPostseason ? (
+            /*
+              THE PLAYOFF MASTHEAD, at the top of the right column, and the Featured Game stays put
+              beneath it.
+
+              The masthead replaces the Power Rankings strip, which was already suppressed -- its
+              valuation is a frozen regular-season record once the bracket opens
+              (`simulationManager.ts:726` gates every increment on `isRegularSeasonGame`).
+
+              The Featured Game is where it has always been. It was briefly moved DOWN into the award
+              race's slot to free the whole corner for the masthead, which left the masthead floating
+              in a column with a gap under it and pushed the day's actual fixture to the bottom of the
+              page. Restoring it costs the masthead the lower half of the column, which is the right
+              trade: two panels stacked read as a column, one panel with a hole under it does not.
+            */
+            <PlayoffMasthead />
+          ) : (
+            <PowerRankingsStrip
+              rankings={powerRankings}
+              teamsById={teamsById}
+              onOpenPowerRankings={onOpenPowerRankings}
+              onSelectTeamId={onSelectTeamId}
+            />
+          )}
 
           <FeaturedGamePanel
             gameId={featuredGame ? featuredGame.game.gameId : null}
@@ -908,11 +1025,26 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
         <div className="flex flex-col gap-5">
           <HomePanel title="Simulation Desk">
+            {/*
+              THE DESK BUTTONS ARE PARALLELOGRAMS.
+
+              A shape rather than a colour, so it survives every variant and both the disabled and
+              enabled states without a second set of rules. The cut is the repo's existing
+              `parallelogram` utility at the standard `--chev`, which is the same geometry the
+              chevron buttons and the panel tags already use -- nothing new was invented for this.
+
+              The label needs room on BOTH cut sides. The chevron already had this bug once, recorded
+              on `RetroButton`: the content was centred across the whole box, so the wedge cut through
+              the last few characters and "Quick Sim" rendered as "Quick| Sim". A parallelogram cuts
+              both corners, so symmetric padding is the fix and it lives in the primitive rather than
+              at each call site.
+            */}
             <div className="flex flex-wrap gap-2">
               {simActions.map((action) => (
                 <RetroButton
                   key={action.label}
-                  variant={action.label === 'Quick Sim' ? 'primary' : 'default'}
+                  variant={action.primary ? 'primary' : 'default'}
+                  shape="parallelogram"
                   size="sm"
                   onClick={action.run}
                   disabled={action.disabled}
@@ -920,9 +1052,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                   {action.label}
                 </RetroButton>
               ))}
-              <RetroButton variant="ghost" size="sm" onClick={onResetSeason} disabled={isSimulating}>
-                Reset Season
-              </RetroButton>
             </div>
           </HomePanel>
 
@@ -950,6 +1079,21 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             reading the same thing -- where the season stands right now. The featured game above is
             the outlier in the old arrangement: it is a single priced fixture, and the award race was
             never going to be near it.
+          */}
+          {/*
+            THE AWARD RACE IS HERE FOR THE WHOLE SEASON, postseason included.
+
+            The MVP and award races CLOSE at the end of the regular season -- deliberately, to close
+            a betting exploit where a manager could back an award that had not been decided and then
+            decide it. That decision about the races is right. The swap was wrong, because it was
+            settled on the postseason's account rather than the regular season's: it pushed the
+            featured game to the bottom of the page for six weeks to cover for a panel that is merely
+            finished, when the featured game could have stayed exactly where it was and the masthead
+            taken the corner above it.
+
+            So the swap is reverted and this panel is unconditional again. A decided race sitting
+            here for six weeks is a dull but true fact about the league; a feature that disappears
+            for a third of the year costs the reader more than the dullness does.
           */}
           <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
 
