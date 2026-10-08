@@ -92,6 +92,39 @@ export const getMilestones = (games: Game[]): Milestone[] => {
   ];
 };
 
+/**
+ * The events a long simulation is allowed to stop at.
+ *
+ * The three a manager is actually waiting on, in the order they arrive. `opening_day` is excluded
+ * because it is behind you, and the playoffs/offseason entries are excluded because the point of
+ * the bound is that an unattended run does not walk past the regular season.
+ */
+export const SEASON_STOP_KEYS = [
+  'all_star_break',
+  'trade_deadline',
+  'regular_season_finale',
+] as const satisfies readonly MilestoneKey[];
+
+/**
+ * The next event a long run should stop at, strictly after `currentDate`.
+ *
+ * Lives here rather than inside the date plan or the button that shows it, because two consumers
+ * need the same answer and a label that disagrees with the scope it names is worse than no label:
+ * the date plan picks the destination, and the desk button says which one it picked. Written twice,
+ * the button would eventually say "All-Star" while the run stopped at the trade deadline.
+ *
+ * Strictly after, so a milestone that has already been reached is not offered again.
+ */
+export const nextSeasonStop = (games: Game[], currentDate: string): Milestone | null => {
+  if (!currentDate) return null;
+  return (
+    getMilestones(games)
+      .filter((milestone) => milestone.phase === 'regular' && (SEASON_STOP_KEYS as readonly string[]).includes(milestone.key))
+      .filter((milestone) => milestone.date > currentDate)
+      .sort((left, right) => left.date.localeCompare(right.date))[0] ?? null
+  );
+};
+
 export const sortStandings = (left: Team, right: Team): number => {
   const leftPct = getWinPct(left);
   const rightPct = getWinPct(right);

@@ -193,6 +193,7 @@ interface AppViewRouterProps {
   onSimulateMonth: () => void;
   onSimulateNextTeamGame: () => void;
   onQuickSimSeason: () => void;
+  onSimulateToNextMilestone: () => void;
   onResetSeason: () => void;
   onTerminateUniverse: () => void;
   onGeneratePlayers: () => void;
@@ -345,6 +346,7 @@ export const AppViewRouter = ({
   onSimulateMonth,
   onSimulateNextTeamGame,
   onQuickSimSeason,
+  onSimulateToNextMilestone,
   onResetSeason,
   onTerminateUniverse,
   onGeneratePlayers,
@@ -433,15 +435,13 @@ export const AppViewRouter = ({
           onOpenFreeAgency={() => onSetView('free_agency')}
           onOpenStandings={() => onSetView('league_standings')}
           onOpenPowerRankings={() => onSetView('power_rankings')}
+          onOpenBracket={() => onSetView('playoffs')}
           powerRankings={rankings}
-          onSimulateToSelectedDate={onSimulateToSelectedDate}
           onSimulateToEndOfRegularSeason={onSimulateToEndOfRegularSeason}
           onSimulateDay={onSimulateDay}
           onSimulateWeek={onSimulateWeek}
           onSimulateMonth={onSimulateMonth}
-          onSimulateNextGame={onSimulateNextTeamGame}
-          onQuickSimSeason={onQuickSimSeason}
-          onResetSeason={onResetSeason}
+          onSimulateToNextMilestone={onSimulateToNextMilestone}
           onSimulateToDate={onSimulateToDate}
           onProposeTrade={onProposeTrade}
         />

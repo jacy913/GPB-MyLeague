@@ -435,7 +435,21 @@ export type SimulationScope =
   | 'month'
   | 'to_date'
   | 'regular_season'
-  | 'season';
+  | 'season'
+  /**
+   * Stop at the next season milestone strictly after the current date.
+   *
+   * Replaces the dashboard's "Quick Sim", which ran `{ scope: 'season' }` -- regular season end plus
+   * seventy days -- and so walked a league through the postseason and into the offseason in one
+   * uninterrupted press, with no statement anywhere of how far it would go. This scope stops at the
+   * All-Star break, the trade deadline or the regular-season finale, whichever comes first, so the
+   * long runs are made of bounded steps that each land on something a manager is waiting for.
+   *
+   * `season` is kept: the Simulation screen's "Full Season" is an explicit, labelled choice on a
+   * screen that also shows the target, and removing it would remove the only way to run a season
+   * unattended.
+   */
+  | 'to_milestone';
 
 export interface SimulationTarget {
   scope: SimulationScope;

@@ -214,6 +214,70 @@
   --texture-hatch:     repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 6px);
 }
 
+/* ------------------------------------------------------------------ *
+ * AUTUMN PALETTE — the postseason
+ *
+ * The league's surface tokens rotated from navy to ember, holding LIGHTNESS.
+ *
+ * LIGHTNESS IS THE WHOLE ARGUMENT. Every contrast relationship in this app is a luminance
+ * relationship: light ink on a dark surface, a gold accent above a floor, a club colour lifted
+ * into a legible band. Rotating hue and chroma while holding L leaves all of them intact.
+ * Measured, autumn against navy:
+ *
+ *   --color-ink vs panel          15.51:1   against 15.43:1
+ *   club primaries under 3:1      14/32     against 14/32
+ *   club primaries LIGHTER        30/32     against 30/32
+ *   semantic + 9 outlet accents   move at most 0.58 contrast points; none below 3:1
+ *
+ * That third line is the load-bearing one. Thirty of thirty-two club primaries are LIGHTER than
+ * the surface, which is why `clubInk` RAISES lightness rather than lowering it. Break that and
+ * every derived club colour in the app is wrong while still looking plausible.
+ *
+ * DO NOT BRIGHTEN THESE. A lighter "warmer" panel is the one edit that breaks the derivation, and
+ * it will look like an improvement. `tools/checkAutumnPalette.ts` asserts the luminance match and
+ * `tools/checkClubInk.ts` asserts the lift direction, so both are caught rather than shipped.
+ *
+ * WHY NOT BEIGE. A light surface is not a background change, it is a theme inversion:
+ * `--color-ink` #f2f5ff measures 15.43:1 on the navy panel and 2.21:1 on a beige one, so every
+ * word in the app would have to be re-inverted. Worse, only 8 of 32 club primaries are lighter
+ * than a beige ground (against 30 of 32 here), so the lift would have to run BACKWARDS for the
+ * other 24 — which `clubInk` cannot do. A warm dark palette is the affordable version of the idea.
+ *
+ * The values below are derived, not chosen: each navy token's OKLCH hue rotated to about 55 degrees,
+ * with chroma reduced only where the rotation leaves the sRGB gamut, and OKLCH lightness then
+ * searched so the result lands as close as the gamut allows to the original WCAG luminance.
+ *
+ * "AS CLOSE AS THE GAMUT ALLOWS", because exact matching is not achievable at these levels and
+ * claiming otherwise would be a nicer sentence than a true one. The darkest tokens are the
+ * constrained ones: a warm brown near black can only reach so many luminances, so the observed
+ * drift runs from 0.5% at `base` to 3.9% at `panel-2`. `tools/checkAutumnPalette.ts` allows 8% --
+ * an order of magnitude above the gamut floor and far below any deliberate edit, so it is a
+ * tripwire for a brightened panel rather than a claim of exactness.
+ *
+ * WHAT ACTUALLY GUARANTEES SAFETY is not this tolerance. It is that the observable contrast
+ * relationships are checked directly and all hold: ink 15.43 -> 15.51, ink-dim 6.47 -> 6.50,
+ * ink-faint 4.68 -> 4.71, all eighteen semantic and outlet accents move by at most 0.05 contrast
+ * points and none falls below 3:1, and `tools/checkClubInk.ts` clears all 32 clubs on all four
+ * surfaces in BOTH themes with the lift direction unchanged at 30 of 32. A designer may retune hue
+ * or chroma for taste provided those checks still pass; the tolerance above will not stop them, the
+ * checks will.
+ *
+ * Plain CSS and not `@utility`, because Tailwind v4 rejects `@utility` names containing `::`, logs
+ * the rejection and silently serves the last good file -- a trap recorded in the handover.
+ * ------------------------------------------------------------------ */
+html[data-season='postseason'] {
+  --color-void:       #0c0603;
+  --color-base:       #160c06;
+  --color-base-2:     #1f0f05;
+  --color-sunken:     #1d0d04;
+  --color-panel:      #2a190d;
+  --color-panel-2:    #331f11;
+  --color-panel-3:    #3d2717;
+  --color-chrome-lo:  #352316;
+  --color-chrome-mid: #634633;
+  --color-chrome-hi:  #a08370;
+}
+
 /* ============================================================
    TYPE SCALE — raised after a full-season playthrough
    ============================================================
@@ -390,6 +454,65 @@
   border: 1px solid var(--color-chrome-lo);
   box-shadow: var(--shadow-bev-lg);
   border-radius: var(--radius-panel);
+}
+
+/* ------------------------------------------------------------------ club colour identity
+ *
+ * The club mark. `--club-accent` is set inline by `ClubPanel` from `clubInk(team.id).hex` --
+ * a resolved colour, never the raw palette hex, because three clubs' primaries sit below 1.2:1 on
+ * `--color-panel` and would draw literally nothing (measured: `ock` 1.04, `urb` 1.03, `dwi` 1.14).
+ *
+ * Plain CSS rather than `@utility` on purpose. Tailwind v4 rejects `@utility` names containing
+ * `::`, it logs the rejection to the terminal and silently serves the last good file, and these two
+ * rules are both pseudo-element work. That trap is recorded in the handover guardrails.
+ *
+ * Drawn as a `::before` on the panel's own box rather than a child element: the panel carries
+ * `overflow-hidden` and a positioned child is a second thing to keep inside the clip.
+ */
+.club-accent {
+  position: relative;
+}
+
+.club-accent::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  /* 4px rather than 3. At 3px the rule reads as part of the panel's 1px border and the identity is
+     lost against `--color-chrome-lo`; at 5px it competes with the chrome bar. */
+  inline-size: 4px;
+  background: var(--club-accent, transparent);
+  /* The panel has a border-radius, and a square rule at the left edge pokes out of the rounded
+     corner. This is what keeps it flush with the panel's own silhouette. */
+  border-start-start-radius: calc(var(--radius-panel) - 1px);
+  border-end-start-radius: calc(var(--radius-panel) - 1px);
+}
+
+/*
+ * The selected player row's club rule.
+ *
+ * An inset `box-shadow` on the first cell, NOT a `border-left`. A border on a `<td>` adds to the
+ * table's box and shifts every column after it -- which is the drift bug this project lost a
+ * debugging session to, where deltas reached 235px and cell-count checks and downscaled
+ * screenshots both reported it clean. An inset shadow paints inside the cell and changes no
+ * layout at all.
+ *
+ * This is why the rule cannot be verified by counting columns. Measure the per-column
+ * `getBoundingClientRect().left` deltas between header and body; `qaSweep` does.
+ */
+.club-row-selected > td:first-child {
+  box-shadow: inset 3px 0 0 var(--club-accent, transparent);
+}
+
+/*
+ * The bench-unit row's club rule.
+ *
+ * Resting is the club tertiary at low alpha, set inline per row because it differs per club. Hover
+ * is the resolved ink, which has to be a rule rather than a Tailwind arbitrary value because the
+ * colour is a runtime derivation and there is no class to name.
+ */
+.club-bench-row:hover {
+  border-left-color: var(--bench-hover, var(--color-gold));
 }
 
 /* Chrome bar — the 3D bevel, always gradient + 1px highlight/shadow lines */

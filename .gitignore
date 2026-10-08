@@ -10,3 +10,7 @@ coverage/
 # CDP harness artifacts (tools/cdp.mjs). Build probe output and the throwaway Chrome profile.
 .mark-build.html
 .mark-chrome-profile/
+
+# Screenshots written to the REPO ROOT by tools/probe*.mjs -- regenerate on every run.
+# Root-level only, so src/assets PNGs (which are source) are unaffected.
+/*.png

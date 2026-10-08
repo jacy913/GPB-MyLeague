@@ -77,6 +77,8 @@ import { useAltHold } from './hooks/useAltHold';
 import { TeamLogoGrid } from './components/ui/TeamLogoGrid';
 import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
 import { clearPowerRankMovement } from './components/home/powerRankMovement';
+import { getMilestones, nextSeasonStop } from './components/home/shared';
+import { isPostseasonWindow } from './lib/seasonPhase';
 import { BettingSlip } from './components/betting/BettingSlip';
 import { useBroadcastFlair } from './hooks/useBroadcastFlair';
 import { useLeagueBootstrap } from './hooks/useLeagueBootstrap';
@@ -1023,6 +1025,7 @@ const getSimulationScopeLabel = (target: SimulationTarget): string => {
   if (target.scope === 'week') return 'Simulating week';
   if (target.scope === 'month') return 'Simulating month';
   if (target.scope === 'regular_season') return 'Simulating regular season';
+  if (target.scope === 'to_milestone') return 'Simulating to next milestone';
   if (target.scope === 'season') return 'Simulating full season';
   if (target.scope === 'next_game') return 'Simulating next team game';
   if (target.scope === 'next_playoff_game') return 'Simulating next playoff game';
@@ -1036,6 +1039,9 @@ const getSimulationTargetLabel = (target: SimulationTarget, teams: Team[], targe
   if (target.scope === 'month') return 'One Month';
   if (target.scope === 'regular_season') return 'Regular Season Finish';
   if (target.scope === 'season') return 'Full Season';
+  // Named for where it stops rather than for its length, because the whole point of the scope is
+  // that the destination is the information. "Quick Sim" said how fast, not how far.
+  if (target.scope === 'to_milestone') return targetDate ? `To ${targetDate}` : 'To Next Milestone';
   if (target.scope === 'next_game') {
     const team = teams.find((entry) => entry.id === target.teamId) ?? null;
     return team ? `${team.city} Next Game` : 'Next Team Game';
@@ -1105,6 +1111,30 @@ const buildSimulationDatePlan = (games: Game[], currentDate: string, target: Sim
     return { dates: dates.length > 0 ? dates : [startDate], targetDate };
   }
 
+  /**
+   * Stop at the next season milestone strictly after the current date.
+   *
+   * The candidate list is the three regular-season events a manager is actually waiting on, in
+   * schedule order, derived from the real game dates rather than from day counts -- `getMilestones`
+   * already does that for the front-page timeline and this reuses it rather than recomputing, so
+   * there is one answer to "when is the trade deadline" in the app.
+   *
+   * Strictly after, not at-or-after. A milestone landing on the current date has already been
+   * reached: pressing the button should advance the league, not re-report where it is.
+   *
+   * Past the finale there is nothing left to stop at, so it falls back to the end of the regular
+   * season. That is the honest floor: it stops rather than running on into the postseason.
+   */
+  if (target.scope === 'to_milestone') {
+    const regularDates = getSortedUniqueDates(games.filter(isRegularSeasonGame));
+    const finale = regularDates[regularDates.length - 1] ?? startDate;
+    const stop = nextSeasonStop(games, startDate);
+    // Past the finale there is nothing to stop at, so the honest floor is the end of the regular
+    // season rather than running on into the postseason. That is what the removed behaviour did.
+    const resolved = stop?.date && stop.date > startDate ? stop.date : finale;
+    return { dates: buildCalendarRange(resolved), targetDate: resolved };
+  }
+
   if (target.scope === 'season') {
     const regularDates = getSortedUniqueDates(games.filter(isRegularSeasonGame));
     const regularSeasonEnd = regularDates[regularDates.length - 1] ?? uniqueDates[uniqueDates.length - 1] ?? startDate;
@@ -1112,6 +1142,19 @@ const buildSimulationDatePlan = (games: Game[], currentDate: string, target: Sim
     return { dates: buildCalendarRange(targetDate), targetDate };
   }
 
+  /*
+   * The selected club's next game.
+   *
+   * Unchanged, and deliberately so. This reads `>= startDate`, which means that on an ordinary day
+   * -- when every club has a fixture on the current slate -- the plan collapses to a single date and
+   * the scope behaves exactly like `day`. That was the defect behind "Next Game seems to just sim
+   * the day", and the dashboard's copy of the button has been removed rather than repaired.
+   *
+   * The semantics were NOT changed here, because this scope is also reachable from the Simulation
+   * screen's "Next Team Game" and from the bracket, and silently re-pointing those is a change to
+   * two other screens that was not asked for. Whether "Next Team Game" should include today's slate
+   * or step past it is a real question about that screen, and it is still open.
+   */
   const nextTeamGame = games
     .filter((game) => game.status === 'scheduled' && game.date >= startDate && (game.homeTeam === target.teamId || game.awayTeam === target.teamId))
     .sort(compareGamesByDateThenId)[0];
@@ -1355,6 +1398,36 @@ const { resetWallet } = bettingSlip;
   useEffect(() => {
     setIsLogoGridOpen(altHeld);
   }, [altHeld]);
+
+  /*
+    THE AUTUMN PALETTE, SET ON THE DOCUMENT ELEMENT.
+
+    One attribute, and it is on `documentElement` rather than on a wrapper for a reason that is easy
+    to get wrong: the header, the navigation rail and the broadcast score ticker all sit OUTSIDE the
+    routed view. A class on <main> would repaint the content and leave three surfaces navy on an
+    autumn page -- which reads as a bug, not as a scope decision.
+
+    `html[data-season='postseason']` also beats the `@theme` block's `:root` on specificity --
+    (0,1,1) against (0,1,0) -- which is why the tokens in index.css override rather than merge.
+
+    The REMOVAL in the cleanup is not decoration. Under React 18 StrictMode an effect runs, cleans up
+    and runs again in development, so an effect that sets the attribute but never removes it would
+    leave the app autumn forever after one postseason, with no way to get back. The gate itself is
+    keyed on SCHEDULED playoff games (see `src/lib/seasonPhase.ts`), which is what makes the window
+    close on its own once the last one is played.
+
+    Measured on a real simulated season: opens on day 179, closes on day 201.
+  */
+  const isPostseason = useMemo(() => isPostseasonWindow(games), [games]);
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isPostseason) {
+      root.setAttribute('data-season', 'postseason');
+    } else {
+      root.removeAttribute('data-season');
+    }
+    return () => root.removeAttribute('data-season');
+  }, [isPostseason]);
 
   const [isSeasonHistoryLoaded, setIsSeasonHistoryLoaded] = useState(false);
   const [offseasonWorkflow, setOffseasonWorkflow] = useState<OffseasonWorkflowState>(IDLE_OFFSEASON_WORKFLOW_STATE);
@@ -3132,6 +3205,22 @@ const { resetWallet } = bettingSlip;
     void runSimulationTarget({ scope: 'next_game', teamId: selectedTeamId });
   }, [selectedTeamId, runSimulationTarget, pushNotice]);
 
+  /**
+   * Advance to the next season milestone.
+   *
+   * Was `{ scope: 'season' }`, which is regular-season end plus seventy days -- the whole postseason
+   * and into the offseason, from one button press, with nothing on screen saying how far it would
+   * go. This is the replacement, and it stops at the All-Star break, the trade deadline or the
+   * regular-season finale.
+   *
+   * `season` still exists and is still reachable from the Simulation screen as an explicit "Full
+   * Season" choice. The difference is that the dashboard's one-click button no longer runs a whole
+   * season unattended, and the button names its destination instead of being called "Quick".
+   */
+  const simulateToNextMilestone = useCallback(() => {
+    void runSimulationTarget({ scope: 'to_milestone' });
+  }, [runSimulationTarget]);
+
   const quickSimSeason = useCallback(() => {
     void runSimulationTarget({ scope: 'season' });
   }, [runSimulationTarget]);
@@ -3645,6 +3734,7 @@ const { resetWallet } = bettingSlip;
     onSimulateMonth: simulateMonth,
     onSimulateNextTeamGame: simulateNextTeamGame,
     onQuickSimSeason: quickSimSeason,
+    onSimulateToNextMilestone: simulateToNextMilestone,
     onResetSeason: resetSeasonFromRouter,
     onTerminateUniverse: terminateUniverseFromRouter,
     onSimulateToDate: simulateToDate,
