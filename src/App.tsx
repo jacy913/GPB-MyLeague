@@ -77,6 +77,7 @@ import { useAltHold } from './hooks/useAltHold';
 import { TeamLogoGrid } from './components/ui/TeamLogoGrid';
 import { HxsePortfolioDrawer } from './components/markets/HxsePortfolioDrawer';
 import { clearPowerRankMovement } from './components/home/powerRankMovement';
+import { useKeyPress } from './hooks/useKeyPress';
 import { getMilestones, nextSeasonStop } from './components/home/shared';
 import { isPostseasonWindow } from './lib/seasonPhase';
 import { BettingSlip } from './components/betting/BettingSlip';
@@ -1354,7 +1355,7 @@ function App() {
    */
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isLogoGridOpen, setIsLogoGridOpen] = useState(false);
-  const altHeld = useAltHold(2000);
+  const tPressed = useKeyPress('t');
   const [settings, setSettings] = useState<SimulationSettings>(DEFAULT_SETTINGS);
   const [playerState, setPlayerState] = useState<LeaguePlayerState>(EMPTY_PLAYER_STATE);
   const [pendingTrades, setPendingTrades] = useState<PendingTradeProposal[]>([]);
@@ -1394,10 +1395,10 @@ const { resetWallet } = bettingSlip;
     settleBets({ games, teams, currentDate, seasonHistory });
   }, [currentDate, games, openBetList.length, seasonHistory, settleBets, teams]);
 
-  // Sync logo grid with Alt hold
+  // Sync logo grid with 't' key press
   useEffect(() => {
-    setIsLogoGridOpen(altHeld);
-  }, [altHeld]);
+    setIsLogoGridOpen(tPressed);
+  }, [tPressed]);
 
   /*
     THE AUTUMN PALETTE, SET ON THE DOCUMENT ELEMENT.
@@ -4198,7 +4199,7 @@ const { resetWallet } = bettingSlip;
         markedOn={latestLedgerDate}
       />
 
-      {/* Team Logo Grid — Alt hold to open */}
+      {/* Team Logo Grid — 't' key to open */}
       <TeamLogoGrid
         teams={teams}
         isOpen={isLogoGridOpen}

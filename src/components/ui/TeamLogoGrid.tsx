@@ -51,8 +51,8 @@ export const TeamLogoGrid: React.FC<TeamLogoGridProps> = ({
       </div>
 
       {/* Logo grid */}
-      <div className="relative z-10 w-full max-w-5xl px-4">
-        <div className="grid grid-cols-8 gap-3">
+      <div className="relative z-10 w-full max-w-6xl px-4">
+        <div className="grid grid-cols-8 gap-4">
           {teams.map((team) => (
             <button
               key={team.id}
@@ -61,12 +61,13 @@ export const TeamLogoGrid: React.FC<TeamLogoGridProps> = ({
                 onSelectTeam(team.id);
                 onClose();
               }}
-              className="group aspect-square relative bg-[var(--color-panel)] border border-[var(--color-chrome-lo)] rounded-[var(--radius-panel)] hover:border-[var(--color-gold)] hover:shadow-[var(--shadow-bev-lg)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
+              className="group aspect-square relative hover:scale-[1.05] transition-transform duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-void)]"
               aria-label={`${team.city} ${team.name}`}
             >
-              <TeamLogo team={team} sizeClass="h-full w-full" />
-              {/* Subtle gold accent on hover */}
-              <div className="absolute inset-0 border-2 border-transparent rounded-[var(--radius-panel)] group-hover:border-[var(--color-gold)] transition-colors pointer-events-none" />
+              <TeamLogo
+                team={team}
+                sizeClass="h-full w-full drop-shadow-[0_0_0_transparent] group-hover:drop-shadow-[0_0_24px_rgba(255,215,0,0.6)] transition-all duration-300"
+              />
             </button>
           ))}
         </div>
