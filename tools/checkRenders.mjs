@@ -103,6 +103,43 @@ try {
   await browser.send('Runtime.enable', {}, sessionId);
   await sleep(6000);
 
+  const clickedRepair = await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')]
+      .find((x) => /repair player pool/i.test(x.textContent || ''));
+    if (b) b.click();
+    return !!b;
+  })()`);
+  if (clickedRepair) {
+    console.log('  clicked "Repair Player Pool"; watching for 90s...');
+    for (let i = 0; i < 18; i += 1) {
+      await sleep(5000);
+      const done = await evaluate(`(() => ({
+        gate: /league has no players/i.test(document.body.innerText || ''),
+        desk: [...document.querySelectorAll('button')]
+          .some((x) => /^to reg finale$/i.test((x.textContent || '').trim())),
+      }))()`);
+      if (!done.gate) {
+        console.log(`  gate cleared after ~${(i + 1) * 5}s; desk visible=${done.desk}`);
+        // Report WHY a desk button might be unusable. The probes click it, and a button that is
+        // present-but-disabled reports to them exactly like a missing feature.
+        const deskState = await evaluate(`(() => {
+          const out = [...document.querySelectorAll('button')]
+            .map((b) => ({
+              label: (b.textContent || '').trim(),
+              disabled: b.disabled,
+              title: b.getAttribute('title') || '',
+            }))
+            .filter((b) => /sim |reg finale|season end|all-star|trade/i.test(b.label));
+          return out;
+        })()`);
+        for (const d of deskState) {
+          console.log(`      "${d.label}" disabled=${d.disabled}${d.title ? ' title="' + d.title + '"' : ''}`);
+        }
+        break;
+      }
+    }
+  }
+
   const state = await evaluate(`(() => {
     const root = document.getElementById('root');
     const text = (document.body.innerText || '').trim();

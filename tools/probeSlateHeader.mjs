@@ -247,11 +247,31 @@ try {
 
   console.log('\nPOSTSEASON SLATE ROW\n');
 
-  await evaluate(`(() => {
-    const b = [...document.querySelectorAll('button')].find((n) => /repair player pool/i.test(n.textContent || ''));
-    if (b) b.click();
-    return 'repaired';
+  /*
+ * Click "Repair Player Pool" ONLY ONCE IT EXISTS.
+ *
+ * This used to fire after a fixed 2.5s wait. On a warm machine the gate renders inside that, so the
+ * click landed. On a cold or loaded one it does not, the click silently hit nothing, and the probe
+ * then polled for a Simulation Desk button that could never appear -- because the thing that removes
+ * the gate was never actually pressed. Every assertion afterwards reported the app as empty, which is
+ * indistinguishable from a completely broken dashboard.
+ *
+ * A no-op click returning success is the whole defect: the old code could not tell the difference
+ * between "I clicked repair" and "repair was not on screen yet". Polling for the button first removes
+ * the ambiguity, and the failure mode becomes a timeout that says what it was waiting for.
+ */
+let repairClicked = false;
+for (let i = 0; i < 60 && !repairClicked; i += 1) {
+  repairClicked = await evaluate(`(() => {
+    const b = [...document.querySelectorAll('button')]
+      .find((n) => /repair player pool/i.test(n.textContent || ''));
+    if (!b) return false;
+    b.click();
+    return true;
   })()`);
+  if (!repairClicked) await sleep(500);
+}
+console.log(`  repair button clicked: ${repairClicked}`);
 
   /*
    * Poll for the Simulation Desk rather than sleeping a fixed interval.
