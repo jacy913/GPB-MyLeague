@@ -15,6 +15,8 @@ import {
   TeamRosterSlot,
 } from '../types';
 import { buildFreeAgencyMarketEntries, FreeAgentMarketEntry, FreeAgencyOfferCard } from '../logic/freeAgencyLogic';
+import { resolveSeasonYear } from '../lib/seasonYear';
+import { OffseasonFeed } from './OffseasonFeed';
 import { Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 interface FreeAgencyHubProps {
@@ -254,6 +256,31 @@ export const FreeAgencyHub: React.FC<FreeAgencyHubProps> = ({
 
   return (
     <section className="space-y-5">
+      {/*
+        WHAT THE WINTER HAS DONE SO FAR, ABOVE THE MARKET THAT IS DOING IT.
+
+        The board below is the instrument: assignments, slots, offers. This is the record of what those
+        clicks have already produced, in the order it matters rather than the order it was clicked --
+        so the biggest name that has signed is the first thing on screen, not the last.
+      */}
+      <OffseasonFeed
+        playerState={{
+          players,
+          battingStats,
+          pitchingStats,
+          battingRatings,
+          pitchingRatings,
+          rosterSlots,
+          transactions,
+        }}
+        teams={teams}
+        // The year of the winter being reviewed. During the offseason `currentDate` is still inside
+        // the season that just finished, so this resolves to it without needing another prop.
+        seasonYear={resolveSeasonYear(currentDate)}
+        fromDate={freeAgencyOpenDate}
+        isPending={false}
+      />
+
       <Panel className="overflow-hidden">
         <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
           <h1 className="t-h2">Free Agency</h1>

@@ -54,8 +54,9 @@ import { applyOffseasonRetirements } from '../src/logic/offseasonFreeAgency';
 import { collectRetirements, tierRetirements } from '../src/lib/retirements';
 import { resolveSeasonYear } from '../src/lib/seasonYear';
 import { buildOffseasonEventSchedule } from '../src/logic/offseasonSchedule';
-import type { Game, Team } from '../src/types';
+import type { Game, Team, PlayerTransaction } from '../src/types';
 import type { LeaguePlayerState, SeasonHistoryEntry } from '../src/types';
+import { collectOffseasonMoves } from '../src/lib/offseasonMoves';
 
 const YEAR = 2026;
 const SEED = 4242;
@@ -417,6 +418,143 @@ const main = async () => {
     'every offseason event has a well-formed date',
     dates.every((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)),
     dates.join(', '),
+  );
+
+  // ============================================================================
+  // TRADE PAIRING: THE OFFSEASON PRODUCES NO TRADES, SO THE PATH MUST BE FED BY HAND
+  // ============================================================================
+  //
+  // Measured over a real winter: the rollover and roster-completion passes write 205 signings, 115
+  // releases and 21 retirements, and ZERO trades. Trades are logged by the automatic market, which
+  // runs in-season only. So the pairing logic -- the part that turns two mirrored log rows into one
+  // card with two crests -- has nothing to run against in an offseason fixture, and would otherwise
+  // ship untested on the strength of having read it.
+  //
+  // So it is exercised directly, on rows in the exact shape `automaticMarket` writes.
+  const rivalTeams = ['t-alpha', 't-beta', 't-gamma', 't-delta'].map((id) => ({
+    id,
+    name: id.slice(2).toUpperCase(),
+    city: id.slice(2),
+    league: 'Platinum',
+    division: 'North',
+    rating: 70,
+    previousBaselineWins: 0,
+    wins: 0,
+    losses: 0,
+    runsScored: 0,
+    runsAllowed: 0,
+  } as unknown as Team));
+
+  const addedPlayer = (playerId: string, firstName: string, lastName: string, teamId: string) =>
+    ({
+      playerId,
+      teamId,
+      firstName,
+      lastName,
+      playerType: 'batter',
+      primaryPosition: 'SS',
+      secondaryPosition: null,
+      bats: 'R',
+      throws: 'R',
+      age: 27,
+      height: "6'2\"",
+      weightLbs: 195,
+      potential: 90,
+      status: 'active',
+      contractYearsLeft: 3,
+      draftClassYear: YEAR - 5,
+      draftRound: 1,
+      yearsPro: 5,
+      retirementYear: null,
+    } as LeaguePlayerState['players'][number]);
+
+  const mirrored: PlayerTransaction[] = [
+    {
+      playerId: 'p-alpha',
+      eventType: 'traded',
+      fromTeamId: 't-alpha',
+      toTeamId: 't-beta',
+      effectiveDate: `${YEAR}-11-20`,
+      notes: 'Auto-accepted trade for Blanca Vasquez.',
+    },
+    {
+      playerId: 'p-bravo',
+      eventType: 'traded',
+      fromTeamId: 't-beta',
+      toTeamId: 't-alpha',
+      effectiveDate: `${YEAR}-11-20`,
+      notes: 'Auto-accepted trade for Hollis Alpha.',
+    },
+  ];
+
+  const pairState: LeaguePlayerState = {
+    ...save.playerState,
+    players: [
+      ...save.playerState.players,
+      addedPlayer('p-alpha', 'Hollis', 'Alpha', 't-beta'),
+      addedPlayer('p-bravo', 'Blanca', 'Vasquez', 't-alpha'),
+    ],
+    transactions: [...mirrored, ...save.playerState.transactions],
+  };
+
+  const pairedTrades = collectOffseasonMoves(pairState, `${YEAR}-11-01`)
+    .moves.filter((move) => move.kind === 'trade' && move.players.length === 2);
+  check(
+    'a trade is ONE card built from its two mirrored log rows, not two cards',
+    pairedTrades.length === 1,
+    `${pairedTrades.length} trade card, carrying ${pairedTrades[0]?.players.map((p) => p.player.lastName).join(' ↔ ') ?? 'nothing'}`,
+    'the two rows are halves of one event and are meaningless apart',
+  );
+  check(
+    'a paired trade carries both clubs, so two crests can face each other',
+    pairedTrades[0]?.fromTeamId === 't-alpha' && pairedTrades[0]?.toTeamId === 't-beta',
+    `${pairedTrades[0]?.fromTeamId} → ${pairedTrades[0]?.toTeamId}`,
+  );
+
+  /*
+   * THE FAILURE THIS GUARDS IS A FABRICATED BLOCKBUSTER.
+   *
+   * Four clubs each making a move on the same day is completely ordinary -- 32 clubs share one
+   * deadline. Pairing on the date alone would weld two unrelated swaps into one fictional headline.
+   * The discriminator is that each half names the OTHER player in its notes, and it is a FULL name:
+   * measured on a 1292-player league, 298 surnames belong to more than one man while zero full
+   * names repeat, so a surname match would let two unrelated swaps satisfy each other.
+   */
+  const decoyState: LeaguePlayerState = {
+    ...pairState,
+    players: [
+      ...pairState.players,
+      addedPlayer('p-charlie', 'Rafe', 'Quill', 't-delta'),
+      addedPlayer('p-delta', 'Nell', 'Ostrander', 't-gamma'),
+    ],
+    transactions: [
+      ...mirrored,
+      {
+        playerId: 'p-charlie',
+        eventType: 'traded',
+        fromTeamId: 't-gamma',
+        toTeamId: 't-delta',
+        effectiveDate: `${YEAR}-11-20`,
+        notes: 'Auto-accepted trade for someone else entirely.',
+      },
+      {
+        playerId: 'p-delta',
+        eventType: 'traded',
+        fromTeamId: 't-delta',
+        toTeamId: 't-gamma',
+        effectiveDate: `${YEAR}-11-20`,
+        notes: 'Auto-accepted trade for another player.',
+      },
+      ...save.playerState.transactions,
+    ],
+  };
+  const decoyTrades = collectOffseasonMoves(decoyState, `${YEAR}-11-01`)
+    .moves.filter((move) => move.kind === 'trade');
+  check(
+    'two unrelated same-day swaps between four clubs stay separate moves',
+    decoyTrades.length === 3,
+    `${decoyTrades.length} trade cards -- the real pair, plus two that correctly refused to pair`,
+    'a date-only match would fuse them into one invented blockbuster',
   );
 
   // -- 8. determinism ------------------------------------------------------------------
