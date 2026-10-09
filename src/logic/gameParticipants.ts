@@ -18,7 +18,7 @@ import {
 } from '../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from './playerStats';
 
-export interface GameParticipantsBuildContext {
+export type GameParticipantsBuildContext = {
   latestSeasonYear: number | null;
   playersById: Map<string, Player>;
   battingRatingsByPlayerId: Map<string, PlayerBattingRatings>;
@@ -26,7 +26,79 @@ export interface GameParticipantsBuildContext {
   battingStatsByPlayerId: Map<string, PlayerSeasonBatting>;
   pitchingStatsByPlayerId: Map<string, PlayerSeasonPitching>;
   rosterSlotsByTeamId?: Map<string, TeamRosterSlot[]>;
-}
+  /**
+   * Last date each pitcher appeared, for games completed before the one being
+   * built. Omit it and every pitcher reads as fully rested.
+   */
+  lastPitchedDateByPlayerId?: Map<string, string>;
+};
+
+/**
+ * Every field of the context is read as `context?.x ?? <derived fallback>`, so
+ * a caller that only knows one of them is passing a valid context, not an
+ * incomplete one. The two interactive call sites -- App's blocking-game
+ * settlement and the game screen -- need only the rest ledger and derive all
+ * the rest themselves, and typing the parameter as Partial is what says that.
+ */
+export type GameParticipantsOverrides = Partial<GameParticipantsBuildContext>;
+
+/** `pitchersUsed` on a completed game, or an empty list for anything older. */
+export const readPitchersUsed = (game: Game): string[] => {
+  const raw = game.stats.pitchersUsed;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return [];
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * LAST DATE EVERY PITCHER PITCHED, from completed games before `beforeDate`.
+ *
+ * Built by folding the finished games in date order, so a later game overwrites
+ * an earlier one and what survives is genuinely the most recent appearance. The
+ * date comparison is lexical, which is safe because every date in the app is
+ * zero-padded `YYYY-MM-DD`.
+ */
+export const buildPitcherRestIndex = (games: Game[], beforeDate: string): Map<string, string> => {
+  const lastPitched = new Map<string, string>();
+
+  for (const game of games) {
+    if (game.status !== 'completed' || game.date >= beforeDate) {
+      continue;
+    }
+
+    for (const playerId of readPitchersUsed(game)) {
+      const existing = lastPitched.get(playerId);
+      if (existing === undefined || game.date > existing) {
+        lastPitched.set(playerId, game.date);
+      }
+    }
+  }
+
+  return lastPitched;
+};
+
+const getDaysRest = (
+  playerId: string,
+  gameDate: string,
+  lastPitchedDateByPlayerId: Map<string, string> | undefined,
+): number | null => {
+  const lastPitchedDate = lastPitchedDateByPlayerId?.get(playerId);
+  if (!lastPitchedDate) {
+    return null;
+  }
+
+  const days = Math.round(
+    (Date.parse(`${gameDate}T00:00:00Z`) - Date.parse(`${lastPitchedDate}T00:00:00Z`)) / 86_400_000,
+  );
+  return Number.isFinite(days) && days >= 0 ? days : null;
+};
 
 type TeamRosterEntry = {
   player: Player;
@@ -183,7 +255,7 @@ const toBatterParticipant = (entry: TeamRosterEntry): GameParticipantBatter | nu
   };
 };
 
-const toPitcherParticipant = (entry: TeamRosterEntry): GameParticipantPitcher | null => {
+const toPitcherParticipant = (entry: TeamRosterEntry, daysRest: number | null): GameParticipantPitcher | null => {
   if (!entry.pitchingRatings || entry.player.teamId === null || entry.player.playerType !== 'pitcher') {
     return null;
   }
@@ -196,6 +268,7 @@ const toPitcherParticipant = (entry: TeamRosterEntry): GameParticipantPitcher | 
     role: entry.player.primaryPosition as PitcherPosition,
     pitchingRatings: entry.pitchingRatings,
     pitchingStat: entry.pitchingStat,
+    daysRest,
   };
 };
 
@@ -212,8 +285,9 @@ const buildTeamRosterContext = (
   teamId: string,
   teamGameIndex: number,
   seasonPhase: Game['phase'],
+  gameDate: string,
   playerState: LeaguePlayerState,
-  context?: GameParticipantsBuildContext,
+  context?: GameParticipantsOverrides,
 ): {
   lineup: GameParticipantBatter[];
   starter: GameParticipantPitcher | null;
@@ -320,7 +394,10 @@ const buildTeamRosterContext = (
       && !rotationPlayerIds.has(entry.player.playerId)
     )),
   ])
-    .map(toPitcherParticipant)
+    .map((entry) => toPitcherParticipant(
+      entry,
+      getDaysRest(entry.player.playerId, gameDate, context?.lastPitchedDateByPlayerId),
+    ))
     .filter((entry): entry is GameParticipantPitcher => entry !== null);
 
   if (orderedLineup.length === 0) {
@@ -328,7 +405,12 @@ const buildTeamRosterContext = (
   }
   return {
     lineup: orderedLineup,
-    starter: chosenStarterEntry ? toPitcherParticipant(chosenStarterEntry) : null,
+    starter: chosenStarterEntry
+      ? toPitcherParticipant(
+        chosenStarterEntry,
+        getDaysRest(chosenStarterEntry.player.playerId, gameDate, context?.lastPitchedDateByPlayerId),
+      )
+      : null,
     bullpen,
   };
 };
@@ -337,10 +419,10 @@ export const buildGameParticipants = (
   game: Game,
   games: Game[],
   playerState: LeaguePlayerState,
-  context?: GameParticipantsBuildContext,
+  context?: GameParticipantsOverrides,
 ): GameParticipantsSnapshot | null => {
-  const awayContext = buildTeamRosterContext(game.awayTeam, getTeamGameIndex(game.awayTeam, game, games), game.phase, playerState, context);
-  const homeContext = buildTeamRosterContext(game.homeTeam, getTeamGameIndex(game.homeTeam, game, games), game.phase, playerState, context);
+  const awayContext = buildTeamRosterContext(game.awayTeam, getTeamGameIndex(game.awayTeam, game, games), game.phase, game.date, playerState, context);
+  const homeContext = buildTeamRosterContext(game.homeTeam, getTeamGameIndex(game.homeTeam, game, games), game.phase, game.date, playerState, context);
 
   if (!awayContext || !homeContext) {
     return null;

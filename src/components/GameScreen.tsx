@@ -20,7 +20,7 @@ import {
   simulateNextHalfInning,
   startGameSession,
 } from '../logic/gameEngine';
-import { buildGameParticipants } from '../logic/gameParticipants';
+import { buildGameParticipants, buildPitcherRestIndex } from '../logic/gameParticipants';
 import { getCurrentSimTimeLabel, getGameWindowStatus, getScheduledGameTimeLabel } from '../logic/gameTimes';
 import { Panel, RetroButton } from './ui';
 import { BaseDiamond, CountTile, LineScore, SidePanel } from './game/shared';
@@ -243,7 +243,16 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 }) => {
   const awayTeam = useMemo(() => teams.find((team) => team.id === game.awayTeam) ?? null, [teams, game.awayTeam]);
   const homeTeam = useMemo(() => teams.find((team) => team.id === game.homeTeam) ?? null, [teams, game.homeTeam]);
-  const participants = useMemo(() => buildGameParticipants(game, games, playerState), [game, games, playerState]);
+  const participants = useMemo(() => buildGameParticipants(game, games, playerState, {
+    /*
+     * Interactive games are played one at a time rather than in bulk, so the
+     * rest ledger is derived here instead of being maintained incrementally.
+     * Without it every arm reads as fully rested and a game played by hand
+     * would produce different pitching decisions from the same fixture played
+     * by the manager.
+     */
+    lastPitchedDateByPlayerId: buildPitcherRestIndex(games, game.date),
+  }), [game, games, playerState]);
   const [session, setSession] = useState<GameSessionState | null>(null);
   const [visibleLogCount, setVisibleLogCount] = useState(0);
   const [pendingCompletedGame, setPendingCompletedGame] = useState<CompletedGameResult | null>(null);

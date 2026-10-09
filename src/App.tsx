@@ -44,7 +44,7 @@ import { FolderNav } from './navigation/FolderNav';
 import { MobileFolderMenu } from './navigation/MobileFolderMenu';
 import gpbLogo from './assets/gpb.png';
 import { createGameSession, simulateGameToFinal, buildCompletedGameFromSession } from './logic/gameEngine';
-import { buildGameParticipants } from './logic/gameParticipants';
+import { buildGameParticipants, buildPitcherRestIndex } from './logic/gameParticipants';
 import { buildNewUniverse, DEFAULT_UNIVERSE_SEED } from './logic/universeBootstrap';
 import { recalculateTeamRatingsFromRosters } from './logic/teamStrength';
 import type { BuildNewUniverseResult } from './logic/universeBootstrap';
@@ -3633,7 +3633,15 @@ const { resetWallet } = bettingSlip;
           return null;
         }
 
-        const participants = buildGameParticipants(blockingGame, games, playerState);
+        const participants = buildGameParticipants(blockingGame, games, playerState, {
+          /*
+           * The same rest ledger the bulk simulation runs on. A game settled on
+           * this path would otherwise see a fully rested bullpen while the same
+           * fixture settled by the manager saw a tired one, and the two would
+           * produce different pitching decisions from the same inputs.
+           */
+          lastPitchedDateByPlayerId: buildPitcherRestIndex(games, blockingGame.date),
+        });
         const session = simulateGameToFinal(createGameSession(blockingGame, participants), awayTeam, homeTeam, settings);
         return buildCompletedGameFromSession(blockingGame, session);
       })

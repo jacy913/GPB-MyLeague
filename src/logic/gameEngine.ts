@@ -15,6 +15,7 @@ import {
   PlayerGameStatDelta,
   SimulationSettings,
   Team,
+  TeamPitchingState,
 } from '../types';
 import { TEAM_EDGE_WEIGHT } from './teamStrength';
 import {
@@ -342,12 +343,68 @@ const getFatiguePenalty = (session: GameSessionState, pitcher: GameParticipantPi
   return battersOver * 1.8 + pitchesOver * 0.18;
 };
 
+/**
+ * REST, expressed as a cost in selection-score points.
+ *
+ * The engine has no cross-game memory of its own: it knows a pitcher's pitch
+ * count inside one outing and nothing about the outing before. So every arm was
+ * "fresh" every night, `pickBullpenArm` re-ranked the same best reliever first
+ * in innings six through eight, and one closer appeared in 154 of 162 games.
+ *
+ * Three days is the rest a real bullpen works to, and the cost per day is set
+ * high enough to outweigh the talent gap between two comparable arms -- so the
+ * fifth-best reliever gets the seventh-inning call when the closer went
+ * yesterday -- while still leaving the best man the obvious answer in a game
+ * where he is genuinely the only option.
+ *
+ * `null` rest history means unknown, and unknown is treated as rested on
+ * purpose: a gap in the ledger must never be able to disqualify an arm.
+ */
+const RELIEF_REST_TARGET_DAYS = 3;
+const RELIEF_REST_COST_PER_DAY = 7;
+/**
+ * The hard floor under that cost: an arm who pitched within the last two days
+ * is not an option.
+ *
+ * The cost alone was not enough, and the reason is worth recording. A gap of
+ * twenty rating points between the best reliever on a club and the fifth-best
+ * is wider than any rest penalty that still leaves a tired arm selectable, so
+ * the same man kept winning the sixth-inning call and still appeared in 154
+ * games. Making rest a preference cannot fix a league where one bullpen is a
+ * single man; it has to be a rule.
+ *
+ * Two days off between outings caps an arm at roughly 81 appearances, which is
+ * the top of the real range for a workhorse setup man. It is a floor and not a
+ * bar: `getAvailableBullpenOptions` falls back to the ineligible arms rather
+ * than leave a game with nobody to pitch in.
+ */
+const RELIEF_MIN_REST_DAYS = 2;
+
+/**
+ * May this arm be used at all today?
+ *
+ * A null rest history is "unknown", and unknown is eligible -- a gap in the
+ * ledger must never be able to disqualify a pitcher, least of all on day one of
+ * a season when no ledger can exist yet.
+ */
+const isReliefEligible = (pitcher: GameParticipantPitcher): boolean =>
+  pitcher.daysRest === null || pitcher.daysRest === undefined || pitcher.daysRest >= RELIEF_MIN_REST_DAYS;
+
+const getReliefRestCost = (pitcher: GameParticipantPitcher): number => {
+  if (pitcher.daysRest === null || pitcher.daysRest === undefined) {
+    return 0;
+  }
+
+  return Math.max(0, RELIEF_REST_TARGET_DAYS - pitcher.daysRest) * RELIEF_REST_COST_PER_DAY;
+};
+
 const scorePitcherSelection = (pitcher: GameParticipantPitcher): number =>
   pitcher.pitchingRatings.overall +
   getPitcherFormBonus(pitcher) +
   pitcher.pitchingRatings.command * 0.16 +
   pitcher.pitchingRatings.movement * 0.12 +
-  pitcher.pitchingRatings.stuff * 0.08;
+  pitcher.pitchingRatings.stuff * 0.08 -
+  getReliefRestCost(pitcher);
 
 const getCloser = (session: GameSessionState, teamId: string): GameParticipantPitcher | null =>
   getTeamBullpen(session, teamId).find((pitcher) => pitcher.role === 'CL') ?? null;
@@ -363,6 +420,19 @@ const getAvailableBullpenOptions = (
     .filter((pitcher) => includeCloser || pitcher.role !== 'CL');
 
   const unused = bullpen.filter((pitcher) => !pitchingState.bullpenUsedIds.includes(pitcher.playerId));
+  /*
+   * RESTRICTED TO ARMS THAT RESTED -- then fall back, in that order.
+   *
+   * The fallbacks are the point. A bullpen with every arm on a short leash must
+   * still be able to finish a game, so "nobody eligible" degrades to "nobody
+   * unused" and then to "anybody at all", rather than returning nothing and
+   * stalling the simulation.
+   */
+  const rested = unused.filter(isReliefEligible);
+  if (rested.length > 0) {
+    return rested;
+  }
+
   if (unused.length > 0) {
     return unused;
   }
@@ -377,7 +447,19 @@ const pickBullpenArm = (
 ): GameParticipantPitcher | null => {
   if (preferredRole === 'closer') {
     const closer = getCloser(session, teamId);
-    if (closer && !getTeamPitchingState(session, teamId).bullpenUsedIds.includes(closer.playerId)) {
+    /*
+     * THE CLOSER IS A PREFERENCE, NOT A SUMMONS.
+     *
+     * This branch used to hand the ninth inning to the designated closer the
+     * instant anybody asked for one, which is precisely how he came to appear in
+     * 154 of 162 games -- he never had to win a selection. He is still taken
+     * first, because that is his job, but only when he is actually available to
+     * do it; otherwise the best arm that is available takes the inning, which is
+     * what a manager does with a closer on a short leash.
+     */
+    if (closer
+      && !getTeamPitchingState(session, teamId).bullpenUsedIds.includes(closer.playerId)
+      && isReliefEligible(closer)) {
       return closer;
     }
   }
@@ -428,6 +510,53 @@ const shouldUseCloser = (
   return Boolean(closer) && closer.playerId !== pitcherId;
 };
 
+/**
+ * WHEN DOES THE MANAGER REACH FOR THE PEN?
+ *
+ * This is the quiet reason a whole league of relievers worked itself to death.
+ * The thresholds below pulled a starter at about 5.2 innings, which handed the
+ * sixth, seventh, eighth and ninth to four separate relievers -- roughly 730
+ * relief appearances a club, divided across a five-man pen. Five arms cannot
+ * absorb 730 outings, so the minimum-rest rule was permanently unsatisfiable
+ * and its "nobody eligible" fallback fired on a fifth of all relief calls. No
+ * rest rule can fix a workload that the usage creates.
+ *
+ * It also made the loss column meaningless: a starter was never still pitching
+ * when a game ended, and the losing pitcher is by definition the pitcher of
+ * record at the end, so every starter finished the season 14-0.
+ *
+ * So the manager now behaves like one. He trusts a starter through six, holds
+ * him into the seventh and eighth while he is still getting outs, and goes to
+ * the pen when the arm is showing it -- too many pitches, too many hitters, too
+ * tired, or too much damage. A comfortable lead still pulls him in the ninth,
+ * which is when the closer takes over anyway.
+ *
+ * The numbers are scaled to what this engine actually produces, not to a real
+ * box score. It throws a great many first-pitch and second-pitch strikes, so a
+ * starter is already at a hundred pitches having completed five innings and
+ * about two hundred and five by the ninth; the limits below therefore sit near
+ * 125/145/165 pitches, which at roughly four batters an inning is about six and
+ * a half, seven and a half and eight and a half innings. Batters faced is the
+ * primary measure for the same reason -- pitch count on its own pulls a starter
+ * a full inning earlier than a real manager would.
+ */
+const STARTER_PULL_LIMITS = {
+  sixth: { pitches: 125, batters: 26, fatigue: 14, earnedRuns: 5 },
+  seventh: { pitches: 145, batters: 30, fatigue: 12, earnedRuns: 4 },
+  eighth: { pitches: 165, batters: 34, fatigue: 13, earnedRuns: 4 },
+} as const;
+
+const exceedsStarterLimits = (
+  limits: { pitches: number; batters: number; fatigue: number; earnedRuns: number },
+  pitchingState: TeamPitchingState,
+  fatiguePenalty: number,
+  earnedRuns: number,
+): boolean =>
+  pitchingState.pitchCount >= limits.pitches ||
+  pitchingState.battersFaced >= limits.batters ||
+  fatiguePenalty >= limits.fatigue ||
+  earnedRuns >= limits.earnedRuns;
+
 const shouldPullStarter = (
   session: GameSessionState,
   teamId: string,
@@ -445,25 +574,28 @@ const shouldPullStarter = (
   const fatiguePenalty = getFatiguePenalty(session, pitcher);
   const earnedRuns = session.playerStats.pitching[pitcher.playerId]?.earnedRuns ?? 0;
 
-  if (session.inning >= 8) {
-    return true;
+  /*
+   * THE NINTH.
+   *
+   * Handed over on a comfortable lead, which is the one thing a manager does
+   * plan for, and otherwise left to run out his road. He is not pulled for
+   * reaching a pitch count here: past the eighth the only question left is
+   * whether the game is still winnable, and `shouldUseCloser` already handles
+   * the ninth-inning save.
+   */
+  if (session.inning >= 9) {
+    return getTeamLeadAt(session, teamId) >= 3;
   }
 
-  if (session.inning === 6) {
-    return (
-      pitchingState.pitchCount >= 88 ||
-      pitchingState.battersFaced >= 24 ||
-      fatiguePenalty >= 10 ||
-      earnedRuns >= 4
-    );
+  if (session.inning === 8) {
+    return exceedsStarterLimits(STARTER_PULL_LIMITS.eighth, pitchingState, fatiguePenalty, earnedRuns);
   }
 
-  return (
-    pitchingState.pitchCount >= 102 ||
-    pitchingState.battersFaced >= 27 ||
-    fatiguePenalty >= 8 ||
-    earnedRuns >= 3
-  );
+  if (session.inning === 7) {
+    return exceedsStarterLimits(STARTER_PULL_LIMITS.seventh, pitchingState, fatiguePenalty, earnedRuns);
+  }
+
+  return exceedsStarterLimits(STARTER_PULL_LIMITS.sixth, pitchingState, fatiguePenalty, earnedRuns);
 };
 
 const shouldPullReliever = (
@@ -1774,6 +1906,30 @@ export const buildCompletedGameFromSession = (game: Game, session: GameSessionSt
       playLog: JSON.stringify(session.logs),
       lineScore: JSON.stringify(session.lineScore),
       participants: session.participants ? JSON.stringify(session.participants) : null,
+      /*
+       * EVERY PITCHER WHO THREW, not just the three decisions.
+       *
+       * This is the rest ledger. Without it the engine has no cross-game memory
+       * at all -- it knows a pitcher's pitch count inside one outing and nothing
+       * about the outing before -- so every arm was "fresh" every night and a
+       * single closer appeared in 154 games.
+       *
+       * It is read from the pitching stat deltas, NOT from the participant
+       * snapshot. That distinction is the whole ballgame: the snapshot holds the
+       * starter plus the entire bullpen roster, so reading it recorded every
+       * man on the club as having pitched every night. With all arms showing one
+       * day of rest, a minimum-rest rule can never be satisfied and silently
+       * never fires. A delta row exists only for a pitcher who faced a batter or
+       * was at least summoned from the bullpen, which is what "appeared" means.
+       *
+       * `game.stats` is a loose `Record`, so this needs no migration: games
+       * completed before it existed have no ledger, and their pitchers read as
+       * resting, which is exactly what the `daysRest` contract says an unknown
+       * rest history means.
+       */
+      pitchersUsed: JSON.stringify(Object.entries(session.playerStats.pitching)
+        .filter(([, line]) => line.games > 0)
+        .map(([playerId]) => playerId)),
       winningPitcherId: session.playerStats.winningPitcherId,
       losingPitcherId: session.playerStats.losingPitcherId,
       savePitcherId: session.playerStats.savePitcherId,

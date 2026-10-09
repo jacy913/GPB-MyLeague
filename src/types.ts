@@ -302,6 +302,18 @@ export interface GameParticipantPitcher {
   role: PitcherPosition;
   pitchingRatings: PlayerPitchingRatings;
   pitchingStat: PlayerSeasonPitching | null;
+  /**
+   * Days since this pitcher last appeared, or null when there is no record of
+   * one (a season opener, or a game saved before this was tracked).
+   *
+   * This is the only cross-game input the pitching engine has. Within a single
+   * outing `TeamPitchingState` knows everything; across outings nothing did, so
+   * the same arm was available every single night and one closer ended up
+   * appearing in 154 games. Null means "unknown", which is deliberately treated
+   * as fully rested rather than as ineligible -- an unknown rest history must
+   * not be able to empty a bullpen.
+   */
+  daysRest: number | null;
 }
 
 export interface GameParticipantsSnapshot {

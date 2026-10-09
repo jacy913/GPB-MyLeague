@@ -1,7 +1,7 @@
 import { Game, LeaguePlayerState, PlayoffGameDetails, PlayoffLeague, PlayoffRoundKey, SimulationSettings, SimulationTarget, Team } from '../types';
 import { addDaysToISODate } from './simulation';
 import { buildCompletedGameFromSession, createGameSession, simulateGameToFinal } from './gameEngine';
-import { buildGameParticipants, GameParticipantsBuildContext } from './gameParticipants';
+import { buildGameParticipants, buildPitcherRestIndex, readPitchersUsed, type GameParticipantsBuildContext } from './gameParticipants';
 import {
   applyPlayerGameStatDeltaToAccumulator,
   createPlayerStatAccumulator,
@@ -114,6 +114,16 @@ export class SimulationManager {
   private nextGameNumber: number;
   private readonly leagueSeedCache = new Map<Team['league'], SeededPlayoffTeam[]>();
   private readonly seedMapCache = new Map<Team['league'], Map<string, SeededPlayoffTeam>>();
+  /**
+   * Last date each pitcher appeared, maintained incrementally.
+   *
+   * Seeded once from the games already on the books, so a run that resumes
+   * mid-season inherits the rest history instead of starting every arm fresh.
+   * From then on `applyGameResult` folds each finished game in as it completes,
+   * which keeps this O(1) per game rather than re-reading the ledger of every
+   * completed game before every pregame.
+   */
+  private readonly pitcherRestByPlayerId: Map<string, string>;
 
   constructor(input: SimulationManagerInput) {
     this.settings = input.settings;
@@ -166,6 +176,9 @@ export class SimulationManager {
     this.currentDate = input.currentDate || this.seasonStartDate;
     this.allDates = this.buildAllDates();
     this.nextGameNumber = this.computeNextGameNumber();
+    // A sentinel past every real date, because this seed wants the WHOLE
+    // history rather than the history before some particular game.
+    this.pitcherRestByPlayerId = buildPitcherRestIndex(this.games, '9999-12-31');
   }
 
   private getLatestBattingRatingsByPlayerId() {
@@ -706,6 +719,9 @@ export class SimulationManager {
         ...this.participantBuildContext,
         battingStatsByPlayerId: this.playerStatAccumulator.preferredBattingByPhase[game.phase],
         pitchingStatsByPlayerId: this.playerStatAccumulator.preferredPitchingByPhase[game.phase],
+        // Only games finished before this one are in the map, because the run
+        // folds each result in as it goes.
+        lastPitchedDateByPlayerId: this.pitcherRestByPlayerId,
       },
     );
     const session = simulateGameToFinal(createGameSession(game, participants), awayTeam, homeTeam, this.settings);
@@ -715,6 +731,21 @@ export class SimulationManager {
     game.status = completedGame.status;
     game.score = { ...completedGame.score };
     game.stats = { ...game.stats, ...completedGame.stats };
+
+    /*
+     * FOLD THIS GAME INTO THE REST LEDGER.
+     *
+     * Read back off the completed game rather than off the session, so the
+     * ledger is driven by exactly the record that survives a save/load. A later
+     * date wins, because a game being completed out of order (a simulated day
+     * catching up on a postponed fixture) must not erase a newer appearance.
+     */
+    for (const playerId of readPitchersUsed(game)) {
+      const existing = this.pitcherRestByPlayerId.get(playerId);
+      if (existing === undefined || game.date > existing) {
+        this.pitcherRestByPlayerId.set(playerId, game.date);
+      }
+    }
 
     applyPlayerGameStatDeltaToAccumulator(
       this.playerStatAccumulator,
