@@ -2044,6 +2044,8 @@ const { resetWallet } = bettingSlip;
     stopDraftAutoRun,
     handleGenerateDraftClass,
     handleDraftNextPick,
+    handleDraftSpecificProspect,
+    readDraftClock,
     runDraftAuto,
     handleResetDraftBoard,
   } = useDraftCenterActions({
@@ -3748,6 +3750,10 @@ const { resetWallet } = bettingSlip;
     void handleDraftNextPick();
   }, [handleDraftNextPick]);
 
+  const draftSpecificProspectFromRouter = useCallback((playerId: string) => {
+    void handleDraftSpecificProspect(playerId);
+  }, [handleDraftSpecificProspect]);
+
   const autoDraftRoundFromRouter = useCallback(() => {
     runDraftAuto('round');
   }, [runDraftAuto]);
@@ -3838,6 +3844,8 @@ const { resetWallet } = bettingSlip;
     onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
     onDraftNextPick: draftNextPickFromRouter,
+    onDraftSpecificProspect: draftSpecificProspectFromRouter,
+    draftClock: readDraftClock(),
     onAutoDraftRound: autoDraftRoundFromRouter,
     onAutoDraftAll: autoDraftAllFromRouter,
     onStopAutoDraft: stopDraftAutoRun,

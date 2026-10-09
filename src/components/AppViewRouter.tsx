@@ -30,6 +30,7 @@ import { OffseasonHub } from './OffseasonHub';
 import { RetirementWall } from './RetirementWall';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
+import type { DraftClock } from './DraftCeremony';
 import { LotteryHub } from './LotteryHub';
 import { MapHub } from './MapHub';
 import { GameScreen } from './GameScreen';
@@ -226,6 +227,10 @@ interface AppViewRouterProps {
   onCompleteFreeAgency: () => void;
   onGenerateDraftClass: () => void;
   onDraftNextPick: () => void;
+  /** Make the pick on the clock, taking a named prospect. See `DraftCeremony` for why this exists. */
+  onDraftSpecificProspect: (playerId: string) => void;
+  /** Who is on the clock. Null when the board is empty, complete, or not yet drawn. */
+  draftClock: DraftClock | null;
   onAutoDraftRound: () => void;
   onAutoDraftAll: () => void;
   onStopAutoDraft: () => void;
@@ -382,6 +387,8 @@ export const AppViewRouter = ({
   onCompleteFreeAgency,
   onGenerateDraftClass,
   onDraftNextPick,
+  onDraftSpecificProspect,
+  draftClock,
   onAutoDraftRound,
   onAutoDraftAll,
   onStopAutoDraft,
@@ -692,6 +699,8 @@ export const AppViewRouter = ({
           isDraftOpen={isDraftOpen}
           onOpenLottery={() => onSetView('lottery')}
           onDraftNextPick={onDraftNextPick}
+          onDraftSpecificProspect={onDraftSpecificProspect}
+          draftClock={draftClock}
           onAutoDraftRound={onAutoDraftRound}
           onAutoDraftAll={onAutoDraftAll}
           onStopAutoDraft={onStopAutoDraft}

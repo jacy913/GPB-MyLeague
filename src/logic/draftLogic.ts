@@ -680,6 +680,21 @@ export const applyNextDraftPick = (
   playerState: LeaguePlayerState,
   teams: Team[],
   effectiveDate: string,
+  /**
+   * NAME THE PROSPECT THIS PICK TAKES, OR LEAVE IT UNSET AND TAKE THE BEST ONE.
+   *
+   * Everything else in this function is the CONSEQUENCE of a selection -- the waiver, the contract,
+   * the slot repair, the transaction -- and all of that must stay identical whichever prospect is
+   * chosen, or the manual and automatic paths would be two different drafts. So the override is
+   * applied at exactly one point: the line that picks the prospect. Every later step reads
+   * `selectedProspect` and cannot tell the difference.
+   *
+   * The default is unchanged and is still the best prospect available, which is what every automated
+   * path wants. An unknown playerId is IGNORED rather than throwing, because a stale id from a
+   * screen that was open while the board changed should fall back to the automatic pick rather than
+   * fail the pick outright.
+   */
+  forcedPlayerId?: string,
 ): DraftStepResult | null => {
   if (draftClass.isComplete || draftClass.prospects.length === 0 || draftClass.draftOrder.length === 0) {
     return null;
@@ -703,7 +718,7 @@ export const applyNextDraftPick = (
   const seasonRosterSlots = playerState.rosterSlots.filter((slot) => slot.seasonYear === seasonYear);
   const overallByPlayerId = getLatestOverallByPlayerId(playerState.battingRatings, playerState.pitchingRatings);
 
-  const selectedProspect = chooseProspectForPick(
+  const autoProspect = chooseProspectForPick(
     team,
     round,
     completedPickCount + 1,
@@ -712,6 +727,18 @@ export const applyNextDraftPick = (
     seasonRosterSlots,
     overallByPlayerId,
   );
+
+  /*
+   * A REQUESTED PROSPECT IS ONLY HONOURED IF IT IS STILL ON THE BOARD.
+   *
+   * The board shrinks with every pick, and a screen can be open across an auto-draft run or a board
+   * reset. A name that is no longer available falls back to the automatic choice instead of failing
+   * the pick, so the draft cannot be stalled by a stale click.
+   */
+  const requestedProspect = forcedPlayerId
+    ? draftClass.prospects.find((prospect) => prospect.playerId === forcedPlayerId) ?? null
+    : null;
+  const selectedProspect = requestedProspect ?? autoProspect;
   if (!selectedProspect) {
     return null;
   }

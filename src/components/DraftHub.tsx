@@ -3,6 +3,7 @@ import { AlertTriangle, Clock3, Play, RotateCcw, Search, ShieldAlert, SkipForwar
 import { Team } from '../types';
 import { DRAFT_LOTTERY_TEAM_COUNT, DraftClassState, DraftHistoryEntry } from '../logic/draftLogic';
 import { Meter, Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import { DraftCeremony, type DraftClock } from './DraftCeremony';
 
 interface DraftHubProps {
   teams: Team[];
@@ -14,6 +15,10 @@ interface DraftHubProps {
   isDraftOpen: boolean;
   onOpenLottery: () => void;
   onDraftNextPick: () => void;
+  /** Make the pick on the clock, taking a named prospect rather than the best available. */
+  onDraftSpecificProspect: (playerId: string) => void;
+  /** Who is choosing, and what slot they hold. Null when nobody is on the clock. */
+  draftClock: DraftClock | null;
   onAutoDraftRound: () => void;
   onAutoDraftAll: () => void;
   onStopAutoDraft: () => void;
@@ -47,6 +52,8 @@ export const DraftHub: React.FC<DraftHubProps> = ({
   isDraftOpen,
   onOpenLottery,
   onDraftNextPick,
+  onDraftSpecificProspect,
+  draftClock,
   onAutoDraftRound,
   onAutoDraftAll,
   onStopAutoDraft,
@@ -152,6 +159,24 @@ export const DraftHub: React.FC<DraftHubProps> = ({
           </div>
         </div>
       </Panel>
+
+      {/*
+        THE CEREMONY COMES FIRST; THE INSTRUMENTS STAY BELOW IT.
+
+        The panel above says who is choosing and what is available. The search box, the prospects
+        table and the auto-draft controls are the machinery for working through it, and leading with
+        the machinery is what made this screen read as a database rather than a draft.
+      */}
+      <DraftCeremony
+        draftClass={draftClass}
+        teamsById={teamsById}
+        clock={draftClock}
+        recentPicks={draftClass?.picks ?? []}
+        isDraftProcessing={isDraftProcessing}
+        isDraftOpen={isDraftOpen}
+        onTakeBest={onDraftNextPick}
+        onTakeProspect={onDraftSpecificProspect}
+      />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_420px]">
         <Panel className="overflow-hidden">

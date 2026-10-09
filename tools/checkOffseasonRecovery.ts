@@ -49,7 +49,12 @@ import {
 } from '../src/logic/simulation';
 import { SimulationManager } from '../src/logic/simulationManager';
 import { isPlayoffGame, isRegularSeasonGame } from '../src/logic/playoffs';
-import { createDraftClassState, generateDraftClassBundle, DRAFT_ROUNDS } from '../src/logic/draftLogic';
+import {
+  createDraftClassState,
+  generateDraftClassBundle,
+  applyNextDraftPick,
+  DRAFT_ROUNDS,
+} from '../src/logic/draftLogic';
 import { applyOffseasonRetirements } from '../src/logic/offseasonFreeAgency';
 import { collectRetirements, tierRetirements } from '../src/lib/retirements';
 import { resolveSeasonYear } from '../src/lib/seasonYear';
@@ -555,6 +560,80 @@ const main = async () => {
     decoyTrades.length === 3,
     `${decoyTrades.length} trade cards -- the real pair, plus two that correctly refused to pair`,
     'a date-only match would fuse them into one invented blockbuster',
+  );
+
+  // ============================================================================
+  // A NAMED PICK MUST PRODUCE THE SAME CONSEQUENCE AS AN AUTOMATIC ONE
+  // ============================================================================
+  //
+  // `applyNextDraftPick` grew a `forcedPlayerId`. Everything after the choice -- the waiver, the
+  // contract, the roster-slot repair, the transaction -- reads `selectedProspect` and must behave
+  // identically whichever prospect was taken. If the override had been threaded through more of the
+  // function than the one line that picks, a manual pick would quietly write a different roster than
+  // an automatic one.
+  const draftTeams = rivalTeams;
+  const draftBundle = generateDraftClassBundle(YEAR, 40);
+  const draftState: LeaguePlayerState = {
+    ...save.playerState,
+    players: [...save.playerState.players, ...draftBundle.players],
+    battingRatings: [...save.playerState.battingRatings, ...draftBundle.battingRatings],
+    pitchingRatings: [...save.playerState.pitchingRatings, ...draftBundle.pitchingRatings],
+    battingStats: [...save.playerState.battingStats, ...draftBundle.battingStats],
+    pitchingStats: [...save.playerState.pitchingStats, ...draftBundle.pitchingStats],
+  };
+  const draftBoard = createDraftClassState(YEAR, draftTeams, draftBundle.prospects);
+
+  const automaticPick = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`);
+  check(
+    'the automatic pick still works and is unchanged',
+    Boolean(automaticPick),
+    automaticPick ? `round ${automaticPick.draftClass.picks[0]?.round}, ${automaticPick.draftClass.picks.length} pick made` : 'returned null',
+    'every existing caller depends on this path and must be unaffected by the override',
+  );
+
+  /*
+   * FORCE THE WORST PROSPECT ON THE BOARD.
+   *
+   * Not the second-best, not a near miss -- the last one by potential. Every property of the result
+   * that is NOT "who was chosen" must match the automatic pick exactly, and only then does the
+   * override look like a selection rather than a fork in the simulation.
+   */
+  const worstProspect = [...draftBoard.prospects]
+    .sort((left, right) => left.potentialOverall - right.potentialOverall)[0];
+  const forcedPick = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`, worstProspect?.playerId);
+  const automaticRecord = automaticPick?.draftClass.picks[0];
+  const forcedRecord = forcedPick?.draftClass.picks[0];
+  check(
+    'a named pick takes the named prospect',
+    forcedRecord?.playerId === worstProspect?.playerId && forcedRecord?.playerId !== automaticRecord?.playerId,
+    `forced ${forcedRecord?.playerName ?? 'none'} over automatic ${automaticRecord?.playerName ?? 'none'}`,
+  );
+  check(
+    'and the surrounding pick record is identical, so only the name differs',
+    Boolean(forcedRecord && automaticRecord)
+    && forcedRecord.round === automaticRecord.round
+    && forcedRecord.pickInRound === automaticRecord.pickInRound
+    && forcedRecord.overallPick === automaticRecord.overallPick
+    && forcedRecord.teamId === automaticRecord.teamId
+    && forcedRecord.date === automaticRecord.date,
+    forcedRecord && automaticRecord
+      ? `both R${forcedRecord.round} P${forcedRecord.pickInRound} #${forcedRecord.overallPick} to ${forcedRecord.teamId}`
+      : 'a pick is missing',
+    'the waiver, slot repair and transaction all read the chosen prospect, so a difference here would mean the override forked the simulation',
+  );
+  check(
+    'a stale prospect id falls back to the automatic pick instead of failing the slot',
+    (() => {
+      const stale = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`, 'no-such-player');
+      return stale?.draftClass.picks[0]?.playerId === automaticRecord?.playerId;
+    })(),
+    'a board that moved while a screen was open falls back rather than stalling the draft',
+  );
+  check(
+    'the forced pick produced a drafted transaction for the named player',
+    (forcedPick?.playerState.transactions ?? [])
+      .some((transaction) => transaction.playerId === worstProspect?.playerId && transaction.eventType === 'drafted'),
+    'the log has to agree with the board, or the winter feed and the archive disagree',
   );
 
   // -- 8. determinism ------------------------------------------------------------------

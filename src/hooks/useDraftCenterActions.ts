@@ -50,6 +50,16 @@ interface UseDraftCenterActionsResult {
   stopDraftAutoRun: () => void;
   handleGenerateDraftClass: () => Promise<void>;
   handleDraftNextPick: () => Promise<void>;
+  /** Make the pick on the clock, taking the named prospect rather than the best available. */
+  handleDraftSpecificProspect: (playerId: string) => Promise<void>;
+  /** Who is choosing, and what slot they hold. Null when nobody is on the clock. */
+  readDraftClock: () => {
+    teamId: string;
+    round: number;
+    pickInRound: number;
+    overallPick: number;
+    remaining: number;
+  } | null;
   runDraftAuto: (scope: 'round' | 'full') => void;
   handleResetDraftBoard: () => Promise<void>;
 }
@@ -98,7 +108,45 @@ export const useDraftCenterActions = ({
     }
   }, []);
 
-  const executeDraftBatch = useCallback((pickCount: number) => {
+  /**
+   * Resolve the team on the clock, and the round and slot it holds.
+   *
+   * Shared by the ceremony panel and the pick handler, because both are answers to the same question
+   * -- "who is choosing, and what are they choosing from" -- and two implementations of it would be
+   * able to disagree about which pick is next.
+   */
+  const readDraftClock = useCallback((): {
+    teamId: string;
+    round: number;
+    pickInRound: number;
+    overallPick: number;
+    remaining: number;
+  } | null => {
+    const activeDraftClass = draftCenterRef.current.activeClass;
+    if (!activeDraftClass || activeDraftClass.isComplete || activeDraftClass.draftOrder.length === 0) {
+      return null;
+    }
+    const completed = activeDraftClass.picks.length;
+    const totalPicks = Math.min(activeDraftClass.totalPicks, activeDraftClass.draftOrder.length * DRAFT_ROUNDS);
+    if (completed >= totalPicks) {
+      return null;
+    }
+    return {
+      teamId: activeDraftClass.draftOrder[completed % activeDraftClass.draftOrder.length] ?? '',
+      round: Math.floor(completed / activeDraftClass.draftOrder.length) + 1,
+      pickInRound: (completed % activeDraftClass.draftOrder.length) + 1,
+      overallPick: completed + 1,
+      remaining: totalPicks - completed,
+    };
+  }, [draftCenterRef]);
+
+  /**
+   * MAKE ONE PICK, NAMING WHO TAKES IT.
+   *
+   * `forcedPlayerId` is optional and absent means "the best one available", which is what every
+   * existing caller does -- so the automatic paths are untouched by this existing at all.
+   */
+  const executeDraftBatch = useCallback((pickCount: number, forcedPlayerId?: string) => {
     const activeDraftClass = draftCenterRef.current.activeClass;
     if (!activeDraftClass || activeDraftClass.isComplete || pickCount <= 0) {
       return { applied: 0, completed: Boolean(activeDraftClass?.isComplete), nextPlayerState: null as LeaguePlayerState | null };
@@ -114,7 +162,16 @@ export const useDraftCenterActions = ({
     let applied = 0;
 
     for (let index = 0; index < pickCount; index += 1) {
-      const stepResult = applyNextDraftPick(workingDraftClass, workingPlayerState, teams, effectiveDate);
+      const stepResult = applyNextDraftPick(
+        workingDraftClass,
+        workingPlayerState,
+        teams,
+        effectiveDate,
+        // Only ever applied to the FIRST pick of a batch. A named prospect is a statement about one
+        // slot; letting it apply to every pick in an auto-run would make a single click reorder the
+        // rest of the draft.
+        index === 0 ? forcedPlayerId : undefined,
+      );
       if (!stepResult) {
         break;
       }
@@ -313,6 +370,39 @@ export const useDraftCenterActions = ({
     pushNotice(result.completed ? 'Draft complete.' : 'Draft pick processed.', 'success');
   }, [currentDate, draftOpenDate, executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, saveSupabasePlayerState]);
 
+  /**
+   * MAKE THE PICK ON THE CLOCK, TAKING A NAMED PROSPECT.
+   *
+   * The ceremony panel's whole reason to exist. It resolves the clock first and refuses if there is
+   * nobody choosing, so a stale button cannot spend a pick.
+   */
+  const handleDraftSpecificProspect = useCallback(async (playerId: string) => {
+    if (isDraftProcessing) {
+      return;
+    }
+    if (!readDraftClock()) {
+      pushNotice('Nobody is on the clock. Generate a class first.', 'warning');
+      return;
+    }
+    const result = executeDraftBatch(1, playerId);
+    if (result.applied === 0 || !result.nextPlayerState) {
+      pushNotice('That prospect is no longer available, so the best remaining player was taken instead.', 'warning');
+      return;
+    }
+
+    try {
+      if (isSupabaseConfigured) {
+        await saveSupabasePlayerState(result.nextPlayerState);
+      }
+    } catch (error) {
+      console.error('Failed to persist chosen draft pick:', error);
+      pushNotice('Pick applied locally, but syncing player state failed.', 'warning');
+      return;
+    }
+
+    pushNotice(result.completed ? 'Draft complete.' : 'Pick made.', 'success');
+  }, [executeDraftBatch, isDraftProcessing, isSupabaseConfigured, pushNotice, readDraftClock, saveSupabasePlayerState]);
+
   const runDraftAuto = useCallback((scope: 'round' | 'full') => {
     const activeClass = draftCenterRef.current.activeClass;
     if (!activeClass || activeClass.isComplete || isDraftProcessing) {
@@ -439,6 +529,8 @@ export const useDraftCenterActions = ({
     stopDraftAutoRun,
     handleGenerateDraftClass,
     handleDraftNextPick,
+    handleDraftSpecificProspect,
+    readDraftClock,
     runDraftAuto,
     handleResetDraftBoard,
   };
