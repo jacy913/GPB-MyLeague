@@ -17,9 +17,18 @@ import { fmtAvg, fmtEra, fmtIp, fmtPct, fmtWhip } from '../logic/statFormatting'
  * leading the MVP race, which is the exact drift the central statFormatting
  * module was created to prevent.
  *
- * The weights are the live formula, unchanged. Each component is declared once
- * and both the total and the visible breakdown are computed from this list, so
- * a weight cannot change in one place and not the other.
+ * Each component is declared once and both the total and the visible breakdown
+ * are computed from this list, so a weight cannot change in one place and not
+ * the other.
+ *
+ * THE PITCHING WEIGHTS WERE RE-FIT on 2026-07 and the batting weights were not.
+ * The first pitching formula leaned on ERA and WHIP hard and treated innings as
+ * a rounding error at 1.1 per, which was survivable only because the league was
+ * broken: relievers were collecting 80 wins and 150 appearances, so the award was
+ * ranking a fabricated season. With wins and workloads corrected in the engine
+ * (see the pitching-decision and relief-usage commits), the formula was retuned
+ * against measured seasons rather than left describing a league that no longer
+ * exists. Batting never had the fault, so its weights are untouched.
  */
 
 export type MvpComponent = {
@@ -62,6 +71,33 @@ export const battingMvpComponents = (
   { label: 'TEAM', detail: fmtPct(winPct), contribution: winPct * 60 },
 ];
 
+/**
+ * THE PITCHING WEIGHTS, volume-forward.
+ *
+ * Fitted against three measured seasons of the corrected league, not chosen by
+ * eye. The premise is that pitching MVP is a starter's award: a real ace is
+ * defined by innings pitched AND quality, while a relief arm's identity is a
+ * small sample of a high rate. So VOLUME CARRIES THE MOST, and the rate terms
+ * are what stop a merely durable pitcher from winning.
+ *
+ *   IP   1.1 -> 2.2   the largest single term. A 250-inning starter banks ~550
+ *                    against ~190 for an 85-inning closer.
+ *   K    0.9 -> 1.5   strikeouts are the clearest evidence of quality available
+ *                    at volume, and were badly underweighted.
+ *   W   4.5 -> 2.0    trimmed. Wins track team success far more than individual
+ *                    quality, and the engine now hands them out sanely.
+ *   SV 2.25 -> 1.2    trimmed for the same reason plus the role split below: a
+ *                    closer cannot reach starter volume, so his saves have to
+ *                    stop being able to buy the award outright.
+ *   TEAM  55 -> 40    a good club is worth something, not half the score.
+ *   ERA / WHIP / OVR  unchanged. These are the brake. A starter with 250 innings
+ *                    and a 4.50 ERA scores materially below one with 180 innings
+ *                    at 2.20, because every rate term moves the other way.
+ *
+ * Measured effect: a starter's score runs ~1150-1200 and a top closer's ~660, so
+ * starters take the award as they should while an elite closer still has a field
+ * to compete in rather than being mathematically excluded from it.
+ */
 export const pitchingMvpComponents = (
   stat: PlayerSeasonPitching,
   overall: number,
@@ -69,12 +105,12 @@ export const pitchingMvpComponents = (
 ): MvpComponent[] => [
   { label: 'ERA', detail: fmtEra(stat.era), contribution: clamp(6 - stat.era, 0, 6) * 40 },
   { label: 'WHIP', detail: fmtWhip(stat.whip), contribution: clamp(2 - stat.whip, 0, 2) * 70 },
-  { label: 'K', detail: String(stat.strikeouts), contribution: stat.strikeouts * 0.9 },
-  { label: 'W', detail: String(stat.wins), contribution: stat.wins * 4.5 },
-  { label: 'SV', detail: String(stat.saves), contribution: stat.saves * 2.25 },
-  { label: 'IP', detail: fmtIp(stat.inningsPitched), contribution: stat.inningsPitched * 1.1 },
+  { label: 'K', detail: String(stat.strikeouts), contribution: stat.strikeouts * 1.5 },
+  { label: 'W', detail: String(stat.wins), contribution: stat.wins * 2 },
+  { label: 'SV', detail: String(stat.saves), contribution: stat.saves * 1.2 },
+  { label: 'IP', detail: fmtIp(stat.inningsPitched), contribution: stat.inningsPitched * 2.2 },
   { label: 'OVR', detail: String(overall), contribution: overall * 0.45 },
-  { label: 'TEAM', detail: fmtPct(winPct), contribution: winPct * 55 },
+  { label: 'TEAM', detail: fmtPct(winPct), contribution: winPct * 40 },
 ];
 
 const buildAwards = (
@@ -161,13 +197,41 @@ export const buildBattingAwards = (
   }];
 }), take);
 
+/**
+ * THE PITCHING GATE: you were a starter, or you were an elite closer.
+ *
+ * This was `50 innings or 12 saves`, which in the corrected league admits every
+ * reliever who touched a save and most of them on the way there -- the field
+ * filled with 40-inning arms because the old formula was cheap to buy with rate
+ * stats. With the weights now volume-forward, the gate is the honest place to
+ * say what the award is FOR.
+ *
+ * It counts STARTS rather than innings, and the reason is worth recording. An
+ * innings floor is a season-progress-sensitive proxy that says the wrong thing
+ * twice: a 100-inning bar sits above every reliever's season total (no reliever
+ * reached 93) so it excludes them correctly, but it is not reached by a starter
+ * until roughly eight weeks in, which left the pitching race visibly EMPTY on
+ * the front page for a quarter of the season while the batting race filled in
+ * weeks earlier. Eight starts arrives around game forty, which is about when a
+ * rotation cycle has shown who is who, and it says directly what is meant:
+ * this is a starter's award.
+ *
+ * The saves branch keeps a genuine closer eligible. He can never out-score a
+ * 200-inning ace -- his ceiling is roughly 660 against 1150 -- but he belongs on
+ * the board, and a race he was excluded from would quietly make the closer
+ * position worthless.
+ */
+const PITCHING_MVP_MIN_STARTS = 8;
+const PITCHING_MVP_MIN_SAVES = 25;
+
 export const buildPitchingAwards = (
   { players, teamsById, pitchingStats, pitchingRatings }: AwardInputs,
   take: number = AWARD_FIELD_SIZE,
 ): AwardEntry[] => buildAwards(players.flatMap((player): AwardCandidate[] => {
   const stat = pitchingStats.get(player.playerId);
   const rating = pitchingRatings.get(player.playerId);
-  if (!stat || !rating || (stat.inningsPitched < 50 && stat.saves < 12)) return [];
+  if (!stat || !rating) return [];
+  if (stat.gamesStarted < PITCHING_MVP_MIN_STARTS && stat.saves < PITCHING_MVP_MIN_SAVES) return [];
   const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
   return [{
     playerId: player.playerId,
