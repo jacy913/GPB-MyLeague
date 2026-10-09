@@ -268,6 +268,20 @@ const buildTeamRosterContext = (
     .filter((entry): entry is TeamRosterEntry => entry !== null)
     .filter((entry) => entry.player.playerType === 'pitcher' && Boolean(entry.pitchingRatings))
     .sort((left, right) => getPitchingTrendScore(right) - getPitchingTrendScore(left));
+  /*
+   * WHO IS IN THE ROTATION TONIGHT, BY PLAYER ID.
+   *
+   * Deliberately not a check on `player.primaryPosition`. A reliever who was
+   * previously a starter keeps an SP primary position after dropping to the
+   * pen, and a promoted prospect is the reverse, so the SLOT is what says which
+   * job a man holds tonight, and the slot is the only thing that is rewritten by
+   * a trade or a roster move.
+   */
+  const rotationPlayerIds = new Set(
+    STARTING_PITCHER_SLOTS
+      .map((slotCode) => rosterBySlot.get(slotCode)?.player.playerId ?? null)
+      .filter((playerId): playerId is string => playerId !== null),
+  );
   const allPitcherEntries = rosterEntries
     .filter((entry) => entry.player.playerType === 'pitcher' && Boolean(entry.pitchingRatings))
     .sort((left, right) => getPitchingTrendScore(right) - getPitchingTrendScore(left));
@@ -278,9 +292,33 @@ const buildTeamRosterContext = (
   const chosenStarterEntry = slottedStarterEntries.length > 0
     ? slottedStarterEntries[teamGameIndex % slottedStarterEntries.length] ?? slottedStarterEntries[0]
     : allPitcherEntries[teamGameIndex % Math.max(1, allPitcherEntries.length)] ?? allPitcherEntries[0] ?? null;
+  /*
+   * THE ROTATION DOES NOT RELIEVE.
+   *
+   * This pool used to be the bullpen slots PLUS every other pitcher on the
+   * roster minus whoever was starting, which put SP1-SP5 into the relief pool on
+   * their off-days. `pickBullpenArm` ranks by overall, so on nearly every day he
+   * was not starting, a starter was simply the best available arm, and the same
+   * five men threw both the starts and the finishes.
+   *
+   * One simulated season of that produced a club where five pitchers each had 30+
+   * starts AND 110+ appearances, a closer who appeared in 154 games, and a
+   * league-wide top five in wins that was entirely relief arms -- with starters
+   * at zero wins apiece.
+   *
+   * The rule is baseball's, not a tuning choice: a relief appearance is a
+   * different job, and the rotation has already spent its innings by the time
+   * anybody is called on. So the pool is the bullpen slots, and the depth behind
+   * them is the best remaining pitcher who is NOT in tonight's rotation. That
+   * depth term is what keeps a thin or unfilled bullpen from stalling a game, and
+   * it is scoped to non-rotation arms for the same reason the pool is.
+   */
   const bullpen = dedupeRosterEntries([
     ...bullpenEntries,
-    ...allPitcherEntries.filter((entry) => entry.player.playerId !== chosenStarterEntry?.player.playerId),
+    ...allPitcherEntries.filter((entry) => (
+      entry.player.playerId !== chosenStarterEntry?.player.playerId
+      && !rotationPlayerIds.has(entry.player.playerId)
+    )),
   ])
     .map(toPitcherParticipant)
     .filter((entry): entry is GameParticipantPitcher => entry !== null);

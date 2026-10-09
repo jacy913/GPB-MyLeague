@@ -97,8 +97,13 @@ const createEmptyBroadcastSession = (
   bases: { first: null, second: null, third: null },
   awayBatterIndex: 0,
   homeBatterIndex: 0,
-  awayPitching: { currentPitcherId: participants?.awayStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [] },
-  homePitching: { currentPitcherId: participants?.homeStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [] },
+  awayPitching: { currentPitcherId: participants?.awayStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [], entryLead: 0, entryRunsAgainst: 0 },
+  homePitching: { currentPitcherId: participants?.homeStarter?.playerId ?? null, pitchCount: 0, battersFaced: 0, enteredInning: 1, bullpenUsedIds: [], entryLead: 0, entryRunsAgainst: 0 },
+  // Fresh, and never advanced. This is the broadcast shell for a game that has
+  // either not been played or is already decided; the decisions are read from
+  // the persisted box score, never recomputed from this object.
+  awayLeadPitcherId: null,
+  homeLeadPitcherId: null,
   scoreboard: {
     awayRuns: 0,
     homeRuns: 0,

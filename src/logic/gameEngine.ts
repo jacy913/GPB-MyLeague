@@ -150,17 +150,43 @@ const addRuns = (session: GameSessionState, runsScored: number): GameSessionStat
   }
 
   const isAwayBatting = session.half === 'top';
-  const scoreboard = {
-    ...session.scoreboard,
-    awayRuns: isAwayBatting ? session.scoreboard.awayRuns + runsScored : session.scoreboard.awayRuns,
-    homeRuns: !isAwayBatting ? session.scoreboard.homeRuns + runsScored : session.scoreboard.homeRuns,
-  };
+  const scoringTeamId = isAwayBatting ? session.awayTeamId : session.homeTeamId;
+  const runsBefore = isAwayBatting ? session.scoreboard.awayRuns : session.scoreboard.homeRuns;
+  const runsAgainstBefore = isAwayBatting ? session.scoreboard.homeRuns : session.scoreboard.awayRuns;
 
-  return {
+  const withScore: GameSessionState = {
     ...session,
-    scoreboard,
+    scoreboard: {
+      ...session.scoreboard,
+      awayRuns: isAwayBatting ? session.scoreboard.awayRuns + runsScored : session.scoreboard.awayRuns,
+      homeRuns: !isAwayBatting ? session.scoreboard.homeRuns + runsScored : session.scoreboard.homeRuns,
+    },
     lineScore: updateLineScore(session.lineScore, session.inning, session.half, runsScored),
   };
+
+  /*
+   * GOING AHEAD RECORDS A PITCHER OF RECORD -- AND ONLY WHEN NEWLY AHEAD.
+   *
+   * A side that already leads and adds to it keeps the pitcher who first got
+   * them there; a lead is not re-earned run by run. A side that only ties the
+   * game has earned nothing, so it is the RETAKING that restores a record. This
+   * is what makes a comeback win credit the pitcher who was on the mound at the
+   * moment of the go-ahead run rather than whoever happened to still be there
+   * when the game ended.
+   *
+   * The pitcher captured is the pitching side's own `currentPitcherId`, because
+   * the side taking the lead is the side currently BATTING -- so their pitcher
+   * is the one who threw the most recent half-inning.
+   */
+  const takesTheLead = runsBefore <= runsAgainstBefore && runsBefore + runsScored > runsAgainstBefore;
+  if (!takesTheLead) {
+    return withScore;
+  }
+
+  const leadPitcherId = getTeamPitchingState(session, scoringTeamId).currentPitcherId;
+  return isAwayBatting
+    ? { ...withScore, awayLeadPitcherId: leadPitcherId }
+    : { ...withScore, homeLeadPitcherId: leadPitcherId };
 };
 
 const getPitchingParticipants = (
@@ -182,6 +208,20 @@ const getPitchingParticipants = (
 
 const getTeamPitchingState = (session: GameSessionState, teamId: string) =>
   teamId === session.awayTeamId ? session.awayPitching : session.homePitching;
+
+/** This side's margin: runs scored less runs conceded. Negative means behind. */
+const getTeamLeadAt = (session: GameSessionState, teamId: string): number => {
+  const isAway = teamId === session.awayTeamId;
+  const own = isAway ? session.scoreboard.awayRuns : session.scoreboard.homeRuns;
+  const against = isAway ? session.scoreboard.homeRuns : session.scoreboard.awayRuns;
+  return own - against;
+};
+
+/** Runs this side had already surrendered before its current pitcher took over. */
+const getTeamRunsAgainstAt = (session: GameSessionState, teamId: string): number => {
+  const isAway = teamId === session.awayTeamId;
+  return isAway ? session.scoreboard.homeRuns : session.scoreboard.awayRuns;
+};
 
 const withTeamPitchingState = (
   session: GameSessionState,
@@ -702,6 +742,10 @@ const makePitchingChange = (
     bullpenUsedIds: pitchingState.bullpenUsedIds.includes(pitcher.playerId)
       ? [...pitchingState.bullpenUsedIds]
       : [...pitchingState.bullpenUsedIds, pitcher.playerId],
+    // The situation he is walking INTO, which is what rule 8.04(c) later asks
+    // about. Captured here because this is the only moment it is knowable.
+    entryLead: getTeamLeadAt(session, teamId),
+    entryRunsAgainst: getTeamRunsAgainstAt(session, teamId),
   };
   const nextSession = withTeamPitchingState(session, teamId, nextState);
   if (!pitchingState.bullpenUsedIds.includes(pitcher.playerId)) {
@@ -1084,28 +1128,105 @@ const isWalkOff = (session: GameSessionState): boolean =>
   session.inning >= 9 &&
   session.scoreboard.homeRuns > session.scoreboard.awayRuns;
 
+/**
+ * THE SAVE, per rule 8.04(c).
+ *
+ * A save is a claim about the SITUATION THE RELIEVER ENTERED, not about the
+ * final line, and all four branches are here: a clean sheet, a one-run lead, a
+ * two-run lead, or a three-run lead finished having worked at least one inning.
+ * The version this replaces tested only the FINAL margin, which is why a
+ * closer in a sampled season finished with 83 wins and 49 saves.
+ *
+ * Three exclusions, each of which a person would catch instantly: the winning
+ * pitcher, who by definition may not also save; the starter; and a reliever who
+ * was on the mound but never faced a batter, who did not do anything.
+ */
+const resolveSavePitcher = (
+  session: GameSessionState,
+  winningTeamId: string,
+  winningPitcherId: string | null,
+  finishingPitcherId: string | null,
+): string | null => {
+  if (!finishingPitcherId || finishingPitcherId === winningPitcherId) {
+    return null;
+  }
+
+  if (finishingPitcherId === getTeamStarter(session, winningTeamId)?.playerId) {
+    return null;
+  }
+
+  const pitchingState = getTeamPitchingState(session, winningTeamId);
+  if (pitchingState.battersFaced === 0) {
+    return null;
+  }
+
+  const entryLead = pitchingState.entryLead;
+  const entryRunsAgainst = pitchingState.entryRunsAgainst;
+  if (entryLead === null || entryRunsAgainst === null || entryLead <= 0) {
+    return null;
+  }
+
+  const runMargin = Math.abs(session.scoreboard.awayRuns - session.scoreboard.homeRuns);
+  const qualifies =
+    (entryRunsAgainst === 0 && runMargin <= 3)
+    || entryLead === 1
+    || entryLead === 2
+    || (entryLead === 3 && runMargin <= 3 && pitchingState.battersFaced >= 3);
+
+  return qualifies ? finishingPitcherId : null;
+};
+
+/**
+ * THE DECISIONS: win, loss, save.
+ *
+ * The win used to go to `currentPitcherId` at the final out. Because the engine
+ * pulls starters by the sixth or seventh, that handed nearly every decision to
+ * the closer: a sampled season produced six starters with 280 innings each on
+ * ZERO wins, relief arms on 65-83, and 30 pitchers holding 50+ wins alongside
+ * 30+ saves -- which is impossible, because nobody wins and saves the same game.
+ *
+ * The win is now the GO-AHEAD PITCHER recorded at the moment that side took the
+ * lead (`awayLeadPitcherId` / `homeLeadPitcherId`). That is baseball's own rule,
+ * and it also delivers the starter-5-innings exemption without special-casing
+ * it: a starter who leaves ahead and never gives the lead back IS the go-ahead
+ * pitcher, so he is the one credited.
+ *
+ * The LOSS stays with the pitcher who was on the mound at the end, which is
+ * already the right answer and was never the problem.
+ */
 const assignPitcherDecision = (session: GameSessionState) => {
   const awayPitcherId = session.awayPitching.currentPitcherId;
   const homePitcherId = session.homePitching.currentPitcherId;
   const winningTeamId = session.scoreboard.awayRuns > session.scoreboard.homeRuns ? session.awayTeamId : session.homeTeamId;
   const losingTeamId = winningTeamId === session.awayTeamId ? session.homeTeamId : session.awayTeamId;
-  const winningPitcherId = winningTeamId === session.awayTeamId ? awayPitcherId : homePitcherId;
+  const finishingPitcherId = winningTeamId === session.awayTeamId ? awayPitcherId : homePitcherId;
   const losingPitcherId = losingTeamId === session.awayTeamId ? awayPitcherId : homePitcherId;
+
+  /*
+   * The go-ahead pitcher falls back to whoever finished.
+   *
+   * A forfeit, or a game terminated before any side went ahead, can reach
+   * `completeGame` with no lead ever recorded, and crediting that win to nobody
+   * would silently lose a decision from the box score.
+   */
+  const winningPitcherId = (
+    winningTeamId === session.awayTeamId ? session.awayLeadPitcherId : session.homeLeadPitcherId
+  ) ?? finishingPitcherId;
 
   session.playerStats.winningPitcherId = winningPitcherId;
   session.playerStats.losingPitcherId = losingPitcherId;
 
-  if (session.playerStats.winningPitcherId) {
-    ensurePitchingDelta(session, session.playerStats.winningPitcherId).wins += 1;
+  if (winningPitcherId) {
+    ensurePitchingDelta(session, winningPitcherId).wins += 1;
   }
-  if (session.playerStats.losingPitcherId) {
-    ensurePitchingDelta(session, session.playerStats.losingPitcherId).losses += 1;
+  if (losingPitcherId) {
+    ensurePitchingDelta(session, losingPitcherId).losses += 1;
   }
 
-  const runMargin = Math.abs(session.scoreboard.awayRuns - session.scoreboard.homeRuns);
-  if (runMargin <= 3 && winningPitcherId && winningPitcherId !== getTeamStarter(session, winningTeamId)?.playerId) {
-    session.playerStats.savePitcherId = winningPitcherId;
-    ensurePitchingDelta(session, winningPitcherId).saves += 1;
+  const savePitcherId = resolveSavePitcher(session, winningTeamId, winningPitcherId, finishingPitcherId);
+  if (savePitcherId) {
+    session.playerStats.savePitcherId = savePitcherId;
+    ensurePitchingDelta(session, savePitcherId).saves += 1;
   }
 };
 
@@ -1218,6 +1339,11 @@ export const createGameSession = (
     battersFaced: 0,
     enteredInning: 1,
     bullpenUsedIds: [],
+    // A starter begins with the score level and nothing surrendered. The value
+    // is recorded honestly rather than left null so the shape is uniform, and
+    // the save rule excludes the starter explicitly regardless.
+    entryLead: 0,
+    entryRunsAgainst: 0,
   },
   homePitching: {
     currentPitcherId: participants?.homeStarter?.playerId ?? null,
@@ -1225,7 +1351,11 @@ export const createGameSession = (
     battersFaced: 0,
     enteredInning: 1,
     bullpenUsedIds: [],
+    entryLead: 0,
+    entryRunsAgainst: 0,
   },
+  awayLeadPitcherId: null,
+  homeLeadPitcherId: null,
   scoreboard: {
     awayRuns: game.status === 'completed' ? game.score.away : 0,
     homeRuns: game.status === 'completed' ? game.score.home : 0,
@@ -1272,6 +1402,18 @@ export const hydrateGameSessionFromGame = (game: Game): GameSessionState | null 
       lineScore,
       logs: logs.map((log) => ({ ...log, bases: normalizeBases(log.bases) })),
       nextEventSeq: logs.length + 1,
+      /*
+       * `awayLeadPitcherId` / `homeLeadPitcherId` and the `entry*` fields stay at
+       * their fresh values here, and that is deliberate.
+       *
+       * This rebuild exists so a finished game can be shown as a broadcast. The
+       * decisions are already decided and already persisted on `game.stats` --
+       * winningPitcherId, losingPitcherId, savePitcherId -- and this screen reads
+       * those, so nothing is ever recomputed from a hydrated session. Replaying
+       * the log to reconstruct a decision that is already recorded would add a
+       * second, non-authoritative implementation of the rule to disagree with the
+       * first.
+       */
     };
   } catch {
     return null;
@@ -1295,6 +1437,8 @@ export const startGameSession = (session: GameSessionState): GameSessionState =>
       battersFaced: 0,
       enteredInning: 1,
       bullpenUsedIds: [],
+      entryLead: 0,
+      entryRunsAgainst: 0,
     },
     homePitching: {
       currentPitcherId: session.participants?.homeStarter?.playerId ?? null,
@@ -1302,7 +1446,11 @@ export const startGameSession = (session: GameSessionState): GameSessionState =>
       battersFaced: 0,
       enteredInning: 1,
       bullpenUsedIds: [],
+      entryLead: 0,
+      entryRunsAgainst: 0,
     },
+    awayLeadPitcherId: null,
+    homeLeadPitcherId: null,
     scoreboard: {
       awayRuns: 0,
       homeRuns: 0,

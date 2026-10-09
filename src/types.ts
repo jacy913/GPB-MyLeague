@@ -387,6 +387,23 @@ export interface TeamPitchingState {
   battersFaced: number;
   enteredInning: number;
   bullpenUsedIds: string[];
+  /**
+   * The score at the moment THIS pitcher took over, and how many runs his team
+   * had already surrendered when he did.
+   *
+   * These exist for one reason: a save is not "won by the last man standing".
+   * Rule 8.04(c) asks what the situation was when the reliever ENTERED, and the
+   * two cases are genuinely different -- a reliever who enters with a clean
+   * sheet and a four-run lead may not convert it, while one who enters with a
+   * one-run lead may allow three. Reading the lead at entry rather than at the
+   * end is the difference between the two, and it cannot be reconstructed from
+   * the final box score.
+   *
+   * Null means "has not entered", which is how a starter is told apart from a
+   * reliever: the starter's is recorded too, but the save rule excludes him.
+   */
+  entryLead: number | null;
+  entryRunsAgainst: number | null;
 }
 
 export interface GameSessionState {
@@ -405,6 +422,23 @@ export interface GameSessionState {
   homeBatterIndex: number;
   awayPitching: TeamPitchingState;
   homePitching: TeamPitchingState;
+  /**
+   * THE GO-AHEAD PITCHER, per team: the pitcher of record who was on the mound
+   * for that side at the moment it went ahead for good.
+   *
+   * This is what decides a win, and getting it wrong is not a cosmetic bug. The
+   * win used to go to whoever was pitching when the game ENDED, which handed
+   * almost every decision to a closer -- because starters are pulled by the
+   * sixth or seventh -- and produced a season where six starters with 280
+   * innings each were credited with zero wins while relief arms led the league
+   * with 80.
+   *
+   * Recording the moment a side goes ahead is also what makes the starter-5-
+   * innings rule fall out for free: a starter who leaves with the lead and never
+   * gives it back IS the go-ahead pitcher, so he is the one credited.
+   */
+  awayLeadPitcherId: string | null;
+  homeLeadPitcherId: string | null;
   scoreboard: GameSessionScoreboard;
   lineScore: InningLine[];
   logs: PlayLogEvent[];
