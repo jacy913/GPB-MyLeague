@@ -3766,6 +3766,7 @@ const { resetWallet } = bettingSlip;
      * the year where the award markets have settled and the reasoning behind them is worth reading.
      */
     onAutoSelectAwards: reviewSeasonAwards,
+    onAcknowledgeAwards: dismissSeasonAwardsSummary,
     onSimulateRetirements: simulateRetirements,
     onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
@@ -3795,6 +3796,7 @@ const { resetWallet } = bettingSlip;
     approvePendingTradeFromRouter,
     assignFreeAgentFromRouter,
     reviewSeasonAwards,
+    dismissSeasonAwardsSummary,
     completeFreeAgency,
     autoDraftAllFromRouter,
     autoDraftRoundFromRouter,

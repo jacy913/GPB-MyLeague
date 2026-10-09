@@ -186,8 +186,26 @@ export const useDraftCenterActions = ({
     }
 
     if (offseasonStage !== 'draft_lottery') {
-      pushNotice('Lottery is view-only. You can only run it during the Draft Lottery stage.', 'warning');
-      return;
+      /*
+       * THE DRAFT STAGE MAY ALSO REGENERATE A BOARD, AND THAT IS A SOFTLOCK FIX.
+       *
+       * The lottery runs once per offseason, and this guard is what says so. But it was also the
+       * ONLY thing between the manager and a working draft when the board went missing -- because
+       * `App.tsx` clears `draftCenter.activeClass` whenever the class stops matching the player
+       * pool, and the stage is already past 'draft_lottery' by then. The result was a stage that
+       * could not be completed by anything: auto-draft needs a board, the board needs the lottery,
+       * and the lottery had been refused.
+       *
+       * So a board that does not exist may always be rebuilt. Running the lottery twice over a
+       * board that DOES exist is still refused, which is the rule the guard was actually there to
+       * express.
+       */
+      const boardIsMissing = draftCenterRef.current.activeClass === null;
+      if (offseasonStage !== 'draft' || !boardIsMissing) {
+        pushNotice('Lottery is view-only. You can only run it during the Draft Lottery stage.', 'warning');
+        return;
+      }
+      pushNotice('No draft board was found for this stage, so a new one is being drawn.', 'info');
     }
 
     if (isDraftProcessing) {

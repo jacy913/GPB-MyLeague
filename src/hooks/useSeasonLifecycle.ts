@@ -130,9 +130,36 @@ export const useSeasonLifecycle = ({
 
   const buildSeasonAwardsSummary = useCallback((): SeasonAwardsSummaryState | null => {
     const seasonYear = resolveSeasonYear(currentDate || games[games.length - 1]?.date || games[0]?.date, games);
-    if (seasonHistory.some((entry) => entry.seasonYear === seasonYear)) {
-      return null;
-    }
+
+    /*
+     * NO "ALREADY ARCHIVED" GUARD HERE. THIS IS THE OFFSEASON SOFTLOCK FIX, AND IT IS A DELETE.
+     *
+     * This used to `return null` as soon as `seasonHistory` held the season. The guard was
+     * protecting the ARCHIVE -- but `archiveSeasonAwards` already dedupes on its own, two lines
+     * of it away, and needs this guard for nothing. What the guard actually protected was the
+     * RESULTS from being rebuilt, and that is what made the offseason unrecoverable.
+     *
+     * The failure it caused, in order:
+     *
+     *   1. The season ends. The archive is written immediately, and the awards screen is staged
+     *      in React state (`seasonAwardsSummary`, `seen=false`).
+     *   2. The manager reads it. The ONLY handler that advances the checklist past 'awards' is
+     *      the modal's own dismiss, which calls `dismissSeasonAwardsSummary`.
+     *   3. The page reloads -- a dev-server edit, a crash, a closed laptop. React state is gone.
+     *      `seasonHistory` is not.
+     *   4. The restore path below calls this builder, gets `null`, and leaves the manager with
+     *      no awards screen at all. The checklist's Awards step is meanwhile marked complete,
+     *      because that is measured off `seasonHistory` -- so its button is disabled.
+     *
+     * No modal, no enabled button, and `runSimulationTarget` refuses to advance the date
+     * because the offseason gate still has an incomplete event. That is a game you cannot
+     * leave without resetting it.
+     *
+     * Rebuilding a read-only summary from a season that has already finished is safe and
+     * idempotent: the same finished-season numbers produce the same winners, and the archive
+     * it might try to write is a no-op. So the builder builds, unconditionally, and the
+     * dedupe that was here lives in the one place it is actually needed.
+     */
 
     const divisionWinners = computeDivisionWinnersSnapshot(teams);
     const battingCandidates = computeBattingMvpCandidates(teams, playerState, seasonYear, 10);
@@ -181,7 +208,6 @@ export const useSeasonLifecycle = ({
     games,
     playerState,
     resolveSeasonYear,
-    seasonHistory,
     teams,
   ]);
 
@@ -285,11 +311,31 @@ export const useSeasonLifecycle = ({
    * awards is one more place for them to disagree.
    */
   const reviewSeasonAwards = useCallback(() => {
-    setSeasonAwardsSummary((current) => {
-      if (current) setSeasonAwardsSeen(false);
-      return current;
-    });
-  }, [setSeasonAwardsSummary]);
+    /*
+     * REBUILDS THE RESULTS INSTEAD OF DOING NOTHING WHEN NONE ARE IN MEMORY.
+     *
+     * This used to read `seasonAwardsSummary`, and if that was null -- which is exactly the state
+     * a reloaded page is in -- it did nothing at all and reported nothing. Clicking "Awards" on a
+     * freshly-loaded checklist appeared to be a dead button. It now builds the summary from the
+     * finished season if it has to, so the one action that shows the results always shows them.
+     *
+     * The step in the state updater that it replaces also called `setSeasonAwardsSeen` from inside
+     * the reducer. A reducer must stay pure: React is entitled to call it twice in StrictMode, and
+     * `seasonAwardsSeen` is exactly the flag that decides whether the dialog is open. Reading the
+     * value directly is both simpler and correct.
+     */
+    if (seasonAwardsSummary) {
+      setSeasonAwardsSeen(false);
+      return;
+    }
+
+    const rebuilt = buildSeasonAwardsSummary();
+    if (!rebuilt) {
+      return;
+    }
+    setSeasonAwardsSummary(rebuilt);
+    setSeasonAwardsSeen(false);
+  }, [buildSeasonAwardsSummary, seasonAwardsSummary]);
 
   const offseasonStage: OffseasonStage = useMemo(
     () => (seasonComplete

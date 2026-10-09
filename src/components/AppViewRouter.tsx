@@ -205,6 +205,13 @@ interface AppViewRouterProps {
   onAssignFreeAgent: (assignment: FreeAgencyAssignment) => void;
   onShakeUpFreeAgency: () => void;
   onAutoSelectAwards: () => void;
+  /**
+   * Step past the awards from the checklist itself.
+   *
+   * Separate from `onAutoSelectAwards`, which SHOWS the results. See `OffseasonHubProps` for why
+   * the advance cannot keep living only inside the results dialog.
+   */
+  onAcknowledgeAwards: () => void;
   onSimulateRetirements: () => void;
   onCompleteFreeAgency: () => void;
   onGenerateDraftClass: () => void;
@@ -358,6 +365,7 @@ export const AppViewRouter = ({
   onAssignFreeAgent,
   onShakeUpFreeAgency,
   onAutoSelectAwards,
+  onAcknowledgeAwards,
   onSimulateRetirements,
   onCompleteFreeAgency,
   onGenerateDraftClass,
@@ -570,6 +578,7 @@ export const AppViewRouter = ({
           lotteryComplete={Boolean(draftClass)}
           draftComplete={Boolean(draftClass?.isComplete)}
           onAwards={onAutoSelectAwards}
+          onAcknowledgeAwards={onAcknowledgeAwards}
           onRetirements={onSimulateRetirements}
           onLottery={onGenerateDraftClass}
           onDraft={onAutoDraftAll}

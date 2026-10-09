@@ -12,6 +12,17 @@ interface OffseasonHubProps {
   lotteryComplete: boolean;
   draftComplete: boolean;
   onAwards: () => void;
+  /**
+   * Step past the awards WITHOUT the results dialog.
+   *
+   * Its own prop, separate from `onAwards`, because the two are different acts. `onAwards` shows
+   * the season's results; this one is the advance. For every other step the checklist does both
+   * with one button, and that is exactly why 'awards' was the one step that could strand a
+   * manager: its advance lived inside a dialog that a page reload deletes, while its button was
+   * disabled because the season was already archived. Having the advance here as well means the
+   * checklist is never waiting on a component that might not be mounted.
+   */
+  onAcknowledgeAwards: () => void;
   onRetirements: () => void;
   onLottery: () => void;
   onDraft: () => void;
@@ -30,7 +41,7 @@ const steps: Array<{ key: OffseasonChecklistStage; title: string; description: s
 
 export const OffseasonHub: React.FC<OffseasonHubProps> = ({
   seasonYear, stage, championLabel, awardsComplete, lotteryComplete, draftComplete,
-  onAwards, onRetirements, onLottery, onDraft, onFreeAgency, onStartSeason,
+  onAwards, onAcknowledgeAwards, onRetirements, onLottery, onDraft, onFreeAgency, onStartSeason,
 }) => {
   const activeIndex = steps.findIndex((entry) => entry.key === stage);
   const activeStep = steps[activeIndex] ?? steps[0];
@@ -45,6 +56,31 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
 
   const activeComplete = isComplete(activeStep.key, activeIndex);
   const actionLabel = activeStep.key === 'start_next_season' ? 'Confirm Start' : 'Simulate Event';
+
+  /*
+   * THE AWARDS STEP IS ALWAYS RE-OPENABLE, AND ITS ADVANCE IS ALWAYS AVAILABLE.
+   *
+   * Every other step is "not done yet, press the button", so a complete one is correctly inert.
+   * Awards is inverted: the archive is written the instant the season ends, so it is complete
+   * before the manager has looked at it, and what is left to do is READ it and step past it. A
+   * step that renders itself as finished with a disabled button is therefore not an honest
+   * representation of the work left -- it is an exit with the handle removed.
+   *
+   * So the active awards step keeps a live tab (to read the results) and a live button (to move
+   * on). Neither depends on the dialog being open, and the dialog being open is no longer the
+   * only way out.
+   */
+  const activeIsAwards = activeStep.key === 'awards';
+  const awardsAwaitingAcknowledgement = activeIsAwards && activeComplete;
+  const canPressStep = (index: number): boolean => {
+    const entry = steps[index];
+    if (index > activeIndex) return false;
+    if (isComplete(entry.key, index)) return entry.key === 'awards' && index === activeIndex;
+    return true;
+  };
+  const activeButtonDisabled = activeComplete && !awardsAwaitingAcknowledgement;
+  const activeButtonLabel = awardsAwaitingAcknowledgement ? 'Continue' : activeComplete ? 'Complete' : actionLabel;
+  const activeButtonAction = awardsAwaitingAcknowledgement ? onAcknowledgeAwards : handlers[activeStep.key];
 
   return (
     <section className="mx-auto max-w-5xl space-y-5">
@@ -76,8 +112,8 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
                 <SkewedTab
                   direction={index % 2 === 0 ? 'skew-r' : 'skew-l'}
                   variant={active ? 'active' : 'inactive'}
-                  disabled={locked || complete}
-                  onClick={() => !locked && !complete && handlers[entry.key]()}
+                  disabled={!canPressStep(index)}
+                  onClick={() => canPressStep(index) && handlers[entry.key]()}
                   aria-current={active ? 'step' : undefined}
                   className={`flex items-center gap-2 whitespace-nowrap ${
                     complete ? 'opacity-60' : locked ? 'opacity-35' : ''
@@ -106,12 +142,20 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
           <p className="t-body text-[var(--color-ink-dim)]">{activeStep.description}</p>
           <RetroButton
             variant={activeComplete ? 'ghost' : 'primary'}
-            disabled={activeComplete}
-            onClick={handlers[activeStep.key]}
+            disabled={activeButtonDisabled}
+            onClick={activeButtonAction}
           >
-            {activeComplete ? 'Complete' : actionLabel}
+            {activeButtonLabel}
             {!activeComplete && <FastForward className="h-4 w-4" aria-hidden="true" />}
           </RetroButton>
+          {/* Reading the results is a separate act from stepping past them. The button above
+              always advances; this is here so the results stay reachable afterwards, which
+              matters because `reviewSeasonAwards` can now rebuild them on demand. */}
+          {awardsAwaitingAcknowledgement && (
+            <RetroButton variant="ghost" onClick={onAwards}>
+              Read Results
+            </RetroButton>
+          )}
         </div>
       </Panel>
 
