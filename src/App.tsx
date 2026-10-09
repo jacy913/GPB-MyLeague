@@ -27,6 +27,7 @@ import { clearFairLayerCache, latestClose, leaguePriceSeed, marketFloorFor, pric
 import { crowdEventShocksFor } from './lib/analytics/crowd';
 import { formatHeaderDate } from './components/SeasonCalendarStrip';
 import { TradeInterruptionModal } from './components/TradeInterruptionModal';
+import { SkipOffseasonDialog } from './components/SkipOffseasonDialog';
 import { SeasonAwardsSummary } from './components/SeasonAwardsSummary';
 
 import { SimCompletePanel } from './components/simulation/SimCompletePanel';
@@ -87,6 +88,7 @@ import { useRosterTransactions } from './hooks/useRosterTransactions';
 import { useScheduleDerivedState } from './hooks/useScheduleDerivedState';
 import { useSeasonLifecycle } from './hooks/useSeasonLifecycle';
 import { buildOffseasonEventSchedule } from './logic/offseasonSchedule';
+import { SKIP_PLAN } from './logic/offseasonSkip';
 import {
   createLocalUniverseBundle,
   readSharePriceLedger,
@@ -302,6 +304,34 @@ const EMPTY_PLAYER_STATE: LeaguePlayerState = {
 const getTeamWinPct = (team: Team): number => {
   const totalGames = team.wins + team.losses;
   return totalGames > 0 ? team.wins / totalGames : 0;
+};
+
+/**
+ * HOW LONG THE SKIP WAITS FOR THE AUTO-DRAFT TO FINISH.
+ *
+ * A full class is 32 clubs x 4 rounds of picks, batched 8 at a time on a 45ms timer. Four seconds is
+ * comfortably more than that needs and far less than a manager will sit watching a spinner -- and the
+ * wait is bounded because the alternative, waiting forever, turns a stalled draft into a hung screen
+ * rather than a reported stop.
+ */
+const DRAFT_SKIP_TIMEOUT_MS = 6000;
+
+/**
+ * POLL A CONDITION UNTIL IT HOLDS OR THE BUDGET RUNS OUT.
+ *
+ * Used only by the offseason skip, and only for the auto-draft, which completes on a timer inside
+ * `useDraftCenterActions` rather than returning a promise. Returns whether the condition came true, so
+ * the caller can decide what an unfinished wait means instead of the wait silently pretending.
+ */
+const waitForCondition = async (condition: () => boolean, timeoutMs: number): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return condition();
 };
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
@@ -2330,6 +2360,27 @@ const { resetWallet } = bettingSlip;
     setOffseasonWorkflow((current) => ({ ...current, stage: 'draft_lottery' }));
   }, [offseasonStage, offseasonWorkflow.retirementsApplied, pushNotice, seasonComplete, setOffseasonWorkflow]);
 
+  /**
+   * RUN THE REST OF THE OFFSEASON.
+   *
+   * Walks the stage plan in order rather than firing the handlers in sequence, for the reason in
+   * `logic/offseasonSkip.ts`: every step reads the persisted `stage` to decide whether it may run,
+   * so a handler fired before the previous one's stage write has landed refuses and the run stalls
+   * halfway. Awaiting each step in turn means the stage is committed before the next one reads it.
+   *
+   * The consequence is that an interrupted run is not a corrupted one. There is no "skipping" flag
+   * to fall out of step with the save: each stage is an ordinary persisted transition, so a reload
+   * mid-run resumes at whatever stage the save actually records. That is the same invariant the
+   * softlock fix rests on, applied to the run rather than to a screen.
+   *
+   * `resetSeason` is deliberately NOT in the plan. It rebuilds the schedule, clears the board and is
+   * refused unless the offseason has reached 'start_next_season', so folding it in would mean
+   * weakening a guard to make a convenience work. Skipping takes you TO the start of the next season
+   * and the manager presses Confirm, which is one click and keeps the guard.
+   */
+  const [isSkippingOffseason, setIsSkippingOffseason] = useState(false);
+  const [isSkipDialogOpen, setIsSkipDialogOpen] = useState(false);
+
   const completeFreeAgency = useCallback(() => {
     if (!seasonComplete || offseasonStage !== 'free_agency') return;
     const seasonYear = offseasonWorkflow.seasonYear ?? resolveSeasonYear(currentDate, games);
@@ -2358,6 +2409,101 @@ const { resetWallet } = bettingSlip;
       completion.remainingOpenSlots === 0 ? 'success' : 'warning',
     );
   }, [auditRosterState, currentDate, games, isSupabaseConfigured, offseasonStage, offseasonWorkflow.seasonYear, playerState, pushNotice, resolveEffectiveActionDate, resolveSeasonYear, saveLocalPlayerStateSafely, saveSupabasePlayerState, seasonComplete, selectedDate, setOffseasonWorkflow, setPlayerState, teams]);
+
+  /**
+   * RUN THE REST OF THE OFFSEASON.
+   *
+   * The plan is walked rather than fired, and the distinction is load-bearing. Every step reads the
+   * persisted `stage` to decide whether it may run, so a handler fired before the previous one's stage
+   * write has landed reads a stage that has not been committed, refuses, and the run stops halfway
+   * with a manager looking at an offseason that still claims to be in progress. Awaiting each step in
+   * turn means the stage is committed before the next one reads it.
+   *
+   * That is also what makes an interrupted run harmless. There is deliberately no "skipping" flag that
+   * could fall out of step with the save: each stage is an ordinary persisted transition, so a reload
+   * mid-run resumes at whatever stage the save actually records. Same invariant the softlock fix rests
+   * on, applied to the run rather than to a screen.
+   *
+   * `resetSeason` is NOT in the plan. It rebuilds the schedule, clears the board, and refuses unless the
+   * offseason has reached 'start_next_season' -- so folding it in would mean weakening a guard to make
+   * a convenience work. Skipping takes the manager TO the start of the next season and they press
+   * Confirm, which is one click and keeps the guard.
+   */
+  const runOffseasonSkip = useCallback(async () => {
+    if (isSkippingOffseason) {
+      return;
+    }
+    setIsSkippingOffseason(true);
+    setIsSkipDialogOpen(false);
+
+    try {
+      for (const stage of SKIP_PLAN) {
+        /*
+         * STAGES BEFORE THE CURRENT ONE ARE ALREADY BEHIND US, and stages the save has moved past are
+         * not this run's to do. Comparing against `offseasonStage` is what makes a resumed skip pick
+         * up where the save actually is rather than replaying steps that already happened.
+         */
+        if (stage === 'start_next_season' || offseasonStage !== stage) {
+          continue;
+        }
+
+        switch (stage) {
+          case 'awards':
+            // Nothing to run. The archive is written the moment the season ends and the results are
+            // rebuildable on demand, so awards is a screen to read, not a transition to make.
+            break;
+          case 'retirements':
+            await simulateRetirements();
+            break;
+          case 'draft_lottery':
+            await handleGenerateDraftClass();
+            break;
+          case 'draft': {
+            const board = draftCenterRef.current.activeClass;
+            if (board && !board.isComplete) {
+              /*
+               * AUTO-DRAFT THE REMAINDER, THEN WAIT FOR IT.
+               *
+               * `runDraftAuto` batches picks on a timer to keep the UI responsive, so returning from it
+               * does NOT mean the draft is finished. Free agency requires a COMPLETED board, so without
+               * waiting here the next step would refuse and the run would stop with picks outstanding --
+               * the exact half-finished state this exists to prevent.
+               */
+              runDraftAuto('full');
+              await waitForCondition(
+                () => Boolean(draftCenterRef.current.activeClass?.isComplete),
+                DRAFT_SKIP_TIMEOUT_MS,
+              );
+            }
+            break;
+          }
+          case 'free_agency':
+            completeFreeAgency();
+            break;
+          default:
+            break;
+        }
+      }
+
+      pushNotice('Offseason skipped. Confirm Start to begin the new season.', 'success');
+    } catch (error) {
+      console.error('Failed to skip the offseason:', error);
+      pushNotice(
+        'The skip stopped before finishing. The offseason is still on its checklist and can be completed by hand.',
+        'warning',
+      );
+    } finally {
+      setIsSkippingOffseason(false);
+    }
+  }, [
+    completeFreeAgency,
+    handleGenerateDraftClass,
+    isSkippingOffseason,
+    offseasonStage,
+    pushNotice,
+    runDraftAuto,
+    simulateRetirements,
+  ]);
 
   const resetSeason = useCallback(async (teamsToReset = teams, settingsToUse = settings) => {
     if (seasonResetStatus.isResetting) {
@@ -3822,6 +3968,8 @@ const { resetWallet } = bettingSlip;
     onQuickSimSeason: quickSimSeason,
     onSimulateToNextMilestone: simulateToNextMilestone,
     onResetSeason: resetSeasonFromRouter,
+    onRequestSkip: () => setIsSkipDialogOpen(true),
+    isSkippingOffseason,
     onTerminateUniverse: terminateUniverseFromRouter,
     onSimulateToDate: simulateToDate,
     onProposeTrade: proposeTradeFromRouter,
@@ -4234,6 +4382,18 @@ const { resetWallet } = bettingSlip;
         view={view}
         onSetView={setView}
         onClose={() => setIsMobileNavOpen(false)}
+      />
+
+      <SkipOffseasonDialog
+        isOpen={isSkipDialogOpen}
+        currentStage={offseasonStage}
+        awardsComplete={awardsSavedForCurrentOffseason}
+        retirementsApplied={Boolean(offseasonWorkflow.retirementsApplied)}
+        lotteryComplete={Boolean(draftCenter.activeClass)}
+        draftComplete={Boolean(draftCenter.activeClass?.isComplete)}
+        isRunning={isSkippingOffseason}
+        onCancel={() => setIsSkipDialogOpen(false)}
+        onConfirm={() => void runOffseasonSkip()}
       />
 
       <TradeInterruptionModal

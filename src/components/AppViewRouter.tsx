@@ -199,6 +199,10 @@ interface AppViewRouterProps {
   onQuickSimSeason: () => void;
   onSimulateToNextMilestone: () => void;
   onResetSeason: () => void;
+  /** Open the skip-the-offseason confirmation. */
+  onRequestSkip: () => void;
+  /** A skip is running; step controls that would race with it are disabled. */
+  isSkippingOffseason: boolean;
   onTerminateUniverse: () => void;
   onGeneratePlayers: () => void;
   onSimulateToDate: (targetDate: string) => void;
@@ -371,6 +375,8 @@ export const AppViewRouter = ({
   onQuickSimSeason,
   onSimulateToNextMilestone,
   onResetSeason,
+  onRequestSkip,
+  isSkippingOffseason,
   onTerminateUniverse,
   onGeneratePlayers,
   onSimulateToDate,
@@ -626,6 +632,8 @@ export const AppViewRouter = ({
             onDraft={onAutoDraftAll}
             onFreeAgency={onCompleteFreeAgency}
             onStartSeason={onResetSeason}
+            onRequestSkip={onRequestSkip}
+            isSkipping={isSkippingOffseason}
           />
         </div>
       )}
@@ -649,6 +657,8 @@ export const AppViewRouter = ({
           onDraft={onAutoDraftAll}
           onFreeAgency={onCompleteFreeAgency}
           onStartSeason={onResetSeason}
+          onRequestSkip={onRequestSkip}
+          isSkipping={isSkippingOffseason}
         />
       )}
       {view === 'offseason' && !seasonComplete && (

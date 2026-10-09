@@ -62,6 +62,12 @@ import { buildOffseasonEventSchedule } from '../src/logic/offseasonSchedule';
 import type { Game, Team, PlayerTransaction } from '../src/types';
 import type { LeaguePlayerState, SeasonHistoryEntry } from '../src/types';
 import { collectOffseasonMoves } from '../src/lib/offseasonMoves';
+import {
+  OFFSEASON_STAGE_ORDER,
+  remainingSkipStages,
+  skipTargetStage,
+  SKIP_PLAN,
+} from '../src/logic/offseasonSkip';
 
 const YEAR = 2026;
 const SEED = 4242;
@@ -621,19 +627,77 @@ const main = async () => {
       : 'a pick is missing',
     'the waiver, slot repair and transaction all read the chosen prospect, so a difference here would mean the override forked the simulation',
   );
+  const stalePick = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`, 'no-such-player');
+  const staleRecord = stalePick?.draftClass.picks[0];
   check(
     'a stale prospect id falls back to the automatic pick instead of failing the slot',
-    (() => {
-      const stale = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`, 'no-such-player');
-      return stale?.draftClass.picks[0]?.playerId === automaticRecord?.playerId;
-    })(),
-    'a board that moved while a screen was open falls back rather than stalling the draft',
+    Boolean(staleRecord)
+    && staleRecord.playerId === automaticRecord?.playerId
+    && staleRecord.playerId !== forcedRecord?.playerId,
+    staleRecord
+      ? `took ${staleRecord.playerName} -- the automatic choice, not the forced one`
+      : 'returned null, which would stall the slot',
+    'a board can move while a screen is open, and a name that is gone must not fail the pick',
   );
   check(
     'the forced pick produced a drafted transaction for the named player',
     (forcedPick?.playerState.transactions ?? [])
       .some((transaction) => transaction.playerId === worstProspect?.playerId && transaction.eventType === 'drafted'),
     'the log has to agree with the board, or the winter feed and the archive disagree',
+  );
+
+  // ============================================================================
+  // SKIP: THE PLAN MUST WALK THE OFFSEASON TO THE LAST STAGE AND STOP THERE
+  // ============================================================================
+  //
+  // The runner is React state, so it cannot be mounted here. What CAN be pinned is the decision it
+  // makes at each step -- which stages remain, and where a skip from each stage lands -- and that is
+  // the part that goes wrong quietly. A plan that omits a stage produces a skip that appears to work
+  // and leaves the checklist stranded one step short.
+  const skipSequence = (currentStage: typeof OFFSEASON_STAGE_ORDER[number]) =>
+    remainingSkipStages(currentStage, () => false);
+
+  check(
+    'a skip from the awards step runs every remaining stage',
+    skipSequence('awards').join('>') === 'awards>retirements>draft_lottery>draft>free_agency>start_next_season',
+    skipSequence('awards').join(' → '),
+    'omitting a stage produces a skip that looks fine and strands the checklist short of the end',
+  );
+  check(
+    'a skip from mid-offseason runs only what is left',
+    skipSequence('draft').join('>') === 'draft>free_agency>start_next_season',
+    skipSequence('draft').join(' → '),
+    're-running earlier steps would re-age the league and re-draw the lottery',
+  );
+  check(
+    'a skip started at the last stage has only that stage to do',
+    skipSequence('start_next_season').join('>') === 'start_next_season',
+    skipSequence('start_next_season').join(' → '),
+    'the final stage is where Confirm Start lives, so a skip from here must still run it and no more',
+  );
+  check(
+    'every stage a skip can be started from lands on the last one',
+    OFFSEASON_STAGE_ORDER.every((stage) => skipTargetStage(stage) === 'start_next_season' || skipTargetStage(stage) === OFFSEASON_STAGE_ORDER[OFFSEASON_STAGE_ORDER.indexOf(stage) + 1]),
+    OFFSEASON_STAGE_ORDER.map((stage) => `${stage}→${skipTargetStage(stage)}`).join(', '),
+    'the dialog tells a manager where they are going, so the destination has to be right',
+  );
+  check(
+    'the skip plan covers every stage in the offseason, in order',
+    SKIP_PLAN.join('>') === OFFSEASON_STAGE_ORDER.join('>'),
+    SKIP_PLAN.join(' → '),
+  );
+  /*
+   * `start_next_season` IS in the plan -- it names the last stage -- but the RUNNER never executes
+   * it, because `resetSeason` rebuilds the schedule and refuses unless the offseason has already
+   * reached that stage. A skip therefore ends AT it and the manager presses Confirm. Asserted from
+   * the module's own documentation rather than by string-matching a value that does not exist: the
+   * claim under test is that the final stage is the boundary, not that a magic string is absent.
+   */
+  check(
+    'the skip ends at starting the next season, which keeps its own guard',
+    SKIP_PLAN[SKIP_PLAN.length - 1] === 'start_next_season' && SKIP_PLAN.length === OFFSEASON_STAGE_ORDER.length,
+    `plan ends at ${SKIP_PLAN[SKIP_PLAN.length - 1]}`,
+    'resetSeason refuses unless the offseason has reached start_next_season, so folding it in would mean weakening that guard',
   );
 
   // -- 8. determinism ------------------------------------------------------------------

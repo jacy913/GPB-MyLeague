@@ -37,6 +37,17 @@ interface OffseasonHubProps {
   onDraft: () => void;
   onFreeAgency: () => void;
   onStartSeason: () => void;
+  /**
+   * Open the "skip the offseason" confirmation.
+   *
+   * A separate callback rather than a flag the hub owns, because the dialog is MODAL state and the
+   * hub is a screen. Keeping the flag in `App` means a reload mid-dialog simply loses the dialog, which
+   * is the correct outcome -- an interrupted skip should resume from the save, not from a remembered
+   * intention to skip.
+   */
+  onRequestSkip: () => void;
+  /** A skip is running; the controls that would race with it are disabled. */
+  isSkipping: boolean;
 }
 
 const steps: Array<{ key: OffseasonChecklistStage; title: string; description: string }> = [
@@ -51,6 +62,7 @@ const steps: Array<{ key: OffseasonChecklistStage; title: string; description: s
 export const OffseasonHub: React.FC<OffseasonHubProps> = ({
   seasonYear, stage, championLabel, awardsComplete, lotteryComplete, draftComplete, retirementsApplied,
   onAwards, onAcknowledgeAwards, onRetirements, onRetirementsContinue, onLottery, onDraft, onFreeAgency, onStartSeason,
+  onRequestSkip, isSkipping,
 }) => {
   const activeIndex = steps.findIndex((entry) => entry.key === stage);
   const activeStep = steps[activeIndex] ?? steps[0];
@@ -201,16 +213,28 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
       </Panel>
       )}
 
-      {/* What the active event will change. A checklist that only says "do the
-          next thing" leaves a new user with nothing to orient by. */}
-      <Panel variant="sunken" className="flex items-start gap-3 p-4">
-        <Crown className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />
-        <div>
-          <p className="t-label text-[var(--color-ink-dim)]">Remaining</p>
-          <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
-            {steps.filter((entry, index) => !isComplete(entry.key, index)).length} of {steps.length} events outstanding
-          </p>
+      {/* What the active event will change, and the way out of the whole thing. */}
+      <Panel variant="sunken" className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="flex items-start gap-3">
+          <Crown className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />
+          <div>
+            <p className="t-label text-[var(--color-ink-dim)]">Remaining</p>
+            <p className="t-caption mt-1 text-[var(--color-ink-faint)]">
+              {steps.filter((entry, index) => !isComplete(entry.key, index)).length} of {steps.length} events outstanding
+            </p>
+          </div>
         </div>
+        {/*
+          SKIP, IN THE FOOTER RATHER THAN BESIDE THE STEP BUTTON.
+
+          It asks first, so it is not a shortcut -- and putting it one click from the button that
+          advances normally would make "skip" and "next step" the same gesture. It lives with the
+          progress readout because that is what it acts on: the whole remaining sequence, not this step.
+        */}
+        <RetroButton variant="ghost" onClick={onRequestSkip} disabled={isSkipping}>
+          <FastForward className="h-4 w-4" aria-hidden="true" />
+          {isSkipping ? 'Skipping…' : 'Skip the Offseason'}
+        </RetroButton>
       </Panel>
     </section>
   );
