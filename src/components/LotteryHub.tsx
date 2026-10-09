@@ -2,7 +2,9 @@ import React, { useMemo } from 'react';
 import { ArrowRight, ListOrdered, Sparkles, Ticket } from 'lucide-react';
 import { Team } from '../types';
 import { DRAFT_ROUNDS, DraftClassState, DraftPickRecord } from '../logic/draftLogic';
+import { resolveSeasonYear } from '../lib/seasonYear';
 import { Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import { LotteryReveal } from './LotteryReveal';
 
 type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'draft' | 'free_agency' | 'start_next_season';
 
@@ -169,6 +171,19 @@ export const LotteryHub: React.FC<LotteryHubProps> = ({
 
   return (
     <section className="space-y-5">
+      {/*
+        THE DRAW COMES FIRST, AND THE ORDER TABLE STAYS BELOW IT.
+
+        The table is 32 clubs across every round and the lottery moves fourteen of the first -- so the
+        table is reference and the reveal is the news. Putting the reveal above rather than instead
+        means a manager reads the result first and can still check the bookkeeping underneath it.
+      */}
+      <LotteryReveal
+        draftClass={draftClass}
+        teamsById={teamsById}
+        seasonYear={draftClass?.seasonYear ?? resolveSeasonYear(currentDate)}
+      />
+
       <Panel className="overflow-hidden">
         <div className="chrome-bar flex flex-wrap items-center justify-between gap-3 px-4">
           <h1 className="t-h2">Lottery</h1>
