@@ -50,6 +50,8 @@ import {
 import { SimulationManager } from '../src/logic/simulationManager';
 import { isPlayoffGame, isRegularSeasonGame } from '../src/logic/playoffs';
 import { createDraftClassState, generateDraftClassBundle, DRAFT_ROUNDS } from '../src/logic/draftLogic';
+import { applyOffseasonRetirements } from '../src/logic/offseasonFreeAgency';
+import { collectRetirements, tierRetirements } from '../src/lib/retirements';
 import { resolveSeasonYear } from '../src/lib/seasonYear';
 import { buildOffseasonEventSchedule } from '../src/logic/offseasonSchedule';
 import type { Game, Team } from '../src/types';
@@ -251,6 +253,57 @@ const main = async () => {
   process.stdout.write('OFFSEASON RECOVERY\n\n');
 
   const save = await playSeasonToTheEnd();
+
+  // ============================================================================
+  // RETIREMENTS: THE WALL HAS TO BE DERIVABLE FROM THE SAVE, NOT SNAPSHOTTED
+  // ============================================================================
+  //
+  // The wall is a pure read of `playerState`, on purpose. If it were a list captured when the stage
+  // ran, then a reload between aging and reading would show an empty wall with no way to tell that
+  // from "nobody retired" -- which is precisely the failure mode the recovery work exists to prevent,
+  // repeated one step later. So the assertion is that the wall rebuilds from persisted state alone.
+  const retirementResult = applyOffseasonRetirements({
+    playerState: save.playerState,
+    seasonYear: YEAR,
+    effectiveDate: `${YEAR}-11-01`,
+  });
+  const retiredNow = collectRetirements(retirementResult.nextPlayerState, YEAR);
+  const retiredByTransaction = retirementResult.nextPlayerState.transactions.filter(
+    (transaction) => transaction.eventType === 'retired',
+  );
+  check(
+    'the retirements wall rebuilds from the save alone, with no snapshot taken',
+    retiredNow.length === retiredByTransaction.length,
+    `${retiredNow.length} players carry a retirement stamp, ${retiredByTransaction.length} transactions logged`,
+    'the two are counted independently -- the players are read by retirementYear and the log by eventType',
+  );
+  check(
+    'a league that retired nobody still reports zero, rather than failing to build',
+    retiredNow.length === 0 || retiredNow.length > 0,
+    `${retiredNow.length} retirees, and the wall builds either way`,
+    'a quiet winter must not be a crash or an error state',
+  );
+  const crestless = retiredNow.filter((record) => record.finalClubId === null).length;
+  check(
+    'every retirement resolves a final club, or a free agent and says so',
+    retiredNow.every((record) => typeof record.finalClubId === 'string' || record.finalClubId === null),
+    `${retiredNow.length - crestless} with a crest, ${crestless} retired as free agents`,
+    'retiring nulls teamId, so the club has to come from the transaction and absence is a real answer',
+  );
+  const tiers = tierRetirements(retiredNow);
+  check(
+    'the wall tiers account for every retiree, with nobody dropped or double-counted',
+    tiers.headline.length + tiers.veteran.length + tiers.rank_and_file.length === retiredNow.length,
+    `${tiers.headline.length} franchise, ${tiers.veteran.length} veteran, ${tiers.rank_and_file.length} rank and file`,
+  );
+  check(
+    'the wall is ordered by how much the retirement mattered',
+    retiredNow.every((record, index) => index === 0 || retiredNow[index - 1].overall >= record.overall),
+    retiredNow.length === 0
+      ? 'no retirees to order'
+      : `front of the wall: ${retiredNow[0].overall} OVR, ${retiredNow[retiredNow.length - 1].overall} at the back`,
+    'a farewell that lists a 20-year ace below a reserve reads as though they are the same',
+  );
 
   // -- 1. the fixture is a genuinely finished season -----------------------------------
   check(

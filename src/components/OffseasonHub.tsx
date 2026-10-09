@@ -11,6 +11,8 @@ interface OffseasonHubProps {
   awardsComplete: boolean;
   lotteryComplete: boolean;
   draftComplete: boolean;
+  /** The aging has run for this winter, so the wall of retirements has something to show. */
+  retirementsApplied: boolean;
   onAwards: () => void;
   /**
    * Step past the awards WITHOUT the results dialog.
@@ -24,6 +26,13 @@ interface OffseasonHubProps {
    */
   onAcknowledgeAwards: () => void;
   onRetirements: () => void;
+  /**
+   * Step past the wall of retirements, to the draft lottery.
+   *
+   * Distinct from `onRetirements`, which AGES THE LEAGUE. The step has two acts now and they are
+   * ordered: the first decides who is leaving, the second is the manager deciding they have read it.
+   */
+  onRetirementsContinue: () => void;
   onLottery: () => void;
   onDraft: () => void;
   onFreeAgency: () => void;
@@ -32,7 +41,7 @@ interface OffseasonHubProps {
 
 const steps: Array<{ key: OffseasonChecklistStage; title: string; description: string }> = [
   { key: 'awards', title: 'Season Awards', description: 'Select Batting MVP, Pitching MVP, and World Series MVP.' },
-  { key: 'retirements', title: 'Player Retirements', description: 'Age the league and announce retiring veterans.' },
+  { key: 'retirements', title: 'Player Retirements', description: 'Age the league, then see who played their last season.' },
   { key: 'draft_lottery', title: 'Draft Lottery', description: 'Lock the rookie draft order.' },
   { key: 'draft', title: 'Rookie Draft', description: 'Make picks manually or quick-sim the class.' },
   { key: 'free_agency', title: 'Free Agency', description: 'Open the market, use Shake Up, and finalize roster movement.' },
@@ -40,8 +49,8 @@ const steps: Array<{ key: OffseasonChecklistStage; title: string; description: s
 ];
 
 export const OffseasonHub: React.FC<OffseasonHubProps> = ({
-  seasonYear, stage, championLabel, awardsComplete, lotteryComplete, draftComplete,
-  onAwards, onAcknowledgeAwards, onRetirements, onLottery, onDraft, onFreeAgency, onStartSeason,
+  seasonYear, stage, championLabel, awardsComplete, lotteryComplete, draftComplete, retirementsApplied,
+  onAwards, onAcknowledgeAwards, onRetirements, onRetirementsContinue, onLottery, onDraft, onFreeAgency, onStartSeason,
 }) => {
   const activeIndex = steps.findIndex((entry) => entry.key === stage);
   const activeStep = steps[activeIndex] ?? steps[0];
@@ -56,6 +65,19 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
 
   const activeComplete = isComplete(activeStep.key, activeIndex);
   const actionLabel = activeStep.key === 'start_next_season' ? 'Confirm Start' : 'Simulate Event';
+
+  /*
+   * RETIREMENTS IS A PLACE, NOT A TRANSITION.
+   *
+   * Every other step runs an event and hands you the next one. This one runs the aging, then STAYS,
+   * so the wall of careers that ended is a thing you walk into rather than a count that flashes past
+   * in a notice. Two buttons, in that order: run it, then read it.
+   *
+   * Which means the stage cannot advance until the manager says so -- hence `retirementsApplied`,
+   * which is persisted rather than inferred, because "nobody retired" and "has not run yet" are the
+   * same observation.
+   */
+  const retirementsAwaitReview = activeStep.key === 'retirements' && retirementsApplied;
 
   /*
    * THE AWARDS STEP IS ALWAYS RE-OPENABLE, AND ITS ADVANCE IS ALWAYS AVAILABLE.
@@ -79,8 +101,18 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
     return true;
   };
   const activeButtonDisabled = activeComplete && !awardsAwaitingAcknowledgement;
-  const activeButtonLabel = awardsAwaitingAcknowledgement ? 'Continue' : activeComplete ? 'Complete' : actionLabel;
-  const activeButtonAction = awardsAwaitingAcknowledgement ? onAcknowledgeAwards : handlers[activeStep.key];
+  const activeButtonLabel = awardsAwaitingAcknowledgement
+    ? 'Continue'
+    : retirementsAwaitReview
+      ? 'Continue to the Draft Lottery'
+      : activeComplete
+        ? 'Complete'
+        : actionLabel;
+  const activeButtonAction = awardsAwaitingAcknowledgement
+    ? onAcknowledgeAwards
+    : retirementsAwaitReview
+      ? onRetirementsContinue
+      : handlers[activeStep.key];
 
   return (
     <section className="mx-auto max-w-5xl space-y-5">
@@ -133,6 +165,15 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
         </ol>
       </div>
 
+      {/*
+        SUPPRESSED WHILE THE WALL IS ON SCREEN.
+
+        The wall above already carries its own "Continue to the Draft Lottery" button, and repeating
+        the step's action twice on one screen is how a reader ends up unsure which of two identical
+        buttons is the real one. So when the wall is up, the step panel says what the step IS and
+        points at the wall rather than offering the same affordance again.
+      */}
+      {!retirementsAwaitReview && (
       <Panel variant={activeComplete ? 'default' : 'hero'} className={`overflow-hidden ${activeComplete ? '' : 'border-[var(--color-gold)]'}`}>
         <div className="chrome-bar flex items-center justify-between gap-3 px-4">
           <h2 className="t-h3">{activeStep.title}</h2>
@@ -158,6 +199,7 @@ export const OffseasonHub: React.FC<OffseasonHubProps> = ({
           )}
         </div>
       </Panel>
+      )}
 
       {/* What the active event will change. A checklist that only says "do the
           next thing" leaves a new user with nothing to orient by. */}

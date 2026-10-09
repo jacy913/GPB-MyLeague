@@ -27,6 +27,7 @@ import { TeamsHub } from './TeamsHub';
 import { PlayersHub } from './PlayersHub';
 import { FreeAgencyHub } from './FreeAgencyHub';
 import { OffseasonHub } from './OffseasonHub';
+import { RetirementWall } from './RetirementWall';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
 import { LotteryHub } from './LotteryHub';
@@ -123,6 +124,8 @@ interface AppViewRouterProps {
    */
   book: UsePortfolio;
   offseasonStage: OffseasonStage;
+  /** The aging has run for this winter, so the retirements wall has something to show. */
+  retirementsApplied: boolean;
   hasPendingSeasonAwards: boolean;
   awardsUnlockDate: string;
   lotteryOpenDate: string;
@@ -213,6 +216,13 @@ interface AppViewRouterProps {
    */
   onAcknowledgeAwards: () => void;
   onSimulateRetirements: () => void;
+  /**
+   * Step past the retirements wall to the draft lottery.
+   *
+   * Separate from `onSimulateRetirements`, which ages the league and decides who is leaving. See
+   * `OffseasonHubProps` for why the step has two acts rather than one.
+   */
+  onRetirementsContinue: () => void;
   onCompleteFreeAgency: () => void;
   onGenerateDraftClass: () => void;
   onDraftNextPick: () => void;
@@ -290,6 +300,7 @@ export const AppViewRouter = ({
   rankings,
   book,
   offseasonStage,
+  retirementsApplied,
   hasPendingSeasonAwards,
   awardsUnlockDate,
   lotteryOpenDate,
@@ -367,6 +378,7 @@ export const AppViewRouter = ({
   onAutoSelectAwards,
   onAcknowledgeAwards,
   onSimulateRetirements,
+  onRetirementsContinue,
   onCompleteFreeAgency,
   onGenerateDraftClass,
   onDraftNextPick,
@@ -569,7 +581,51 @@ export const AppViewRouter = ({
         />
       )}
 
-      {view === 'offseason' && seasonComplete && offseasonStage !== 'idle' && (
+      {/*
+        THE RETIREMENTS WALL sits above the checklist rather than inside it.
+
+        Inside would have meant a step whose detail view is a component the checklist has to mount,
+        tear down and remount as the stage moves -- and the thing it renders is the one screen in the
+        offseason that a manager is meant to stop and read. A full-width stage above a checklist that
+        still shows where you are in the sequence keeps both: the wall is the content, the checklist
+        is the frame.
+      */}
+      {view === 'offseason'
+        && seasonComplete
+        && offseasonStage === 'retirements'
+        && retirementsApplied && (
+        <div className="space-y-5">
+          <RetirementWall
+            playerState={playerState}
+            teams={teams}
+            seasonYear={offseasonSeasonYear}
+            isPending={false}
+            isComplete={false}
+            onContinue={onRetirementsContinue}
+          />
+          <OffseasonHub
+            seasonYear={offseasonSeasonYear}
+            stage={offseasonStage}
+            championLabel={offseasonChampionLabel}
+            awardsComplete={seasonHistory.some((entry) => entry.seasonYear === offseasonSeasonYear)}
+            lotteryComplete={Boolean(draftClass)}
+            draftComplete={Boolean(draftClass?.isComplete)}
+            retirementsApplied={retirementsApplied}
+            onAwards={onAutoSelectAwards}
+            onAcknowledgeAwards={onAcknowledgeAwards}
+            onRetirements={onSimulateRetirements}
+            onRetirementsContinue={onRetirementsContinue}
+            onLottery={onGenerateDraftClass}
+            onDraft={onAutoDraftAll}
+            onFreeAgency={onCompleteFreeAgency}
+            onStartSeason={onResetSeason}
+          />
+        </div>
+      )}
+
+      {view === 'offseason' && seasonComplete && offseasonStage !== 'idle' && !(
+        offseasonStage === 'retirements' && retirementsApplied
+      ) && (
         <OffseasonHub
           seasonYear={offseasonSeasonYear}
           stage={offseasonStage}
@@ -577,9 +633,11 @@ export const AppViewRouter = ({
           awardsComplete={seasonHistory.some((entry) => entry.seasonYear === offseasonSeasonYear)}
           lotteryComplete={Boolean(draftClass)}
           draftComplete={Boolean(draftClass?.isComplete)}
+          retirementsApplied={retirementsApplied}
           onAwards={onAutoSelectAwards}
           onAcknowledgeAwards={onAcknowledgeAwards}
           onRetirements={onSimulateRetirements}
+          onRetirementsContinue={onRetirementsContinue}
           onLottery={onGenerateDraftClass}
           onDraft={onAutoDraftAll}
           onFreeAgency={onCompleteFreeAgency}

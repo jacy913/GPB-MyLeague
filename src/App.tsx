@@ -147,6 +147,24 @@ type OffseasonStage = 'idle' | 'awards' | 'retirements' | 'draft_lottery' | 'dra
 interface OffseasonWorkflowState {
   seasonYear: number | null;
   stage: OffseasonStage;
+  /**
+   * THE AGING AND RETIREMENTS FOR `seasonYear` HAVE BEEN APPLIED.
+   *
+   * This exists because the retirements stage stopped being a thing you were pushed through. It used
+   * to advance the workflow to the lottery in the same tick it aged the league, which meant the only
+   * thing a manager ever saw was a notice saying "7 retired" -- the step was over before it could be
+   * looked at.
+   *
+   * So the stage now holds while the wall is on screen, and this flag is what distinguishes "not
+   * aged yet" from "aged, and here is who left". It has to be persisted rather than derived: a league
+   * can legitimately retire nobody, and "no retired players" is indistinguishable from "the step has
+   * not run" if you try to infer it from the roster. That ambiguity is exactly the kind that leaves
+   * a manager looking at an empty wall wondering whether they have just broken something.
+   *
+   * Optional and additive, so a save written before this field loads as not-applied and the step can
+   * simply be run again.
+   */
+  retirementsApplied?: boolean;
 }
 
 type BlockingOffseasonEventKey = 'awards' | 'lottery' | 'draft';
@@ -1674,6 +1692,20 @@ const { resetWallet } = bettingSlip;
       setOffseasonWorkflow({
         seasonYear,
         stage,
+        /*
+         * READ DEFENSIVELY, AND DEFAULT TO FALSE.
+         *
+         * This field did not exist when these saves were written, so absence has to mean "not
+         * applied" rather than throwing or guessing true. Defaulting to true would put a manager
+         * who has never aged the league on a retirements wall built from nobody's retirements; the
+         * step then reads as already-done and cannot be re-run. The safe default is the one that
+         * re-offers the work.
+         *
+         * Non-boolean values are treated the same way. A corrupt flag that reads true is the one
+         * shape of corruption here that is silent -- it would show a confident, wrong, empty wall --
+         * so anything that is not literally `true` means false.
+         */
+        retirementsApplied: parsed.retirementsApplied === true,
       });
     } catch (error) {
       console.error('Failed to load offseason workflow state:', error);
@@ -2248,7 +2280,24 @@ const { resetWallet } = bettingSlip;
     setPlayerState(development.nextPlayerState);
     playerStateRef.current = development.nextPlayerState;
     saveLocalPlayerStateSafely(development.nextPlayerState);
-    setOffseasonWorkflow({ seasonYear, stage: 'draft_lottery' });
+    /*
+     * THE STAGE IS HELD HERE, NOT ADVANCED.
+     *
+     * This used to set `stage: 'draft_lottery'` in the same tick that aged the league, which made
+     * the retirements step a thing that happened to you rather than a place you went. The wall is
+     * now rendered at this stage and the manager steps past it deliberately -- see
+     * `retirementsApplied` on `OffseasonWorkflowState` for why that needs a flag and cannot be
+     * inferred.
+     *
+     * The flag is written in the same update as the player state so the two cannot disagree: there is
+     * no ordering in which the wall claims to be aged while the roster says otherwise.
+     */
+    setOffseasonWorkflow((current) => ({
+      ...current,
+      seasonYear,
+      stage: 'retirements',
+      retirementsApplied: true,
+    }));
     try {
       if (isSupabaseConfigured) await saveSupabasePlayerState(development.nextPlayerState);
       pushNotice(
@@ -2261,6 +2310,23 @@ const { resetWallet } = bettingSlip;
       pushNotice('Retirements completed locally, but syncing player data failed.', 'warning');
     }
   }, [currentDate, games, isSupabaseConfigured, offseasonStage, offseasonWorkflow.seasonYear, playerState, pushNotice, resolveEffectiveActionDate, saveLocalPlayerStateSafely, saveSupabasePlayerState, seasonComplete, selectedDate, setPlayerState]);
+
+  /**
+   * STEP PAST THE WALL OF RETIREMENTS.
+   *
+   * The second half of a two-act step: `simulateRetirements` decides who is leaving, this decides
+   * the manager has read it. Guarded on `retirementsApplied` so the stage cannot be skipped by a
+   * manager who never saw the wall -- an empty ledger and an unrun step are different states and
+   * only one of them is a finished offseason.
+   */
+  const continueFromRetirements = useCallback(() => {
+    if (!seasonComplete || offseasonStage !== 'retirements') return;
+    if (!offseasonWorkflow.retirementsApplied) {
+      pushNotice('Run the aging first, so there is a retirement list to read.', 'warning');
+      return;
+    }
+    setOffseasonWorkflow((current) => ({ ...current, stage: 'draft_lottery' }));
+  }, [offseasonStage, offseasonWorkflow.retirementsApplied, pushNotice, seasonComplete, setOffseasonWorkflow]);
 
   const completeFreeAgency = useCallback(() => {
     if (!seasonComplete || offseasonStage !== 'free_agency') return;
@@ -3768,6 +3834,7 @@ const { resetWallet } = bettingSlip;
     onAutoSelectAwards: reviewSeasonAwards,
     onAcknowledgeAwards: dismissSeasonAwardsSummary,
     onSimulateRetirements: simulateRetirements,
+    onRetirementsContinue: continueFromRetirements,
     onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
     onDraftNextPick: draftNextPickFromRouter,
@@ -3797,6 +3864,7 @@ const { resetWallet } = bettingSlip;
     assignFreeAgentFromRouter,
     reviewSeasonAwards,
     dismissSeasonAwardsSummary,
+    continueFromRetirements,
     completeFreeAgency,
     autoDraftAllFromRouter,
     autoDraftRoundFromRouter,
@@ -4091,6 +4159,7 @@ const { resetWallet } = bettingSlip;
       pendingClub={hxseClubSelection}
       onPendingClubConsumed={() => setHxseClubSelection(null)}
             offseasonStage={offseasonStage}
+            retirementsApplied={Boolean(offseasonWorkflow.retirementsApplied)}
             offseasonSeasonYear={offseasonEventSeasonYear}
             offseasonChampionLabel={seasonAwardsSummary?.champion?.teamName ?? seasonHistory.find((entry) => entry.seasonYear === offseasonEventSeasonYear)?.champion?.teamName ?? 'To be crowned'}
             /*

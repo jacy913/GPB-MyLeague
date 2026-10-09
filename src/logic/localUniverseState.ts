@@ -25,6 +25,15 @@ export type LocalOffseasonStage =
 export interface LocalOffseasonWorkflow {
   seasonYear: number | null;
   stage: LocalOffseasonStage;
+  /**
+   * The aging and retirements for `seasonYear` have been applied.
+   *
+   * Optional, like every additive field in this bundle, so a save written before the retirements
+   * became a stage loads as not-applied. See `OffseasonWorkflowState` in `App.tsx` for why this
+   * cannot be inferred from the roster: a league may retire nobody, and "nobody retired" and "the
+   * step has not run" look identical from the outside.
+   */
+  retirementsApplied?: boolean;
 }
 
 export interface LocalDraftCenterState {
