@@ -92,45 +92,81 @@ export interface TeamValueInput {
  * with". Target centred within each snapshot, because the value function is intercept-free and
  * predicts a club's standing relative to its league.
  *
- *   joint R2            0.6978   69.8% of the variance in final win totals
- *   residual SE         5.392 wins
+ *   joint R2            0.6605   66.1% of the variance in final win totals
+ *   residual SE         5.305 wins
  *
  *   term                   coeff      SE       t   partial R2   shipped
- *   expectedWinPct          6.628   0.329  20.17      29.85%      0.6961
- *   playoffProbability      1.941   0.288   6.75       4.55%      0.2039
- *   rosterSurplus          -0.120   0.251   0.48       0.02%      0.0500  (floor)
- *   momentum                0.034   0.194   0.17       0.00%      0.0500  (floor)
+ *   expectedWinPct          5.399   0.430  12.57      21.65%      0.6639
+ *   playoffProbability      1.733   0.390   4.44       3.34%      0.2132
+ *   rosterSurplus           0.593   0.277   2.14       0.80%      0.0729
+ *   momentum                0.304   0.243   1.25       0.27%      0.0500  (floor)
+ *
+ * The fitter prints four decimals, and those four decimals sum to 1.0001 rather than 1. The 0.0001
+ * is a rounding artefact of the printout, not a measurement, and `checkHxseIndex` holds the weights
+ * to exactly 1 because the blend is an average rather than a scale. It is therefore assigned to
+ * expectedWinPct, the largest term, where 1e-4 is the smallest proportional distortion -- which is
+ * why the shipped value reads 0.6639 against the fit's printed 0.6640.
  *
  * ---------------------------------------------------------------------------
- * WHY TWO TERMS SHIP AT THE FLOOR, AND WHY THAT IS NOT "ROSTERS DO NOT MATTER"
+ * RE-FITTED AFTER THE PITCHING-ENGINE REWORK, AND WHAT ACTUALLY MOVED
  * ---------------------------------------------------------------------------
  *
- * This is the finding most likely to be misread, so it is spelled out rather than left as two
- * small numbers.
+ * These are a RE-FIT. It was not cosmetic: the pitching work changed which pitchers work which
+ * games, which changed run distribution, and the target here is realised season wins. Refitting
+ * against the old league would have been fitting a league that no longer exists.
  *
- * It is not evidence that roster quality is worthless. It is evidence that roster quality is
- * REDUNDANT here. `expectedWinPct` is not an independent opinion about a club -- it is built by
- * `buildMediaReads` from those same rosters, via `getTeamRosterStrength`. The consensus and the
- * roster surplus are nearly the same column of data, so once the consensus is in the model, roster
- * surplus has nothing left to explain. Its coefficient goes slightly negative for the ordinary
- * reason that a redundant regressor's residual contribution is noise.
+ * What the pitching work did NOT touch is which things are predictive. All four predictors are
+ * roster-derived, record-derived or Monte-Carlo-derived, and none of them moved. So the expectation
+ * going in was a small shift, and that is what happened -- the consensus and the playoff odds traded
+ * about three points of weight in opposite directions.
  *
- * Momentum is the same story with a different cause. Last-ten win rate is mostly record, and
- * expectedWinPct already knows the record; a ten-game window on top of that is noise, and the
- * coefficient is 0.034 wins per standard deviation against a standard error of 0.194.
+ * ---------------------------------------------------------------------------
+ * WHY MOMENTUM STILL SHIPS AT THE FLOOR, AND WHY THAT IS NOT "FORM DOESN'T MATTER"
+ * ---------------------------------------------------------------------------
  *
- * So the honest summary is: the valuation is the forecaster consensus plus playoff odds, and two
- * terms that duplicate information already present are held at a floor rather than dressed up with
- * weight the data does not support. If a future fit with more seasons revives either, the constant
- * moves. A term at the floor is still wired, still measured, and still reported -- it is not
- * removed, because deleting it would make a future revival impossible to detect.
+ * The same finding as before, with the same cause. Last-ten win rate is mostly record, and
+ * expectedWinPct already knows the record; a ten-game window on top of that is noise. The
+ * coefficient is 0.304 wins per standard deviation against a standard error of 0.243 -- a t of 1.25,
+ * which cannot be told apart from zero at this sample size. It ships at the floor and the report
+ * says "no measurable edge" rather than dressing a noise term as a measurement.
  *
- * The floor (0.05) was declared before the fit ran and has not been moved since.
+ * ---------------------------------------------------------------------------
+ * WHY rosterSurplus IS NOW ABOVE THE FLOOR, AND HOW MUCH THAT IS WORTH
+ * ---------------------------------------------------------------------------
+ *
+ * This is the only term that genuinely moved, and it needs stating carefully because the reasoning
+ * behind the floor has not changed.
+ *
+ * At the previous fit rosterSurplus was not merely small, it was NEGATIVE (-0.120, t 0.48) and sat
+ * at the floor on a structural argument: `expectedWinPct` is built by `buildMediaReads` from these
+ * same rosters via `getTeamRosterStrength`, so the consensus and the surplus are nearly the same
+ * column of data, and once the consensus is in the model the surplus has nothing left to explain.
+ * A negative coefficient is the ordinary signature of a redundant regressor.
+ *
+ * That argument has NOT been disproved. It is a claim about the shape of the data, and the data did
+ * not change. What changed is that the coefficient came back positive and above its own standard
+ * error, so the fit no longer puts it on the floor and it now ships at 0.0729.
+ *
+ * So read this as a change worth REPORTING rather than a discovery worth BANKING. t = 2.14 is
+ * marginal, the partial R-squared is 0.80%, and six replicates is a thin sample -- joint R-squared
+ * fell from 0.6978 to 0.6605 between the two fits, which is roughly the scale of noise these
+ * numbers carry. What can be said is narrow and worth saying: this term stopped being negative. It
+ * is not yet a strong claim that roster quality predicts wins once the forecaster consensus is
+ * known.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THE FLOOR IS FOR
+ * ---------------------------------------------------------------------------
+ *
+ * The floor (0.05) was declared before any fit ran and has not been moved; what moved is
+ * rosterSurplus's weight, because the fit put it above the floor. A term at the floor stays wired,
+ * measured and reported rather than being deleted, because deleting it would make a revival
+ * impossible to detect. This block is that revival being detected.
  */
 export const TEAM_VALUE_WEIGHTS = {
-  rosterSurplus: 0.05,
-  expectedWinPct: 0.6961,
-  playoffProbability: 0.2039,
+  rosterSurplus: 0.0729,
+  expectedWinPct: 0.6639,
+  playoffProbability: 0.2132,
   momentum: 0.05,
 } as const;
 

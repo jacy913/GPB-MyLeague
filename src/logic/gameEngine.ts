@@ -497,12 +497,37 @@ const isStarterNoHitBidActive = (
   return hitsAllowed === 0;
 };
 
+/**
+ * A SAVE SITUATION: the side on defense leads entering the ninth by one to three.
+ *
+ * This is what the closer is FOR, and nothing tested it until now. He was
+ * summoned whenever his team held any lead at all in the ninth, which is why a
+ * measured season put him at ~105 appearances and ~85 innings -- he was pitching
+ * the ninth inning of blowouts, not closing games. A real manager protects a
+ * four-run lead with a setup man, or with nobody at all.
+ *
+ * One to three is the same window rule 8.04(c) uses, so the man who comes in
+ * here is the man who can actually earn a save.
+ */
+const isSaveSituation = (session: GameSessionState, teamId: string): boolean => {
+  const lead = getTeamLeadAt(session, teamId);
+  return lead >= 1 && lead <= 3;
+};
+
+/** Does this ninth-inning situation call for the designated closer specifically? */
+const wantsCloser = (session: GameSessionState, teamId: string): boolean =>
+  session.inning >= 9 && isSaveSituation(session, teamId);
+
 const shouldUseCloser = (
   session: GameSessionState,
   teamId: string,
   pitcherId: string | null,
 ): boolean => {
   if (session.inning !== 9 || isStarterNoHitBidActive(session, teamId, pitcherId)) {
+    return false;
+  }
+
+  if (!isSaveSituation(session, teamId)) {
     return false;
   }
 
@@ -915,7 +940,7 @@ const maybeMakePitchingChange = (session: GameSessionState): GameSessionState =>
       return session;
     }
 
-    const nextPitcher = pickBullpenArm(session, fieldingTeamId, session.inning >= 9 ? 'closer' : 'reliever');
+    const nextPitcher = pickBullpenArm(session, fieldingTeamId, wantsCloser(session, fieldingTeamId) ? 'closer' : 'reliever');
     if (!nextPitcher) {
       return session;
     }
@@ -930,7 +955,7 @@ const maybeMakePitchingChange = (session: GameSessionState): GameSessionState =>
     return session;
   }
 
-  const nextPitcher = pickBullpenArm(session, fieldingTeamId, session.inning >= 9 ? 'closer' : 'reliever');
+  const nextPitcher = pickBullpenArm(session, fieldingTeamId, wantsCloser(session, fieldingTeamId) ? 'closer' : 'reliever');
   if (!nextPitcher) {
     return session;
   }
