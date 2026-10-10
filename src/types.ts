@@ -46,6 +46,25 @@ export type AppView =
    * offers it. Both screens carry the switch, so neither can strand a reader here.
    */
   | 'leaders_dashboards'
+  /**
+   * The two MVP races, in full.
+   *
+   * Its own screen rather than a third board mode inside `leaders`, and the reason is the same one
+   * that moved the dashboards out. A race is not a column of numbers to be ranked against other
+   * columns -- it is a story with a leader, a gap to second, and a score underneath it, and putting
+   * it behind the same segmented control as AVG and ERA buried exactly that. It read as a dense table
+   * because it was a dense table, sitting on a screen whose whole job is to be dense and tabular.
+   *
+   * It IS a nav leaf, unlike `leaders_dashboards`. The dashboards are a second reading of tables the
+   * reader already has; the award race is a thing managers come to look for on its own, in season,
+   * the same way they come to check a standings page. It also cannot be stranded: it is a leaf, so
+   * there is a route in from the rail and a route back, which is what a screen reachable only from
+   * a switch on a sibling has to work to guarantee.
+   *
+   * Scoring is not defined here and not changed here -- it is `lib/awardRace.ts`, shared with the
+   * front-page summary and the MacroBet board, so the three cannot disagree about who leads.
+   */
+  | 'awards'
   | 'history'
   | 'media'
   | 'betting'

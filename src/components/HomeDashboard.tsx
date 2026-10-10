@@ -113,6 +113,13 @@ interface HomeDashboardProps {
    */
   onOpenBracket: () => void;
   /**
+   * Opens the full award race. A route switch for the same reason as the rankings and the bracket:
+   * the award races are a real LEAGUE nav destination now, and the front-page panel shows three of
+   * eight candidates -- so its "Open full race" button should reach the page the way a manager would
+   * from the rail, not through a private route change inside this component.
+   */
+  onOpenAwards: () => void;
+  /**
    * The League Office board, or null when it could not be computed.
    *
    * Passed in rather than built here for one reason: the strip and the full board must read the SAME
@@ -185,6 +192,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenStandings,
   onOpenPowerRankings,
   onOpenBracket,
+  onOpenAwards,
   powerRankings,
   onSimulateToEndOfRegularSeason,
   onSimulateDay,
@@ -1097,7 +1105,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             here for six weeks is a dull but true fact about the league; a feature that disappears
             for a third of the year costs the reader more than the dullness does.
           */}
-          <MvpRacePanel board={mvpBoard} onBoardChange={setMvpBoard} entries={mvpAwards} />
+          <MvpRacePanel
+            board={mvpBoard}
+            onBoardChange={setMvpBoard}
+            entries={mvpAwards}
+            onOpenFullRace={onOpenAwards}
+          />
 
           <DivisionSnapshotPanel
             snapshots={divisionSnapshots}

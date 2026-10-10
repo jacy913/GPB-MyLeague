@@ -43,6 +43,7 @@ import { MediaHub } from './media/MediaHub';
 import { BettingPage } from './betting/BettingPage';
 import { BettingRecordScreen } from './betting/BettingRecordScreen';
 import { LeadersDashboard } from './leaders/LeadersDashboard';
+import { AwardsPage } from './awards/AwardsPage';
 import { PowerRankingsView } from './leaders/PowerRankingsView';
 import type { BettingSlipState } from '../hooks/useBettingSlip';
 import { resolveSeasonYear } from '../lib/seasonYear';
@@ -471,6 +472,7 @@ export const AppViewRouter = ({
           onOpenStandings={() => onSetView('league_standings')}
           onOpenPowerRankings={() => onSetView('power_rankings')}
           onOpenBracket={() => onSetView('playoffs')}
+          onOpenAwards={() => onSetView('awards')}
           powerRankings={rankings}
           onSimulateToEndOfRegularSeason={onSimulateToEndOfRegularSeason}
           onSimulateDay={onSimulateDay}
@@ -842,6 +844,33 @@ export const AppViewRouter = ({
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}
           onOpenDashboards={() => onSetView('leaders_dashboards')}
+        />
+      )}
+
+      {/*
+        THE AWARD RACES.
+
+        A nav leaf of its own rather than the third board mode inside `leaders`, and the reason is
+        density: a race is a leaderboard with a story attached, and burying it on a screen whose job
+        is dense tabular comparisons is what made it unreadable. Same inputs as the Leaders screen --
+        both read the same `playerState` and the same shared scoring in `lib/awardRace`, so the two
+        cannot name different leaders.
+
+        The two callbacks are the only exits it needs, and both are required rather than optional so
+        every caller has to decide where they go. A screen reachable from the rail can always be left
+        by the rail, but the two places a reader WILL want to go from a race -- the book that prices it
+        and the standings behind its TEAM term -- should be one click rather than a trip back.
+      */}
+      {view === 'awards' && (
+        <AwardsPage
+          teams={teams}
+          players={playerState.players}
+          battingStats={playerState.battingStats}
+          pitchingStats={playerState.pitchingStats}
+          battingRatings={playerState.battingRatings}
+          pitchingRatings={playerState.pitchingRatings}
+          onOpenBetting={() => onSetView('betting')}
+          onOpenStandings={() => onSetView('league_standings')}
         />
       )}
 

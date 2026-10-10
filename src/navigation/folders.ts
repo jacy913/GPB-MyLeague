@@ -22,6 +22,7 @@ import {
   Clock3,
   LayoutDashboard,
   Map as MapIcon,
+  Medal,
   Megaphone,
   Play,
   Receipt,
@@ -186,6 +187,14 @@ export const NAV_FOLDERS: NavFolder[] = [
       */
       { view: 'power_rankings', label: 'Power Rankings', icon: TrendingUp },
       { view: 'leaders', label: 'Leaders', icon: BarChart3 },
+      /*
+        Awards sits directly under Leaders because they are the same kind of fact -- where a player
+        or club stands -- and because a manager checking who is winning the MVP race was previously
+        made to hunt for it behind a segmented control on the Leaders screen. It is a full page, not
+        a board: the race deserves the width, and burying it inside a screen whose job is dense
+        tables is what made it unreadable.
+      */
+      { view: 'awards', label: 'Awards', icon: Medal },
       { view: 'history', label: 'History', icon: ScrollText },
       { view: 'map', label: 'Map', icon: MapIcon },
     ],
@@ -249,6 +258,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
   power_rankings: 'league',
   leaders: 'league',
   leaders_dashboards: 'league',
+  awards: 'league',
   history: 'league',
   map: 'league',
   teams: 'teams',

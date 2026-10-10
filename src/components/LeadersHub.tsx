@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Crown, Trophy } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 import {
   type Player,
   type PlayerBattingRatings,
@@ -17,8 +17,7 @@ import {
   summarise,
   type Distribution,
 } from '../lib/analytics/percentile';
-import { buildBattingAwards, buildPitchingAwards, type AwardEntry } from '../lib/awardRace';
-import { OddsBar, Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
+import { Panel, SegmentedControl, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from './ui';
 
 interface LeadersHubProps {
   teams: Team[];
@@ -36,6 +35,9 @@ interface LeadersHubProps {
    * their own again for which plot and which split. Three nested controls would be a
    * navigation problem wearing a layout costume.
    *
+   * It was once three controls on ONE screen: scope, board, and a third board option for the
+   * award races. The races are now their own screen, so this control is the last hop.
+   *
    * Required rather than optional so that every caller has to decide where the switch
    * goes. A screen that can be reached with no way onward is the failure this split has
    * to avoid, and an optional prop would make it a compile-time possibility.
@@ -44,7 +46,7 @@ interface LeadersHubProps {
 }
 
 type LeadersMode = 'players' | 'teams';
-type PlayerBoard = 'batting' | 'pitching' | 'awards';
+type PlayerBoard = 'batting' | 'pitching';
 
 const TOP_ROWS = 10;
 
@@ -612,78 +614,19 @@ const CategoryPanel: React.FC<{
   </Panel>
 );
 
-/* MVP scoring lives in lib/awardRace, shared with the front page. The weights
-   are the live formula, unchanged; the comment there explains why it is not
-   duplicated per screen. */
+/*
+  THE AWARD RACES ARE NOT HERE ANY MORE. They moved to their own screen, `components/awards/AwardsPage.tsx`,
+  reached from the LEAGUE rail under Leaders.
 
-const AwardRace: React.FC<{
-  title: string;
-  entries: AwardEntry[];
-  accent: 'gold' | 'platinum';
-  icon: React.ReactNode;
-}> = ({ title, entries, accent, icon }) => {
-  const leader = entries[0];
-  const runnerUp = entries[1];
-  const gap = leader && runnerUp ? leader.total - runnerUp.total : 0;
+  It was the third board mode on this screen, which put it behind the same segmented control as AVG and ERA.
+  Those are columns to be scanned; a race is a leaderboard with a story -- a leader, a margin, and the
+  arithmetic behind the score -- and rendering it as a third dense table beside the others is what made
+  it unreadable rather than a design choice anyone made deliberately. Two full races, each candidate
+  carrying an eight-cell scoring grid, half a screen wide, was the whole problem.
 
-  return (
-    <Panel className="flex flex-col overflow-hidden">
-      <div className="chrome-bar flex items-center justify-between gap-3 px-4">
-        <h2 className="t-h3">{title}</h2>
-        <span className={accent === 'gold' ? 'text-[var(--color-gold)]' : 'text-[var(--color-platinum)]'}>{icon}</span>
-      </div>
-
-      {leader && runnerUp && (
-        <p className="t-caption border-b border-[var(--color-chrome-lo)] px-4 py-2 text-[var(--color-ink-dim)]">
-          Lead over second: <StatValue size="sm" variant="accent">{gap.toFixed(1)}</StatValue> points
-        </p>
-      )}
-
-      <ol className="flex flex-col divide-y divide-[var(--color-chrome-lo)]">
-        {entries.map((entry, index) => {
-          const isLeader = index === 0;
-          return (
-            <li
-              key={entry.playerId}
-              className={`border-l-[3px] px-4 py-3 ${isLeader ? 'border-l-[var(--color-gold)]' : 'border-l-transparent'}`}
-            >
-              <div className="flex items-center gap-3">
-                <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-                {entry.team ? <TeamLogo team={entry.team} sizeClass="h-8 w-8" /> : null}
-                <div className="min-w-0 flex-1">
-                  <p className={`truncate t-stat-sm ${isLeader ? 'text-[var(--color-gold-hi)]' : ''}`}>
-                    {entry.name}
-                  </p>
-                  <p className="truncate t-caption text-[var(--color-ink-faint)]">
-                    {entry.team ? `${entry.team.city} ${entry.team.name}` : 'Free Agent'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <StatValue variant="accent">{entry.total.toFixed(1)}</StatValue>
-                  <p className="t-caption text-[var(--color-ink-faint)]">SCORE</p>
-                </div>
-              </div>
-
-              {/* The scoring function, shown. Every term that produced the total
-                  above appears here with the value it was computed from. */}
-              <dl className="mt-2 grid grid-cols-4 gap-x-2 gap-y-1 sm:grid-cols-8">
-                {entry.components.map((component) => (
-                  <div key={component.label} className="min-w-0">
-                    <dt className="t-caption truncate text-[var(--color-ink-faint)]">{component.label}</dt>
-                    <dd className="t-stat-sm truncate text-[var(--color-ink-dim)]">{component.detail}</dd>
-                    <dd className="t-stat-sm text-[var(--color-gold)]">+{component.contribution.toFixed(1)}</dd>
-                  </div>
-                ))}
-              </dl>
-
-              <OddsBar odds={entry.odds} label={entry.name} className="mt-3" />
-            </li>
-          );
-        })}
-      </ol>
-    </Panel>
-  );
-};
+  Nothing about the scoring moved. It lives in `lib/awardRace.ts` and is shared with the front-page summary
+  and the MacroBet board, so the three surfaces still cannot disagree about who leads.
+*/
 
 export const LeadersHub: React.FC<LeadersHubProps> = ({
   teams,
@@ -703,14 +646,20 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const battingByPlayerId = useMemo(() => getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'), [battingStats]);
   const pitchingByPlayerId = useMemo(() => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'), [pitchingStats]);
-  const battingRatingsByPlayerId = useMemo(
-    () => new Map(battingRatings.map((rating) => [rating.playerId, rating])),
-    [battingRatings],
-  );
-  const pitchingRatingsByPlayerId = useMemo(
-    () => new Map(pitchingRatings.map((rating) => [rating.playerId, rating])),
-    [pitchingRatings],
-  );
+
+  /*
+    The rating maps that used to sit here are gone with the award races.
+
+    They existed for exactly one consumer -- `buildBattingAwards`/`buildPitchingAwards` read `overall`
+    from the ratings -- and both of those now live on the awards screen, which builds its own. Keeping
+    two `new Map(...)` passes over every rating row on every render to feed nothing was the kind of dead
+    work that hides a real dependency: `battingRatings` and `pitchingRatings` remain props because the
+    awards screen is given them separately by the router, not because this screen reads them.
+
+    This is why the props are still required here rather than removed with the code: the router has one
+    `playerState` and hands the same arrays to both screens, and trimming the props now would be tidying
+    the call site at the cost of a second wiring later if the screen needs ratings again.
+  */
 
   const displayName = (player: Player) => `${player.firstName} ${player.lastName}`;
 
@@ -1078,20 +1027,9 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
     };
   }), [teamCategories, teams]);
 
-  // -- award races --------------------------------------------------------
-  // Scoring lives in lib/awardRace so the front page and this board cannot
-  // disagree about who leads the race.
-  const awardInputs = useMemo(() => ({
-    players,
-    teamsById,
-    battingStats: battingByPlayerId,
-    pitchingStats: pitchingByPlayerId,
-    battingRatings: battingRatingsByPlayerId,
-    pitchingRatings: pitchingRatingsByPlayerId,
-  }), [battingByPlayerId, battingRatingsByPlayerId, pitchingByPlayerId, pitchingRatingsByPlayerId, players, teamsById]);
-
-  const battingAwards = useMemo<AwardEntry[]>(() => buildBattingAwards(awardInputs), [awardInputs]);
-  const pitchingAwards = useMemo<AwardEntry[]>(() => buildPitchingAwards(awardInputs), [awardInputs]);
+  // The award races used to be built here and are now built on their own screen. This file no
+  // longer reads `buildBattingAwards`/`buildPitchingAwards`, and the ranking below cannot drift
+  // from the race because it does not compute one -- `lib/awardRace.ts` remains the single source.
 
   const activeBoards = mode === 'teams' ? teamBoards : playerBoard === 'pitching' ? pitchingBoards : battingBoards;
   const selectedKey = mode === 'teams' ? selectedTeam : playerBoard === 'pitching' ? selectedPitching : selectedBatting;
@@ -1119,6 +1057,12 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
           (Tables/Dashboards) are deliberately separate rather than one four-stop control:
           they answer different questions, and merging them would mean a reader reaching
           for Teams lands on a different screen instead of the one they asked for.
+
+          The board control is now two stops, not three. 'Awards' used to sit in it beside
+          Batting and Pitching, which made the award races the third board on a screen about
+          dense category tables -- and they are not a category table. They are a leaderboard with
+          a margin and a score behind it, and they read better on their own screen with the full
+          width. A manager who wants the race now has a leaf for it under Leaders in the rail.
         */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -1147,7 +1091,6 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
                 options={[
                   { value: 'batting', label: 'Batting' },
                   { value: 'pitching', label: 'Pitching' },
-                  { value: 'awards', label: 'Awards' },
                 ]}
               />
             )}
@@ -1165,59 +1108,56 @@ export const LeadersHub: React.FC<LeadersHubProps> = ({
         </div>
       </Panel>
 
-      {mode === 'players' && playerBoard === 'awards' ? (
-        <div className="grid gap-5 xl:grid-cols-2">
-          <AwardRace title="Batting MVP" entries={battingAwards} accent="gold" icon={<Crown className="h-4 w-4" />} />
-          <AwardRace title="Pitching MVP" entries={pitchingAwards} accent="platinum" icon={<Trophy className="h-4 w-4" />} />
-        </div>
-      ) : (
-        <>
-          {/* Expand one, browse many: the selected category at full width, the
-              rest as a dense grid that wraps to three or four across. */}
-          {expanded && (
-            <Panel className="overflow-hidden">
-              <div className="chrome-bar flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-2.5">
-                <h2 className="t-h3">{expanded.title}</h2>
-                {/*
-                  The expanded board used to print only a count, while every small card
-                  beneath it printed MEAN and the percentile pool. That is backwards: this
-                  is the table a reader came for, and it was the one giving them the least
-                  context for the numbers. It now carries exactly what the cards carry, so
-                  the two renderings of the same board cannot disagree.
-                */}
-                <div className="flex items-baseline gap-3">
-                  <MeanReadout board={expanded} />
-                  <span className="t-caption text-[var(--color-ink-faint)]">
-                    {expanded.count} {expanded.qualified ? 'QUALIFIED' : expanded.scope === 'team' ? 'TEAMS' : 'PLAYERS'}
-                  </span>
-                </div>
-              </div>
-              {expanded.shortNote && (
-                <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 t-caption text-[var(--color-ink-faint)]">
-                  {expanded.shortNote}
-                </p>
-              )}
-              <StatTable
-                columns={expanded.columns}
-                rows={expanded.rows}
-                density="default"
-                aria-label={`${expanded.title} full board`}
-              />
-            </Panel>
-          )}
+      {/* Expand one, browse many: the selected category at full width, the
+          rest as a dense grid that wraps to three or four across.
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {activeBoards.map((board) => (
-              <CategoryPanel
-                key={board.key}
-                board={board}
-                selected={board.key === selectedKey}
-                onSelect={() => setSelectedKey(board.key)}
-              />
-            ))}
-          </div>
-        </>
-      )}
+          The fragment here used to be the else-branch of a ternary whose other branch was the award
+          races. With that branch gone it could be unwrapped, but two siblings still need it, so it
+          stays as a fragment rather than becoming a wrapper element. */}
+      <>
+        {expanded && (
+          <Panel className="overflow-hidden">
+            <div className="chrome-bar flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-2.5">
+              <h2 className="t-h3">{expanded.title}</h2>
+              {/*
+                The expanded board used to print only a count, while every small card
+                beneath it printed MEAN and the percentile pool. That is backwards: this
+                is the table a reader came for, and it was the one giving them the least
+                context for the numbers. It now carries exactly what the cards carry, so
+                the two renderings of the same board cannot disagree.
+              */}
+              <div className="flex items-baseline gap-3">
+                <MeanReadout board={expanded} />
+                <span className="t-caption text-[var(--color-ink-faint)]">
+                  {expanded.count} {expanded.qualified ? 'QUALIFIED' : expanded.scope === 'team' ? 'TEAMS' : 'PLAYERS'}
+                </span>
+              </div>
+            </div>
+            {expanded.shortNote && (
+              <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 t-caption text-[var(--color-ink-faint)]">
+                {expanded.shortNote}
+              </p>
+            )}
+            <StatTable
+              columns={expanded.columns}
+              rows={expanded.rows}
+              density="default"
+              aria-label={`${expanded.title} full board`}
+            />
+          </Panel>
+        )}
+
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {activeBoards.map((board) => (
+            <CategoryPanel
+              key={board.key}
+              board={board}
+              selected={board.key === selectedKey}
+              onSelect={() => setSelectedKey(board.key)}
+            />
+          ))}
+        </div>
+      </>
     </section>
   );
 };

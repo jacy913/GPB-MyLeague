@@ -1,5 +1,5 @@
 import React from 'react';
-import { Crown, Trophy } from 'lucide-react';
+import { ChevronRight, Crown, Trophy } from 'lucide-react';
 import type { AwardEntry } from '../../lib/awardRace';
 import { formatAmerican, probabilityToAmerican } from '../../lib/markets';
 import { SegmentedControl, StatValue, TeamLogo } from '../ui';
@@ -20,8 +20,9 @@ export type MvpRaceRow = AwardEntry & {
 /**
  * Front-page award race.
  *
- * Top three only. A front page should be a summary, and the full candidate table with the
- * component breakdown is one click away on the Leaders screen -- where it already lives and belongs.
+ * Top three only. A front page should be a summary. The full field, the margin, and the scoring
+ * behind every score are one click away on the Awards screen, which is where they belong -- the race
+ * now has its own page rather than hiding as a third board mode on Leaders.
  *
  * THE PRICE IS MACROBET'S, NOT THIS PANEL'S. It is the confidence-weighted consensus of the same
  * field the book is selling, taken from the same `buildAwardMarket` call, which is why the leader
@@ -33,7 +34,9 @@ export const MvpRacePanel: React.FC<{
   board: 'batting' | 'pitching';
   onBoardChange: (board: 'batting' | 'pitching') => void;
   entries: MvpRaceRow[];
-}> = ({ board, onBoardChange, entries }) => {
+  /** Opens the full award race on its own screen, where the whole field and the scoring live. */
+  onOpenFullRace: () => void;
+}> = ({ board, onBoardChange, entries, onOpenFullRace }) => {
   const leader = entries[0];
   const runnerUp = entries[1];
   const gap = leader && runnerUp ? leader.total - runnerUp.total : 0;
@@ -53,6 +56,25 @@ export const MvpRacePanel: React.FC<{
         onChange={(value) => onBoardChange(value as 'batting' | 'pitching')}
         options={[{ value: 'batting', label: 'Batting' }, { value: 'pitching', label: 'Pitching' }]}
       />
+
+      {/*
+        THE WAY TO THE FULL RACE.
+
+        A summary panel that can only ever show three of eight needs somewhere to send the reader who
+        wants the rest, and until the races became their own screen this pointed nowhere -- the note
+        under this panel used to say the full table lived "on the Leaders screen", which was true only
+        for anyone who knew it was hidden behind a third segmented stop. Now it is a real button to a
+        real screen, and this front-page summary and that page read the same shared scoring, so the
+        leader here is the leader there.
+      */}
+      <button
+        type="button"
+        onClick={onOpenFullRace}
+        className="mt-2 flex w-full items-center justify-center gap-1.5 border border-[var(--color-chrome-lo)] bg-[var(--color-panel-2)] py-1.5 t-caption text-[var(--color-ink-dim)] hover:text-[var(--color-gold)] hover:border-[var(--color-gold-lo)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
+      >
+        Open full race
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
 
       {/*
         THE CREST ONLY -- the club's city and nickname are gone from each row.
