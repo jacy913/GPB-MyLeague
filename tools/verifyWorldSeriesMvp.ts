@@ -132,6 +132,74 @@ const monsterSeries = {
   weightedExtraBaseHits: 7.7,
 };
 
+/*
+ * THE REPORTED CASE, TRANSCRIBED.
+ *
+ * A manager's own words: a batter hit .400 with 3 HR and 8 RBI across the World Series and lost it to
+ * a pitcher who worked two games, 11 innings, 1.67 ERA. In real voting that hitter wins easily --
+ * eleven innings without a decision is a good outing, not a series.
+ *
+ * At the first calibration this scored 238.6 against 242.0: the pitcher took it by three points. It is
+ * pinned here rather than left to a weight nobody checks, because a three-point margin is invisible
+ * until it is the wrong way round.
+ */
+const reportedBatter = {
+  ...blankWorldSeriesBattingLine(),
+  plateAppearances: 27,
+  atBats: 25,
+  hits: 10,
+  doubles: 1,
+  homeRuns: 3,
+  runs: 6,
+  rbi: 8,
+  walks: 2,
+  weightedHomeRuns: 3.3,
+  weightedRbi: 8.8,
+  weightedRuns: 6.6,
+  weightedExtraBaseHits: 4.4,
+};
+const reportedPitcher = {
+  ...blankWorldSeriesPitchingLine(),
+  outsRecorded: 33,
+  runsAllowed: 2,
+  strikeouts: 12,
+  wins: 0,
+  saves: 0,
+  weightedStrikeouts: 13.2,
+};
+const reportedBatterScore = scoreWorldSeriesBatter(reportedBatter);
+const reportedPitcherScore = scoreWorldSeriesPitcher(reportedPitcher);
+
+check(
+  'the reported case: .400 / 3 HR / 8 RBI beats 11 scoreless-ish innings with no decision',
+  reportedBatterScore > reportedPitcherScore * 1.05,
+  `batter ${reportedBatterScore.toFixed(1)} vs pitcher ${reportedPitcherScore.toFixed(1)}`,
+  'reported as a real loss; at the first calibration this was 238.6 to 242.0, so a three-point margin was the whole bug',
+);
+
+/*
+ * AND THE MARGIN IS NOT ACCIDENTAL.
+ *
+ * Not a "reassuringly big" margin -- both scores are pure functions of their lines, so the same inputs
+ * give the same answer every time and there is no coin to flip. What a margin does have to survive is
+ * a future weight change, and what would make this fragile is a lead so thin that nudging the home-run
+ * weight by one reverses it. Ten percent is a lead that means something to a maintainer reading this
+ * file, and the assertion is that it is a lead at all rather than a rounding artefact.
+ */
+check(
+  'and the margin is wide enough to survive a weight change, not a rounding artefact',
+  reportedBatterScore > reportedPitcherScore * 1.08,
+  `batter leads by ${(((reportedBatterScore / reportedPitcherScore) - 1) * 100).toFixed(0)}%`,
+  'deterministic scores, so this is not about luck on a seed -- it is about whether the ordering would flip on a small rebalance',
+);
+
+check(
+  'the pitcher still takes it when he wins games, which is what separates the two',
+  scoreWorldSeriesPitcher({ ...reportedPitcher, wins: 2, outsRecorded: 45, runsAllowed: 3 }) > reportedBatterScore,
+  `a two-win 15.0 IP ace outscores the same hitter`,
+  'favouring hitters must not make a multi-win starter uncompetitive -- the volume-first shape is what stops that',
+);
+
 const scoreReliever = scoreWorldSeriesPitcher(relieverCameo);
 const scoreAce = scoreWorldSeriesPitcher(aceTwoDominantStarts);
 const scoreSlugger = scoreWorldSeriesBatter(starSlugger);
@@ -531,6 +599,52 @@ const main = async () => {
     'an unfinished postseason names nobody rather than naming a provisional MVP',
     unfinished.champion === null && unfinished.candidates.length === 0,
     'no games, no champion, no candidates',
+  );
+
+  /*
+   * THE SPLIT, WHICH IS THE OTHER HALF OF THE COMPLAINT.
+   *
+   * "Favour batters a bit more" is easy to satisfy by accident -- one favourable seed proves nothing
+   * about whether the award has a hitter bias or a pitcher bias. So this measures the split across
+   * several postseasons and asserts it is not lopsided in EITHER direction.
+   *
+   * The band is deliberately wide. Real World Series MVP history runs about 40-45% hitters, and this
+   * simulation's postseasons are not history: the exact number is not the claim, and pinning it to
+   * 45% would fail the next time somebody changes a weight. The claim is that neither discipline is
+   * shut out, and a range is the honest way to say that.
+   *
+   * Each seed is a full season simulation, so this is the slowest section of the tool by some distance.
+   * It is worth it: it is the only check here that looks at the outcome rather than at a formula.
+   */
+  const SPLIT_SEEDS = [777, 24601, 8675309, 111222, 31337, 5150];
+  let hitterWins = 0;
+  const splitLines: string[] = [];
+
+  for (const seed of SPLIT_SEEDS) {
+    const season = await playToTheEnd(YEAR, seed);
+    const bundle = computeWorldSeriesMvpCandidates(season.teams, season.games, season.playerState, YEAR);
+    const winner = bundle.candidates[0];
+    if (!winner) {
+      continue;
+    }
+    const type = season.playerState.players.find((p) => p.playerId === winner.playerId)?.playerType ?? '?';
+    if (type === 'batter') {
+      hitterWins += 1;
+    }
+    splitLines.push(`  seed ${String(seed).padStart(7)}: ${type.padEnd(7)} ${winner.playerName} -- ${winner.summary}`);
+  }
+
+  const hitterRate = hitterWins / SPLIT_SEEDS.length;
+  splitLines.forEach((line) => process.stdout.write(`${line}\n`));
+  process.stdout.write(
+    `  hitters won ${hitterWins}/${SPLIT_SEEDS.length} (${(hitterRate * 100).toFixed(0)}%); real history runs about 40-45%\n\n`,
+  );
+
+  check(
+    'neither discipline is shut out of the award across several postseasons',
+    hitterRate >= 0.25 && hitterRate <= 0.75,
+    `${(hitterRate * 100).toFixed(0)}% of ${SPLIT_SEEDS.length} postseasons went to a hitter`,
+    'a formula that always names a pitcher is the same defect as one that never does, and it reads the same from the checklist',
   );
 
   process.stdout.write('\nWORLD SERIES MVP BOARD\n');

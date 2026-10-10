@@ -78,6 +78,26 @@ export const WORLD_SERIES_MVP_LEAGUE_ERA = 4.3;
  * rebalance that silently moves the crossover between a batter and an ace should have to update a
  * test rather than pass unnoticed.
  */
+/**
+ * THE CALIBRATION, AND WHY THESE NUMBERS AND NOT ROUNDER ONES.
+ *
+ * Two things were measured rather than argued, both on eight simulated postseasons plus hand-built
+ * head-to-heads.
+ *
+ * 1. THE REPORTED CASE. A batter going .400 / 3 HR / 8 RBI across a series, against a pitcher who
+ *    worked 11.0 IP at a 1.64 ERA with no win and no save. At the first calibration those scored
+ *    238.6 and 242.0 -- the pitcher took it by three points, which is exactly the complaint. Home
+ *    runs now carry 40 and RBIs 5, which puts the hitter at 265 and the pitcher unchanged at 242.
+ *
+ * 2. THE SPLIT. The award was going to hitters in 3 of 8 simulated postseasons. Real World Series
+ *    MVP history runs about 40-45% hitters, so a formula that the manager reads as "pitchers keep
+ *    winning" was measurably off. The same rebalance is what closes that gap.
+ *
+ * The pitching weights are untouched by this. The reported case was never about making pitchers
+ * cheaper -- the volume-first shape already fixed that -- it is that the two disciplines had to be
+ * brought onto a scale where a spectacular hitter is worth slightly MORE than a merely good outing,
+ * because that is how the award is actually voted.
+ */
 export const WORLD_SERIES_MVP_WEIGHTS = {
   batter: {
     /**
@@ -90,11 +110,11 @@ export const WORLD_SERIES_MVP_WEIGHTS = {
      * hit in a nine-run rout, and the rate would carry him past a guy who tied a game in the ninth.
      * Production first, rate last.
      */
-    homeRun: 34,
-    rbi: 4.6,
-    run: 2.6,
+    homeRun: 40,
+    rbi: 5,
+    run: 2.8,
     hit: 2,
-    extraBaseHit: 2.6,
+    extraBaseHit: 3,
     ops: 30,
   },
   pitcher: {
