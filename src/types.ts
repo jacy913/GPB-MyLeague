@@ -382,6 +382,19 @@ export interface PlayLogEvent {
   scoreAway: number;
   scoreHome: number;
   bases: BaseState;
+  /**
+   * The runners on base BEFORE this plate appearance resolved.
+   *
+   * `bases` is the state after the outcome applied -- a home run clears them, which is exactly why
+   * it could not be used to judge how much pressure a batter was under. `outs` and `scoreHome`/
+   * `scoreAway` are both pre-play for the same reason, and this field completes that set: a leverage
+   * calculation needs the situation as it stood when the decision was made.
+   *
+   * Null rather than absent-by-default so that a log written before this field existed reads as "not
+   * recorded" and falls back to `bases`, which is a defensible approximation. See
+   * `worldSeriesMvp.ts` for where that fallback is and is not good enough.
+   */
+  basesBefore: BaseState | null;
 }
 
 export interface GameSessionScoreboard {

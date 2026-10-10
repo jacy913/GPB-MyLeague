@@ -858,6 +858,16 @@ const createLog = (
   runsScored: number,
   rbi: number,
   scoringPlayerIds: string[],
+  /**
+   * The occupancy this plate appearance was decided against.
+   *
+   * Passed separately because `session` has already advanced its bases by the time this is called.
+   * `bases` below records the state the outcome LEFT BEHIND -- right for reconstructing what happened
+   * next, wrong for asking what pressure the hitter was under, since a home run clears the bases and
+   * a bases-loaded shot is exactly the case that must not read as an empty count. `recordProbeAtBat`
+   * takes the same argument for the same reason.
+   */
+  basesBefore: BaseState,
 ): PlayLogEvent => ({
   seq: session.nextEventSeq,
   inning: session.inning,
@@ -878,6 +888,7 @@ const createLog = (
   scoreAway: session.scoreboard.awayRuns,
   scoreHome: session.scoreboard.homeRuns,
   bases: cloneBases(session.bases),
+  basesBefore: cloneBases(basesBefore),
 });
 
 const makePitchingChange = (
@@ -911,7 +922,7 @@ const makePitchingChange = (
 
   return appendLog(
     nextSession,
-    createLog(nextSession, 'PITCHING_CHANGE', reason, null, pitcher, null, 0, 0, []),
+    createLog(nextSession, 'PITCHING_CHANGE', reason, null, pitcher, null, 0, 0, [], nextSession.bases),
   );
 };
 
@@ -1426,7 +1437,7 @@ const completeGame = (session: GameSessionState, description: string): GameSessi
     playerStats: clonePlayerStatDelta(session.playerStats),
   };
   assignPitcherDecision(completed);
-  return appendLog(completed, createLog(completed, 'GAME_END', description, null, null, null, 0, 0, []));
+  return appendLog(completed, createLog(completed, 'GAME_END', description, null, null, null, 0, 0, [], completed.bases));
 };
 
 const completeBrokenGameByForfeit = (
@@ -1805,7 +1816,7 @@ export const simulateNextAtBat = (
   // plate appearance was decided against.
   recordProbeAtBat(session.bases, outcome, runsScored);
   nextSession = advanceBatterIndex(nextSession);
-  nextSession = appendLog(nextSession, createLog(nextSession, outcome, description, batter, pitcher, defender, runsScored, rbi, scoringPlayerIds));
+  nextSession = appendLog(nextSession, createLog(nextSession, outcome, description, batter, pitcher, defender, runsScored, rbi, scoringPlayerIds, session.bases));
 
   if (isWalkOff(nextSession)) {
     return completeGame(nextSession, `${homeTeam.city} ${homeTeam.name} walk it off in the bottom of the ${nextSession.inning}th.`);
@@ -1822,7 +1833,7 @@ export const simulateNextAtBat = (
       endedHalf === 'top'
         ? `Top ${nextSession.inning} complete.`
         : `Bottom ${nextSession.inning} complete.`;
-    const withHalfLog = appendLog(nextSession, createLog(nextSession, 'HALF_END', halfDescription, null, null, null, 0, 0, []));
+    const withHalfLog = appendLog(nextSession, createLog(nextSession, 'HALF_END', halfDescription, null, null, null, 0, 0, [], nextSession.bases));
 
     if (endedHalf === 'top') {
       if (withHalfLog.inning >= 9 && withHalfLog.scoreboard.homeRuns > withHalfLog.scoreboard.awayRuns) {

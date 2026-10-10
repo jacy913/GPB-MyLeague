@@ -75,6 +75,9 @@ const makeLog = (spec: LogSpec, seq: number): PlayLogEvent => ({
   scoreAway: spec.scoreAway,
   scoreHome: spec.scoreHome,
   bases: EMPTY_BASES,
+  // These fixtures never load runners, so the pre-play occupancy is the same empty set the outcome
+  // leaves behind. Recorded explicitly so a fixture cannot quietly diverge from a real log.
+  basesBefore: EMPTY_BASES,
 });
 
 const AWAY = INITIAL_TEAMS[0].id;

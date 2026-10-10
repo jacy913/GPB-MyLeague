@@ -601,15 +601,22 @@ export const computeWorldSeriesMvpCandidates = (
         : marginAfter + Math.max(0, log.runsScored);
 
       /*
-       * `log.bases` is the state AFTER the outcome applied, not the traffic the plate appearance was
-       * decided against -- so a bases-loaded home run reads as empty and has its traffic bonus
-       * understated. That is the marquee case paying the approximation, so it is written down rather
-       * than smoothed over. The bound is small (traffic is worth at most 12%), and inferring the
-       * pre-play occupancy from the outcome instead would be worse: it would credit a player with
-       * runners he removed.
+       * THE TRAFFIC IS THE PRE-PLAY OCCUPANCY.
+       *
+       * `log.bases` is the state the outcome LEFT BEHIND, so a home run reads as empty bases -- and the
+       * biggest swings in baseball were being measured as the least pressured plays on the board. That
+       * was the documented limitation of the first version of this formula, and it was the one case
+       * worth going to the game engine for.
+       *
+       * `log.basesBefore` carries the occupancy the plate appearance was actually decided against, which
+       * is what makes "bases loaded in the ninth" mean anything here. The fallback is for logs written
+       * before the field existed: those have no pre-play record at all and post-play bases are the only
+       * thing available. It remains a real approximation in that case, and it is recorded rather than
+       * hidden -- but it now applies to historical saves instead of to every game.
        */
-      const basesOccupied = log.bases
-        ? [log.bases.first, log.bases.second, log.bases.third].filter((base): base is string => Boolean(base)).length
+      const occupancy = log.basesBefore ?? log.bases;
+      const basesOccupied = occupancy
+        ? [occupancy.first, occupancy.second, occupancy.third].filter((base): base is string => Boolean(base)).length
         : 0;
       const leverage = computeLeverageWeight({
         inning: log.inning,

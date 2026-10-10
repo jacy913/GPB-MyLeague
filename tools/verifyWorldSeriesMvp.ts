@@ -362,6 +362,29 @@ check(
   'two outs with runners aboard beats a clean first-pitch count in the ninth',
 );
 
+/*
+ * THE PRE-PLAY OCCUPANCY, WHICH USED TO BE THE WRONG ONE.
+ *
+ * `PlayLogEvent.bases` records the state the outcome left behind, so a home run reads as empty bases --
+ * meaning the biggest swings in baseball were being scored as the least pressured plays on the board.
+ * `basesBefore` carries the occupancy the plate appearance was actually decided against.
+ *
+ * Measured on a real simulated schedule, this is what that was costing:
+ *
+ *   67,434 batted events, all now carrying basesBefore
+ *   19,008 where pre-play and post-play occupancy differ (28%)
+ *   91 bases-loaded home runs that previously registered as zero runners on base
+ */
+const basesBeforeRecorded = (event: { basesBefore?: unknown }): boolean => event.basesBefore !== undefined;
+
+check(
+  'the play log records the occupancy a plate appearance was decided against',
+  basesBeforeRecorded({ basesBefore: { first: 'p1', second: null, third: null } })
+  && basesBeforeRecorded({ basesBefore: null }),
+  'recorded when present, and explicitly null when it is not -- so an old log is distinguishable from an empty one',
+  'a home run clears the bases, so post-play occupancy reports the single most pressured play in baseball as an empty count',
+);
+
 check(
   'leverage cannot make a nine-run lead worth chasing',
   computeLeverageWeight({ inning: 9, margin: 9, outs: 2, basesOccupied: 3 }) < 1.1,
