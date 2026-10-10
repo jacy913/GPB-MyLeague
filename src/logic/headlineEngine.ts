@@ -485,6 +485,16 @@ export interface GameShape {
   winnerPitcherCount: number;
   loserPitcherCount: number;
   winnerWasUnderdog: boolean;
+  /**
+   * The club that was held hitless, or null.
+   *
+   * Null for a FORFEIT, which matters more than it looks. `completeBrokenGameByForfeit` ends the game
+   * when a side cannot field a valid pitcher or the simulation stalls, and the side that never took
+   * its at-bats is left with a genuine zero in the hit column. Reading hits alone therefore publishes
+   * "NO-HIT IMMORTALITY" and credits a no-hitter to a staff that never took the mound -- which is why
+   * the check is on the description the engine itself writes, rather than on a separate flag that
+   * could drift out of step with it.
+   */
   noHitOpponentId: string | null;
   isPlayoffGame: boolean;
 }
@@ -686,6 +696,18 @@ export const deriveGameLines = (game: Game): DerivedGameLines => {
  * none of it touches the play log except the pitcher counts, which come from the
  * lines the first pass already produced.
  */
+/**
+ * WAS THIS GAME DECIDED BY A FORFEIT?
+ *
+ * Read off the description rather than a dedicated flag, and that is a considered choice rather than a
+ * shortcut. The string is written by exactly one place -- `completeBrokenGameByForfeit` in
+ * `gameEngine.ts` -- and it is the same string the manager reads on the game card, so the newsroom and
+ * the box score cannot disagree about what happened. A separate boolean would be a second source of
+ * truth for a fact that already has one.
+ */
+const gameIsForfeit = (game: Game): boolean =>
+  typeof game.stats.description === 'string' && /take a forfeit win over/i.test(game.stats.description);
+
 export const deriveGameShape = (
   game: Game,
   teamsById: Map<string, Team>,
@@ -725,8 +747,9 @@ export const deriveGameShape = (
       Boolean(awayTeam && homeTeam) &&
       ((awayWon && (awayTeam!.rating + 8 <= homeTeam!.rating || (awayTeam ? getWinPct(awayTeam) : 0) + 0.15 <= (homeTeam ? getWinPct(homeTeam) : 0))) ||
         (!awayWon && (homeTeam!.rating + 8 <= awayTeam!.rating || (homeTeam ? getWinPct(homeTeam) : 0) + 0.15 <= (awayTeam ? getWinPct(awayTeam) : 0)))),
-    noHitOpponentId:
-      typeof game.stats.awayHits === 'number' && game.stats.awayHits === 0
+    noHitOpponentId: gameIsForfeit(game)
+      ? null
+      : typeof game.stats.awayHits === 'number' && game.stats.awayHits === 0
         ? game.awayTeam
         : typeof game.stats.homeHits === 'number' && game.stats.homeHits === 0
           ? game.homeTeam

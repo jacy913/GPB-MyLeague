@@ -34,6 +34,8 @@ import {
   type GameEventKind,
 } from '../src/logic/headliners';
 import { VOICE_BANKS } from '../src/logic/headlinerVoices';
+import { deriveGameShape, type DerivedGameLines } from '../src/logic/headlineEngine';
+import type { Game, Team } from '../src/types';
 
 const checks: Array<{ label: string; pass: boolean; detail?: string }> = [];
 const check = (label: string, pass: boolean, detail?: string): void => {
@@ -171,6 +173,75 @@ check(
   `${HEADLINERS.length} reporters, ${Object.keys(VOICE_BANKS).length} voice banks. The generic bank is what `
   + 'catches an event kind a persona covers but has no specific lines for, so an empty one means that byline '
   + 'goes silent on exactly the events it was given.',
+);
+
+// -- 6. A FORFEIT IS NOT A NO-HITTER ---------------------------------------------------------
+/*
+  The newsroom reads one shape field for this: `GameShape.noHitOpponentId`, which the story builder and
+  `detectNoHitter` both consume. It used to be derived from the hit column alone, which is wrong for a
+  forfeit -- `completeBrokenGameByForfeit` ends the game when a side cannot field a valid pitcher, and
+  the side that never took its at-bats is left with a genuine zero. That published "NO-HIT IMMORTALITY"
+  and credited a no-hitter to a staff that never took the mound.
+
+  Measured on a 2,511-game simulated season, no forfeits occurred, so this is a latent defect rather
+  than a live one: it needs a malformed roster or a stalled simulation to fire. Both fixtures below are
+  constructed, which is the only honest way to test a branch a healthy league never takes.
+*/
+const SHAPE_FIXTURE_TEAMS = new Map<string, Team>([
+  ['fx-away', { id: 'fx-away', city: 'Away', name: 'Aces', league: 'Platinum', division: 'North', rating: 70, previousBaselineWins: 0, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0 }],
+  ['fx-home', { id: 'fx-home', city: 'Home', name: 'Hawks', league: 'Platinum', division: 'North', rating: 70, previousBaselineWins: 0, wins: 1, losses: 0, runsScored: 0, runsAllowed: 0 }],
+]);
+
+const emptyDerived: DerivedGameLines = {
+  logs: [],
+  battingLines: [],
+  pitchingLines: [],
+  extraInnings: 9,
+  awayLargestDeficit: 0,
+  homeLargestDeficit: 0,
+  leadChanges: 0,
+  tieCount: 0,
+  walkOffBatterName: null,
+};
+
+const makeFixtureGame = (gameId: string, description: string): Game => ({
+  gameId,
+  date: '2026-06-01',
+  homeTeam: 'fx-home',
+  awayTeam: 'fx-away',
+  phase: 'regular_season',
+  status: 'completed',
+  score: { away: 0, home: 1 },
+  stats: { awayHits: 0, homeHits: 3, description },
+});
+
+const forfeitShape = deriveGameShape(
+  makeFixtureGame('fx-forfeit', 'Home Hawks take a forfeit win over Away Aces. The fielding side had no valid pitcher available.'),
+  SHAPE_FIXTURE_TEAMS,
+  emptyDerived,
+);
+const realNoHitterShape = deriveGameShape(
+  makeFixtureGame('fx-nohit', 'Home Hawks win 1-0.'),
+  SHAPE_FIXTURE_TEAMS,
+  emptyDerived,
+);
+
+check(
+  'a forfeit is never reported as a no-hitter',
+  forfeitShape.noHitOpponentId === null,
+  forfeitShape.noHitOpponentId === null
+    ? 'the forfeiting loser keeps a real zero in the hit column, and the newsroom declines to call it. '
+      + 'A no-hitter here would credit a staff that never took the mound -- and needs a malformed roster or a '
+      + 'stalled simulation to reach, which is why 2,511 simulated games produced none.'
+    : `reported a no-hitter for ${forfeitShape.noHitOpponentId}`,
+);
+
+check(
+  'and a genuine no-hitter is still reported',
+  realNoHitterShape.noHitOpponentId === 'fx-away',
+  realNoHitterShape.noHitOpponentId === 'fx-away'
+    ? 'the guard is on the forfeit, not on the hit column'
+    : `missed it: ${realNoHitterShape.noHitOpponentId}`,
 );
 
 const failed = checks.filter((c) => !c.pass);
