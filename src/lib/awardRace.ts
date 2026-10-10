@@ -180,6 +180,36 @@ const getWinPct = (team: Team): number => {
  * therefore reports each racer's true share of the whole field, and the three
  * do not sum to 100 -- which is correct. Renormalising the displayed subset
  * would inflate the leader's odds and overstate the race.
+ *
+ * THE ELIGIBILITY GATE, WHICH IS "HAS A CLUB", NOT JUST "HAS THE NUMBERS".
+ *
+ * Both race builders used to qualify on production alone -- 120 at-bats, or eight starts -- and then
+ * look up the team, defaulting a miss to `null` and scoring the TEAM term as zero. That default is what
+ * let a player with no club into the race, and it was wrong in three separate ways:
+ *
+ *   1. HE COULD WIN. The award went to the highest score, and a released player's score is built from
+ *      a season's worth of real hits. A manager who cut a star in July left him at the top of the
+ *      leaderboard for the rest of the season, on a club that does not exist.
+ *   2. HIS SCORE WAS MEASURED DIFFERENTLY. Every other candidate's TEAM term is a real win
+ *      percentage. His was a hard zero, so he was being compared on seven terms against everyone's
+ *      eight -- a handicap nobody chose and nobody could see, on a page that prints the arithmetic.
+ *   3. IT REACHED THE ARCHIVE AND THE BOOK. `computeBattingMvpCandidates` in App.tsx ranks the season
+ *      that gets written to the season history, and `BettingPage` prices the market off this same
+ *      field. So the bug was not confined to a display: a teamless player could be recorded as a
+ *      season MVP with a null team, and the book would take bets on him.
+ *
+ * Reproduced deliberately (`tools/checkAwardEligibility.ts`): take a simulated season, apply the exact
+ * release the app already performs in `useRosterTransactions.ts` -- `teamId: null, status: 'free_agent'`
+ * -- and the released player stays rank 1 with a full line and `TEAM .000`.
+ *
+ * The gate is `if (!team) return []`, and it resolves the team FIRST rather than defaulting it. That
+ * ordering is the point: a null default is indistinguishable from a real zero, which is why this read
+ * as "Free Agent" on the page and as a legitimate race entry everywhere else. Making the lookup
+ * mandatory means a player with no resolvable club is not a candidate at all.
+ *
+ * The price consequence is intentional and is the same argument `checkAwardRacePrice` already makes
+ * about field size: the field is smaller, so the remaining candidates hold more of it, and the book
+ * reprices to match. That is the book telling the truth about a race with a legitimate field.
  */
 export const buildBattingAwards = (
   { players, teamsById, battingStats, battingRatings }: AwardInputs,
@@ -188,12 +218,14 @@ export const buildBattingAwards = (
   const stat = battingStats.get(player.playerId);
   const rating = battingRatings.get(player.playerId);
   if (!stat || !rating || stat.atBats < 120) return [];
+  // Resolved before the candidate is built, and required. See the note above.
   const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
+  if (!team) return [];
   return [{
     playerId: player.playerId,
     name: `${player.firstName} ${player.lastName}`,
     team,
-    components: battingMvpComponents(stat, rating.overall, team ? getWinPct(team) : 0),
+    components: battingMvpComponents(stat, rating.overall, getWinPct(team)),
   }];
 }), take);
 
@@ -232,12 +264,14 @@ export const buildPitchingAwards = (
   const rating = pitchingRatings.get(player.playerId);
   if (!stat || !rating) return [];
   if (stat.gamesStarted < PITCHING_MVP_MIN_STARTS && stat.saves < PITCHING_MVP_MIN_SAVES) return [];
+  // Same gate, same reason as the batting race: no club, no candidacy. See `buildBattingAwards`.
   const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
+  if (!team) return [];
   return [{
     playerId: player.playerId,
     name: `${player.firstName} ${player.lastName}`,
     team,
-    components: pitchingMvpComponents(stat, rating.overall, team ? getWinPct(team) : 0),
+    components: pitchingMvpComponents(stat, rating.overall, getWinPct(team)),
   }];
 }), take);
 
