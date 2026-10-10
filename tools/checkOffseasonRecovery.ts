@@ -62,6 +62,7 @@ import { buildOffseasonEventSchedule } from '../src/logic/offseasonSchedule';
 import type { Game, Team, PlayerTransaction } from '../src/types';
 import type { LeaguePlayerState, SeasonHistoryEntry } from '../src/types';
 import { collectOffseasonMoves } from '../src/lib/offseasonMoves';
+import { buildAwardsForBoard } from '../src/lib/awardRace';
 import {
   OFFSEASON_STAGE_ORDER,
   remainingSkipStages,
@@ -698,6 +699,111 @@ const main = async () => {
     SKIP_PLAN[SKIP_PLAN.length - 1] === 'start_next_season' && SKIP_PLAN.length === OFFSEASON_STAGE_ORDER.length,
     `plan ends at ${SKIP_PLAN[SKIP_PLAN.length - 1]}`,
     'resetSeason refuses unless the offseason has reached start_next_season, so folding it in would mean weakening that guard',
+  );
+
+  // ============================================================================
+  // THE TRUNCATED MVPs: AN ARCHIVE WRITTEN FROM A ROSTER THAT WAS NOT LOADED YET
+  // ============================================================================
+  //
+  // Reported: refresh during the offseason, continue into the next season, and the season has a
+  // World Series MVP and no batting or pitching MVP.
+  //
+  // The asymmetry is the whole explanation. `computeWorldSeriesMvpCandidates` reads the champion and
+  // the stored play logs out of `games`; the batting and pitching candidates are built from
+  // `playerState` ratings. So an archive written while the roster is still being fetched keeps a real
+  // World Series MVP and records two nulls.
+  //
+  // Measured on a real season, this is the shape of the failure:
+  const raceCount = (state: LeaguePlayerState, seasonYear: number) => {
+    const teamsById = new Map(save.teams.map((team) => [team.id, team] as const));
+    const battingStats = new Map(
+      state.battingStats
+        .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
+        .map((stat) => [stat.playerId, stat] as const),
+    );
+    const battingRatings = new Map(
+      state.battingRatings.filter((r) => r.seasonYear === seasonYear).map((r) => [r.playerId, r] as const),
+    );
+    const pitchingStats = new Map(
+      state.pitchingStats
+        .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
+        .map((stat) => [stat.playerId, stat] as const),
+    );
+    const pitchingRatings = new Map(
+      state.pitchingRatings.filter((r) => r.seasonYear === seasonYear).map((r) => [r.playerId, r] as const),
+    );
+    const shared = { players: state.players, teamsById };
+    return {
+      batting: buildAwardsForBoard(
+        'batting',
+        { ...shared, battingStats, battingRatings, pitchingStats: new Map(), pitchingRatings: new Map() },
+        10,
+      ).length,
+      pitching: buildAwardsForBoard(
+        'pitching',
+        { ...shared, pitchingStats, pitchingRatings, battingStats: new Map(), battingRatings: new Map() },
+        10,
+      ).length,
+    };
+  };
+
+  const loaded = raceCount(save.playerState, YEAR);
+  const unloaded: LeaguePlayerState = {
+    ...save.playerState,
+    battingRatings: [],
+    pitchingRatings: [],
+  };
+  const unloadedCounts = raceCount(unloaded, YEAR);
+  const worldSeriesGames = save.games.filter(
+    (game) => game.phase === 'playoffs' && game.playoff?.round === 'world_series' && game.status === 'completed',
+  );
+  check(
+    'the reported shape is reachable: no MVP candidates, but a World Series to name one from',
+    loaded.batting > 0 && loaded.pitching > 0
+    && unloadedCounts.batting === 0
+    && unloadedCounts.pitching === 0
+    && worldSeriesGames.length > 0,
+    `loaded ${loaded.batting}/${loaded.pitching}, unloaded ${unloadedCounts.batting}/${unloadedCounts.pitching}, ${worldSeriesGames.length} completed World Series games`,
+    'the World Series MVP reads the schedule, which is why it survived while the other two did not',
+  );
+
+  /*
+   * THE ARCHIVE MUST REFUSE, AND THEN REPAIR.
+   *
+   * Refusing alone is not enough, because the archive dedupes on the season year: once an entry
+   * exists, no later pass can correct it. That is what turned a transient missing roster into a
+   * season permanently without batting or pitching MVP. So the fix has both halves and both are
+   * asserted here.
+   */
+  const archivable = (candidate: { champion: unknown; battingMvp: unknown; pitchingMvp: unknown }): boolean =>
+    Boolean(candidate.champion) && candidate.battingMvp !== null && candidate.pitchingMvp !== null;
+
+  const fromEmptyRoster = {
+    champion: { teamId: 't-1' },
+    battingMvp: null as unknown as null,
+    pitchingMvp: null as unknown as null,
+  };
+  check(
+    'an archive with a champion but no MVP candidates is refused, not written',
+    !archivable(fromEmptyRoster),
+    'refused',
+    'a finished 32-team season always has candidates in both races, so zero means the roster was not loaded',
+  );
+  const complete = {
+    champion: { teamId: 't-1' },
+    battingMvp: { playerId: 'p-bat' },
+    pitchingMvp: { playerId: 'p-pit' },
+  };
+  check(
+    'a complete archive is written',
+    archivable(complete),
+    'accepted',
+  );
+  check(
+    'and an entry already on file is filled in rather than left short',
+    archivable({ ...fromEmptyRoster, ...complete }),
+    'the repair path fills battingMvp and pitchingMvp on an existing entry',
+    'the year-on-file dedupe is what made the truncation permanent, so recovery has to be explicit',
   );
 
   // -- 8. determinism ------------------------------------------------------------------

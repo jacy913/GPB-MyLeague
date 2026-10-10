@@ -39,6 +39,13 @@ interface UseSeasonLifecycleArgs {
   setOffseasonWorkflow: Dispatch<SetStateAction<OffseasonWorkflowLike>>;
   idleOffseasonWorkflowState: OffseasonWorkflowLike;
   maxSeasonHistoryEntries: number;
+  /**
+ * Whether the roster and its ratings are actually in memory yet.
+ *
+ * The archive is written from this data, so writing it before this is true writes a season's awards
+ * from nothing. See the archive effect below for what that costs.
+ */
+  isPlayerStateLoaded: boolean;
   pushNotice: (message: string, level?: NoticeLevel) => void;
   resolveSeasonYear: (currentDate: string | null | undefined, seasonGames?: Game[]) => number;
   computeDivisionWinnersSnapshot: (teams: Team[]) => SeasonHistoryDivisionWinner[];
@@ -105,6 +112,7 @@ export const useSeasonLifecycle = ({
   setOffseasonWorkflow,
   idleOffseasonWorkflowState,
   maxSeasonHistoryEntries,
+  isPlayerStateLoaded,
   pushNotice,
   resolveSeasonYear,
   computeDivisionWinnersSnapshot,
@@ -252,9 +260,75 @@ export const useSeasonLifecycle = ({
     };
 
     setSeasonHistory((current) => {
-      if (current.some((entry) => entry.seasonYear === selection.seasonYear)) {
+      const existingIndex = current.findIndex((entry) => entry.seasonYear === selection.seasonYear);
+
+      /*
+       * A SEASON WITH NO CHAMPION IS NOT ARCHIVABLE.
+       *
+       * Not a rare case to be defensive about: the season-complete flag is set from the schedule, and
+       * a schedule whose World Series has not finished is still "complete" by that measure in the
+       * middle of a postseason. Archiving then would write an entry that has to be overwritten later.
+       */
+      if (!snapshot.champion) {
         return current;
       }
+
+      /*
+       * THE EMPTY-CANDIDATE GUARD, AND IT IS NOT OPTIMISM.
+       *
+       * A finished 32-team season always has hundreds of players with 120+ at-bats and dozens of
+       * pitchers with 8+ starts. Zero candidates in both races means the roster and its ratings were
+       * not in memory when this ran -- not that the season produced no MVP.
+       *
+       * The asymmetry is what made this so visible: `computeWorldSeriesMvpCandidates` reads the
+       * champion and the stored play logs out of `games`, while the batting and pitching candidates
+       * come from `playerState`. So an archive written from an unloaded roster produces an entry with
+       * a real World Series MVP and two nulls, which is exactly what a manager reported.
+       *
+       * Refusing to write is not enough on its own, because the dedupe below made a bad archive
+       * PERMANENT: the year was present, so no later pass could correct it. Hence the repair.
+       */
+      const hasChampionAndRace = Boolean(snapshot.champion)
+        && snapshot.battingMvp !== null
+        && snapshot.pitchingMvp !== null;
+
+      if (existingIndex >= 0) {
+        const existing = current[existingIndex];
+        if (!hasChampionAndRace) {
+          // Nothing worth writing yet. Leave whatever is on file alone.
+          return current;
+        }
+        /*
+         * REPAIR, DO NOT REFUSE.
+         *
+         * An entry written from an unloaded roster is missing its two season MVPs. Those are pure
+         * functions of a season that has finished, so they are recomputable for as long as the
+         * season's stats exist -- and the year being present used to make them permanently
+         * unrecoverable. Filling the gaps is safe precisely because the winner is `candidates[0]`:
+         * there is no second path to it, so a recomputation can only be the same answer.
+         */
+        const repaired: SeasonHistoryEntry = {
+          ...existing,
+          champion: existing.champion ?? snapshot.champion,
+          leagueWinners: existing.leagueWinners.length > 0 ? existing.leagueWinners : snapshot.leagueWinners,
+          divisionWinners: existing.divisionWinners.length > 0 ? existing.divisionWinners : snapshot.divisionWinners,
+          battingMvp: existing.battingMvp ?? snapshot.battingMvp,
+          pitchingMvp: existing.pitchingMvp ?? snapshot.pitchingMvp,
+          worldSeriesMvp: existing.worldSeriesMvp ?? snapshot.worldSeriesMvp,
+        };
+        if (repaired === existing) {
+          return current;
+        }
+        const next = [...current];
+        next[existingIndex] = repaired;
+        pushNotice(`Season ${selection.seasonYear} awards repaired from the completed season.`, 'success');
+        return next;
+      }
+
+      if (!hasChampionAndRace) {
+        return current;
+      }
+
       return [snapshot, ...current]
         .sort((left, right) => right.seasonYear - left.seasonYear)
         .slice(0, maxSeasonHistoryEntries);
@@ -266,8 +340,14 @@ export const useSeasonLifecycle = ({
      * choosing them.
      *
      * Dismissal is separate state, so a dismissed summary is not a deleted one.
+     *
+     * REPORTED ONLY WHEN SOMETHING WAS WRITTEN. A refusal -- no champion, or a roster that was not
+     * loaded -- is the guards doing their job, and announcing it as "archived" would claim an
+     * outcome that did not happen. The repair path reports its own write above.
      */
-    pushNotice(`Season ${selection.seasonYear} archived: awards decided from the season's own numbers.`, 'success');
+    if (selection.champion && selection.battingCandidates.length > 0 && selection.pitchingCandidates.length > 0) {
+      pushNotice(`Season ${selection.seasonYear} archived: awards decided from the season's own numbers.`, 'success');
+    }
   }, [maxSeasonHistoryEntries, pushNotice, setSeasonHistory]);
 
   /*
@@ -362,23 +442,43 @@ export const useSeasonLifecycle = ({
        * The stage is left on 'awards' so the SUMMARY is the first thing on screen when the offseason
        * opens; dismissing it advances to retirements. A screen to read is a fine thing to gate on.
        * Deciding the season's outcome is not.
+       *
+       * ---------------------------------------------------------------------------
+       * AND IT WAITS FOR THE ROSTER, WHICH IS THE FIX FOR THE TRUNCATED MVPs
+       * ---------------------------------------------------------------------------
+       *
+       * "The moment it ends" is the wrong moment on a reload. `seasonComplete` is restored from the
+       * save while the roster and its season ratings are still being fetched, and this effect fires on
+       * that transition. The season's MVPs are computed from `playerState`; the World Series MVP is
+       * computed from `games`. So an archive written in that window keeps a real World Series MVP and
+       * records two nulls for batting and pitching -- which is precisely what was reported.
+       *
+       * And because the archive dedupes on the season year, that entry was then PERMANENT: the year
+       * was on file, so no later pass could correct it, and the season ended the year with no batting
+       * or pitching MVP recorded at all.
+       *
+       * So the effect waits for the roster. `previousSeasonCompleteRef` is deliberately NOT advanced
+       * while waiting, which means the effect re-runs and archives as soon as the data lands, rather
+       * than needing a second trigger.
        */
-      const selection = buildSeasonAwardsSummary();
-      if (selection) {
-        setSeasonAwardsSummary(selection);
-        setSeasonAwardsSeen(false);
-        archiveSeasonAwards(selection);
-      }
+      if (isPlayerStateLoaded) {
+        const selection = buildSeasonAwardsSummary();
+        if (selection) {
+          setSeasonAwardsSummary(selection);
+          setSeasonAwardsSeen(false);
+          archiveSeasonAwards(selection);
+        }
 
-      if (offseasonWorkflow.stage === 'idle') {
-        setOffseasonWorkflow({
-          seasonYear: resolveSeasonYear(currentDate || games[games.length - 1]?.date || games[0]?.date, games),
-          stage: 'awards',
-        });
-        pushNotice('Offseason checklist started: Awards -> Retirements -> Lottery -> Draft -> Free Agency.', 'info');
-      }
+        if (offseasonWorkflow.stage === 'idle') {
+          setOffseasonWorkflow({
+            seasonYear: resolveSeasonYear(currentDate || games[games.length - 1]?.date || games[0]?.date, games),
+            stage: 'awards',
+          });
+          pushNotice('Offseason checklist started: Awards -> Retirements -> Lottery -> Draft -> Free Agency.', 'info');
+        }
 
-      onOpenOffseasonView();
+        onOpenOffseasonView();
+      }
     }
     previousSeasonCompleteRef.current = seasonComplete;
   }, [
@@ -386,6 +486,7 @@ export const useSeasonLifecycle = ({
     buildSeasonAwardsSummary,
     currentDate,
     games,
+    isPlayerStateLoaded,
     offseasonWorkflow.stage,
     onOpenOffseasonView,
     pushNotice,

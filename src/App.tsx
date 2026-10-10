@@ -2013,6 +2013,15 @@ const { resetWallet } = bettingSlip;
     setOffseasonWorkflow,
     idleOffseasonWorkflowState: IDLE_OFFSEASON_WORKFLOW_STATE,
     maxSeasonHistoryEntries: MAX_SEASON_HISTORY_ENTRIES,
+    /*
+     * THE ROSTER GATE ON ARCHIVING.
+     *
+     * The season's MVPs are computed from the roster and its season ratings; the World Series MVP is
+     * computed from the schedule. So an archive written before the roster arrives records two nulls
+     * and one real winner, and the year-on-file dedupe then makes that permanent. Not gated on
+     * `isBootstrapping` alone -- that flag is about the league shell, and this data arrives separately.
+     */
+    isPlayerStateLoaded: !isBootstrapping && playerState.players.length > 0,
     pushNotice,
     resolveSeasonYear,
     computeDivisionWinnersSnapshot,
