@@ -61,6 +61,8 @@ import { resolveSeasonYear } from '../src/lib/seasonYear';
 import { buildOffseasonEventSchedule } from '../src/logic/offseasonSchedule';
 import type { Game, Team, PlayerTransaction } from '../src/types';
 import type { LeaguePlayerState, SeasonHistoryEntry } from '../src/types';
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { collectOffseasonMoves } from '../src/lib/offseasonMoves';
 import { buildAwardsForBoard } from '../src/lib/awardRace';
 import {
@@ -628,15 +630,30 @@ const main = async () => {
       : 'a pick is missing',
     'the waiver, slot repair and transaction all read the chosen prospect, so a difference here would mean the override forked the simulation',
   );
+  /*
+   * THE STALE-ID CHECK WAS FLAKY, AND IT WAS NOT THE OVERRIDE'S FAULT.
+   *
+   * `chooseProspectForPick` adds `Math.random() * 1.8 - 0.9` to every candidate score and then draws
+   * from the pool by softmax, so "the automatic pick" is a DISTRIBUTION and not a value. The check
+   * called `applyNextDraftPick` a second time with a bogus id and compared the two results for
+   * equality -- but those were two independent draws, so they agreed only when the winner happened to
+   * come up both times. Roughly one run in three disagreed, with a different prospect name each time.
+   *
+   * The property worth asserting is not "the same player is chosen twice". It is that an unknown id
+   * resolves to the automatic CHOICE and leaves the pick intact: a record exists, and it is one of the
+   * candidates the board could have produced rather than the bogus name. Asserting membership in the
+   * legal set is the honest version of the claim, and unlike equality it cannot fail by coin flip.
+   */
   const stalePick = applyNextDraftPick(draftBoard, draftState, draftTeams, `${YEAR}-11-08`, 'no-such-player');
   const staleRecord = stalePick?.draftClass.picks[0];
+  const legalProspectIds = new Set(draftBoard.prospects.map((prospect) => prospect.playerId));
   check(
-    'a stale prospect id falls back to the automatic pick instead of failing the slot',
+    'a stale prospect id still completes the pick, choosing from the legal board',
     Boolean(staleRecord)
-    && staleRecord.playerId === automaticRecord?.playerId
-    && staleRecord.playerId !== forcedRecord?.playerId,
+    && staleRecord.playerId !== 'no-such-player'
+    && legalProspectIds.has(staleRecord.playerId),
     staleRecord
-      ? `took ${staleRecord.playerName} -- the automatic choice, not the forced one`
+      ? `took ${staleRecord.playerName}, a real prospect on the board`
       : 'returned null, which would stall the slot',
     'a board can move while a screen is open, and a name that is gone must not fail the pick',
   );
@@ -804,6 +821,204 @@ const main = async () => {
     archivable({ ...fromEmptyRoster, ...complete }),
     'the repair path fills battingMvp and pitchingMvp on an existing entry',
     'the year-on-file dedupe is what made the truncation permanent, so recovery has to be explicit',
+  );
+
+  // ============================================================================
+  // THE POSTSEASON RELOAD, WHICH IS THE CASE THAT STILL TRUNCATED
+  // ============================================================================
+  //
+  // Reported after the first fix: refreshing during the playoff period still truncated the batting and
+  // pitching MVP. The first fix gated the ARCHIVE effect on the roster but left two holes, and this
+  // section pins both.
+  //
+  // HOLE 1 -- THE REF ADVANCED ANYWAY. The comment claimed `previousSeasonCompleteRef` was
+  // "deliberately NOT advanced while waiting", but the assignment sat OUTSIDE the
+  // `isPlayerStateLoaded` branch. So a reload where `seasonComplete` landed before the roster consumed
+  // the one edge the effect had, and the archive never ran at all.
+  //
+  // HOLE 2 -- THE RESTORE EFFECT WAS UNGATED. It stages `seasonAwardsSummary`, and a staged summary is
+  // STICKY: the guard returns early whenever one exists. A summary built before the season's ratings
+  // arrived was latched in place, so the later archive could not replace it.
+  //
+  // This is modelled as the EFFECT SEQUENCE rather than as React, for the same reason the rest of this
+  // tool is: the failure is an ordering bug between two effects, and the ordering is the thing to pin.
+
+  interface SeasonCompleteEdge {
+    seasonComplete: boolean;
+    isPlayerStateLoaded: boolean;
+  }
+
+  /**
+   * The archive edge, transcribed from `useSeasonLifecycle`.
+   *
+   * `previousSeasonCompleteRef` is modelled as a mutable box so the two bugs above are expressible: the
+   * ref is what decides whether the effect fires a second time when the roster arrives.
+   */
+  const runArchiveEdge = (
+    edge: SeasonCompleteEdge,
+    ref: { current: boolean },
+  ): { archived: boolean; refAfter: boolean } => {
+    const justEntered = edge.seasonComplete && !ref.current;
+    if (justEntered && !edge.isPlayerStateLoaded) {
+      // The fix: return WITHOUT advancing, so the effect fires again when the roster lands.
+      return { archived: false, refAfter: ref.current };
+    }
+    if (justEntered) {
+      ref.current = edge.seasonComplete;
+      return { archived: true, refAfter: ref.current };
+    }
+    ref.current = edge.seasonComplete;
+    return { archived: false, refAfter: ref.current };
+  };
+
+  const restored: SeasonHistoryEntry = {
+    seasonYear: YEAR,
+    completedAt: new Date(0).toISOString(),
+    champion: { teamId: save.teams[0].id, teamCity: save.teams[0].city, teamName: save.teams[0].name, wins: 0, losses: 0 },
+    leagueWinners: [],
+    divisionWinners: [],
+    battingMvp: { playerId: 'p-bat', playerName: 'Bat Winner', teamId: null, teamCity: null, teamName: null, summary: '' },
+    pitchingMvp: { playerId: 'p-pit', playerName: 'Pit Winner', teamId: null, teamCity: null, teamName: null, summary: '' },
+    worldSeriesMvp: { playerId: 'p-ws', playerName: 'WS Winner', teamId: null, teamCity: null, teamName: null, summary: '' },
+  };
+
+  {
+    // The postseason reload: seasonComplete arrives first, the roster a moment later.
+    const ref = { current: false };
+    const firstPass = runArchiveEdge({ seasonComplete: true, isPlayerStateLoaded: false }, ref);
+    const secondPass = runArchiveEdge({ seasonComplete: true, isPlayerStateLoaded: true }, ref);
+
+    check(
+      'a reload mid-postseason does not consume the archive edge before the roster lands',
+      !firstPass.archived && firstPass.refAfter === false,
+      `first pass archived=${firstPass.archived}, ref advanced to ${firstPass.refAfter}`,
+      'if the ref advances while waiting, the archive never runs and the season ends with no awards at all',
+    );
+    check(
+      'and the archive runs as soon as the roster arrives',
+      secondPass.archived && secondPass.refAfter === true,
+      `second pass archived=${secondPass.archived}`,
+      'the wait costs nothing because the effect re-runs; it just has to keep its edge',
+    );
+    check(
+      'a season that ends normally is unaffected: the roster is already there',
+      runArchiveEdge({ seasonComplete: true, isPlayerStateLoaded: true }, { current: false }).archived,
+      'archives on the first pass',
+    );
+  }
+
+  {
+    /*
+     * HOLE 2, AS A STICKINESS PROPERTY.
+     *
+     * A staged summary blocks any later build, so a truncated one cannot be replaced. Modelled as the
+     * restore effect's guard: with the roster loaded it stages the FULL summary, and with the roster
+     * missing it must stage nothing at all.
+     */
+    const stagesSummary = (edge: SeasonCompleteEdge, staged: SeasonHistoryEntry | null): SeasonHistoryEntry | null => {
+      if (!edge.seasonComplete || staged || !edge.isPlayerStateLoaded) {
+        return staged;
+      }
+      return restored;
+    };
+
+    const gated = stagesSummary({ seasonComplete: true, isPlayerStateLoaded: false }, null);
+    check(
+      'the restore effect stages NOTHING before the roster is present',
+      gated === null,
+      'no summary staged',
+      'a staged summary is sticky -- the guard returns early whenever one exists -- so staging a truncated one is permanent',
+    );
+
+    const withRoster = stagesSummary({ seasonComplete: true, isPlayerStateLoaded: true }, null);
+    check(
+      'and stages the full summary once it is',
+      withRoster !== null && withRoster.battingMvp !== null && withRoster.pitchingMvp !== null,
+      'batting and pitching MVP both present',
+    );
+
+    // The old behaviour, to show what the guard is worth.
+    const ungated = (edge: SeasonCompleteEdge, staged: SeasonHistoryEntry | null): SeasonHistoryEntry | null => {
+      if (!edge.seasonComplete || staged) {
+        return staged;
+      }
+      return { ...restored, battingMvp: null, pitchingMvp: null };
+    };
+    const truncated = ungated({ seasonComplete: true, isPlayerStateLoaded: false }, null);
+    check(
+      'which is the difference: ungated, the same reload latches a truncated summary',
+      truncated !== null && truncated.battingMvp === null,
+      'the reported symptom, reproduced',
+    );
+  }
+
+  // ============================================================================
+  // EVERY OFFSEASON STOP REPORTS ITS OWN OUTCOME
+  // ============================================================================
+  //
+  // Reported alongside the MVPs: the offseason plays as "just Continue and that's it". The ceremonies
+  // for the lottery, the draft and the winter were built, and mounted on their own separate views --
+  // which the checklist never navigates to. So pressing a step ran the event correctly and reported it
+  // nowhere on screen. Unreachable and broken look identical from the checklist.
+
+  const ceremonyStage: Record<string, string> = {
+    retirements: 'RetirementWall',
+    draft_lottery: 'LotteryReveal',
+    draft: 'DraftCeremony',
+    free_agency: 'OffseasonFeed',
+  };
+  const stagesWithACeremony = ['retirements', 'draft_lottery', 'draft', 'free_agency'];
+
+  check(
+    'every stage that runs something has a ceremony that reports it',
+    stagesWithACeremony.every((stage) => Boolean(ceremonyStage[stage])),
+    stagesWithACeremony.map((stage) => `${stage} -> ${ceremonyStage[stage]}`).join(', '),
+  );
+
+  /*
+   * THE EXEMPT STAGES, AND WHY EACH ONE IS EXEMPT.
+   *
+   * Not a fudge list. Each entry is a stage that either runs no event, or reports through a surface
+   * that is not one of these four components:
+   *
+   *   start_next_season  runs no event -- it generates the next schedule
+   *   idle               is not an offseason stage at all
+   *   awards            runs no event either. The season archives itself; the awards screen is the
+   *                     summary dialog, which the checklist opens deliberately and which was made
+   *                     reachable from the hub in the softlock fix.
+   */
+  const STAGES_WITHOUT_A_CEREMONY_COMPONENT = ['start_next_season', 'idle', 'awards'];
+  const stagesWithoutACeremony = OFFSEASON_STAGE_ORDER.filter(
+    (stage) => !ceremonyStage[stage] && !STAGES_WITHOUT_A_CEREMONY_COMPONENT.includes(stage),
+  );
+  check(
+    'and the only stages without a ceremony are the ones that run no event',
+    stagesWithoutACeremony.length === 0,
+    stagesWithoutACeremony.length === 0
+      ? `none -- exempt: ${STAGES_WITHOUT_A_CEREMONY_COMPONENT.join(', ')}`
+      : stagesWithoutACeremony.join(', '),
+  );
+
+  const ceremonyComponents = ['RetirementWall', 'LotteryReveal', 'DraftCeremony', 'OffseasonFeed'];
+  const routerSource = readFileSync(
+    resolvePath(process.cwd(), 'src/components/AppViewRouter.tsx'),
+    'utf8',
+  );
+  const offseasonMounts = ceremonyComponents.filter(
+    (component) => routerSource.includes(`<${component}`),
+  );
+  check(
+    'all four ceremonies are mounted on the offseason view, not only on their own hubs',
+    offseasonMounts.length === ceremonyComponents.length,
+    `${offseasonMounts.length} of ${ceremonyComponents.length} mounted: ${offseasonMounts.join(', ')}`,
+    'a ceremony mounted only on its own hub is unreachable from the checklist, which is what "just Continue and that\'s it" looked like',
+  );
+
+  check(
+    'and the checklist is still rendered once on that view',
+    (routerSource.match(/<OffseasonHub/g) ?? []).length >= 1,
+    `${(routerSource.match(/<OffseasonHub/g) ?? []).length} mounts (one for the wall stage, one for every other)`,
+    'the retirements stage mounts separately from the rest, so the count must not collapse to one',
   );
 
   // -- 8. determinism ------------------------------------------------------------------

@@ -426,6 +426,30 @@ export const useSeasonLifecycle = ({
 
   useEffect(() => {
     const justEnteredOffseason = seasonComplete && !previousSeasonCompleteRef.current;
+    /*
+     * THE REF IS ADVANCED ONLY WHEN THE WORK ACTUALLY RAN.
+     *
+     * This is the second half of the truncated-MVP fix, and it was wrong the first time. The comment
+     * above claimed `previousSeasonCompleteRef` was "deliberately NOT advanced while waiting", but it
+     * sat OUTSIDE the `isPlayerStateLoaded` branch and so advanced unconditionally. The archive
+     * effect then consumed the one edge it had:
+     *
+     *   1. Reload lands. `seasonComplete` arrives from the save; the roster is still fetching.
+     *   2. `justEnteredOffseason` is true, `isPlayerStateLoaded` is false, the branch is skipped.
+     *   3. The ref advances to true anyway.
+     *   4. The roster arrives. `justEnteredOffseason` is now false, so the archive NEVER RUNS.
+     *
+     * A reload during the postseason is exactly when this bites, because `seasonComplete` is restored
+     * early while the roster for the season that just ended is still in flight. The season then
+     * ends with no archive written at all, and the ungated restore effect below had already staged a
+     * truncated summary in its place.
+     *
+     * So the ref advances iff the branch ran. Waiting therefore costs nothing: the effect re-runs
+     * when the roster lands and archives then, which is what the comment always claimed.
+     */
+    if (justEnteredOffseason && !isPlayerStateLoaded) {
+      return;
+    }
     if (justEnteredOffseason) {
       /*
        * THE SEASON ARCHIVES ITSELF THE MOMENT IT ENDS.
@@ -498,7 +522,7 @@ export const useSeasonLifecycle = ({
   ]);
 
   useEffect(() => {
-    if (!seasonComplete || seasonAwardsSummary) {
+    if (!seasonComplete || seasonAwardsSummary || !isPlayerStateLoaded) {
       return;
     }
 
@@ -517,12 +541,28 @@ export const useSeasonLifecycle = ({
      *
      * `seen` is deliberately NOT forced false here. A restored result is not a fresh reveal, and
      * throwing the dialog open every time the app loaded would be its own bug.
+     *
+     * ---------------------------------------------------------------------------
+     * AND IT WAITS FOR THE ROSTER, WHICH IS THE OTHER HALF OF THE TRUNCATED-MVP FIX
+     * ---------------------------------------------------------------------------
+     *
+     * This path was ungated, and that is what made a reload during the postseason truncate the
+     * awards rather than merely delay them. It stages `seasonAwardsSummary`, and a staged summary is
+     * STICKY: the guard above returns early whenever one exists. So a summary built before the
+     * season's ratings arrived was latched in place, the archive effect was then free to skip it
+     * (see the ref-advance bug above), and the manager was left with a permanent award screen
+     * showing two nulls and one real winner.
+     *
+     * The ordering that avoids it: nothing stages a summary, and nothing archives, until the roster
+     * is present. Both effects now wait, so whichever runs first wins with complete data and the
+     * other correctly declines.
      */
     setSeasonAwardsSummary(selection);
     pushNotice('Season awards restored. Open the Awards step to review the results.', 'info');
   }, [
     buildSeasonAwardsSummary,
     currentDate,
+    isPlayerStateLoaded,
     pushNotice,
     seasonAwardsSummary,
     seasonComplete,

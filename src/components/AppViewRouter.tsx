@@ -30,7 +30,9 @@ import { OffseasonHub } from './OffseasonHub';
 import { RetirementWall } from './RetirementWall';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
-import type { DraftClock } from './DraftCeremony';
+import { DraftCeremony, type DraftClock } from './DraftCeremony';
+import { LotteryReveal } from './LotteryReveal';
+import { OffseasonFeed } from './OffseasonFeed';
 import { LotteryHub } from './LotteryHub';
 import { MapHub } from './MapHub';
 import { GameScreen } from './GameScreen';
@@ -638,28 +640,96 @@ export const AppViewRouter = ({
         </div>
       )}
 
-      {view === 'offseason' && seasonComplete && offseasonStage !== 'idle' && !(
-        offseasonStage === 'retirements' && retirementsApplied
-      ) && (
-        <OffseasonHub
-          seasonYear={offseasonSeasonYear}
-          stage={offseasonStage}
-          championLabel={offseasonChampionLabel}
-          awardsComplete={seasonHistory.some((entry) => entry.seasonYear === offseasonSeasonYear)}
-          lotteryComplete={Boolean(draftClass)}
-          draftComplete={Boolean(draftClass?.isComplete)}
-          retirementsApplied={retirementsApplied}
-          onAwards={onAutoSelectAwards}
-          onAcknowledgeAwards={onAcknowledgeAwards}
-          onRetirements={onSimulateRetirements}
-          onRetirementsContinue={onRetirementsContinue}
-          onLottery={onGenerateDraftClass}
-          onDraft={onAutoDraftAll}
-          onFreeAgency={onCompleteFreeAgency}
-          onStartSeason={onResetSeason}
-          onRequestSkip={onRequestSkip}
-          isSkipping={isSkippingOffseason}
-        />
+      {/*
+        THE OFFSEASON, AS A SEQUENCE YOU WALK THROUGH.
+
+        ============================================================================
+        WHY EVERY STOP IS MOUNTED HERE RATHER THAN ONLY THE WALL
+        ============================================================================
+        *
+        The retirements wall worked because it was mounted ABOVE the checklist, at its own stage, as
+        a place you arrive and read. The other three ceremonies were built the same way and then hung
+        on their own separate views -- `lottery`, `draft`, `free_agency` -- which the checklist never
+        navigated to. The manager pressed "Simulate Event", the stage advanced, and the result of the
+        event they had just run was never shown to them anywhere on the screen they were looking at.
+
+        That is why this reads as "it's just Continue and that's it": the checklist's buttons ran the
+        events correctly and every ceremony that would have reported the outcome was one view away,
+        behind a navigation the offseason sequence does not contain. Nothing was broken; it was
+        unreachable, which from the checklist looks identical to broken.
+        *
+        * So each stage mounts its own ceremony above the checklist, exactly as retirements does, and
+        * the step buttons that run an event also bring you to the screen that reports it.
+        */
+        view === 'offseason'
+        && seasonComplete
+        && offseasonStage !== 'idle'
+        /*
+         * The retirements stage has its own mount just above this one, because the wall is a full
+         * screen of its own rather than a ceremony above a step. Excluding it here is what keeps the
+         * checklist from being rendered twice while the wall is up.
+         */
+        && !(offseasonStage === 'retirements' && retirementsApplied) && (
+        <div className="space-y-5">
+          {offseasonStage === 'draft_lottery' && draftClass && (
+            <LotteryReveal
+              draftClass={draftClass}
+              teamsById={teamLookup}
+              seasonYear={draftClass.seasonYear ?? offseasonSeasonYear}
+            />
+          )}
+
+          {offseasonStage === 'draft' && (
+            <DraftCeremony
+              draftClass={draftClass}
+              teamsById={teamLookup}
+              clock={draftClock}
+              recentPicks={draftClass?.picks ?? []}
+              isDraftProcessing={isDraftProcessing}
+              isDraftOpen={isDraftOpen}
+              onTakeBest={onDraftNextPick}
+              onTakeProspect={onDraftSpecificProspect}
+            />
+          )}
+
+          {offseasonStage === 'free_agency' && (
+            <OffseasonFeed
+              playerState={{
+                players: playerState.players,
+                battingStats: playerState.battingStats,
+                pitchingStats: playerState.pitchingStats,
+                battingRatings: playerState.battingRatings,
+                pitchingRatings: playerState.pitchingRatings,
+                rosterSlots: playerState.rosterSlots,
+                transactions: playerState.transactions,
+              }}
+              teams={teams}
+              seasonYear={offseasonSeasonYear}
+              fromDate={freeAgencyOpenDate}
+              isPending={false}
+            />
+          )}
+
+          <OffseasonHub
+            seasonYear={offseasonSeasonYear}
+            stage={offseasonStage}
+            championLabel={offseasonChampionLabel}
+            awardsComplete={seasonHistory.some((entry) => entry.seasonYear === offseasonSeasonYear)}
+            lotteryComplete={Boolean(draftClass)}
+            draftComplete={Boolean(draftClass?.isComplete)}
+            retirementsApplied={retirementsApplied}
+            onAwards={onAutoSelectAwards}
+            onAcknowledgeAwards={onAcknowledgeAwards}
+            onRetirements={onSimulateRetirements}
+            onRetirementsContinue={onRetirementsContinue}
+            onLottery={onGenerateDraftClass}
+            onDraft={onAutoDraftAll}
+            onFreeAgency={onCompleteFreeAgency}
+            onStartSeason={onResetSeason}
+            onRequestSkip={onRequestSkip}
+            isSkipping={isSkippingOffseason}
+          />
+        </div>
       )}
       {view === 'offseason' && !seasonComplete && (
         <Panel className="flex flex-col items-center gap-3 p-10 text-center">
