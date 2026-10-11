@@ -65,6 +65,30 @@ export const getPitchingRatingsAsOfSeason = (
   seasonYear: number,
 ): Map<string, PlayerPitchingRatings> => latestRatingAsOfSeason(ratings, seasonYear);
 
+/**
+ * THE NEWEST RATING PER PLAYER, which is what a LIVE screen wants.
+ *
+ * Both awards surfaces -- the Awards page and the front-page panel -- used to build this with
+ * `new Map(ratings.map((r) => [r.playerId, r]))`. That takes whichever row happens to come LAST IN ARRAY
+ * ORDER, which is only the newest rating if the array happens to be sorted by season year. Nothing
+ * guarantees that: the rows are appended across universe builds, drafts and rookie promotions, and a
+ * rebuilt universe or an imported save reorders them. When it is not sorted, the race silently scores
+ * players against a stale `overall` -- no error, a plausible number, and a leaderboard that is simply
+ * wrong about who is better.
+ *
+ * So this is `latestRatingAsOfSeason` with no upper bound, which keeps one tie-break rule for every
+ * rating map in the app instead of leaving each call site to invent its own. `BettingPage` already had a
+ * correct private copy of this and is deliberately left alone; its helper and this one agree, and folding
+ * it in is a separate change to a screen with its own measured render-cost constraints.
+ */
+export const getLatestBattingRatings = (
+  ratings: PlayerBattingRatings[],
+): Map<string, PlayerBattingRatings> => latestRatingAsOfSeason(ratings, Number.POSITIVE_INFINITY);
+
+export const getLatestPitchingRatings = (
+  ratings: PlayerPitchingRatings[],
+): Map<string, PlayerPitchingRatings> => latestRatingAsOfSeason(ratings, Number.POSITIVE_INFINITY);
+
 export interface PlayerStatAccumulator {
   battingByKey: Map<string, PlayerSeasonBatting>;
   pitchingByKey: Map<string, PlayerSeasonPitching>;

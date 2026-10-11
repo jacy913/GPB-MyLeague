@@ -8,7 +8,7 @@ import {
   type PlayerSeasonPitching,
   type Team,
 } from '../../types';
-import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../../logic/playerStats';
+import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId, getLatestBattingRatings, getLatestPitchingRatings } from '../../logic/playerStats';
 import { buildAwardsForBoard, type AwardEntry, type AwardInputs, type MvpBoard } from '../../lib/awardRace';
 import { AWARD_RACE_SPECS, buildAwardMarket } from '../../lib/mediaMarkets';
 import { formatAmerican, probabilityToAmerican } from '../../lib/markets';
@@ -412,8 +412,17 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
     teamsById,
     battingStats: getPreferredBattingStatsByPlayerId(battingStats, 'regular_season'),
     pitchingStats: getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
-    battingRatings: new Map(battingRatings.map((rating) => [rating.playerId, rating])),
-    pitchingRatings: new Map(pitchingRatings.map((rating) => [rating.playerId, rating])),
+    /*
+      The NEWEST rating per player, not the last one in the array.
+
+      This was `new Map(battingRatings.map((r) => [r.playerId, r]))`, which keeps whichever row comes
+      last in array order. That is the newest rating only if the array is sorted by season year, and
+      nothing guarantees it -- the rows accumulate across universe builds, drafts and rookie promotions,
+      and a rebuilt universe or an imported save reorders them. Unsorted, the race scores players against
+      a stale `overall`, which produces a plausible scoreboard rather than an error.
+    */
+    battingRatings: getLatestBattingRatings(battingRatings),
+    pitchingRatings: getLatestPitchingRatings(pitchingRatings),
   }), [battingRatings, battingStats, pitchingRatings, pitchingStats, players, teamsById]);
 
   /*

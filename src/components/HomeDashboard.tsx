@@ -34,7 +34,7 @@ import type { GameEvent, HeadlinerContext, HeadlinerId } from '../logic/headline
 import { addDaysToISODate } from '../logic/simulation';
 import { EMPTY_HEADLINER_LEDGER, type HeadlinerLedger } from '../logic/localUniverseState';
 import { isPlayoffGame } from '../logic/playoffs';
-import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
+import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId, getLatestBattingRatings, getLatestPitchingRatings } from '../logic/playerStats';
 import { buildAwardsForBoard, type MvpBoard } from '../lib/awardRace';
 import { buildAwardMarket, AWARD_RACE_SPECS } from '../lib/mediaMarkets';
 import { viewersFor } from '../lib/analytics/crowdSize';
@@ -261,8 +261,17 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     () => getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season'),
     [pitchingStats],
   );
-  const battingRatingsByPlayerId = useMemo(() => new Map(battingRatings.map((rating) => [rating.playerId, rating])), [battingRatings]);
-  const pitchingRatingsByPlayerId = useMemo(() => new Map(pitchingRatings.map((rating) => [rating.playerId, rating])), [pitchingRatings]);
+  /*
+    THE NEWEST RATING PER PLAYER, not the last one in the array.
+
+    This was `new Map(battingRatings.map((r) => [r.playerId, r]))`, which keeps whichever row comes
+    last in array order. That is the newest rating only when the array is sorted by season year, and
+    nothing guarantees it: rows accumulate across universe builds, drafts and rookie promotions, and a
+    rebuilt universe or an imported save reorders them. Unsorted, the front-page race reads a stale
+    `overall` and prints a scoreboard that is confidently wrong rather than an error.
+  */
+  const battingRatingsByPlayerId = useMemo(() => getLatestBattingRatings(battingRatings), [battingRatings]);
+  const pitchingRatingsByPlayerId = useMemo(() => getLatestPitchingRatings(pitchingRatings), [pitchingRatings]);
 
   if (
     gameStoryCacheDependenciesRef.current.teamsById !== teamsById ||
