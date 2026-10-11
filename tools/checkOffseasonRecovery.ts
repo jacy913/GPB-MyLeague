@@ -965,7 +965,7 @@ const main = async () => {
     retirements: 'RetirementWall',
     draft_lottery: 'LotteryReveal',
     draft: 'DraftCeremony / DraftResultsWall',
-    free_agency: 'OffseasonFeed',
+    free_agency: 'FreeAgencyWall',
   };
   const stagesWithACeremony = ['retirements', 'draft_lottery', 'draft', 'free_agency'];
 
@@ -1005,7 +1005,17 @@ const main = async () => {
     a finished draft is a result and an unfinished one is a queue -- so a check that only looked for the
     ceremony would be describing a stage that no longer exists in that shape.
   */
-  const ceremonyComponents = ['RetirementWall', 'LotteryReveal', 'DraftCeremony', 'DraftResultsWall', 'OffseasonFeed'];
+  /*
+    `DraftResultsWall` and `FreeAgencyWall` joined this list as the two offseason steps that became
+    RESULTS rather than processes. The draft stage still carries `DraftCeremony` for the time the class
+    is being taken and swaps it for the wall once it is complete; the free agency stage now presents the
+    winter's biggest moves the same way the retirement and draft walls present theirs.
+
+    `OffseasonFeed` is no longer one of the OFFSEASON stage components -- it is the seasonal feed the
+    Free Agents hub renders all year, which is a different screen and still mounted. It is deliberately
+    absent from this list rather than deleted: the offseason stage changed, the hub did not.
+  */
+  const ceremonyComponents = ['RetirementWall', 'LotteryReveal', 'DraftCeremony', 'DraftResultsWall', 'FreeAgencyWall'];
   const routerSource = readFileSync(
     resolvePath(process.cwd(), 'src/components/AppViewRouter.tsx'),
     'utf8',

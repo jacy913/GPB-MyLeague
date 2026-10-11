@@ -33,7 +33,7 @@ import { DraftHub } from './DraftHub';
 import { DraftCeremony, type DraftClock } from './DraftCeremony';
 import { DraftResultsWall } from './DraftResultsWall';
 import { LotteryReveal } from './LotteryReveal';
-import { OffseasonFeed } from './OffseasonFeed';
+import { FreeAgencyWall } from './FreeAgencyWall';
 import { LotteryHub } from './LotteryHub';
 import { MapHub } from './MapHub';
 import { GameScreen } from './GameScreen';
@@ -721,7 +721,20 @@ export const AppViewRouter = ({
           )}
 
           {offseasonStage === 'free_agency' && (
-            <OffseasonFeed
+            /*
+              FREE AGENCY AS A RESULT, not a market to scroll.
+
+              This was the `OffseasonFeed`: a card per move, weight-ordered, with the tail dropped below a
+              line. It was honest and unmemorable -- nothing on the screen ever said "this is what the
+              winter bought you", because there was no moment where the answer appeared.
+
+              The wall answers it in the same shape as the retirements and draft walls: the eight biggest
+              moves as cards, everything else as names. "Top eight by rating" and "the eight most
+              consequential moves" are the same list here only because `collectOffseasonMoves` already
+              weights a move by its player's overall and a trade by its bigger half -- one place, decided
+              once, rather than re-decided inside a component.
+            */
+            <FreeAgencyWall
               playerState={{
                 players: playerState.players,
                 battingStats: playerState.battingStats,
@@ -735,6 +748,8 @@ export const AppViewRouter = ({
               seasonYear={offseasonSeasonYear}
               fromDate={freeAgencyOpenDate}
               isPending={false}
+              isComplete={false}
+              onContinue={onResetSeason}
             />
           )}
 
