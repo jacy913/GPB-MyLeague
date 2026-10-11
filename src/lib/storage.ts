@@ -20,6 +20,10 @@ import {
   measureGamesBudgetUnits,
 } from './localGamesMirror';
 import { supabase } from './supabaseClient';
+import {
+  playerStateFallbackLadder,
+  retainedStatSeasonYears,
+} from './playerStateBudget';
 
 const STORAGE_KEYS = {
   teams: 'glb_teams',
@@ -1362,33 +1366,89 @@ export const saveLocalLeagueState = (
   queueLocalSafetySnapshot();
 };
 
+/**
+ * SAVE THE ROSTER, AND NEVER SAVE HALF OF IT.
+ *
+ * These seven `setItem` calls ran unguarded and in sequence. A localStorage quota error therefore threw
+ * partway through the list: the keys written before the failure were current, the keys after it were
+ * still last season's, and the app reloaded into a league that was half of each. That is not a smaller
+ * problem than the quota error it replaces -- a save that fails loudly is recoverable, and a save that
+ * succeeds while corrupting is not. A manager reported exactly that shape: the app crashing or
+ * reloading around the postseason, and afterwards "it is like their stats go away".
+ *
+ * The growth is not hypothetical; `playerStateBudget.ts` carries the measurement. Player stat rows are
+ * kept for EVERY season, they are the bulk of the payload, and the save crosses the 5 MiB ceiling in the
+ * fourth season.
+ *
+ * So the state is offered to localStorage down a ladder -- complete, then history trimmed, then stat rows
+ * dropped -- and the first rung that writes is the one IndexedDB is told about too, so the two stores can
+ * never disagree about which rung was reached. The roster itself is never on the ladder: a save without
+ * it is not a smaller league, it is a different one.
+ */
 export const saveLocalPlayerState = (playerState: LeaguePlayerState): void => {
-  const serializedPlayers = JSON.stringify(playerState.players);
-  const serializedBattingStats = JSON.stringify(playerState.battingStats);
-  const serializedPitchingStats = JSON.stringify(playerState.pitchingStats);
-  const serializedBattingRatings = JSON.stringify(playerState.battingRatings);
-  const serializedPitchingRatings = JSON.stringify(playerState.pitchingRatings);
-  const serializedRosterSlots = JSON.stringify(playerState.rosterSlots);
-  const serializedTransactions = JSON.stringify(playerState.transactions);
+  const attempt = (state: LeaguePlayerState): boolean => {
+    const serializedPlayers = JSON.stringify(state.players);
+    const serializedBattingStats = JSON.stringify(state.battingStats);
+    const serializedPitchingStats = JSON.stringify(state.pitchingStats);
+    const serializedBattingRatings = JSON.stringify(state.battingRatings);
+    const serializedPitchingRatings = JSON.stringify(state.pitchingRatings);
+    const serializedRosterSlots = JSON.stringify(state.rosterSlots);
+    const serializedTransactions = JSON.stringify(state.transactions);
 
-  localStorage.setItem(STORAGE_KEYS.players, serializedPlayers);
-  localStorage.setItem(STORAGE_KEYS.battingStats, serializedBattingStats);
-  localStorage.setItem(STORAGE_KEYS.pitchingStats, serializedPitchingStats);
-  localStorage.setItem(STORAGE_KEYS.battingRatings, serializedBattingRatings);
-  localStorage.setItem(STORAGE_KEYS.pitchingRatings, serializedPitchingRatings);
-  localStorage.setItem(STORAGE_KEYS.rosterSlots, serializedRosterSlots);
-  localStorage.setItem(STORAGE_KEYS.playerTransactions, serializedTransactions);
+    try {
+      localStorage.setItem(STORAGE_KEYS.players, serializedPlayers);
+      localStorage.setItem(STORAGE_KEYS.battingStats, serializedBattingStats);
+      localStorage.setItem(STORAGE_KEYS.pitchingStats, serializedPitchingStats);
+      localStorage.setItem(STORAGE_KEYS.battingRatings, serializedBattingRatings);
+      localStorage.setItem(STORAGE_KEYS.pitchingRatings, serializedPitchingRatings);
+      localStorage.setItem(STORAGE_KEYS.rosterSlots, serializedRosterSlots);
+      localStorage.setItem(STORAGE_KEYS.playerTransactions, serializedTransactions);
+    } catch {
+      return false;
+    }
 
-  void writeIndexedDbValues([
-    [STORAGE_KEYS.players, serializedPlayers],
-    [STORAGE_KEYS.battingStats, serializedBattingStats],
-    [STORAGE_KEYS.pitchingStats, serializedPitchingStats],
-    [STORAGE_KEYS.battingRatings, serializedBattingRatings],
-    [STORAGE_KEYS.pitchingRatings, serializedPitchingRatings],
-    [STORAGE_KEYS.rosterSlots, serializedRosterSlots],
-    [STORAGE_KEYS.playerTransactions, serializedTransactions],
-  ]);
-  queueLocalSafetySnapshot();
+    void writeIndexedDbValues([
+      [STORAGE_KEYS.players, serializedPlayers],
+      [STORAGE_KEYS.battingStats, serializedBattingStats],
+      [STORAGE_KEYS.pitchingStats, serializedPitchingStats],
+      [STORAGE_KEYS.battingRatings, serializedBattingRatings],
+      [STORAGE_KEYS.pitchingRatings, serializedPitchingRatings],
+      [STORAGE_KEYS.rosterSlots, serializedRosterSlots],
+      [STORAGE_KEYS.playerTransactions, serializedTransactions],
+    ]);
+    return true;
+  };
+
+  const ladder = playerStateFallbackLadder(playerState);
+  for (let index = 0; index < ladder.length; index += 1) {
+    const rung = ladder[index];
+    if (!attempt(rung.state)) {
+      continue;
+    }
+    if (index > 0) {
+      const kept = new Set(retainedStatSeasonYears(rung.state));
+      const dropped = [...new Set([
+        ...playerState.battingStats.map((stat) => stat.seasonYear),
+        ...playerState.pitchingStats.map((stat) => stat.seasonYear),
+      ])].filter((year) => !kept.has(year));
+      console.warn(
+        `playerState save: quota pressure, fell back to "${rung.label}"`
+        + `${dropped.length > 0 ? `, dropping ${dropped.join(', ')}` : ''}. `
+        + 'Players, ratings and roster slots survive every rung.',
+      );
+    }
+    queueLocalSafetySnapshot();
+    return;
+  }
+
+  /*
+    Even the roster alone did not fit. There is nothing left to give up, and swallowing it would leave the
+    caller believing the league was saved. The throw is the honest outcome: this browser cannot hold this
+    league.
+  */
+  throw new Error(
+    'Unable to persist the player roster: local storage quota exceeded and even the roster alone does not fit.',
+  );
 };
 
 export const clearLocalPlayerState = (): void => {
