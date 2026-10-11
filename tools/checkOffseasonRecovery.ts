@@ -964,7 +964,7 @@ const main = async () => {
   const ceremonyStage: Record<string, string> = {
     retirements: 'RetirementWall',
     draft_lottery: 'LotteryReveal',
-    draft: 'DraftCeremony',
+    draft: 'DraftCeremony / DraftResultsWall',
     free_agency: 'OffseasonFeed',
   };
   const stagesWithACeremony = ['retirements', 'draft_lottery', 'draft', 'free_agency'];
@@ -999,7 +999,13 @@ const main = async () => {
       : stagesWithoutACeremony.join(', '),
   );
 
-  const ceremonyComponents = ['RetirementWall', 'LotteryReveal', 'DraftCeremony', 'OffseasonFeed'];
+  /*
+    `DraftResultsWall` is listed alongside `DraftCeremony` because the draft stage now carries BOTH: the
+    ceremony while the class is being taken, and the wall once it is complete. The pair is the point --
+    a finished draft is a result and an unfinished one is a queue -- so a check that only looked for the
+    ceremony would be describing a stage that no longer exists in that shape.
+  */
+  const ceremonyComponents = ['RetirementWall', 'LotteryReveal', 'DraftCeremony', 'DraftResultsWall', 'OffseasonFeed'];
   const routerSource = readFileSync(
     resolvePath(process.cwd(), 'src/components/AppViewRouter.tsx'),
     'utf8',
@@ -1008,7 +1014,7 @@ const main = async () => {
     (component) => routerSource.includes(`<${component}`),
   );
   check(
-    'all four ceremonies are mounted on the offseason view, not only on their own hubs',
+    'all offseason ceremonies are mounted on the offseason view, not only on their own hubs',
     offseasonMounts.length === ceremonyComponents.length,
     `${offseasonMounts.length} of ${ceremonyComponents.length} mounted: ${offseasonMounts.join(', ')}`,
     'a ceremony mounted only on its own hub is unreachable from the checklist, which is what "just Continue and that\'s it" looked like',

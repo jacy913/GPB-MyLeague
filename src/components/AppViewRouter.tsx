@@ -31,6 +31,7 @@ import { RetirementWall } from './RetirementWall';
 import { TradesHub } from './TradesHub';
 import { DraftHub } from './DraftHub';
 import { DraftCeremony, type DraftClock } from './DraftCeremony';
+import { DraftResultsWall } from './DraftResultsWall';
 import { LotteryReveal } from './LotteryReveal';
 import { OffseasonFeed } from './OffseasonFeed';
 import { LotteryHub } from './LotteryHub';
@@ -231,6 +232,8 @@ interface AppViewRouterProps {
    * `OffseasonHubProps` for why the step has two acts rather than one.
    */
   onRetirementsContinue: () => void;
+  /** Steps past the draft-results wall. Same two-act shape as the retirements wall. */
+  onContinueFromDraft: () => void;
   onCompleteFreeAgency: () => void;
   onGenerateDraftClass: () => void;
   onDraftNextPick: () => void;
@@ -393,6 +396,7 @@ export const AppViewRouter = ({
   onAcknowledgeAwards,
   onSimulateRetirements,
   onRetirementsContinue,
+  onContinueFromDraft,
   onCompleteFreeAgency,
   onGenerateDraftClass,
   onDraftNextPick,
@@ -682,16 +686,38 @@ export const AppViewRouter = ({
           )}
 
           {offseasonStage === 'draft' && (
-            <DraftCeremony
-              draftClass={draftClass}
-              teamsById={teamLookup}
-              clock={draftClock}
-              recentPicks={draftClass?.picks ?? []}
-              isDraftProcessing={isDraftProcessing}
-              isDraftOpen={isDraftOpen}
-              onTakeBest={onDraftNextPick}
-              onTakeProspect={onDraftSpecificProspect}
-            />
+            /*
+              A FINISHED DRAFT IS A RESULT, NOT A QUEUE.
+
+              The ceremony ran the draft pick by pick on screen -- a club on the clock, six cards, a
+              Select on each -- which is a good way to run a draft and a poor way to read one. Nobody
+              finishes a draft wanting to know who pick 214 went to.
+
+              So once `isComplete`, the wall takes over and the board goes away entirely. It is not
+              stacked underneath: showing a live board with no club on the clock, under a finished
+              class, is the interface saying the draft is still going when it is not. Anyone who wants
+              to make a pick by hand has the board for the whole time the draft is open.
+            */
+            draftClass?.isComplete ? (
+              <DraftResultsWall
+                draftClass={draftClass}
+                teamsById={teamLookup}
+                isPending={false}
+                isComplete={false}
+                onContinue={onContinueFromDraft}
+              />
+            ) : (
+              <DraftCeremony
+                draftClass={draftClass}
+                teamsById={teamLookup}
+                clock={draftClock}
+                recentPicks={draftClass?.picks ?? []}
+                isDraftProcessing={isDraftProcessing}
+                isDraftOpen={isDraftOpen}
+                onTakeBest={onDraftNextPick}
+                onTakeProspect={onDraftSpecificProspect}
+              />
+            )
           )}
 
           {offseasonStage === 'free_agency' && (

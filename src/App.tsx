@@ -1926,6 +1926,22 @@ const { resetWallet } = bettingSlip;
   }, [offseasonStage, offseasonWorkflow.retirementsApplied, pushNotice, seasonComplete, setOffseasonWorkflow]);
 
   /**
+   * STEP PAST THE WALL OF DRAFT RESULTS.
+   *
+   * The same two-act shape as the retirements wall: the draft step decides what was taken, this decides
+   * the manager has read it. Guarded on the class actually being complete rather than merely drawn --
+   * the lottery produces a board, and a board with nobody on the clock is not a draft.
+   */
+  const continueFromDraft = useCallback(() => {
+    if (!seasonComplete || offseasonStage !== 'draft') return;
+    if (!draftCenterRef.current.activeClass?.isComplete) {
+      pushNotice('Run the draft first, so there is a class to read.', 'warning');
+      return;
+    }
+    setOffseasonWorkflow((current) => ({ ...current, stage: 'free_agency' }));
+  }, [offseasonStage, pushNotice, seasonComplete, setOffseasonWorkflow]);
+
+  /**
    * RUN THE REST OF THE OFFSEASON.
    *
    * Walks the stage plan in order rather than firing the handlers in sequence, for the reason in
@@ -3554,6 +3570,7 @@ const { resetWallet } = bettingSlip;
     onAcknowledgeAwards: dismissSeasonAwardsSummary,
     onSimulateRetirements: simulateRetirements,
     onRetirementsContinue: continueFromRetirements,
+    onContinueFromDraft: continueFromDraft,
     onCompleteFreeAgency: completeFreeAgency,
     onGenerateDraftClass: generateDraftClassFromRouter,
     onDraftNextPick: draftNextPickFromRouter,
@@ -3586,6 +3603,7 @@ const { resetWallet } = bettingSlip;
     reviewSeasonAwards,
     dismissSeasonAwardsSummary,
     continueFromRetirements,
+    continueFromDraft,
     completeFreeAgency,
     autoDraftAllFromRouter,
     autoDraftRoundFromRouter,
