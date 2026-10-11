@@ -9,6 +9,7 @@ import { Panel, RetroButton, StatValue, TeamLogo } from './ui';
 import worldSeriesLogo from '../assets/worldserieslogo.png';
 import gpbLogo from '../assets/gpb.png';
 import playoffsLogo from '../assets/playoffs.png';
+import trophyImage from '../assets/trophy.png';
 
 interface PlayoffsBracketProps {
   teams: Team[];
@@ -1083,22 +1084,48 @@ const WorldSeriesShowcase: React.FC<{
       </div>
 
       <div className="border-t border-[var(--color-gold-dim)] bg-[var(--color-base-2)] px-4 py-8">
-        {overallChampion ? (
-          <div className="flex flex-col items-center gap-3 text-center">
-            <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
-            <TeamLogo team={overallChampion.team} sizeClass="h-28 w-28" />
-            <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
-            <p className="t-h1 text-[var(--color-gold)]">{overallChampion.team.name}</p>
-            <p className="t-caption text-[var(--color-ink-dim)]">
-              {fmtRecord(overallChampion.wins, overallChampion.losses)} · RD {fmtDiff(overallChampion.runDiff)}
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2 text-center">
-            <p className="t-h2 text-[var(--color-ink-dim)]">Champion Crowns Here</p>
-            <p className="t-caption text-[var(--color-ink-faint)]">Winner is decided once the final ends</p>
-          </div>
-        )}
+        {/*
+          THE PRIZE, AND WHY IT IS HERE RATHER THAN IN THE HEADER.
+
+          The bracket is the one screen in the product where thirty-two clubs are doing something and
+          nothing on it says what they are doing it for. The wordmark above names the event; it does not
+          put anything in it. So this block -- the empty case at the foot of the World Series -- is
+          where the trophy belongs: it is literally the case somebody is going to fill, and until they
+          do it is sitting there waiting, which is the whole feeling the bracket was missing.
+
+          Sizing is driven by the artwork's shape rather than by a square. It is 1492x2676, portrait and
+          narrow, so it is sized by HEIGHT and given `w-auto`, and the flex column centres it. A width-
+          sized trophy here would have been a wide, short smudge on a tall pedestal-shaped object.
+
+          It is dimmed while unclaimed and full-strength once somebody has it, which is the same signal
+          the rest of the screen uses for decided and undecided, so the two agree without a label.
+        */}
+        <div className="flex flex-col items-center gap-3 text-center">
+          <img
+            src={trophyImage}
+            alt=""
+            aria-hidden="true"
+            className={`h-40 w-auto object-contain drop-shadow-[0_10px_22px_rgba(0,0,0,0.45)] md:h-52 ${
+              overallChampion ? '' : 'opacity-55'
+            }`}
+          />
+          {overallChampion ? (
+            <>
+              <p className="t-label text-[var(--color-ink-dim)]">World Series Champion</p>
+              <TeamLogo team={overallChampion.team} sizeClass="h-28 w-28" />
+              <p className="t-display text-[var(--color-gold-hi)]">{overallChampion.team.city}</p>
+              <p className="t-h1 text-[var(--color-gold)]">{overallChampion.team.name}</p>
+              <p className="t-caption text-[var(--color-ink-dim)]">
+                {fmtRecord(overallChampion.wins, overallChampion.losses)} · RD {fmtDiff(overallChampion.runDiff)}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="t-h2 text-[var(--color-ink-dim)]">Champion Crowns Here</p>
+              <p className="t-caption text-[var(--color-ink-faint)]">Winner is decided once the final ends</p>
+            </>
+          )}
+        </div>
       </div>
     </Panel>
   );
@@ -1195,6 +1222,32 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
               <h1 className="t-h1">Playoffs</h1>
               <p className="t-caption mt-1 text-[var(--color-ink-faint)]">{bracketStatusCopy}</p>
             </div>
+            {/*
+              THE PRIZE, IN THE MASTHEAD, FROM THE FIRST ROUND.
+
+              The World Series block below only mounts once a league champion exists, so a trophy living
+              only there is invisible for the division series and the league championships -- which is
+              most of the bracket, and precisely the part where thirty-two clubs are still working their
+              way toward it. This is the same object at masthead scale, after a divider, so the band reads
+              left to right as logos, then the event, then the thing being fought over.
+
+              Sized by height for the same reason as the large one: the artwork is portrait and narrow,
+              and `w-auto` keeps that shape instead of stretching it into a wide, short smudge.
+
+              Dimmed by OPACITY only. A first pass also dropped saturation, which turned the gold into silver
+              and quietly changed the object: a trophy is a gold object, and desaturating it to read as
+              "unclaimed" is a different claim from the one being made. Faded gold still reads as gold
+              sitting on a shelf; grey reads as a pewter ornament.
+            */}
+            <span className="h-16 w-px self-stretch bg-[var(--color-chrome-lo)] md:h-20" aria-hidden="true" />
+            <img
+              src={trophyImage}
+              alt=""
+              aria-hidden="true"
+              className={`h-16 w-auto object-contain drop-shadow-[0_6px_14px_rgba(0,0,0,0.45)] md:h-20 ${
+                bracket.champion ? '' : 'opacity-60'
+              }`}
+            />
           </div>
           <div className="text-right">
             <p className="t-caption text-[var(--color-ink-faint)]">NEXT PLAYOFF DATE</p>
