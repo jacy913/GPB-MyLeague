@@ -1,13 +1,69 @@
 import {
   LeaguePlayerState,
   Player,
+  PlayerBattingRatings,
   PlayerGameBattingLine,
   PlayerGamePitchingLine,
   PlayerGameStatDelta,
+  PlayerPitchingRatings,
   PlayerSeasonBatting,
   PlayerSeasonPitching,
   SeasonPhase,
 } from '../types';
+
+/**
+ * THE RATING IN FORCE DURING A SEASON, which is not the same thing as the newest rating.
+ *
+ * Player ratings are written when a PLAYER IS CREATED -- the initial universe, a draft pick, a rookie
+ * promoted to fill a gap -- and are not re-stamped when the calendar rolls over. So a player who joined
+ * in 2026 still carries a 2026 rating in 2028. `resetPlayerSeasonStats` gives every non-retired player a
+ * fresh stat row for each new season; nothing does the equivalent for ratings, and that asymmetry is
+ * the whole trap.
+ *
+ * Which means `rating.seasonYear === seasonYear` -- the obvious way to ask "how good was he that
+ * season?" -- matches almost nobody once the league is past its first year. It returns only that
+ * season's rookies, who have no at-bats, so the season archive finds zero candidates and writes two
+ * null MVPs. That is exactly what a manager reported: season 2028, third season, both races empty,
+ * while the World Series MVP resolved fine because it is read out of the stored play logs rather than
+ * off the roster.
+ *
+ * So the rule is the newest rating AT OR BEFORE the season being archived. The `<=` is load-bearing in
+ * the other direction too: taking the plain newest rating would score a finished season with an
+ * ability number written during a LATER offseason, which leaks future information into an archive and,
+ * worse, can change the winner retroactively.
+ *
+ * Four call sites already wanted "the latest rating" and each had written its own copy -- BettingPage,
+ * PlayersHub, TeamsHub and teamStrength -- while this fifth one wanted "the rating as of a year" and
+ * guessed a strict equality instead. This is the shared version of both questions; the copies are left
+ * alone here rather than folded in, because they take the plain newest row and folding them in would
+ * change their behaviour.
+ */
+const latestRatingAsOfSeason = <T extends { playerId: string; seasonYear: number }>(
+  ratings: T[],
+  seasonYear: number,
+): Map<string, T> => {
+  const byPlayerId = new Map<string, T>();
+  for (const rating of ratings) {
+    if (rating.seasonYear > seasonYear) {
+      continue;
+    }
+    const held = byPlayerId.get(rating.playerId);
+    if (!held || rating.seasonYear > held.seasonYear) {
+      byPlayerId.set(rating.playerId, rating);
+    }
+  }
+  return byPlayerId;
+};
+
+export const getBattingRatingsAsOfSeason = (
+  ratings: PlayerBattingRatings[],
+  seasonYear: number,
+): Map<string, PlayerBattingRatings> => latestRatingAsOfSeason(ratings, seasonYear);
+
+export const getPitchingRatingsAsOfSeason = (
+  ratings: PlayerPitchingRatings[],
+  seasonYear: number,
+): Map<string, PlayerPitchingRatings> => latestRatingAsOfSeason(ratings, seasonYear);
 
 export interface PlayerStatAccumulator {
   battingByKey: Map<string, PlayerSeasonBatting>;

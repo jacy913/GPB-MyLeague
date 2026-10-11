@@ -61,6 +61,8 @@ import type { BuildNewUniverseResult } from './logic/universeBootstrap';
 import { normalizeSeed } from './lib/random';
 import {
   applyPlayerGameStatDelta,
+  getBattingRatingsAsOfSeason,
+  getPitchingRatingsAsOfSeason,
   resetPlayerSeasonStats,
 } from './logic/playerStats';
 import { auditRosterInvariants, repairRosterSlotsForTeams } from './logic/rosterManagement';
@@ -472,11 +474,7 @@ const computeBattingMvpCandidates = (
       .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
       .map((stat) => [stat.playerId, stat] as const),
   );
-  const battingRatings = new Map(
-    playerState.battingRatings
-      .filter((rating) => rating.seasonYear === seasonYear)
-      .map((rating) => [rating.playerId, rating] as const),
-  );
+  const battingRatings = getBattingRatingsAsOfSeason(playerState.battingRatings, seasonYear);
 
   return buildAwardsForBoard(
     'batting',
@@ -510,11 +508,7 @@ const computePitchingMvpCandidates = (
       .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
       .map((stat) => [stat.playerId, stat] as const),
   );
-  const pitchingRatings = new Map(
-    playerState.pitchingRatings
-      .filter((rating) => rating.seasonYear === seasonYear)
-      .map((rating) => [rating.playerId, rating] as const),
-  );
+  const pitchingRatings = getPitchingRatingsAsOfSeason(playerState.pitchingRatings, seasonYear);
 
   return buildAwardsForBoard(
     'pitching',
