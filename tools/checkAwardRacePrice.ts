@@ -82,15 +82,15 @@ const built = buildNewUniverse({
   effectiveDate: `${YEAR}-12-15`,
 });
 
-const seasonTeams = recalculateTeamRatingsFromRosters(
+const seasonTeamsAtStart = recalculateTeamRatingsFromRosters(
   INITIAL_TEAMS.map((t) => ({ ...t, wins: 0, losses: 0, runsScored: 0, runsAllowed: 0 })),
   built.playerState,
   YEAR,
 );
 
 const manager = new SimulationManager({
-  teams: seasonTeams,
-  games: generateSchedule(seasonTeams, {
+  teams: seasonTeamsAtStart,
+  games: generateSchedule(seasonTeamsAtStart, {
     seasonStartDate: getDefaultSeasonStartDate(YEAR),
     seasonDays: 180,
     random: seededRandomStream(31337),
@@ -101,14 +101,41 @@ const manager = new SimulationManager({
 });
 
 let universe = built.playerState;
+let seasonTeams = seasonTeamsAtStart;
 for (let day = 0; day < DAYS; day += 1) {
   const r = await manager.run({ scope: 'day' });
   universe = r.playerState;
+  seasonTeams = r.teams;
+}
+
+/*
+  THE SIMULATED TEAMS, NOT THE TEMPLATE THEY WERE BUILT FROM.
+
+  This passed `INITIAL_TEAMS`, which is the zeroed 0-0 array handed to the simulation -- so every club
+  here read as 0-for-130, every candidate's TEAM term was a hard zero, and the scoring path ran in a
+  shape the league never produces. Nothing failed, because the TEAM term is a small additive term and a
+  constant offset across every candidate does not change the RANKING. That is exactly why it went
+  unnoticed: it had to be caught by reading, not by a red test.
+
+  It is also what makes this file worth fixing rather than deleting. The moment the TEAM term became a
+  meaningful share of a score, this degenerate input would have produced a plausible wrong answer here
+  while the app was correct, and the guard would have agreed with it.
+
+  `checkAwardEligibility.ts` hit exactly this and now treats an uncalibratable check as a FAILURE rather
+  than a silent pass. This file makes the same guard for itself.
+*/
+const teamsWithARecord = seasonTeams.filter((team) => team.wins + team.losses > 0).length;
+if (teamsWithARecord === 0) {
+  console.error(
+    `  ${DAYS} simulated days produced NO club with a record, so every TEAM term below is a hard zero`
+    + ' and this check cannot distinguish the real scoring path from the degenerate one.',
+  );
+  process.exit(1);
 }
 
 const awardInputs: AwardInputs = {
   players: universe.players,
-  teamsById: new Map(INITIAL_TEAMS.map((t) => [t.id, t])),
+  teamsById: new Map(seasonTeams.map((t) => [t.id, t])),
   battingStats: getPreferredBattingStatsByPlayerId(universe.battingStats),
   pitchingStats: getPreferredPitchingStatsByPlayerId(universe.pitchingStats),
   battingRatings: latestByPlayerId<PlayerBattingRatings>(universe.battingRatings),
