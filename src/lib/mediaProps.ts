@@ -672,7 +672,27 @@ export const selectOutletProps = (
 
   const safeCount = Math.max(1, Math.round(limit * 0.6));
   const selected: PropMarket[] = [];
-  const take = (market: PropMarket): void => { selected.push(market); };
+
+  /*
+    MEMBERSHIP AND THE SAFE QUOTA, TRACKED INCREMENTALLY.
+
+    Every pass below asks "have I already taken this one?", and the six passes together ask it on the
+    order of 60,000 times over the whole board -- once per market, per pass, per outlet. The obvious
+    `selected.includes(market)` is a LINEAR scan of a list at most `limit` long, so it walked up to
+    fifteen entries to answer a yes/no question, six times over, for every outlet on every slate change.
+
+    `selected` is only ever appended to and never removed or reordered, so a Set alongside it is exactly
+    equivalent: there is no case where a market leaves the card and has to become selectable again.
+    Keyed on `propId`, which is the market's identity and is already the deterministic tiebreak key, so
+    two entries cannot collide.
+  */
+  const chosen = new Set<string>();
+  let safeTaken = 0;
+  const take = (market: PropMarket): void => {
+    selected.push(market);
+    chosen.add(market.propId);
+    if (market.temperament[mediaId] === 'safe') safeTaken += 1;
+  };
 
   /*
    * PASS 1 -- guarantees.
@@ -685,7 +705,7 @@ export const selectOutletProps = (
   for (let weight of [2, 1]) {
     for (const market of ranked) {
       if (selected.length >= limit) break;
-      if (selected.includes(market)) continue;
+      if (chosen.has(market.propId)) continue;
       if (!canTake(selected, market)) continue;
       const unmet = unmetGuarantees(selected);
       const closes =
@@ -698,13 +718,18 @@ export const selectOutletProps = (
   }
 
   // PASS 2 -- the safe quota: the outlet's most confident reads.
+  //
+  // The quota is counted as the card fills rather than re-derived with a `filter` on every iteration.
+  // That filter allocated a fresh array and walked it for EVERY market that reached the bottom of the
+  // loop, purely to answer how many safe picks were already on the card -- the single most expensive
+  // line in this function. `take` maintains the count, which is the same number by construction.
   for (const market of ranked) {
     if (selected.length >= limit) break;
-    if (selected.includes(market)) continue;
+    if (chosen.has(market.propId)) continue;
     if (market.temperament[mediaId] !== 'safe') continue;
     if (!canTake(selected, market)) continue;
     take(market);
-    if (selected.filter((m) => m.temperament[mediaId] === 'safe').length >= safeCount) break;
+    if (safeTaken >= safeCount) break;
   }
 
   // PASS 3 -- the hot tail.
@@ -713,7 +738,7 @@ export const selectOutletProps = (
   // card of all-safe picks gives a manager nothing to do with his nerve.
   for (const market of byBoldness) {
     if (selected.length >= limit) break;
-    if (selected.includes(market)) continue;
+    if (chosen.has(market.propId)) continue;
     if (market.temperament[mediaId] !== 'hot') continue;
     if (!canTake(selected, market)) continue;
     take(market);
@@ -723,7 +748,7 @@ export const selectOutletProps = (
   // because every one of its reads landed in the middle band.
   for (const market of ranked) {
     if (selected.length >= limit) break;
-    if (selected.includes(market)) continue;
+    if (chosen.has(market.propId)) continue;
     if (!canTake(selected, market)) continue;
     take(market);
   }
@@ -747,7 +772,7 @@ export const selectOutletProps = (
     if (selected.length >= limit) break;
     for (const market of ranked) {
       if (selected.length >= limit) break;
-      if (selected.includes(market)) continue;
+      if (chosen.has(market.propId)) continue;
       if (!allows(selected, market)) continue;
       take(market);
     }
