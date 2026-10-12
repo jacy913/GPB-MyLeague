@@ -267,6 +267,31 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       }
 
         /*
+          HAND THE MARKET BACK TO THE MANAGER, OR THE NEXT DAY UNDOES IT.
+
+          This is the line whose absence made the league's trade market dead, and it is easy to miss
+          because everything above it looks correct: the signings are applied, the proposals are
+          generated, the trades are accepted, and `working.playerState` holds all of it at the end of
+          every iteration.
+
+          Then the next iteration calls `manager.run(stepTarget)`, and `run()` reads the manager's OWN
+          `this.playerState` -- the copy it made at construction, before any market pass ever ran. The
+          manager was built once, outside this loop, precisely so a bulk run would not pay to reconstruct
+          it per day. So the market edits were silently overwritten on the following day and only ever
+          survived on the final day of a run, where there was no following day.
+
+          Measured on a real season before this line existed: 79 proposals generated, 48 accepted,
+          0 trades in the save. Three signings, all of them from the last day. That is why the winter
+          feed's trade pairing -- proven against synthetic rows and never seen in a league -- was the
+          standing "untriggered" flag, and why the generator's own gates were never the problem: it was
+          producing plenty.
+
+          `adoptPlayerState` rebuilds the manager's participant caches, which a trade genuinely
+          invalidates. The accumulator is deliberately left alone; see the note on the method.
+        */
+        manager.adoptPlayerState(working.playerState);
+
+        /*
           PRICE THE DAY, THROUGH THE CROWD.
 
           The crowd runs HERE rather than inside priceBoardForDay, for one reason that matters:

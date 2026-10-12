@@ -125,6 +125,70 @@ export class SimulationManager {
    */
   private readonly pitcherRestByPlayerId: Map<string, string>;
 
+  /**
+   * ADOPT A ROSTER CHANGED BY SOMETHING OTHER THAN THE SIMULATION.
+   *
+   * The simulation worker runs a market between simulated days: it signs free agents and it accepts
+   * trades, both of which rewrite `players`, `rosterSlots` and `transactions`. Those edits used to go
+   * into the worker's own `playerState` and then evaporate, because the manager is constructed ONCE for
+   * the whole run and `run()` reads `this.playerState` -- the copy it made at construction.
+   *
+   * So every trade the league generated was applied and then thrown away on the next day. Measured on a
+   * real season: 79 proposals generated, 48 accepted, 0 surviving in the save. The signings were no
+   * better -- the league kept three, which were the ones that happened on the FINAL day, because those
+   * had no following day to be overwritten by.
+   *
+   * `run()` itself is untouched. This is the missing half of the contract: a caller that owns the player
+   * state and mutates it between runs needs a way to hand it back, exactly as it already receives it.
+   *
+   * The derived caches are rebuilt rather than patched, because a trade is precisely the case where they
+   * go stale: `playersById` and the per-team roster index both describe who is on which roster, and
+   * `participantBuildContext` is what turns a roster slot into the participants for a game. Rebuilding is
+   * O(players + slots) once per market pass, which is nothing beside a day's games.
+   *
+   * `playerStatAccumulator` is deliberately NOT rebuilt. The accumulator is this manager's own record of
+   * the season it simulated, and it is materialised into the returned state at the end of every `run`.
+   * Re-seeding it would be harmless for stats the market did not touch and would silently drop running
+   * season totals if the two ever disagreed -- and they do disagree, because
+   * `materializePlayerStatAccumulator` returns the accumulator's view rather than the adopted one.
+   */
+  adoptPlayerState(next: LeaguePlayerState): void {
+    this.playerState = {
+      players: next.players.map((player) => ({ ...player })),
+      battingStats: next.battingStats.map((stat) => ({ ...stat })),
+      pitchingStats: next.pitchingStats.map((stat) => ({ ...stat })),
+      battingRatings: next.battingRatings.map((rating) => ({ ...rating })),
+      pitchingRatings: next.pitchingRatings.map((rating) => ({ ...rating })),
+      rosterSlots: next.rosterSlots.map((slot) => ({ ...slot })),
+      transactions: next.transactions.map((transaction) => ({ ...transaction })),
+    };
+
+    this.playersById.clear();
+    for (const player of this.playerState.players) {
+      this.playersById.set(player.playerId, player);
+    }
+
+    const latestSeasonYear = this.playerState.rosterSlots.length > 0
+      ? Math.max(...this.playerState.rosterSlots.map((slot) => slot.seasonYear))
+      : null;
+    const rosterSlotsByTeamId = new Map<string, typeof this.playerState.rosterSlots>();
+    if (latestSeasonYear !== null) {
+      this.playerState.rosterSlots.forEach((slot) => {
+        if (slot.seasonYear !== latestSeasonYear) {
+          return;
+        }
+        const current = rosterSlotsByTeamId.get(slot.teamId) ?? [];
+        current.push(slot);
+        rosterSlotsByTeamId.set(slot.teamId, current);
+      });
+    }
+    this.participantBuildContext.latestSeasonYear = latestSeasonYear;
+    this.participantBuildContext.playersById = this.playersById;
+    this.participantBuildContext.battingRatingsByPlayerId = this.getLatestBattingRatingsByPlayerId();
+    this.participantBuildContext.pitchingRatingsByPlayerId = this.getLatestPitchingRatingsByPlayerId();
+    this.participantBuildContext.rosterSlotsByTeamId = rosterSlotsByTeamId;
+  }
+
   constructor(input: SimulationManagerInput) {
     this.settings = input.settings;
     this.teamOrder = input.teams.map((team) => team.id);
