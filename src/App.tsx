@@ -3656,13 +3656,18 @@ const { resetWallet } = bettingSlip;
   // clears the pool before the replacement is generated.
   const leagueHasNoPlayers = !isBootstrapping && playerState.players.length === 0;
 
-  // The folder nav is sticky and has to park directly under the header, which is
-  // itself sticky and is three bands tall (score strip, masthead, and whatever
-  // else is added to it later). This used to be a hand-written top-[176px], which
-  // silently desynchronised the moment the header changed -- removing the team
-  // strip left the nav floating with a gap. Measuring it instead means the two
-  // cannot drift apart, and it survives a viewport narrower than the score strip's
-  // own breakpoint.
+  /*
+    THE HEADER IS MEASURED, BECAUSE THE RAIL IS PINNED UNDER IT.
+
+    The rail is `sticky`, parked directly below the header, and its height is `100vh` minus that same
+    offset -- so the two cannot disagree about where the boundary is. This replaced a hand-written
+    `top-[176px]`, which silently desynchronised the moment the header changed: removing the team strip
+    left the nav floating with a gap above it, and nothing reported it, because a misalignment between a
+    sticky offset and a sticky height is not an error, it is a gap.
+
+    Measuring it also means the rail survives a viewport narrower than the score strip's own breakpoint,
+    which a fixed number cannot.
+  */
   const stickyHeaderRef = useRef<HTMLDivElement | null>(null);
   const [stickyHeaderHeight, setStickyHeaderHeight] = useState(0);
 
@@ -3716,8 +3721,25 @@ const { resetWallet } = bettingSlip;
     );
   }
 
+  /*
+    THE ROOT IS `overflow-x-clip`, NOT `overflow-x-hidden`, AND THE DIFFERENCE IS THE NAV RAIL.
+
+    `hidden` on one axis forces the other to `auto`, which makes the root a scroll container in both
+    directions. A `position: sticky` descendant then resolves against THAT box rather than the viewport --
+    and that box never scrolls, so the sticky never engages. The rail was marked `sticky`, given a measured
+    `top`, and a height calc reading the same measurement, and it did not stick: measured on the
+    dashboard its viewport position went 145px at scroll 0, -255px at scroll 400, and -655px at scroll
+    800. It travelled with the page exactly as an unpinned element would, which is why the rail appeared
+    not to follow the reader, and then appeared to do nothing different once it was genuinely unpinned.
+
+    `clip` clips without establishing a scroll container, so the sticky chain reaches the viewport again.
+    The horizontal-overflow protection is kept; the broken sticky is what goes.
+
+    The two are near-synonyms to the eye and nothing reports the difference. A sticky element that does
+    not stick is not an error, it is an element that scrolls.
+  */
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[var(--color-base)] pb-20 text-[var(--color-ink)] font-[family-name:var(--font-body)] selection:bg-[var(--color-gold-dim)]">
+    <div className="relative min-h-screen overflow-x-clip bg-[var(--color-base)] pb-20 text-[var(--color-ink)] font-[family-name:var(--font-body)] selection:bg-[var(--color-gold-dim)]">
       <div ref={stickyHeaderRef} className="sticky top-0 z-50">
         <div className="border-b border-[var(--color-chrome-lo)] bg-[var(--color-void)]">
           <PreviousDateScoreStrip
@@ -3840,6 +3862,20 @@ const { resetWallet } = bettingSlip;
       </div>
 
       <div className="relative z-10 flex">
+        {/*
+          THE RAIL IS PINNED, AND SCROLLS INSIDE ITSELF.
+
+          Asked to follow the page instead, and it did -- scrolling 900px moved it 900px. That is the wrong
+          trade on a window this shape. The nav is 1216px fully expanded and the space under this header
+          is about 700px, so travelling with the page means that a third of the way down any long view the
+          rail is off-screen entirely and the left column is empty beside a full one.
+
+          So it goes back to `sticky` under the measured header, with its own scroll for the overflow that
+          cannot be avoided. What is different from the version that started this is that the accordion now
+          opens by default and the rail scrolls itself to whatever you are looking at -- see
+          `FolderNav`'s active-item effect, which is what stops an internal scrollbar from feeling like the
+          nav has lost its place.
+        */}
         <FolderNav
           view={view}
           onSetView={setView}

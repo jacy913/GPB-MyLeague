@@ -27,13 +27,57 @@ type VisibleItem =
  */
 export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className = '', style }) => {
   const activeFolder = VIEW_TO_FOLDER[view];
-  const [expandedFolders, setExpandedFolders] = useState<Set<FolderId>>(() => new Set([activeFolder]));
+  /*
+    OPEN BY DEFAULT, ALL OF THEM.
+
+    This opened the active folder and collapsed the other six, which was a sensible default while the rail
+    was a fixed-height scroll region: seven collapsed rows fitted the space, and the destinations were one
+    click away for whoever was already looking for them. It stopped being sensible the moment the rail
+    stopped being height-constrained. With every folder expanded the rail is 1216px and its scrollHeight
+    equals its clientHeight -- nothing is clipped and nothing is hidden -- so a collapsed default now
+    hides twenty-four destinations for no benefit, on the one screen a commissioner uses to reach them.
+
+    Folders still toggle, and the effect below still re-opens whichever folder the reader is inside, so
+    collapsing a section to get it out of the way holds until you navigate away from it.
+  */
+  const [expandedFolders, setExpandedFolders] = useState<Set<FolderId>>(
+    () => new Set(NAV_FOLDERS.map((folder) => folder.id)),
+  );
   const [activeItemId, setActiveItemId] = useState<string>(`folder-${activeFolder}`);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const railRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     setExpandedFolders((current) => new Set([...current, activeFolder]));
   }, [activeFolder]);
+
+  /*
+    KEEP THE CURRENT DESTINATION IN VIEW.
+
+    This is what makes an internal scrollbar bearable rather than baffling. The nav is 1216px fully
+    expanded and the space under the header is about 700px on a short window, so it has to scroll, and a
+    nav that scrolls but never moves on its own is a nav that looks broken: you arrive at PLAYOFFS and the
+    rail is still showing PLAY, because nothing ever asked it where you are.
+
+    So on every view change the rail scrolls its own scrollTop -- never the page's -- to bring the active
+    destination to the middle. Deliberately NOT `scrollIntoView`: that walks up the ancestor chain and will
+    happily scroll the document out from under the reader, which is the opposite of what is wanted here.
+
+    Only moves when the item is actually outside the rail's window, so a nav that fits does not twitch.
+  */
+  useEffect(() => {
+    const rail = railRef.current;
+    const item = itemRefs.current.get(`leaf-${view}`) ?? itemRefs.current.get(`folder-${activeFolder}`);
+    if (!rail || !item) {
+      return;
+    }
+    const railBox = rail.getBoundingClientRect();
+    const itemBox = item.getBoundingClientRect();
+    if (itemBox.top >= railBox.top && itemBox.bottom <= railBox.bottom) {
+      return;
+    }
+    rail.scrollTop += itemBox.top - railBox.top - (railBox.height - itemBox.height) / 2;
+  }, [view, activeFolder]);
 
   const visibleItems = useMemo<VisibleItem[]>(() => NAV_FOLDERS.flatMap((folder) => {
     const folderItem: VisibleItem = { id: `folder-${folder.id}`, kind: 'folder', folderId: folder.id };
@@ -162,10 +206,24 @@ export const FolderNav: React.FC<FolderNavProps> = ({ view, onSetView, className
 
   return (
     <aside
+      ref={railRef}
       aria-label="Primary navigation"
-      // Height is derived from the measured header offset rather than the old
-      // hardcoded 176px, which no longer described the header once the team strip
-      // came out. Falls back to a sane value before the first measurement lands.
+      /*
+        THE RAIL IS PINNED, AND THE OVERFLOW IS ITS OWN.
+
+        It was tried the other way -- ordinary flow content, travelling with the page -- and that is a real
+        thing to want: one scrollbar, nothing hidden. On this window it is also worse. Measured at 1908x845
+        the nav is 1216px fully expanded and the space under the header is about 700px, so travelling with
+        the page means a third of the way down any long view the rail has scrolled off the top and the
+        left column stands empty beside a full one.
+
+        Pinned, the overflow cannot be avoided -- an element taller than the viewport cannot be read below
+        its own fold -- so the scroll belongs to the rail. `100vh - <measured header>` rather than the old
+        hand-written `top-[176px]`, which desynchronised from the header whenever the header changed.
+
+        The thing that made this feel broken was never the scrollbar; it was the rail not moving on its
+        own. That is the effect above.
+      */
       style={{ height: 'calc(100vh - var(--sticky-header-h, 176px))', ...style }}
       className={`hidden w-60 shrink-0 overflow-y-auto border-r border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] lg:block ${className}`}
     >
