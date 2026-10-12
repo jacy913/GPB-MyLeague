@@ -3,7 +3,8 @@ import { CalendarDays, Crosshair, Flag } from 'lucide-react';
 import { Game, Team } from '../types';
 import { formatHeaderDate } from './SeasonCalendarStrip';
 import { Panel, RetroButton } from './ui';
-import { GameCard, type PregameRecord } from './game/GameCard';
+import type { PregameRecord } from './game/GameCard';
+import { ScorebugCard } from './game/ScorebugCard';
 
 interface SeasonProgressSummary {
   completedGames: number;
@@ -288,7 +289,7 @@ export const GamesScheduleView: React.FC<GamesScheduleViewProps> = ({
             </p>
           ) : (
             gamesForActiveDate.map((game) => (
-              <GameCard
+              <ScorebugCard
                 key={game.gameId}
                 game={game}
                 games={games}

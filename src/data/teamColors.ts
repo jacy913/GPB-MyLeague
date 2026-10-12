@@ -107,3 +107,50 @@ export const teamColors: Record<TeamId, ClubPalette> = {
 /** The order the fallback chain tries, in order. */
 export const PALETTE_SLOTS = ['primary', 'secondary', 'tertiary'] as const;
 export type PaletteSlot = (typeof PALETTE_SLOTS)[number];
+
+/**
+ * The three-letter code a broadcast scorebug prints instead of the club's name.
+ *
+ * The scorebug brief was that initials REPLACE the name as the identifier rather than the name
+ * disappearing, so this is identity and not a label -- which is why it lives beside the uniforms and is
+ * keyed the same way. It is the second half of "who is this club", and a club without either half
+ * would be an anonymous coloured band.
+ *
+ * Nearly all of these are the club id uppercased, which is the point: the id is already the short,
+ * stable handle the rest of the product uses, so `alc -> ALC` is the least surprising mapping there
+ * is. They are written out rather than computed so a club can be given a code that reads properly --
+ * `hui` auto-uppercases to a perfectly good `HUI`, but a future `lei` should be free to be `LEI` or
+ * `LUX` without anyone having to decide whether an auto-uppercase rule is allowed to override it.
+ *
+ * Keyed by `TeamId` rather than `string` for the reason this file's header gives: a typo becomes a type
+ * error instead of a club quietly printing `UNDEFINED` on its own band.
+ */
+export const TEAM_INITIALS: Record<TeamId, string> = {
+  // Platinum League — North
+  alc: 'ALC', val: 'VAL', luf: 'LUF', hui: 'HUI',
+  // Platinum League — South
+  ara: 'ARA', des: 'DES', suk: 'SUK', gar: 'GAR',
+  // Platinum League — West
+  gra: 'GRA', tru: 'TRU', caf: 'CAF', rag: 'RAG',
+  // Platinum League — East
+  win: 'WIN', aub: 'AUB', dwi: 'DWI', hou: 'HOU',
+  // Prestige League — North
+  ock: 'OCK', bal: 'BAL', fes: 'FES', urb: 'URB',
+  // Prestige League — South
+  sin: 'SIN', loy: 'LOY', niy: 'NIY', ars: 'ARS',
+  // Prestige League — West
+  der: 'DER', rei: 'REI', fey: 'FEY', cal: 'CAL',
+  // Prestige League — East
+  sta: 'STA', bra: 'BRA', geb: 'GEB', and: 'AND',
+};
+
+/**
+ * The code for a club id that may be unknown.
+ *
+ * The `TeamId` key above makes a *missing entry* a compile error, so the fallback branch only fires for
+ * a value that came out of a save or an import and is not a club this build knows about. It prints a
+ * visible placeholder rather than an empty cell: a band with blank initials reads as a rendering fault,
+ * and one that reads `???` reads as an unknown club, which is what it is.
+ */
+export const clubInitials = (teamId: string | null | undefined): string =>
+  (teamId && TEAM_INITIALS[teamId as TeamId]) || '???';
