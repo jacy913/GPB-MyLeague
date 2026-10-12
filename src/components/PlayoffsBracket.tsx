@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { CalendarDays, PauseCircle, Play, SkipForward } from 'lucide-react';
+import { PauseCircle, SkipForward } from 'lucide-react';
 import { Game, PlayoffRoundKey, Team } from '../types';
 import { SeededPlayoffTeam, compareSeededTeams, getLeaguePlayoffSeeds, getRoundBestOf, isPlayoffGame } from '../logic/playoffs';
 import { addDaysToISODate } from '../logic/simulation';
@@ -14,13 +14,10 @@ import trophyImage from '../assets/trophy.png';
 interface PlayoffsBracketProps {
   teams: Team[];
   games: Game[];
-  seasonComplete: boolean;
   currentDate: string;
   selectedDate: string;
-  onSelectDate: (date: string) => void;
   isSimulating: boolean;
   onSimulateToDate: (targetDate: string) => void;
-  onSimulateNextPlayoffGame: () => void;
   onSimulateToGame: (gameId: string) => void;
   onCancelSimulation: () => void;
 }
@@ -1134,13 +1131,10 @@ const WorldSeriesShowcase: React.FC<{
 export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
   teams,
   games,
-  seasonComplete,
   currentDate,
   selectedDate,
-  onSelectDate,
   isSimulating,
   onSimulateToDate,
-  onSimulateNextPlayoffGame,
   onSimulateToGame,
   onCancelSimulation,
 }) => {
@@ -1165,45 +1159,16 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
     () => playoffGames.filter((game) => game.status === 'scheduled' && (!playbackAnchorDate || game.date >= playbackAnchorDate)),
     [playbackAnchorDate, playoffGames],
   );
-  const allScheduleDates = useMemo<string[]>(() => {
-    const dates: string[] = games.map((game) => game.date);
-    return Array.from<string>(new Set(dates)).sort((left: string, right: string) => left.localeCompare(right));
-  }, [games]);
-  const maxSelectableDate = useMemo(() => {
-    const existingMax = allScheduleDates[allScheduleDates.length - 1] ?? '';
-    const horizonBase = playbackAnchorDate || bracket.bracketDate || existingMax;
-    if (!horizonBase) {
-      return existingMax;
-    }
-    const horizon = addDaysToISODate(horizonBase, 70);
-    if (!existingMax) {
-      return horizon;
-    }
-    return horizon > existingMax ? horizon : existingMax;
-  }, [allScheduleDates, bracket.bracketDate, playbackAnchorDate]);
-  const activeTargetDate = selectedDate || playbackAnchorDate || bracket.bracketDate || allScheduleDates[0] || '';
-  const canSimToTargetDate = Boolean(activeTargetDate) && (!playbackAnchorDate || activeTargetDate >= playbackAnchorDate);
   const nextPlayoffDate = upcomingPlayoffGames[0]?.date ?? null;
   const gameQueue = upcomingPlayoffGames.slice(0, 12);
-  const firstScheduledPlayoffDate = useMemo(
-    () => playoffGames
-      .filter((game) => game.status === 'scheduled')
-      .map((game) => game.date as string)
-      .sort((left, right) => left.localeCompare(right))[0] ?? null,
-    [playoffGames],
-  );
-  const completedPlayoffGames = useMemo(
-    () => playoffGames.filter((game) => game.status === 'completed' && game.date <= bracket.bracketDate).length,
-    [bracket.bracketDate, playoffGames],
-  );
-  const bracketStatusCopy = useMemo(() => {
-    if (bracket.champion) return `Bracket completed through ${formatHeaderDate(bracket.bracketDate)}.`;
-    if (completedPlayoffGames > 0) return `Bracket live through ${formatHeaderDate(bracket.bracketDate)}.`;
-    if (firstScheduledPlayoffDate) return `Playoffs scheduled to open ${formatHeaderDate(firstScheduledPlayoffDate)}.`;
-    return seasonComplete
-      ? 'Regular season complete. Generate or schedule playoff games to start the bracket.'
-      : 'Playoff field projected. Simulate forward to begin bracket games.';
-  }, [bracket.bracketDate, bracket.champion, completedPlayoffGames, firstScheduledPlayoffDate, seasonComplete]);
+
+  /*
+    `firstScheduledPlayoffDate`, `completedPlayoffGames` and `bracketStatusCopy` are gone with the
+    status caption they fed. Left in place they would have been three useMemos running on every render
+    to compute a string nobody printed -- and worse, `bracketStatusCopy` had a fourth branch to keep
+    current, so it was a place a stale sentence could have lived without anyone noticing it was no
+    longer read.
+  */
   const simControlsLocked = isSimulating;
 
   return (
@@ -1218,10 +1183,19 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
             <img src={gpbLogo} alt="" className="h-16 w-auto object-contain md:h-20" aria-hidden="true" />
             <span className="h-16 w-px self-stretch bg-[var(--color-chrome-lo)] md:h-20" aria-hidden="true" />
             <img src={playoffsLogo} alt="" className="h-16 w-auto object-contain md:h-20" aria-hidden="true" />
-            <div>
-              <h1 className="t-h1">Playoffs</h1>
-              <p className="t-caption mt-1 text-[var(--color-ink-faint)]">{bracketStatusCopy}</p>
-            </div>
+            {/*
+              NO TITLE BLOCK, BECAUSE THE WORDMARK ALREADY IS THE TITLE.
+
+              This band carried the scripted `playoffsLogo` wordmark immediately followed by an `h1`
+              reading "Playoffs" and a status caption underneath it -- the screen announcing its own name
+              twice, in two typefaces, one of them the actual design asset.
+
+              The caption is the worse of the two. "Playoff field projected. Simulate forward to begin
+              bracket games" restates what the bracket already says: empty division slots read TBD, the
+              league sections print the seeds, and the game queue prints the scheduled count. A sentence
+              summarising what is on screen is also the kind that goes stale -- it was derived from four
+              separate signals and had to be re-derived whenever any of them moved.
+            */}
             {/*
               THE PRIZE, IN THE MASTHEAD, FROM THE FIRST ROUND.
 
@@ -1257,31 +1231,26 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:flex-wrap lg:items-end">
-          <label className="flex flex-col gap-1">
-            <span className="t-caption text-[var(--color-ink-faint)]">SIM TARGET DATE</span>
-            <input
-              type="date"
-              value={activeTargetDate}
-              min={allScheduleDates[0]}
-              max={maxSelectableDate}
-              onChange={(event) => onSelectDate(event.target.value)}
-              className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-1.5 t-stat-sm text-[var(--color-ink)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
-            />
-          </label>
+        {/*
+          ONE CONTROL, AND IT IS A DAY NOT A GAME.
 
-          <RetroButton variant="default" onClick={onSimulateNextPlayoffGame} disabled={simControlsLocked}>
-            <Play className="h-4 w-4" /> Sim Next Game
-          </RetroButton>
+          This row had a date picker, "Sim Next Game", "Sim To Date" and "Next Playoff Day" in a row,
+          which is three different notions of "advance the league" sitting shoulder to shoulder. Three of
+          them are gone.
+
+          The date input went with "Sim To Date", which was its only consumer -- leaving a picker that
+          set a value nothing read. "Sim Next Game" went because it and "Next Playoff Day" sat adjacent
+          and meant different amounts of movement, which is the whole reason the second one reads as a
+          bug (see the note on its scope below).
+
+          `shape="parallelogram"` rather than the default chevron: this is the one forward action on the
+          screen, and the chevron is used by every other primary button in the product, so it stopped
+          meaning "the thing to press here" the moment it joined the others.
+        */}
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <RetroButton
             variant="primary"
-            onClick={() => onSimulateToDate(activeTargetDate)}
-            disabled={simControlsLocked || !canSimToTargetDate}
-          >
-            <CalendarDays className="h-4 w-4" /> Sim To Date
-          </RetroButton>
-          <RetroButton
-            variant="default"
+            shape="parallelogram"
             onClick={() => nextPlayoffDate && onSimulateToDate(nextPlayoffDate)}
             disabled={simControlsLocked || !nextPlayoffDate}
           >
@@ -1302,23 +1271,48 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
               {gameQueue.map((game) => {
                 const awayTeam = teamsById.get(game.awayTeam) ?? null;
                 const homeTeam = teamsById.get(game.homeTeam) ?? null;
+                /*
+                  THE CRESTS CARRY THE MATCHUP; THE NAMES GO ON THE HOVER.
+
+                  "Aerial City @ Duskcove Mustangs" is eleven words to say what two logos say
+                  instantly, and in a horizontal queue that width is what forced the minimum card size
+                  and truncated the longer club names. The marks are also how the rest of this screen
+                  identifies a club -- every bracket card is a crest and a score -- so the queue was the
+                  one place breaking the visual language of the page it sits on.
+
+                  Not lost, though: both names are the button's accessible name and its tooltip, so a
+                  screen reader and a hover both get the full answer. `TeamLogo`'s own alt carries the
+                  club name for the images.
+                */
+                const matchupLabel = `${awayTeam ? `${awayTeam.city} ${awayTeam.name}` : game.awayTeam} at ${
+                  homeTeam ? `${homeTeam.city} ${homeTeam.name}` : game.homeTeam
+                }`;
                 return (
                   <button
                     key={game.gameId}
                     type="button"
                     onClick={() => onSimulateToGame(game.gameId)}
                     disabled={simControlsLocked}
-                    className="min-w-[200px] shrink-0 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-panel-2)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
+                    title={matchupLabel}
+                    aria-label={`${game.playoff?.seriesLabel ?? 'Playoff'} game ${game.playoff?.gameNumber ?? ''}: ${matchupLabel}`}
+                    className="flex min-w-[188px] shrink-0 flex-col gap-2 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 text-left transition-colors hover:border-[var(--color-gold-lo)] hover:bg-[var(--color-panel-2)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
                   >
-                    <p className="t-caption text-[var(--color-ink-faint)]">
-                      {formatHeaderDate(game.date)} · G{game.playoff?.gameNumber ?? '?'}
-                    </p>
-                    <p className="mt-1 truncate t-label text-[var(--color-gold)]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="t-caption text-[var(--color-ink-faint)]">
+                        {formatHeaderDate(game.date)}
+                      </span>
+                      <span className="t-caption shrink-0 text-[var(--color-ink-faint)]">
+                        G{game.playoff?.gameNumber ?? '?'}
+                      </span>
+                    </div>
+                    <p className="truncate t-label text-[var(--color-gold)]">
                       {game.playoff?.seriesLabel ?? 'Playoff'}
                     </p>
-                    <p className="mt-1 truncate t-stat-sm">
-                      {(awayTeam?.city ?? game.awayTeam)} @ {(homeTeam?.city ?? game.homeTeam)}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      {awayTeam ? <TeamLogo team={awayTeam} sizeClass="h-9 w-9" /> : null}
+                      <span className="t-caption text-[var(--color-ink-faint)]" aria-hidden="true">@</span>
+                      {homeTeam ? <TeamLogo team={homeTeam} sizeClass="h-9 w-9" /> : null}
+                    </div>
                   </button>
                 );
               })}

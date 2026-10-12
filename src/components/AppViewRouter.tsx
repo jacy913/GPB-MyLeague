@@ -1021,13 +1021,10 @@ export const AppViewRouter = ({
         <PlayoffsBracket
           teams={teams}
           games={games}
-          seasonComplete={seasonComplete}
           currentDate={currentDate}
           selectedDate={selectedDate}
-          onSelectDate={onSetSelectedDate}
           isSimulating={isSimulating || isFinalizingSimulation}
           onSimulateToDate={onSimulateInlineToDate}
-          onSimulateNextPlayoffGame={onSimulateNextPlayoffGameInline}
           onSimulateToGame={onSimulateToGameInline}
           onCancelSimulation={onCancelSimulation}
         />
