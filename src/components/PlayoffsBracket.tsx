@@ -5,7 +5,7 @@ import { SeededPlayoffTeam, compareSeededTeams, getLeaguePlayoffSeeds, getRoundB
 import { addDaysToISODate } from '../logic/simulation';
 import { fmtDiff, fmtRecord } from '../logic/statFormatting';
 import { formatHeaderDate } from './SeasonCalendarStrip';
-import { Panel, RetroButton, StatValue, TeamLogo } from './ui';
+import { LeagueBadge, Panel, RetroButton, StatValue, TeamLogo } from './ui';
 import worldSeriesLogo from '../assets/worldserieslogo.png';
 import gpbLogo from '../assets/gpb.png';
 import playoffsLogo from '../assets/playoffs.png';
@@ -606,29 +606,50 @@ const SeriesPips: React.FC<{ wins: number; bestOf: number; fill: string; size?: 
  * This used to force seeds 1 and 2 to gold on the reasoning that "a top-two seed is the only
  * seeding distinction that means something postseason". That was wrong for a bracket with two
  * leagues: a seed-1 in Prestige and a seed-1 in Platinum were both gold, so the two best clubs in
- * the league were the one pair a reader could not tell apart.
+ * the league were the one pair a reader could not tell apart. League colour now comes first, and gold
+ * is reserved for LEADING a series -- the distinction that actually changes what happens next. The
+ * leader is marked on the ROW (gold left edge, `panel-3` fill, gold city), not on the seed.
  *
- * League colour now comes first and gold is reserved for LEADING a series, which is the distinction
- * that actually changes what happens next. The trailing team is dimmed in INK rather than recessed
- * onto a dark chip, so the seed stays legible when it is behind -- it used to drop to `panel-2` with
- * `ink-dim` and become the least readable number on the card.
+ * ---------------------------------------------------------------------------
+ * WHY THE COLOUR IS ON AN INNER ELEMENT AND NOT ON THE CHIP
+ * ---------------------------------------------------------------------------
+ * This chip was invisible for a leading team and nobody caught it in review, because the markup reads
+ * correctly: a coloured chip with a digit on it. It is `skew-shadow` that breaks it.
+ *
+ * `skew-shadow` is a WRAPPER pattern. Its `::before` is a positioned, zero-inset child box filled with
+ * `--color-void` and offset 4px, and its intent is the hard offset shadow the whole app uses. The
+ * catch is paint order: a positioned child box paints ABOVE its parent's own background. Put the league
+ * colour on the same element as `skew-shadow` and that colour is covered by the shadow -- what is left
+ * is a 4px fringe along the top and left, and a void interior.
+ *
+ * Worse, the leading digit was `--color-ink-invert`, which is `#05070d`, and `--color-void` is
+ * `#05070d`. Measured on a live bracket with a series in progress: 8 of 24 chips, every one of them a
+ * leading team, painted their digit at **1.00:1** against the surface covering them. The trailing chips
+ * happened to survive on `ink-dim` at 7.75:1, which is why the defect looked like it only struck the
+ * teams in front.
+ *
+ * So the colour goes on an inner element that fills the wrapper, which is exactly how `SkewedTab` and
+ * `SkewedPanel` use the same utility. With the league colour genuinely painted, `ink-invert` is the
+ * right digit ink for both leagues -- 7.80:1 on platinum teal, 8.70:1 on prestige brass -- and it is the
+ * same ink `LeagueBadge` uses on the identical colours, so a seed chip and a league chip agree.
+ *
+ * The old `dimmed` prop is gone rather than re-tuned. It existed only to change the digit's ink, and on
+ * these two chip colours there is no second ink that is both dimmer and still readable: `ink-dim` measures
+ * 1.01:1 on teal and 1.12:1 on brass. A seed is a fact about the club, not a status, so it should not
+ * change colour with the series.
  */
-const SeedBadge: React.FC<{ seed: number; league: AnyLeague; dimmed?: boolean }> = ({ seed, league, dimmed }) => {
+const SeedBadge: React.FC<{ seed: number; league: AnyLeague }> = ({ seed, league }) => {
   const fill = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
   return (
-    // 30px rather than 22px, and the digit is t-stat at 17px rather than
-    // t-stat-sm. A skewed 22px chip holding a 13px digit was the smallest
-    // element anywhere on the bracket, and the skew eats usable width at the
-    // extremes, so the seed was the one figure on the card that was genuinely
-    // hard to read. The number is also never dimmed to the point of losing it:
-    // a non-leading seed keeps full-strength ink on a recessed chip.
     <span
-      className={`skew-shadow inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center ${fill} ${
-        dimmed ? 'text-[var(--color-ink-dim)]' : 'text-[var(--color-ink-invert)]'
-      }`}
+      className="skew-shadow relative inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center"
       aria-label={`Seed ${seed}`}
     >
-      <span className="relative z-10 t-stat">{seed}</span>
+      <span
+        className={`relative z-10 inline-flex h-full w-full items-center justify-center ${fill} text-[var(--color-ink-invert)]`}
+      >
+        <span className="t-stat">{seed}</span>
+      </span>
     </span>
   );
 };
@@ -660,7 +681,7 @@ const BracketTeamRow: React.FC<{
           : 'border-l-transparent'
       }`}
     >
-      <SeedBadge seed={participant.seed} league={league} dimmed={!isLeader} />
+      <SeedBadge seed={participant.seed} league={league} />
       <TeamLogo team={participant.team} sizeClass="h-12 w-12" />
       <div className="min-w-0 flex-1">
         <p className={`truncate t-h3 ${isLeader ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
@@ -852,10 +873,16 @@ const BracketConnectors: React.FC<{
   );
 };
 
-const LeagueBracketDesktop: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
+const LeagueBracketDesktop: React.FC<{
+  bracket: LeagueBracketView;
+  league: AnyLeague;
+  pipFill: string;
+  flipped?: boolean;
+}> = ({
   bracket,
   league,
   pipFill,
+  flipped = false,
 }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const cardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
@@ -883,12 +910,22 @@ const LeagueBracketDesktop: React.FC<{ bracket: LeagueBracketView; league: AnyLe
   return (
     <div ref={containerRef} className="relative hidden xl:block">
       <BracketConnectors containerRef={containerRef} cardRefs={cardRefs} specs={specs} />
+      {/*
+        THE MIRROR, AND IT IS TWO LINES.
+
+        Each card sits at the top of its grid cell and is pushed down by a padding offset, so the league
+        series is the lowest card on the bracket and the wild cards are the highest. Swapping which round
+        carries which offset flips the whole thing vertically: the league series moves to the top, the
+        wild cards to the bottom, the divisionals stay put in the middle. Nothing about the column order
+        changes, so the connectors -- which are measured from the DOM by `BracketConnectors`, not drawn to
+        fixed coordinates -- re-route themselves onto the new positions without being told.
+      */}
       <div className="relative grid grid-cols-5 gap-6">
-        {card(bracket.wildCard[0], '')}
+        {card(bracket.wildCard[0], flipped ? 'pt-32' : '')}
         {card(bracket.divisional[0], 'pt-16')}
-        {card(bracket.leagueSeries, 'pt-32')}
+        {card(bracket.leagueSeries, flipped ? '' : 'pt-32')}
         {card(bracket.divisional[1], 'pt-16')}
-        {card(bracket.wildCard[1], '')}
+        {card(bracket.wildCard[1], flipped ? 'pt-32' : '')}
       </div>
     </div>
   );
@@ -900,16 +937,20 @@ const LeagueBracketDesktop: React.FC<{ bracket: LeagueBracketView; league: AnyLe
  * narrow screen -- the same reason the design proposal drops skew below 1024px.
  * Rounds become labelled groups instead.
  */
-const LeagueBracketStacked: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
-  bracket,
-  league,
-  pipFill,
-}) => {
+const LeagueBracketStacked: React.FC<{
+  bracket: LeagueBracketView;
+  league: AnyLeague;
+  pipFill: string;
+  flipped?: boolean;
+}> = ({ bracket, league, pipFill, flipped = false }) => {
   const groups: Array<{ title: string; series: BracketSeriesView[] }> = [
     { title: 'Wild Card', series: [...bracket.wildCard] },
     { title: 'Divisional', series: [...bracket.divisional] },
     { title: 'League Series', series: [bracket.leagueSeries] },
   ];
+  // The same mirror the desktop bracket gets: the league series leads, the wild cards close it out, so
+  // the two league brackets read the same way on a phone as they do on a desk.
+  if (flipped) groups.reverse();
 
   return (
     <div className="flex flex-col gap-4 xl:hidden">
@@ -927,28 +968,39 @@ const LeagueBracketStacked: React.FC<{ bracket: LeagueBracketView; league: AnyLe
   );
 };
 
-const LeagueSection: React.FC<{ bracket: LeagueBracketView; league: AnyLeague; pipFill: string }> = ({
-  bracket,
-  league,
-  pipFill,
-}) => {
-  const topSeed = bracket.seeds[0];
+const LeagueSection: React.FC<{
+  bracket: LeagueBracketView;
+  league: AnyLeague;
+  pipFill: string;
+  flipped?: boolean;
+}> = ({ bracket, league, pipFill, flipped = false }) => {
   const pipFillVar = league === 'Prestige' ? 'bg-[var(--color-prestige)]' : 'bg-[var(--color-platinum)]';
 
   return (
     <Panel className="overflow-hidden">
-      <div className="chrome-bar flex flex-wrap items-end justify-between gap-3 px-4">
+      {/*
+        THE HEADER CARRIES THE LEAGUE, NOT THE TOP SEED.
+
+        It read "TOP SEED" over the league's best club's full name. Three things are wrong with that on
+        this screen: the seeds are printed on every card in the bracket below, so the header restated the
+        most visible thing on it; it named the league's best club before a single game was played, which
+        is a promise the bracket may not keep; and it was the only place on the section that could have
+        said WHICH LEAGUE this was in anything but plain white text.
+
+        The `LeagueBadge` that replaces it is the same chip the power rankings, the club page and the
+        standings use beside a club's name, so the two leagues are identified here by the same object
+        that identifies them everywhere else. It is an identity chip and not an accent, which matters:
+        prestige brass measures 1.52:1 from this app's gold, so a prestige-tinted accent here would be
+        indistinguishable from the gold that marks a leader. The chip is filled with dark text at 8.70:1,
+        so it states the league without arguing with anything else on the screen.
+      */}
+      <div className="chrome-bar flex flex-wrap items-center gap-3 px-4">
         <h2 className="t-h2">{bracket.league} League</h2>
-        <div className="text-right">
-          <p className="t-caption text-[var(--color-ink-faint)]">TOP SEED</p>
-          <p className="t-stat text-[var(--color-gold)]">
-            {topSeed ? `${topSeed.team.city} ${topSeed.team.name}` : 'TBD'}
-          </p>
-        </div>
+        <LeagueBadge variant={league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
       </div>
       <div className="flex flex-col gap-5 p-4">
-        <LeagueBracketDesktop bracket={bracket} league={league} pipFill={pipFillVar} />
-        <LeagueBracketStacked bracket={bracket} league={league} pipFill={pipFillVar} />
+        <LeagueBracketDesktop bracket={bracket} league={league} pipFill={pipFillVar} flipped={flipped} />
+        <LeagueBracketStacked bracket={bracket} league={league} pipFill={pipFillVar} flipped={flipped} />
       </div>
     </Panel>
   );
@@ -1342,9 +1394,27 @@ export const PlayoffsBracket: React.FC<PlayoffsBracketProps> = ({
           would leave roughly 150px per series card, which cannot hold a logo, a
           city name and a series record -- and the connector layer is the reason
           the bracket is worth building this way in the first place. */}
+      {/*
+        THE TWO LEAGUES MIRROR EACH OTHER, WHICH IS WHAT MAKES THIS A TOURNAMENT.
+
+        Stacked one above the other, both brackets running the same way leaves two identical ladders. A
+        tournament reads because the two halves face each other: the rounds narrow toward a shared
+        middle. So the Prestige bracket is flipped vertically -- its League Series card at the TOP, its
+        wild cards at the bottom -- and the two league finals come to rest opposite one another in the
+        middle of the screen, with the World Series above them waiting for exactly those two clubs.
+
+        Only the vertical offsets swap; the columns stay in the same order, so the connector layer, which
+        measures the cards rather than assuming their positions, redraws the paths onto the new geometry
+        without any change of its own.
+      */}
       <LeagueSection bracket={bracket.platinum} league="Platinum" pipFill="bg-[var(--color-platinum)]" />
 
-      <LeagueSection bracket={bracket.prestige} league="Prestige" pipFill="bg-[var(--color-prestige)]" />
+      <LeagueSection
+        bracket={bracket.prestige}
+        league="Prestige"
+        pipFill="bg-[var(--color-prestige)]"
+        flipped
+      />
 
       {!(bracket.platinum.champion || bracket.prestige.champion) && (
         <WorldSeriesShowcase
