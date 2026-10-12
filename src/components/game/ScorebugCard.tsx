@@ -4,7 +4,7 @@ import { isPlayoffGame } from '../../logic/playoffs';
 import { clubInitials, type TeamId } from '../../data/teamColors';
 import { clubInk, clubTint, type ClubTheme } from '../../lib/clubColour';
 import type { Game, Team } from '../../types';
-import { TeamLogo } from '../ui';
+import { LeagueBadge, TeamLogo } from '../ui';
 import type { PregameRecord } from './GameCard';
 
 /*
@@ -245,7 +245,28 @@ export const ScorebugCard: React.FC<ScorebugCardProps> = ({
         {crest(team, edge)}
 
         <div className="flex min-w-0 flex-1 flex-col justify-center pl-3">
-          <span className="t-label truncate text-[var(--color-ink)]">{clubInitials(team?.id)}</span>
+          {/*
+            THE LEAGUE, PER BAND.
+
+            The scorebug already answers "which club" with the crest and the code, and it answers "who
+            won" with the runs. It did not answer "which league", which is the third fact a commissioner
+            scanning a slate is actually looking for when a date carries games from both leagues.
+
+            It is a per-band badge rather than one badge on the card because a World Series game is the
+            one card on this screen with a club from each league, and a card-level badge would have to be
+            either wrong or conditional on exactly that case.
+
+            It is the same `LeagueBadge` chip the power rankings, the club page and the standings use
+            beside a club's name -- an identity chip, not an accent. That distinction is load-bearing
+            here: prestige brass measures 1.52:1 from the app's gold, and this card already uses gold for
+            the winning runs, so a league-tinted accent would have been indistinguishable from the thing
+            it sits next to. The chip is filled with dark text at 8.70:1, and it is separated from the
+            club's own colour, which owns the band.
+          */}
+          <div className="flex items-center gap-2">
+            <span className="t-label truncate text-[var(--color-ink)]">{clubInitials(team?.id)}</span>
+            {team && <LeagueBadge variant={team.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />}
+          </div>
           <span className="truncate text-[13px] leading-tight text-[var(--color-ink-dim)]">
             {team ? `${team.city} ${team.name}` : 'Unknown club'}
           </span>
