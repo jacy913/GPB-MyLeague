@@ -2644,7 +2644,98 @@ shape as the four existing awards, and `tsc` covers the prop plumbing.
 **Resolved later in the same session** — the full-season headless run below covers
 it: the Strikeout King card renders with its band and its footnote.
 
-## Season Awards modal: playoffs recap removed, award rows banded
+## Season archive (History page): the honour list is now a solid club band
+
+The last screen still carrying the old tile treatment. Four changes, all on
+`HistoryHub.tsx`.
+
+**1. Division winners are gone; all seven awards moved into the honours column.** The
+manager's instruction was to "replace the division winners with all of the awards
+available now". They were six rows of "Platinum North: Huidor, 95-59" on a page
+whose subject is how a season finished at the top, and that record is one click away
+on the standings. **The data is not deleted** — `divisionWinners` is still computed
+and still written to the archive, so this only stops displaying it.
+
+The column is now ONE continuous list of club band rows: league champions, Staff
+of the Year, then the player awards. No "Team Honors" heading, no trophy icon, no
+"Awards / Regular-season honors and postseason performance" subheading. Every row is
+already labelled by its own award name and already coloured by its own club, so the
+heading labelled the list with a word every row was already spelling out. The
+team-honour vs player-award distinction the headings drew is now carried by what is
+in the row: a team honour names a club and its record, an award names a player and
+the line that decided it.
+
+**2. The rows are the club band in its SOLID form — the club's primary as the
+background.** This deliberately breaks `docs/team-band-row.md`, which fills a band
+row with `clubTint` at 22%. The reason is quantity, and it is worth keeping because
+the next person to see a full-strength club row here will assume it is a mistake:
+
+- `clubTint` exists because a list of **thirty-two** rows has to be scannable, and
+  because three primaries are invisible against the panel. Both are arguments about
+  *many* rows.
+- This is **nine** rows, one per honour, each a different club. Nine near-identical
+  dark tints is a list you cannot scan; nine saturated colours is the fastest read on
+  the page. The standard still governs the ten surfaces with 32 rows in them.
+
+Still `clubInk`, never the raw palette primary, so eighteen clubs get their own
+colour untouched and the invisible handful get lifted. And the row's text ink is
+**derived from the background** with `contrastRatio` rather than taken from
+`--color-ink`, because a panel-relative ink is unreadable on a bright club and a gold
+award title on a gold club's row is the first thing to disappear. Documented in the
+standard as "the solid variant", with the rule that it goes back to the tint past
+roughly a dozen rows.
+
+**3. The MVP belt is cropped to the row like a crest** — `object-cover` in a
+row-height window at the trailing edge, so the artwork is exactly as tall as its row
+and the list's right edge is a straight line. At `h-16 object-contain` a belt in a
+56px row is a 27px letterbox floating in the middle of it, and ten of those look
+like a column of icons that lost their labels. The trophy gets cropped harder (it is
+tall) and leaves the plate and barrel, which is the part that reads as the object.
+
+**4. The World Series result.** The archive stores the champion but not the series,
+so "def. Sinope Seals 4-2" is derived from the completed `world_series` games —
+which are persisted alongside the archive, so this works for old seasons too, where an
+archive-only field would not. Scoped by **both** season year and champion, because
+either alone is wrong: year alone mixes every series in that calendar year, and a
+club can win twice. Requires exactly one distinct opponent, and returns null
+otherwise rather than inventing a number from half a series.
+
+**THE "def." LINE WAS SHIPPED INVISIBLE, AND THAT IS THE LESSON.** It rendered on
+the first pass and measured as present — it was simply 11px in a translucent secondary
+ink on the club's own colour, which nobody contrast-checked. It now measures 14px at
+weight 600 in **full-strength** ink at **6.5:1** against the club background. A green
+probe that only asks "is the element in the DOM" will happily confirm an element
+nobody can read; the assertion has to measure the rendered thing.
+
+Two bugs the verification caught rather than the type checker:
+
+- The champion card was a grid item, so it **stretched to the height of the column
+  beside it** — 1651px, a half-empty orange rectangle with the crest at the top and
+  the trophy a mile below it. `self-start` plus `lg:sticky` caps it at its own height
+  and keeps it on screen while the honour list scrolls. Verified by measuring: after
+  scrolling 900px the card had moved from top 281 to top 16 (pinned to `top-4`),
+  where without sticky it would have been at −619.
+- The new "No winner this season" empty state keyed off `detail`, which team-honour
+  rows never set — so **league champions and Staff of the Year** briefly printed "No
+  winner this season" over clubs that had in fact won one. The condition is now "the
+  row has no content at all", not "the row has no player name".
+
+Verified in headless Chrome through a full season: 10 rows at 56px, each with its
+club's primary fill, a 5px edge, an 81×56 crest window with the mark drawn at 81, and
+a 106×56 artwork window filled to the row height and flush to the right edge.
+`checkOffseasonRecovery` is 43/43, `checkSeasonAwards` 68/68, `checkBoothMetrics`
+30/30, `checkPowerRankings` 9/9, `checkAwardEligibility` 7/7, `tsc` and `vite build`
+clean.
+
+**`checkOffseasonRecovery` had a failure that was mine, from two commits earlier.**
+One assertion asserted that emptying a season's *ratings* empties both MVP races —
+which was how commit 71247f4 was able to reach the bug it fixed. That fix stopped a
+missing rating from disqualifying a candidate, so the assertion was pinning the
+**bug**, and pinning it there meant the fix tripped the suite. Rewritten: the guard
+now states the fixed behaviour (removing the ratings no longer empties a race), and
+the reachability half moves to the input that still empties one — the season **stats**,
+the other half of the same gate. A regression guard and a bug description are easy to
+confuse, and the tell is a test that fails when you fix something.
 
 Two changes to `SeasonAwardsSummary.tsx`, the modal that opens at offseason.
 

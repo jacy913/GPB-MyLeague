@@ -256,6 +256,7 @@ If you want a taller row, raise `height`; do not pad around the crest.
 | Context | Height | Density |
 | --- | --- | --- |
 | Booth Metrics board | 72 | — (custom list) |
+| Season archive honour row | 56 | — (solid band) |
 | Awards race row — Awards page | 64 | `ClubBandRow` |
 | Season Awards modal card row | 64 | `ClubBandRow` |
 | Standings | 58 | `large` |
@@ -265,6 +266,33 @@ If you want a taller row, raise `height`; do not pad around the crest.
 | Division Snapshot | 34 | `dense` |
 
 The crest is always that number × 1.45, clipped back to it.
+
+### The solid variant — a short list, one club per row
+
+The tint is not always right. `clubTint` at 22% exists because a **long** list of thirty-two rows
+has to be scannable and because three club primaries are effectively invisible against the panel.
+Both reasons are about *quantity*.
+
+A **short** list — one row per honour, nine of them, each a different club — inverts the
+arithmetic. Nine near-identical dark tints is a list you cannot scan, and nine saturated club
+colours is the fastest read on the page. `HistoryHub.tsx`'s season archive is the sanctioned
+example, and it fills a row with `clubInk(teamId, 'panel')` instead:
+
+- **Still `clubInk`, never the raw palette primary.** Eighteen clubs get their own primary
+  untouched; the handful whose primary would vanish against the panel get lifted. So the row is
+  the club's real colour and is never missing.
+- **The text ink is derived FROM THE BACKGROUND.** `--color-ink` and `--color-gold` are
+  panel-relative and unreadable on a bright club, so the ink is picked by measured contrast
+  against the fill, using `contrastRatio`. A gold award title on a gold club's row is the first
+  thing to disappear.
+- **Artwork can be cropped to the row the way a crest is.** A belt that is `h-16 object-contain`
+  in a 56px row is a 27px letterbox floating in the row, and a list of those looks like a column
+  of icons that lost their labels. `object-cover` in a row-height window keeps the trailing edge a
+  straight line down the whole list.
+
+So: **tint for the lists you scan, solid for the short lists you read.** If a solid list ever
+grows past roughly a dozen rows it should go back to the tint — that is the number at which the
+scan problem returns.
 
 Roughly, the height follows how much else the row has to hold: a row with only an ordinal
 and figures is comfortable at 34–44, a row that also carries a name and a second line wants
@@ -282,6 +310,7 @@ tuned against what it sits next to, not against the other.
 - `src/components/leaders/PowerRankingsView.tsx` — the full board (hand-built `<table>`)
 - `src/components/awards/AwardsPage.tsx` — the award race (disclosure rows)
 - `src/components/SeasonAwardsSummary.tsx` — the season-end modal's award cards
+- `src/components/HistoryHub.tsx` — the season archive's honour rows (the **solid** variant)
 - `src/components/home/PowerRankingsStrip.tsx` — the dashboard's top five
 - `src/components/home/Panels.tsx` — the dashboard's Division Snapshot
 - `src/components/home/MvpRacePanel.tsx` — the dashboard's Award Race (the row wears the

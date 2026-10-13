@@ -1020,6 +1020,7 @@ export const AppViewRouter = ({
         <HistoryHub
           seasonHistory={seasonHistory}
           teams={teams}
+          games={games}
         />
       )}
 

@@ -771,16 +771,43 @@ const main = async () => {
     pitchingRatings: [],
   };
   const unloadedCounts = raceCount(unloaded, YEAR);
+
+  /*
+   * EMPTYING THE RATINGS NO LONGER EMPTIES EITHER RACE. That is commit 71247f4, and this assertion
+   * used to assert the opposite.
+   *
+   * The old gate was `if (!stat || !rating) return []`, so a missing rating disqualified a candidate
+   * and this check could reach the reported shape by emptying the ratings. It cannot any more: a
+   * player with a season line qualifies on his line alone and is scored against a neutral 75. The
+   * check was not wrong when it was written, it was pinning the BUG -- and pinning it here meant the
+   * fix tripped the suite, which is how a regression guard and a bug description get confused.
+   *
+   * So the guard now states the fixed behaviour, and the reachability half below moves to the input
+   * that still empties a race: the season STATS, which is the other half of the same gate.
+   */
+  check(
+    'emptying the ratings no longer empties either race',
+    unloadedCounts.batting > 0 && unloadedCounts.pitching > 0,
+    `loaded ${loaded.batting}/${loaded.pitching}, ratings removed ${unloadedCounts.batting}/${unloadedCounts.pitching}`,
+    'a candidate qualifies on his season line; a missing rating scores a neutral 75 rather than disqualifying him',
+  );
+
+  const noStats: LeaguePlayerState = {
+    ...save.playerState,
+    battingStats: [],
+    pitchingStats: [],
+  };
+  const noStatsCounts = raceCount(noStats, YEAR);
   const worldSeriesGames = save.games.filter(
     (game) => game.phase === 'playoffs' && game.playoff?.round === 'world_series' && game.status === 'completed',
   );
   check(
     'the reported shape is reachable: no MVP candidates, but a World Series to name one from',
     loaded.batting > 0 && loaded.pitching > 0
-    && unloadedCounts.batting === 0
-    && unloadedCounts.pitching === 0
+    && noStatsCounts.batting === 0
+    && noStatsCounts.pitching === 0
     && worldSeriesGames.length > 0,
-    `loaded ${loaded.batting}/${loaded.pitching}, unloaded ${unloadedCounts.batting}/${unloadedCounts.pitching}, ${worldSeriesGames.length} completed World Series games`,
+    `loaded ${loaded.batting}/${loaded.pitching}, season stats removed ${noStatsCounts.batting}/${noStatsCounts.pitching}, ${worldSeriesGames.length} completed World Series games`,
     'the World Series MVP reads the schedule, which is why it survived while the other two did not',
   );
 
