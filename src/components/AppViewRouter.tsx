@@ -45,6 +45,7 @@ import { BettingPage } from './betting/BettingPage';
 import { BettingRecordScreen } from './betting/BettingRecordScreen';
 import { LeadersDashboard } from './leaders/LeadersDashboard';
 import { AwardsPage } from './awards/AwardsPage';
+import { BoothMetrics } from './league/BoothMetrics';
 import { PowerRankingsView } from './leaders/PowerRankingsView';
 import type { BettingSlipState } from '../hooks/useBettingSlip';
 import { resolveSeasonYear } from '../lib/seasonYear';
@@ -885,6 +886,21 @@ export const AppViewRouter = ({
           battingRatings={playerState.battingRatings}
           pitchingRatings={playerState.pitchingRatings}
           onOpenDashboards={() => onSetView('leaders_dashboards')}
+        />
+      )}
+
+      {/*
+        BOOTH METRICS.
+
+        The eight boards behind the sportswriter's byline. A nav leaf between Leaders and Awards. It
+        reads the same completed regular-season games every other league screen does, plus the season
+        year so two seasons can never be averaged together, and derives its eight rankings from them.
+      */}
+      {view === 'booth_metrics' && (
+        <BoothMetrics
+          teams={teams}
+          games={games}
+          seasonYear={resolveSeasonYear(currentDate, games)}
         />
       )}
 

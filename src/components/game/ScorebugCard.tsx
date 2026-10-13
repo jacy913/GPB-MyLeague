@@ -188,8 +188,15 @@ export const ScorebugCard: React.FC<ScorebugCardProps> = ({
             : 'items-end';
 
     return (
+      // Height and width are inline styles, NOT Tailwind arbitrary classes. `h-[${BAND_H}px]`
+      // interpolates at render time and never reaches the scanner, so it compiled to nothing and this
+      // window sized itself to its content -- which meant the crop silently did not happen. `align`
+      // alone decides the vertical placement; `items-center` is deliberately not in the base classes,
+      // because two same-specificity utilities in one class list resolve by stylesheet order, not by
+      // the order they are written here.
       <div
-        className={`flex h-[${BAND_H}px] w-[${width}px] shrink-0 items-center overflow-hidden ${align}`}
+        className={`flex shrink-0 overflow-hidden ${align}`}
+        style={{ height: BAND_H, width }}
       >
         <div className="drop-shadow-[0_3px_8px_rgba(0,0,0,0.85)]" style={{ width: size, height: size }}>
           {team

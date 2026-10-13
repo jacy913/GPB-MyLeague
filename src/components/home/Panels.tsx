@@ -1,7 +1,8 @@
 import React from 'react';
 import { ArrowRightLeft, Users, X } from 'lucide-react';
 import type { Player, Team } from '../../types';
-import { LeagueBadge, Panel, RetroButton, StatTable, StatValue, TeamLogo, type StatTableColumn, type StatTableRow } from '../ui';
+import { clubBandPalette, CroppedCrest, LeagueBadge, Panel, RetroButton, StatTable, StatValue, type StatTableColumn, type StatTableRow } from '../ui';
+import type { TeamId } from '../../data/teamColors';
 import { DivisionSnapshot as DivisionSnapshotType, HomePanel, Milestone, formatHeadlineDate, recordOf, winPctOf } from './shared';
 
 /**
@@ -126,6 +127,9 @@ const divisionColumns: StatTableColumn[] = [
   { key: 'diff', header: 'DIFF', align: 'right', isNumeric: true, width: '5ch' },
 ];
 
+/** The crest window, matching StatTable's `dense` row height. See `StandingsHub` for the same tie. */
+const DIVISION_ROW_H = 34;
+
 export const DivisionSnapshotPanel: React.FC<{
   snapshots: DivisionSnapshotType[];
   activeIndex: number;
@@ -133,26 +137,32 @@ export const DivisionSnapshotPanel: React.FC<{
 }> = ({ snapshots, activeIndex, onSelect }) => {
   const active = snapshots[activeIndex] ?? null;
 
-  const rows: StatTableRow[] = (active?.teams ?? []).map((team, index) => ({
-    id: team.id,
-    className: index < 2 ? 'border-l-[3px] border-l-[var(--color-gold)]' : '',
-    cells: {
-      team: (
-        <span className="flex items-center gap-2">
-          <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-          <TeamLogo team={team} sizeClass="h-6 w-6" />
-          <span className="truncate t-stat-sm">{team.city} {team.name}</span>
-        </span>
-      ),
-      record: recordOf(team),
-      pct: winPctOf(team),
-      diff: (
-        <StatValue size="sm" variant={team.runsScored - team.runsAllowed >= 0 ? 'pos' : 'neg'}>
-          {team.runsScored - team.runsAllowed >= 0 ? '+' : ''}{team.runsScored - team.runsAllowed}
-        </StatValue>
-      ),
-    },
-  }));
+  const rows: StatTableRow[] = (active?.teams ?? []).map((team, index) => {
+    const isTopTwo = index < 2;
+    return {
+      id: team.id,
+      // Every row wears its club's band. The top two used to be marked with a gold left border; that
+      // border is now the club's own full-strength edge, so the marker moved to something that still
+      // reads as a state and not as a club colour -- the ordinal, in gold.
+      band: clubBandPalette(team.id as TeamId),
+      cells: {
+        team: (
+          <span className="flex items-center gap-2">
+            <span className={`w-[2ch] shrink-0 text-right t-stat-sm ${isTopTwo ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'}`}>{index + 1}</span>
+            <CroppedCrest team={team} height={DIVISION_ROW_H} />
+            <span className="truncate t-stat-sm">{team.city} {team.name}</span>
+          </span>
+        ),
+        record: recordOf(team),
+        pct: winPctOf(team),
+        diff: (
+          <StatValue size="sm" variant={team.runsScored - team.runsAllowed >= 0 ? 'pos' : 'neg'}>
+            {team.runsScored - team.runsAllowed >= 0 ? '+' : ''}{team.runsScored - team.runsAllowed}
+          </StatValue>
+        ),
+      },
+    };
+  });
 
   return (
     <HomePanel

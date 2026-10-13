@@ -38,7 +38,14 @@ import { ViewBoundary } from './components/ui';
 import { NoPlayersGate } from './components/NoPlayersGate';
 import { resolveSeasonYear } from './lib/seasonYear';
 import { leagueChampionsFromSeries } from './lib/futuresRisk';
-import { buildAwardsForBoard } from './lib/awardRace';
+import { battingMvpComponents, buildAwardsForBoard, pitchingMvpComponents } from './lib/awardRace';
+import {
+  calculateBattingKing,
+  calculateRookieOfTheYear,
+  calculateStaffOfTheYear,
+  calculateUltimateSlugger,
+  SEASON_AWARDS_VERSION,
+} from './lib/seasonAwards';
 import {
   computeWorldSeriesMvpCandidates,
   scoreWorldSeriesBatter,
@@ -476,11 +483,54 @@ const computeBattingMvpCandidates = (
   );
   const battingRatings = getBattingRatingsAsOfSeason(playerState.battingRatings, seasonYear);
 
-  return buildAwardsForBoard(
+  const inputs =
+    { players: playerState.players, teamsById, battingStats, pitchingStats: new Map(), pitchingRatings: new Map(), battingRatings };
+  const ranked = buildAwardsForBoard(
     'batting',
-    { players: playerState.players, teamsById, battingStats, pitchingStats: new Map(), pitchingRatings: new Map(), battingRatings },
+    inputs,
     limit,
-  ).map((entry) => {
+  );
+  if (ranked.length === 0) {
+    /*
+     * EMERGENCY FALLBACK, and it must stay inside this branch.
+     *
+     * The fallback is a differently-shaped record -- no `components`, no `total`, no `odds` --
+     * so it cannot share a variable with the ranked `AwardEntry[]`. It did, and the union made
+     * `.map` pick the `AwardEntry` overload, which is a type error even though the runtime branch
+     * was always correct. Keeping it block-scoped removes the union rather than widening it.
+     */
+    const activeBatters = playerState.players.filter((player) =>
+      player.playerType === 'batter' && player.status === 'active' && Boolean(player.teamId && teamsById.has(player.teamId)),
+    );
+    const hasSeasonLines = activeBatters.some((player) => (battingStats.get(player.playerId)?.atBats ?? 0) > 0);
+    const emergencyEntries = activeBatters
+      .filter((player) => !hasSeasonLines || (battingStats.get(player.playerId)?.atBats ?? 0) > 0)
+      .map((player) => {
+        const team = teamsById.get(player.teamId!)!;
+        const stat = battingStats.get(player.playerId);
+        const rating = battingRatings.get(player.playerId);
+        const score = stat
+          ? battingMvpComponents(stat, rating?.overall ?? 75, (team.wins + team.losses) > 0 ? team.wins / (team.wins + team.losses) : 0)
+            .reduce((total, component) => total + component.contribution, 0)
+          : rating?.overall ?? player.potential;
+        return { player, team, stat, rating, score };
+      })
+      .sort((left, right) => right.score - left.score || `${left.player.firstName} ${left.player.lastName}`.localeCompare(`${right.player.firstName} ${right.player.lastName}`))
+      .slice(0, limit);
+
+    return emergencyEntries.map(({ player, team, stat, rating }) => ({
+      playerId: player.playerId,
+      playerName: `${player.firstName} ${player.lastName}`,
+      teamId: team.id,
+      teamCity: team.city,
+      teamName: team.name,
+      summary: stat
+        ? `Emergency fallback; ${stat.avg.toFixed(3)} AVG | ${stat.homeRuns} HR | ${stat.rbi} RBI${rating ? '' : ' | neutral OVR'}`
+        : `Emergency fallback; season batting line unavailable | ${rating?.overall ?? player.potential} OVR proxy`,
+    }));
+  }
+
+  return ranked.map((entry) => {
     const stat = battingStats.get(entry.playerId);
     return {
       playerId: entry.playerId,
@@ -510,11 +560,47 @@ const computePitchingMvpCandidates = (
   );
   const pitchingRatings = getPitchingRatingsAsOfSeason(playerState.pitchingRatings, seasonYear);
 
-  return buildAwardsForBoard(
+  const inputs =
+    { players: playerState.players, teamsById, pitchingStats, pitchingRatings, battingStats: new Map(), battingRatings: new Map() };
+  const ranked = buildAwardsForBoard(
     'pitching',
-    { players: playerState.players, teamsById, pitchingStats, pitchingRatings, battingStats: new Map(), battingRatings: new Map() },
+    inputs,
     limit,
-  ).map((entry) => {
+  );
+  if (ranked.length === 0) {
+    // See the batting fallback above: the fallback shape cannot share a variable with `AwardEntry[]`.
+    const activePitchers = playerState.players.filter((player) =>
+      player.playerType === 'pitcher' && player.status === 'active' && Boolean(player.teamId && teamsById.has(player.teamId)),
+    );
+    const hasSeasonLines = activePitchers.some((player) => (pitchingStats.get(player.playerId)?.games ?? 0) > 0);
+    const emergencyEntries = activePitchers
+      .filter((player) => !hasSeasonLines || (pitchingStats.get(player.playerId)?.games ?? 0) > 0)
+      .map((player) => {
+        const team = teamsById.get(player.teamId!)!;
+        const stat = pitchingStats.get(player.playerId);
+        const rating = pitchingRatings.get(player.playerId);
+        const score = stat
+          ? pitchingMvpComponents(stat, rating?.overall ?? 75, (team.wins + team.losses) > 0 ? team.wins / (team.wins + team.losses) : 0)
+            .reduce((total, component) => total + component.contribution, 0)
+          : rating?.overall ?? player.potential;
+        return { player, team, stat, rating, score };
+      })
+      .sort((left, right) => right.score - left.score || `${left.player.firstName} ${left.player.lastName}`.localeCompare(`${right.player.firstName} ${right.player.lastName}`))
+      .slice(0, limit);
+
+    return emergencyEntries.map(({ player, team, stat, rating }) => ({
+      playerId: player.playerId,
+      playerName: `${player.firstName} ${player.lastName}`,
+      teamId: team.id,
+      teamCity: team.city,
+      teamName: team.name,
+      summary: stat
+        ? `Emergency fallback; ${stat.era.toFixed(2)} ERA | ${stat.strikeouts} K | ${stat.inningsPitched.toFixed(1)} IP${rating ? '' : ' | neutral OVR'}`
+        : `Emergency fallback; season pitching line unavailable | ${rating?.overall ?? player.potential} OVR proxy`,
+    }));
+  }
+
+  return ranked.map((entry) => {
     const stat = pitchingStats.get(entry.playerId);
     return {
       playerId: entry.playerId,
@@ -1373,9 +1459,10 @@ const { resetWallet } = bettingSlip;
    * record would set a high rating, the high rating would produce the record,
    * and roster management would have no purchase on either.
    */
-  const buildFreshSeasonTeams = useCallback((teamsToReset: Team[]): Team[] =>
+  const buildFreshSeasonTeams = useCallback((teamsToReset: Team[], capturePriorSeasonWins: boolean): Team[] =>
     teamsToReset.map((team) => ({
       ...team,
+      previousBaselineWins: capturePriorSeasonWins ? team.wins : team.previousBaselineWins,
       wins: 0,
       losses: 0,
       runsScored: 0,
@@ -1584,6 +1671,11 @@ const { resetWallet } = bettingSlip;
     computeLeagueChampionsSnapshot,
     computeBattingMvpCandidates,
     computePitchingMvpCandidates,
+    computeUltimateSlugger: calculateUltimateSlugger,
+    computeBattingKing: calculateBattingKing,
+    computeRookieOfTheYear: calculateRookieOfTheYear,
+    computeStaffOfTheYear: calculateStaffOfTheYear,
+    homeFieldAdvantage: settings.homeFieldAdvantage,
     computeWorldSeriesMvpCandidates,
     onOpenDraftView: () => {
       setView('lottery');
@@ -1678,10 +1770,16 @@ const { resetWallet } = bettingSlip;
     },
   });
 
-  const awardsSavedForCurrentOffseason = useMemo(
-    () => seasonHistory.some((entry) => entry.seasonYear === offseasonEventSeasonYear),
-    [offseasonEventSeasonYear, seasonHistory],
-  );
+  const awardsSavedForCurrentOffseason = useMemo(() => {
+    const entry = seasonHistory.find((candidate) => candidate.seasonYear === offseasonEventSeasonYear);
+    return Boolean(
+      entry?.champion &&
+      entry.battingMvp &&
+      entry.pitchingMvp &&
+      entry.awardsVersion !== undefined &&
+      entry.awardsVersion >= SEASON_AWARDS_VERSION,
+    );
+  }, [offseasonEventSeasonYear, seasonHistory]);
   const regularSeasonDates = useMemo(
     () => getSortedUniqueDates(games.filter((game) => isRegularSeasonGame(game))),
     [games],
@@ -2141,7 +2239,7 @@ const { resetWallet } = bettingSlip;
       // at the end of free agency -- so this covers the case where a reset happens
       // without one, and guarantees the season never starts on a stale rating.
       const ratedTeams = recalculateTeamRatingsFromRosters(teamsToReset, playerState, nextSeasonYear);
-      const freshTeams = buildFreshSeasonTeams(ratedTeams);
+      const freshTeams = buildFreshSeasonTeams(ratedTeams, seasonComplete);
       const schedule = createMasterSchedule(freshTeams, nextSeasonYear);
       const firstDate = schedule[0]?.date ?? getDefaultSeasonStartDate(nextSeasonYear);
       const resetSeasonYear = resolveSeasonYear(firstDate, schedule);
@@ -2223,6 +2321,7 @@ const { resetWallet } = bettingSlip;
     latestArchivedSeasonYear,
     pushNotice,
     buildFreshSeasonTeams,
+    seasonComplete,
     playerState,
  createMasterSchedule,
     playerState,
@@ -3166,9 +3265,7 @@ const { resetWallet } = bettingSlip;
 
     const nextGames = Array.from(nextGamesMap.values()).sort(compareGamesByDateThenId);
     const nextSeasonComplete = nextGames.every((game) => game.status === 'completed');
-    const nextTeams = Array.from(nextTeamsMap.values()).map((team) =>
-      nextSeasonComplete ? { ...team, previousBaselineWins: team.wins } : team,
-    );
+    const nextTeams = Array.from(nextTeamsMap.values());
     const latestCompletedDate = orderedResults[orderedResults.length - 1]?.game.date ?? currentDate;
     const nextCurrentDate = latestCompletedDate > currentDate ? latestCompletedDate : currentDate;
     const nextProgress = getProgressFromGames(nextGames);

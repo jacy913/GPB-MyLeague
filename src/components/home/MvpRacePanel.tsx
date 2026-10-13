@@ -2,7 +2,8 @@ import React from 'react';
 import { ChevronRight, Crown, Trophy } from 'lucide-react';
 import type { AwardEntry } from '../../lib/awardRace';
 import { formatAmerican, probabilityToAmerican } from '../../lib/markets';
-import { SegmentedControl, StatValue, TeamLogo } from '../ui';
+import { ClubBandRow, SegmentedControl, StatValue } from '../ui';
+import type { TeamId } from '../../data/teamColors';
 import { HomePanel } from './shared';
 
 /** A top-three candidate, plus the house price for that candidate on the MacroBet board. */
@@ -16,6 +17,13 @@ export type MvpRaceRow = AwardEntry & {
    */
   houseProbability: number | null;
 };
+
+/**
+ * The award-race row height, in px. It stays 48 -- the size the panel was measured around -- but
+ * the crest is now cropped to it, so the visible mark is 70 wide by 48 tall rather than a 48 square.
+ * The crest fills the row; there is no vertical padding around it.
+ */
+const AWARD_ROW_H = 48;
 
 /**
  * Front-page award race.
@@ -102,32 +110,33 @@ export const MvpRacePanel: React.FC<{
       ) : (
         <ol className="mt-2 flex flex-col">
           {entries.map((entry, index) => (
-            <li
+            /*
+             * The row wears the candidate's club band -- the same fill, edge and cropped crest as a
+             * Booth board. The leader used to be marked with a gold left border and a lifted
+             * background; the club's edge now owns that border (and club colour may never carry
+             * meaning), so the leader is marked where it still reads: the ordinal and the name in gold.
+             */
+            <ClubBandRow
               key={entry.playerId}
-              className={`flex items-center gap-3 border-l-[3px] px-2 py-2 ${
-                index === 0 ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
-              }`}
+              team={entry.team ?? null}
+              teamId={(entry.team?.id ?? null) as TeamId | null}
+              height={AWARD_ROW_H}
+              rank={index + 1}
+              rankClassName={index === 0 ? 'text-[var(--color-gold)]' : undefined}
+              name={entry.team ? `${entry.name} — ${entry.team.city} ${entry.team.name}` : `${entry.name} — Free agent`}
             >
-              <span className="w-[2ch] shrink-0 text-right t-stat-sm text-[var(--color-ink-faint)]">{index + 1}</span>
-              {entry.team ? (
-                <TeamLogo team={entry.team} sizeClass="h-12 w-12 shrink-0" />
-              ) : (
-                <span className="h-12 w-12 shrink-0" aria-hidden="true" />
-              )}
               {/*
                 THE NAME AND THE CREST SHARE THE ROW ON THEIR OWN, because the bar that used to sit
                 beneath them is gone. It was a full-width `OddsBar` -- an 8px track plus a `6ch`
                 percentage -- carrying the same normalised share the MacroBet price now carries. Two
                 renderings of one number, and the second one was the number a manager could actually
-                bet. Removing it also removed the reason this row was two lines tall, which is what
-                lets the crest go from 32px to 48px without the panel growing.
+                bet. Removing it also removed the reason this row was two lines tall.
 
                 The MVP score stays, because it is the only figure here that is not a probability.
                 Points are the model's own arithmetic; the price is a market's opinion about it.
               */}
               <p
                 className={`t-stat min-w-0 flex-1 truncate ${index === 0 ? 'text-[var(--color-gold-hi)]' : ''}`}
-                title={entry.team ? `${entry.name} — ${entry.team.city} ${entry.team.name}` : `${entry.name} — Free agent`}
               >
                 {entry.name}
               </p>
@@ -149,7 +158,7 @@ export const MvpRacePanel: React.FC<{
                   ? '—'
                   : formatAmerican(probabilityToAmerican(entry.houseProbability))}
               </span>
-            </li>
+            </ClubBandRow>
           ))}
         </ol>
       )}

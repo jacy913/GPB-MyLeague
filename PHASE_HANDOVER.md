@@ -2475,6 +2475,302 @@ previous session.
   detail showed ERA; AVG's repeated the average). Both fixed; recorded because both
   were individually plausible and neither changed a number a user would compare.
 
+## Season awards: four more, decided by the season, not by hand
+
+The archive now carries **Ultimate Slugger, Batting King, Rookie of the Year and
+Staff of the Year** alongside the MVPs and the World Series MVP, all computed the
+moment the season ends (`useSeasonLifecycle` → `archiveSeasonAwards` →
+`src/lib/seasonAwards.ts`) and stored as optional fields on `SeasonHistoryEntry`
+behind a `awardsVersion` marker. The Season Awards screen (`SeasonAwardsSummary`)
+and the History Hub (`HistoryHub`) both render them. There is still no button that
+could change a winner: the season played, and the top of each list won it.
+
+**Why they are computed, not chosen.** This is the same correction the MVP ballot
+already took — a clickable ballot made the click the outcome, and a market bet
+on an award became a bet on a decision the bettor was about to make. The four new
+awards inherit the auto-computed rule so they stay consistent with what the
+awards board would price.
+
+### The rules, and the tie-break that matters for each
+
+- **Ultimate Slugger.** Regular-season batting only, 120-AB floor. Ranked by home
+  runs, then by slugging percentage recomputed from raw counts (`hits + doubles +
+  2·triples + 3·HR) / AB`), then name, then player id. The raw-count recompute
+  matters: SLG must not come from a rounded display field.
+- **Batting King.** Same 120-AB floor. Ranked by exact average (`hits / AB`),
+  then hits, then OBP (`(H+BB)/(AB+BB)`), then name, then id. The exact-ratio
+  computation exists because a float derived from an already-rounded `avg` can
+  flip a near-tie, and the name/id ladder is what keeps two archive runs from
+  naming different winners.
+- **Rookie of the Year.** ONE race across batters and pitchers. Eligibility is
+  `yearsPro === 0` + `draftRound !== null` + not retired, gated on the same
+  workload floors as the MVPs (120 AB / 8 starts / 25 saves). Cross-role
+  comparison is a z-score of each candidate's MVP total against that role's own
+  qualified league field, so a closer is never compared raw against a starter.
+- **Staff of the Year.** A TEAM award, ranked by wins above expectation.
+  Expected wins = the before-season rating vs opponent rating over the actual
+  schedule with the home-field edge, blended 85% projection / 15% regressed
+  prior (`1 + (priorWins − leagueAvg)·0.5`). Ties: win %, run differential,
+  team id. Playoff games do not move the expectation.
+
+### The `previousBaselineWins` relocation, and why it is safe
+
+The Staff prior used to be overwritten at season completion; it is now captured
+at the **next season's reset** (`buildFreshSeasonTeams(..., capturePriorSeasonWins)`
+in `App.tsx`). The observable effect is narrow and deliberate: during a season the
+field means exactly what it meant before (the prior season's wins), and it only
+diverges in the offseason window, where it is one season behind until the reset
+lands. Verified against all three readers: `tradeLogic` value (`getTeamOutlookScore`)
+and the Club Snapshot tile shift by one win in that window at most and
+self-correct; `mediaReads` mentions the baseline only in a comment — Scintilla's
+measured gap is against the league mean, not the team baseline — so media pricing
+is unaffected. Season 1 has no "prior zero" problem because `INITIAL_TEAMS` carry
+real baselines (e.g., `alc` 102).
+
+### Rookie of the Year: the honest, measured result
+
+A dedicated probe (draft + retirements + roster completion on a real simulated
+league) established three things that shape what this award is:
+
+1. The **initial universe has no first-year players** — its 200 `yearsPro: 0`
+   players are all undrafted prospects (`draftRound: null`, no club) and can
+   never qualify. Season 1 of a fresh league therefore has an empty rookie race,
+   and that is correct.
+2. **Rookie batters get zero at-bats** from the lineup engine in a fully
+   simulated season — bench/reserve players are used once a manager or a future
+   roster fix promotes them. The 120-AB floor is structurally unreachable for a
+   drafted batter today.
+3. Rookie pitchers qualify only occasionally, via the saves route (25 SV) when
+   a first-rounder lands in the closer role.
+
+**Decision (user-confirmed): ship as locked, document.** The MVP-level gates stay,
+and the race is an empty-but-honest "No eligible candidates" until a rookie
+actually earns the workload — exactly what the archive says when nobody did. If a
+future lineup/promotion change gives rookies real at-bats, the award fills
+without any change to the code here.
+
+### Archive and repair
+
+- `awardsVersion` on `SeasonHistoryEntry` marks the write; anything an older
+  archive lacks (all four fields `undefined` in pre-feature entries) stays empty
+  rather than being invented on read.
+- The repair path exists for the one edge that matters: a save written before
+  this feature whose season's offseason is reopened on load. It backfills the four
+  fields from the rebuilt summary when the entry already has a champion and both
+  MVPs, and it is idempotent — re-running on a fully-repaired entry writes nothing.
+- One bug caught before ship: the repair's "did anything change" check compared
+  object references (`repaired === existing`), which is **always false** for a
+  rebuilt object, so every reload of a completed season would have announced
+  "awards repaired". Replaced with a per-field reference comparison that is exact
+  because the repair carries existing fields through by reference.
+
+### Verification
+
+`tools/checkSeasonAwards.ts` (added; run with `npx tsx
+tools/checkSeasonAwards.ts`) pins the ranking, every tie-break, the 120-AB floors,
+ROY eligibility (veteran / undrafted / retired excluded, one race across roles),
+Staff expectation blending and the playoff exclusion on synthetic fixtures, then
+runs three real simulated seasons and asserts the winners are the top of their own
+rankings, the Staff prior is the preseason baseline (not the season being
+awarded), and ROY is empty iff no rookie qualified. `tsc --noEmit` and `vite
+build` pass, and the other check tools still pass. Both screens were also verified
+in headless Chrome (`tools/cdp.mjs`, full season sim): the Season Awards modal
+opens at completion with all four awards plus the WS MVP leaders, and History
+renders the champion, team honors, division winners, Staff card and all award
+tiles. (The modal's labels read UPPERCASE in `innerText` because of CSS
+`text-transform`, which is why a case-sensitive text search on them fails.)
+
+Betting markets for the four new awards remain **deferred** — the bets that exist
+still settle against the MVPs and the World Series MVP.
+
+## Booth Metrics: eight boards on what the numbers don't say
+
+`booth_metrics` is a LEAGUE leaf between Leaders and Awards, headed **"What The
+Numbers Don't Tell You"** and bylined **Gary Sallow** (`garysallow.png`, a square
+portrait with an initials fallback — deliberately not masked into a circle, which
+only shrank the art). The masthead also carries `baseballpersonified.jpg` as the
+page's cover thumbnail (drawn at its native 3:4, because a squared-off cover stops
+reading as a cover). It carries eight ranked boards, all computed in
+`src/lib/analytics/boothMetrics.ts`; the page
+(`src/components/league/BoothMetrics.tsx`) is presentation only.
+
+The eight boards are grouped into **four tabs — Scoring, Winning, Close Games,
+Weather — two boards apiece** (`BOARD_TABS` in the page). Stacked end to end the
+boards were a long scroll, and the tab groups are by question, not by module order:
+what a team scores, whether it wins, how it wins the close ones, and how it wins in
+the weather. One screenful is one idea.
+
+Each board header is the **title and the question only** — no chrome bar (its bevel
+and racing wash dimmed the title) and no board ordinal ("02", "03"), which counted
+boards rather than ranking teams. Each row is drawn like one band of the SCORES →
+Results scorebug: the club's colour as the row fill (`clubTint`, the same helper and
+the same 0.22 share the scorebug's band uses, so all 32 clubs stay legible) and the
+full-strength `clubInk` as the leading edge. The **crest is taller than the row and
+the row crops it**: it is drawn at `CREST_SIZE` (≈1.45× the row height) inside a box
+only `ROW_MIN_H` tall with `overflow: hidden`, so it bleeds ~16px off the top and
+bottom the way the scorebug's crest is meant to. Those two sizes are **inline
+styles, not Tailwind arbitrary classes** — an interpolated class name never reaches
+the scanner, so `h-[${…}px]` compiles to nothing (the same reason the scorebug's own
+`h-[${BAND_H}px]` band never actually applied). The city and name are dropped from
+the row — the colour, crest and rank say who it is — and survive only as `sr-only`
+text and a tooltip, so the accessible name is intact. The supporting figures and the
+primary value remain.
+
+The scope, the inclusion rules, every tie-break and the temperature dependency
+live in the module's header comment. The short of it:
+
+- **Scope is fixed and explicit.** Completed games with `phase === 'regular_season'`,
+  de-duplicated by `gameId`, optionally pinned to a season year. The router passes
+  `resolveSeasonYear(currentDate, games)`, so two seasons can never be averaged
+  together. (The app holds one season at a time, but the pin makes it explicit
+  rather than assumed.)
+- **Two stored JSON strings are read, not re-derived.** `stats.lineScore` and
+  `stats.playLog`. The local parsers return `null` for missing/unparseable and
+  treat that differently from empty — which is why they are not
+  `parseStoredPlayLog` (that returns `[]` for both, and a board must never turn a
+  missing log into a valid-looking zero).
+- **Percentage boards rank by a rate and print it as a percentage; one board still
+  ranks by a count.** Giant Slayers, Fence Leapers and both weather boards sort on
+  their percentage, printed at one decimal with a percent sign (`64.5%`, never
+  `.645`), with the sample behind it kept as a supporting figure — a rate without its
+  denominator cannot be checked. Giant Slayers and the two weather boards were briefly
+  counts (the original spec asked for "number of wins" in the weather); the user moved
+  all three to the rate, because how a club does when the condition is met is the
+  story, not how many such games its schedule happened to contain. One-Run Specialists
+  is the last count board: it ranks by wins and its big figure is the record (`12–7`),
+  not a rate a one-game sample can distort. A board never pads: a club with no
+  qualifying sample is ABSENT rather than ranked at 0%.
+- **Every board sorts on its primary metric then a stated deterministic ladder
+  ending in `teamId`**, so ranks are unique and identical on every render.
+
+The rules with a real trap in them: **Giant Slayers** ranks by win rate against
+qualifying opponents (a club that won some but not all appears on its real rate, and
+one that lost every meeting at 0.0%) and removes the judged team's own games from an
+opponent's record before deciding whether that opponent is a giant (and the mirror
+requirement — a club that never won must still be evaluable — is why the matchup
+matrix is symmetric, not winner-keyed);
+**Comeback Kids** uses the score once the FOURTH has fully concluded, proven by a
+fifth inning, a `finalInning > 4`, or a `HALF_END` at inning 4 bottom — never "the
+last event in inning four"; **Fence Leapers** sums the `runsScored` of each HR (a
+three-run homer is three), not one per HR, and reads numerator and denominator from
+the same logged games.
+
+### Weather: computed on purpose, dependency recorded
+
+Heat Seeking Missiles and Cold Blooded Killers bucket by the per-game temperature
+from `gameTemperature.ts` — the same value the game screen's thermometer shows —
+warm at `>= 62F`, cold at `<= 61F`. **Per-game weather is not persisted**, and the
+user chose that after the dependency was raised: the value is a pure function of
+(home park, date, gameId), so it reproduces exactly on every render and save
+round-trip, and the only thing that moves a historical result is a mid-season edit
+to the park climate data itself. The alternative — a persisted per-game snapshot
+written at completion — remains available and would be a small `stats.temperatureF`
+plus a fallback read; it was not needed to make the boards stable.
+
+### Verification
+
+`tools/checkBoothMetrics.ts` (run with `npx tsx tools/checkBoothMetrics.ts`)
+builds games by hand and asserts the exact answer for all eight boards:
+late-inning sums including extras; the Giant Slayers head-to-head exclusion, the
+exactly-.500 exclusion, a never-won team appearing at 0.0%, and a 1–0 giant record
+topping a 3–1 one (the rate, not the count); one-run games including extras and the
+record/denominator it prints; the end-of-fourth checkpoint
+including bottom-of-fourth runs and a game that ends before the fourth; shutouts on
+both sides; HR-run attribution and the three-run-homer case; the 62F/61F boundary
+found by brute force against the real parks; plus empty / duplicate / scheduled /
+postseason / missing-log / missing-line-score / zero-denominator samples and
+season/phase filtering. **30/30 pass.** It caught two real bugs during construction —
+a team that never won vanished from Giant Slayers, and the symmetric-matchup
+requirement behind that. `tsc --noEmit` and `vite build` pass. The rate change is a
+change of arithmetic and of a display string inside that pure function, so the checker
+is its proof: it pins `100.0%`, `75.0%` and `0.0%` exactly, and One-Run still pins its
+record. The rendering path is unchanged — the row prints `primaryDisplay` as text —
+and the earlier headless pass (`tools/cdp.mjs`: 6 sim days for the tab pass, 1 for the
+crest probe) still describes the layout: four tabs with two boards each, and a crest
+box `104×104` cropped to a `104×72` window (16px off the top and bottom), with no
+console errors. As with the awards modal, board titles read UPPERCASE in `innerText`
+because `t-label` applies `text-transform`, so a case-sensitive text search fails.
+
+## The Club Band: one row style for every screen
+
+The Booth row design — a club's tinted colour as the row fill, its full-strength ink
+as a leading edge, and an oversized crest cropped to the row height — is now a **shared
+primitive**, so the answer to "what does a club's row look like" is written once. The
+written standard is **`docs/team-band-row.md`**; the executable form is
+**`src/components/ui/ClubBand.tsx`** (`ClubBandRow`, `CroppedCrest`, `clubBandPalette`,
+and the `CLUB_BAND_*` constants).
+
+Applied so far:
+
+- **Booth Metrics** (`league/BoothMetrics.tsx`) — refactored onto the primitive; its
+  output is unchanged (72px row, `104×104` crest clipped to `104×72`).
+- **Standings** (`StandingsHub.tsx`) — every row wears `row.band` and a `CroppedCrest`
+  at 58px. `StatTable` gained an optional `row.band = { fill, edge }`: `fill` replaces
+  the zebra stripe and `edge` is drawn as the first cell's left border.
+- **Dashboard** — the Power Rankings strip (`home/PowerRankingsStrip.tsx`, 44px rows),
+  the Division Snapshot (`home/Panels.tsx`, 34px rows), and the Award Race
+  (`home/MvpRacePanel.tsx`, 48px rows). The Division Snapshot's and the Award Race's old
+  gold left borders (the top-two marker, and the leader) are gone; because a club's edge
+  now owns that border and club colour may never carry meaning, both markers moved to the
+  ordinal, in gold. The strip's first cut kept its old `py-2`, which left an 8px strip of
+  club colour above and below the crest; a band row takes **horizontal padding only**,
+  because the crest IS the row height. That trap is now written up in
+  `docs/team-band-row.md` ("No vertical padding on a band row").
+- **Results scorebug** (`game/ScorebugCard.tsx`) — kept its own three crop modes but now
+  **actually crops**: its window was sized with `h-[${BAND_H}px] w-[${width}px]`, an
+  interpolated Tailwind class that never compiled, so it had been sizing to its content
+  and not cropping at all. Now inline styles. This is the canonical example of the trap
+  `docs/team-band-row.md` warns about.
+- **`StatTable`** (`ui/StatTable.tsx`) — optional `row.band`; backward-compatible, so
+  every other table is unchanged.
+
+Verified in headless Chrome (`tools/cdp.mjs`): the strip is `color-mix(club 22%, panel)`
+with a full-strength edge, a `64×64` crest in a `64×44` window, and **no gap** above or
+below (only the row's 1px border); the Award Race rows are `70×70` crests in `70×48`
+windows with zero gap; the standings are an `84×84` crest in an `84×58` window (13px crop)
+with a `5px` edge on the first cell; the Booth is unchanged; **no console errors**.
+`tsc --noEmit` and `vite build` pass, and `tools/checkBoothMetrics.ts` is still 30/30.
+
+### Club band rollout — Power Rankings, Standings and Awards done
+
+The three pages asked for are banded. Standings already was; the other two now are, and the
+two cases they exercise are new shapes, so both are written down in `docs/team-band-row.md`:
+
+1. **Power Rankings full board** (`leaders/PowerRankingsView.tsx`) — banded at **52**. This
+   is a hand-built `<table>`, not a `StatTable`, so the three parts are wired by hand: the
+   `<tr>` wears the fill and `height`, the first cell's left border is the edge,
+   `CroppedCrest` sits in the club cell. Three things it needs that `StatTable` would have
+   given for free, and that are the reason it is worth writing down: `py-0` on every cell
+   (the old `py-2` grows the row past the crest window and leaves club colour above and
+   below the mark), `align-middle` on the cells, and `border-collapse` on the table.
+2. **Awards** (`awards/AwardsPage.tsx`) — banded at **64**. `ClubBandRow` cannot be used
+   here: it renders the crest *before* its children, and this row is a disclosure, so the
+   mark would fall outside the button's click target. The band goes on the `<li>` instead
+   and the crest inside the button. Two consequences: the fill is on the `<li>` rather than
+   the button, because an inline `style` beats a `hover:bg-*` class on the same element and
+   putting it on the button would silently kill the hover — so the hover colour is the
+   translucent wash `color-mix(in_srgb, var(--color-ink) 6%, transparent)` instead of
+   `panel-2`, which would bury the tint. And an expanded row tints its breakdown panel
+   too, because that panel is a sibling of the button inside the `<li>`. That is intended;
+   leave it alone.
+   The row's **gold left border and lifted background marking the leader are gone** — the
+   club edge now owns that border, and club colour may never carry meaning. The leader is
+   marked by the gold ordinal and the gold name, matching the dashboard Award Race.
+
+   Verified in headless Chrome on a season with a real race (six month-sim runs, the batting
+   MVP gate is 120 at-bats so one day shows an empty list): 8 rows, edge 5px, crest window
+   64×93 with `overflow:hidden`, mark drawn at 93px — the 1.45× crop — and `0px/0px` vertical
+   padding on the button. Power Rankings verified the same way, 32 rows banded.
+
+3. **Team hubs / roster** and **Free agents / Draft board** — `TeamLogo` rows in
+   `DraftHub.tsx` and the trade desk. Still to do.
+4. **Betting fixtures** (`betting/BetFixtureLine.tsx`) — small inline crests in a line,
+   probably not a band candidate.
+5. **`App.tsx` team logo grid** — a grid, not a row; explicitly out of scope.
+6. **`LeadersHub.tsx`** — 24px crest cells inside a *player's* row. **Deliberately not
+   banded.** The row belongs to a person; tinting it with a club's colour would band a
+   player's row by his employer, which is the meaning the band is not allowed to carry.
+
 ## Open questions for the user
 
 1. **Should completion always return to the dashboard?** The instruction was "when
@@ -2570,3 +2866,15 @@ previous session.
     are unreferenced next to their WebP versions, and an untracked
     `fuyukashinonome2.png` (3.1 MB) sits among them. Third time this project has
     shipped oversized art.
+17. ~~**Rookie of the Year workload floor.**~~ **RESOLVED by measurement, 2026-10-13:
+    ship as locked, document.** The MVP-level gates (120 AB / 8 GS / 25 SV) stood.
+    Measured evidence: the initial universe has no eligible rookies (season 1 is
+    correctly empty); drafted rookies get zero AB from the lineup engine and
+    qualify only occasionally via saves. See the Season awards section above.
+18. **NEW — the four-award work is staged but uncommitted.** `seasonAwards.ts`,
+    `checkSeasonAwards.ts` (untracked) plus the `App.tsx`, `types.ts`,
+    `useSeasonLifecycle.ts`, `SeasonAwardsSummary.tsx`, `HistoryHub.tsx`,
+    `OffseasonHub.tsx`, `awardRace.ts` and `simulationWorker.ts` edits sit on top
+    of the last commit on `local`, which is unpushed. Five `src/assets/cured
+    logos/*.png` files are also modified — logo corrections from earlier work,
+    unrelated to the awards feature, left in place.

@@ -40,11 +40,18 @@ import React, { useEffect, useMemo } from 'react';
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react';
 import type { Team } from '../../types';
 import type { PowerRankings } from '../../lib/analytics/powerRankings';
-import { TeamLogo } from '../ui';
+import { CLUB_BAND_EDGE_WIDTH, clubBandPalette, CroppedCrest } from '../ui';
+import type { TeamId } from '../../data/teamColors';
 import { HomePanel } from './shared';
 import { rankMovementLabel, resolveRankMovement, writeRankMovement } from './powerRankMovement';
 
 const STRIP_SIZE = 5;
+
+/**
+ * The strip row's height, in px. The crest is cropped to it, so it has to name the row the mark is
+ * sitting in: 28px of crest plus 8px of padding either side.
+ */
+const STRIP_ROW_H = 44;
 
 export interface PowerRankingsStripProps {
   rankings: PowerRankings | null;
@@ -98,6 +105,7 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
       <ul>
         {top.map((row) => {
           const team = teamsById.get(row.teamId);
+          const { fill, edge } = clubBandPalette(row.teamId as TeamId);
           const places = resolved.movement.get(row.teamId) ?? 0;
           const MovementIcon = places > 0 ? ArrowUp : places < 0 ? ArrowDown : Minus;
           const movementClass = places > 0
@@ -106,8 +114,18 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
               ? 'text-[var(--color-neg)]'
               : 'text-[var(--color-ink)]';
           return (
-            <li key={row.teamId} className="border-b border-[var(--color-chrome-lo)]/40 last:border-0">
-              <div className="flex items-center gap-3 px-4 py-2">
+            <li
+              key={row.teamId}
+              className="relative overflow-hidden border-b border-[var(--color-chrome-lo)]/40 last:border-0"
+              style={{ background: fill, minHeight: STRIP_ROW_H }}
+            >
+              <span aria-hidden="true" className="absolute inset-y-0 left-0" style={{ width: CLUB_BAND_EDGE_WIDTH, background: edge }} />
+              {/*
+                No vertical padding on this row: the crest IS the row height, and padding around it
+                would put a strip of club colour above and below the mark. `minHeight` only ever grows
+                the row to fit the crest, so the crest touches the top and bottom edges.
+              */}
+              <div className="flex items-center gap-3 pl-4 pr-4">
                 <span className="t-stat w-6 shrink-0 text-right tabular-nums">{row.rank}</span>
                 <button
                   type="button"
@@ -115,8 +133,8 @@ export const PowerRankingsStrip: React.FC<PowerRankingsStripProps> = ({
                   className="flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
                 >
                   {team
-                    ? <TeamLogo team={team} sizeClass="h-7 w-7 shrink-0" />
-                    : <span className="h-7 w-7 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+                    ? <CroppedCrest team={team} height={STRIP_ROW_H} />
+                    : <span className="shrink-0 border border-dashed border-[var(--color-chrome-lo)]" style={{ height: STRIP_ROW_H, width: STRIP_ROW_H }} aria-hidden="true" />}
                   <span className="t-body min-w-0 truncate">{team?.city ?? row.teamId}</span>
                 </button>
                 <span

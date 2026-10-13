@@ -21,7 +21,8 @@ import React from 'react';
 import { TrendingUp } from 'lucide-react';
 import type { Team } from '../../types';
 import type { DivisionStrengthTag, PowerRankings } from '../../lib/analytics/powerRankings';
-import { LeagueBadge, Panel, StatValue, TeamLogo } from '../ui';
+import { CLUB_BAND_EDGE_WIDTH, clubBandPalette, CroppedCrest, LeagueBadge, Panel, StatValue } from '../ui';
+import type { TeamId } from '../../data/teamColors';
 
 /** soft | even | deep, coloured so the strongest division reads at a glance. */
 const TAG_STYLE: Record<DivisionStrengthTag, string> = {
@@ -52,11 +53,19 @@ export interface PowerRankingsViewProps {
 }
 
 /**
- * A crest + city + rank, in that reading order.
+ * The board's row height, in px. The crest is cropped to it -- drawn larger and clipped back -- so
+ * the mark bleeds off the top and bottom the way a Booth board's does. It names the row the crest
+ * sits in, so the crop and the row agree; and a row takes no vertical padding, because the crest IS
+ * the row height.
+ */
+const BOARD_ROW_H = 52;
+
+/**
+ * A crest + city + name, in that reading order.
  *
- * The crest is 8px on a 40px row rather than the 96px the Exchange uses per club. Thirty-two rows at
- * that size is a scroll of nothing but faces; the ranking is the information here and the crest is
- * only there to make the row findable.
+ * The crest is the shared cropped mark now, not a plain 32px thumbnail: the board wears the same
+ * club band the Booth boards and the dashboard strip wear, so a club row reads the same on every
+ * screen. Thirty-two rows is still not a wall of faces -- the crest is the row height, not a card.
  */
 const ClubCell: React.FC<{
   team: Team | undefined;
@@ -66,11 +75,17 @@ const ClubCell: React.FC<{
   <button
     type="button"
     onClick={onSelect}
-    className="flex min-w-0 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
+    className="flex min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]"
   >
     {team
-      ? <TeamLogo team={team} sizeClass="h-8 w-8 shrink-0" />
-      : <span className="h-8 w-8 shrink-0 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+      ? <CroppedCrest team={team} height={BOARD_ROW_H} />
+      : (
+        <span
+          className="shrink-0 border border-dashed border-[var(--color-chrome-lo)]"
+          style={{ height: BOARD_ROW_H, width: Math.round(BOARD_ROW_H * 1.45) }}
+          aria-hidden="true"
+        />
+      )}
     <span className="min-w-0">
       <span className="t-body block truncate">{team?.city ?? fallbackId}</span>
       <span className="t-caption block truncate text-[var(--color-ink-faint)]">{team?.name ?? ''}</span>
@@ -123,7 +138,7 @@ export const PowerRankingsView: React.FC<PowerRankingsViewProps> = ({
             <h2 className="t-label">All Clubs</h2>
             <span className="t-caption text-[var(--color-ink-faint)]">{rows.length} ranked</span>
           </div>
-          <table className="w-full">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-[var(--color-chrome-lo)]">
                 <th scope="col" className="t-caption px-4 py-2 text-left font-normal">#</th>
@@ -136,45 +151,60 @@ export const PowerRankingsView: React.FC<PowerRankingsViewProps> = ({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.teamId} className="border-b border-[var(--color-chrome-lo)]/40 last:border-0">
-                  <td className="px-4 py-2">
-                    <span className="t-stat tabular-nums">{row.rank}</span>
-                  </td>
-                  <td className="px-2 py-2">
-                    <ClubCell
-                      team={teamsById.get(row.teamId)}
-                      fallbackId={row.teamId}
-                      onSelect={() => onSelectTeamId(row.teamId)}
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    {teamsById.get(row.teamId) && (
-                      <span className="flex items-center gap-1.5">
-                        <LeagueBadge variant={row.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
-                        <span className="t-caption text-[var(--color-ink-dim)]">{row.division}</span>
+              {rows.map((row) => {
+                // The row wears the club's own colour -- the same fill and leading edge a Booth row,
+                // the standings tables and the dashboard strip wear -- so a club row reads the same
+                // everywhere. `ClubCell` carries the cropped crest; the edge is the first cell's left
+                // border, exactly as `StatTable` draws it. The row takes no vertical padding, because
+                // the crest IS the row height.
+                const { fill, edge } = clubBandPalette(row.teamId as TeamId);
+                return (
+                  <tr
+                    key={row.teamId}
+                    className="border-b border-[var(--color-chrome-lo)]/40 last:border-0"
+                    style={{ background: fill, height: BOARD_ROW_H }}
+                  >
+                    <td
+                      className="py-0 pl-3 pr-2 align-middle"
+                      style={{ borderLeft: `${CLUB_BAND_EDGE_WIDTH}px solid ${edge}` }}
+                    >
+                      <span className="t-stat tabular-nums">{row.rank}</span>
+                    </td>
+                    <td className="px-2 py-0 align-middle">
+                      <ClubCell
+                        team={teamsById.get(row.teamId)}
+                        fallbackId={row.teamId}
+                        onSelect={() => onSelectTeamId(row.teamId)}
+                      />
+                    </td>
+                    <td className="px-2 py-0 align-middle">
+                      {teamsById.get(row.teamId) && (
+                        <span className="flex items-center gap-1.5">
+                          <LeagueBadge variant={row.league === 'Prestige' ? 'prestige' : 'platinum'} size="sm" />
+                          <span className="t-caption text-[var(--color-ink-dim)]">{row.division}</span>
+                        </span>
+                      )}
+                      <DivisionTag tag={row.divisionTag} />
+                    </td>
+                    <td className="px-2 py-0 align-middle text-right">
+                      <StatValue>{row.valuation.toFixed(1)}</StatValue>
+                    </td>
+                    <td className="px-2 py-0 align-middle text-right">
+                      <span className="t-body tabular-nums">${row.fairPrice.toFixed(0)}</span>
+                    </td>
+                    <td className="px-2 py-0 align-middle text-right">
+                      <span className="t-body tabular-nums text-[var(--color-ink-dim)]">
+                        {pct(row.makePlayoffPct)}
                       </span>
-                    )}
-                    <DivisionTag tag={row.divisionTag} />
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <StatValue>{row.valuation.toFixed(1)}</StatValue>
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <span className="t-body tabular-nums">${row.fairPrice.toFixed(0)}</span>
-                  </td>
-                  <td className="px-2 py-2 text-right">
-                    <span className="t-body tabular-nums text-[var(--color-ink-dim)]">
-                      {pct(row.makePlayoffPct)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <span className="t-body tabular-nums text-[var(--color-gold-hi)]">
-                      {pct(row.championshipPct)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-0 align-middle text-right">
+                      <span className="t-body tabular-nums text-[var(--color-gold-hi)]">
+                        {pct(row.championshipPct)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Panel>

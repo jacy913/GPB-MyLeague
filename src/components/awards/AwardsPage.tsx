@@ -14,6 +14,9 @@ import { AWARD_RACE_SPECS, buildAwardMarket } from '../../lib/mediaMarkets';
 import { formatAmerican, probabilityToAmerican } from '../../lib/markets';
 import mvpBeltImage from '../../assets/mvpbelt.png';
 import {
+  CLUB_BAND_EDGE_WIDTH,
+  clubBandPalette,
+  CroppedCrest,
   OddsBar,
   Panel,
   RetroButton,
@@ -21,6 +24,7 @@ import {
   StatValue,
   TeamLogo,
 } from '../ui';
+import type { TeamId } from '../../data/teamColors';
 
 export interface AwardsPageProps {
   teams: Team[];
@@ -65,6 +69,13 @@ type RacedEntry = AwardEntry & {
  * Exported so the depth is one number, changed in one place, rather than a literal retyped per row.
  */
 const EXPANDED_DEPTH = 3;
+
+/**
+ * The award row's height, in px. The crest is cropped to it -- drawn larger and clipped back -- so
+ * the row takes no vertical padding: the crest IS the row height, and padding around it would leave
+ * a strip of club colour above and below the mark. The name and the figures centre against it.
+ */
+const AWARD_ROW_H = 64;
 
 /**
  * ONE TERM OF THE SCORE, SHOWN.
@@ -118,12 +129,19 @@ const CandidateRow: React.FC<{
     : formatAmerican(probabilityToAmerican(entry.houseProbability));
   const panelId = `award-breakdown-${entry.playerId}`;
 
+  // The candidate's club band, resolved for the panel this list is drawn on. The row used to mark
+  // the leader with a gold 3px border and a lifted background; the club's edge now owns that border
+  // (and club colour may never carry meaning), so the leader is marked where it still reads -- the
+  // ordinal and the name in gold, the same convention the dashboard's award race uses.
+  const band = clubBandPalette((entry.team?.id ?? null) as TeamId | null);
+
   return (
-    <li
-      className={`border-l-[3px] ${
-        isLeader ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-3)]' : 'border-l-transparent'
-      }`}
-    >
+    <li className="relative overflow-hidden" style={{ background: band.fill }}>
+      <span
+        aria-hidden="true"
+        className="absolute inset-y-0 left-0"
+        style={{ width: CLUB_BAND_EDGE_WIDTH, background: band.edge }}
+      />
       {/*
         THE WHOLE ROW IS THE DISCLOSURE.
 
@@ -145,7 +163,7 @@ const CandidateRow: React.FC<{
         onClick={onToggle}
         aria-expanded={isExpanded}
         aria-controls={panelId}
-        className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-[var(--color-panel-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-gold)] md:px-4"
+        className="flex w-full items-center gap-3 px-3 text-left hover:bg-[color:color-mix(in_srgb,var(--color-ink)_6%,transparent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-gold)] md:px-4"
       >
         <span className={`w-[2ch] shrink-0 text-right t-stat ${isLeader ? 'text-[var(--color-gold)]' : 'text-[var(--color-ink-faint)]'}`}>
           {rank}
@@ -154,16 +172,16 @@ const CandidateRow: React.FC<{
         {entry.team ? (
           /*
             `display: contents` on the wrapper, so the crest is a direct flex item of the button while
-            the element actually in the DOM is a span. `TeamLogo` renders a div, and a div inside a
+            the element actually in the DOM is a span. `CroppedCrest` renders a div, and a div inside a
             button is not phrasing content -- browsers tolerate it, but it is invalid and the
             difference between valid and tolerated is exactly the kind of thing that breaks silently
             somewhere later.
           */
           <span className="contents">
-            <TeamLogo team={entry.team} sizeClass="h-12 w-12 shrink-0" />
+            <CroppedCrest team={entry.team} height={AWARD_ROW_H} />
           </span>
         ) : (
-          <span className="h-12 w-12 shrink-0" aria-hidden="true" />
+          <span className="shrink-0" style={{ height: AWARD_ROW_H, width: Math.round(AWARD_ROW_H * 1.45) }} aria-hidden="true" />
         )}
 
         <span className="min-w-0 flex-1">

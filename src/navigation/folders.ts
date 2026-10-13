@@ -24,6 +24,7 @@ import {
   Map as MapIcon,
   Medal,
   Megaphone,
+  Mic,
   Play,
   Receipt,
   ScrollText,
@@ -188,6 +189,12 @@ export const NAV_FOLDERS: NavFolder[] = [
       { view: 'power_rankings', label: 'Power Rankings', icon: TrendingUp },
       { view: 'leaders', label: 'Leaders', icon: BarChart3 },
       /*
+        Booth Metrics sits between Leaders and Awards: it is a ranked reading of the league, so it
+        belongs in the same run as both, and a reader arriving from the tables finds the booth before
+        the season honours rather than after them.
+      */
+      { view: 'booth_metrics', label: 'Booth Metrics', icon: Mic },
+      /*
         Awards sits directly under Leaders because they are the same kind of fact -- where a player
         or club stands -- and because a manager checking who is winning the MVP race was previously
         made to hunt for it behind a segmented control on the Leaders screen. It is a full page, not
@@ -258,6 +265,7 @@ export const VIEW_TO_FOLDER: Record<AppView, FolderId> = {
   power_rankings: 'league',
   leaders: 'league',
   leaders_dashboards: 'league',
+  booth_metrics: 'league',
   awards: 'league',
   history: 'league',
   map: 'league',
