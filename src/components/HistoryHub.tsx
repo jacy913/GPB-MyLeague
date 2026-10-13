@@ -199,14 +199,27 @@ const honorRowColours = (teamId: string | null): { fill: string; edge: string; i
  * The belt is the reason this exists rather than a plain `h-full` image: at a 56px row a
  * `h-16 object-contain` belt is a 27px letterbox floating in the row, and a row of those looks like
  * a list of icons that lost their labels.
+ *
+ * ZOOMED PAST THE WINDOW, on purpose. `object-cover` alone fits each image at exactly the row
+ * height, which for the belt means the whole 2.2:1 strap squeezed into 106x56 -- legible, but the
+ * plate ends up small. A transform scale draws the image larger and lets the window clip it, so the
+ * crop tightens onto the centre of the object and the artwork reads at about the weight of the
+ * crest beside it. `transform` rather than width/height, so the zoom costs no layout.
  */
+const ROW_ARTWORK_ZOOM = 1.28;
+
 const RowArtwork: React.FC<{ src: string; alt: string; height: number }> = ({ src, alt, height }) => (
   <div
     aria-hidden="true"
     className="flex shrink-0 items-center justify-center overflow-hidden"
     style={{ height, width: Math.round(height * 1.9) }}
   >
-    <img src={src} alt={alt} className="h-full w-full object-cover" />
+    <img
+      src={src}
+      alt={alt}
+      className="h-full w-full object-cover"
+      style={{ transform: `scale(${ROW_ARTWORK_ZOOM})` }}
+    />
   </div>
 );
 

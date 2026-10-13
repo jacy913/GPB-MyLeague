@@ -1164,17 +1164,42 @@ export const loadLocalPlayerStateAsync = async (): Promise<LeaguePlayerState> =>
  */
 export const saveSharePriceLedger = (ledger: SharePriceLedger): boolean => {
   const isEmpty = !ledger || ledger.length === 0;
+  // Serialized ONCE, before either store is touched. It used to be built separately in each branch,
+  // and the whole point of doing this below is that both branches now run.
+  const serialized = isEmpty ? null : JSON.stringify(ledger);
 
+  /*
+   * THE TWO STORES ARE ATTEMPTED INDEPENDENTLY, AND THAT IS THE WHOLE FIX.
+   *
+   * This used to `return false` from inside the localStorage catch, which meant a localStorage quota
+   * failure stopped the IndexedDB write below from ever running. That is backwards. localStorage is
+   * consulted only when IndexedDB is completely empty, so IndexedDB is the store of record -- and the
+   * one failure least able to skip it was the one that skipped it.
+   *
+   * The observed symptom was a full season of console warnings reading "Failed to save the HXSE price
+   * ledger. The market will not survive a reload", while the write that would have preserved the
+   * market sat three lines below the `return` and never executed. This was seen on every full-season
+   * run in headless Chrome, where a long season fills localStorage and then every subsequent ledger
+   * save threw QuotaExceededError.
+   *
+   * So each store gets its own outcome. The function reports success if EITHER landed, because one
+   * durable copy is enough to survive a reload, and reports failure only when both are gone.
+   */
+  let localStorageLanded = true;
   try {
     if (isEmpty) {
       // An absent key is the honest representation of "never priced" and the loader treats it so.
       localStorage.removeItem(STORAGE_KEYS.sharePriceLedger);
     } else {
-      localStorage.setItem(STORAGE_KEYS.sharePriceLedger, JSON.stringify(ledger));
+      localStorage.setItem(STORAGE_KEYS.sharePriceLedger, serialized as string);
     }
   } catch (error) {
-    console.warn('Failed to save the HXSE price ledger. The market will not survive a reload.', error);
-    return false;
+    localStorageLanded = false;
+    console.warn(
+      'Failed to save the HXSE price ledger to localStorage. Writing it to IndexedDB instead, which '
+      + 'is the store a reload actually reads.',
+      error,
+    );
   }
 
   /*
@@ -1191,9 +1216,9 @@ export const saveSharePriceLedger = (ledger: SharePriceLedger): boolean => {
   */
   void (isEmpty
     ? deleteIndexedDbValue(STORAGE_KEYS.sharePriceLedger)
-    : writeIndexedDbValues([[STORAGE_KEYS.sharePriceLedger, JSON.stringify(ledger)]]));
+    : writeIndexedDbValues([[STORAGE_KEYS.sharePriceLedger, serialized as string]]));
 
-  return true;
+  return localStorageLanded;
 };
 
 export const loadLocalLeagueState = (): {

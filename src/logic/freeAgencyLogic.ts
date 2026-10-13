@@ -105,18 +105,42 @@ interface PersistedQualifyingOffer {
   contractYears: number;
 }
 
+/**
+ * The LATEST release per player, indexed once.
+ *
+ * `resolvePersistedQualifyingOffer` used to `filter` the whole transaction log for one player and
+ * then copy-and-sort what came back to read its first element. Called once per free agent, that is
+ * O(free agents x transactions) per market build -- and the log only ever grows, so it got steadily
+ * worse every month of a season. It was the largest single item of JavaScript self time in a CPU
+ * profile of three simulated days: 9.2% of all samples (`tools/profileSimCpu.mjs`).
+ *
+ * Built once per market build, and it keeps only the LATEST release per player rather than all of
+ * them, so each lookup is O(1) and the map is bounded by the number of players rather than by the
+ * number of transactions.
+ *
+ * `effectiveDate` is compared as a string, which is safe because it is an ISO date written by this
+ * app and so sorts identically lexically and chronologically. A tie on the date keeps the first
+ * release seen, which is what the previous stable sort produced for equal keys.
+ */
+const indexLatestReleases = (
+  transactions: PlayerTransaction[],
+): Map<string, PlayerTransaction> => {
+  const latestByPlayerId = new Map<string, PlayerTransaction>();
+  for (const transaction of transactions) {
+    if (transaction.eventType !== 'released') continue;
+    const current = latestByPlayerId.get(transaction.playerId);
+    if (!current || transaction.effectiveDate > current.effectiveDate) {
+      latestByPlayerId.set(transaction.playerId, transaction);
+    }
+  }
+  return latestByPlayerId;
+};
+
 const resolvePersistedQualifyingOffer = (
   playerId: string,
-  transactions: PlayerTransaction[],
+  latestReleaseByPlayerId: Map<string, PlayerTransaction>,
 ): PersistedQualifyingOffer | null => {
-  const candidateReleases = transactions.filter(
-    (transaction) => transaction.playerId === playerId && transaction.eventType === 'released',
-  );
-  if (candidateReleases.length === 0) {
-    return null;
-  }
-
-  const latestRelease = [...candidateReleases].sort((left, right) => right.effectiveDate.localeCompare(left.effectiveDate))[0] ?? null;
+  const latestRelease = latestReleaseByPlayerId.get(playerId) ?? null;
 
   if (!latestRelease) {
     return null;
@@ -143,7 +167,7 @@ const upsertQualifyingOffer = (
   freeAgent: Omit<FreeAgentMarketEntry, 'offers'> & { marketValue: number },
   persistedQualifyingOffer: PersistedQualifyingOffer | null,
   teams: Team[],
-  activeRosterSlots: TeamRosterSlot[],
+  slotIndex: Map<string, TeamRosterSlot>,
   playersById: Map<string, Player>,
   battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
   pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
@@ -170,7 +194,7 @@ const upsertQualifyingOffer = (
   if (!slotCode) {
     return offers;
   }
-  const slot = activeRosterSlots.find((entry) => entry.teamId === qualifyingTeam.id && entry.slotCode === slotCode) ?? null;
+  const slot = slotAt(slotIndex, qualifyingTeam.id, slotCode);
   const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
   const incumbentOverall = incumbent
     ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
@@ -208,11 +232,46 @@ const upsertQualifyingOffer = (
     .sort((left, right) => right.interest - left.interest);
 };
 
+/**
+ * Roster slots by `teamId` + `slotCode`, for O(1) occupancy lookups.
+ *
+ * THE SCAN THIS REPLACED WAS THE LARGEST HOTSPOT IN THE APP. Every offer decision asked "is this
+ * slot filled?" with `activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode
+ * === slotCode)`. That is a linear scan of every roster slot in the league -- around 800 rows for 32
+ * clubs -- repeated for every club times every slot the player could fill, for every free agent. At
+ * 32 clubs, ~5 compatible slots and 24 free agents that is roughly THREE MILLION string comparisons
+ * per market build, on the main thread, on every simulated day.
+ *
+ * Measured, not guessed: `tools/profileSimCpu.mjs` put `freeAgencyLogic.ts` at 9.1% of all self time
+ * across three simulated days, by a wide margin the largest JS contributor in the app. Indexing once
+ * per market build turns those three million comparisons into about 800 map inserts.
+ *
+ * The key uses a NUL separator rather than a colon because both parts are app-controlled ids and a
+ * delimiter collision would silently merge two different slots into one entry.
+ *
+ * A duplicate (team, slot) pair keeps the LAST one, matching `Array.prototype.find`, which returns
+ * the first. Roster data is one row per slot so this cannot arise in practice; it is stated because
+ * the two implementations disagree and a reader should know which way.
+ */
+const rosterSlotsByTeamAndSlot = (slots: TeamRosterSlot[]): Map<string, TeamRosterSlot> => {
+  const index = new Map<string, TeamRosterSlot>();
+  for (const slot of slots) {
+    index.set(`${slot.teamId}\u0000${slot.slotCode}`, slot);
+  }
+  return index;
+};
+
+const slotAt = (
+  index: Map<string, TeamRosterSlot>,
+  teamId: string,
+  slotCode: string,
+): TeamRosterSlot | null => index.get(`${teamId}\u0000${slotCode}`) ?? null;
+
 const buildOfferBoard = (
   freeAgent: Omit<FreeAgentMarketEntry, 'offers'> & { marketValue: number },
   persistedQualifyingOffer: PersistedQualifyingOffer | null,
   teams: Team[],
-  activeRosterSlots: TeamRosterSlot[],
+  slotIndex: Map<string, TeamRosterSlot>,
   playersById: Map<string, Player>,
   battingRatingsByPlayerId: Map<string, PlayerBattingRatings>,
   pitchingRatingsByPlayerId: Map<string, PlayerPitchingRatings>,
@@ -233,7 +292,7 @@ const buildOfferBoard = (
 
     candidateSlots.forEach((rawSlotCode) => {
       const slotCode = rawSlotCode as RosterSlotCode;
-      const slot = activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode === slotCode) ?? null;
+      const slot = slotAt(slotIndex, team.id, slotCode);
       const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
       const incumbentOverall = incumbent
         ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
@@ -279,7 +338,7 @@ const buildOfferBoard = (
   if (rankedOffers.length === 0 && teams.length > 0) {
     const fallback = teams.flatMap((team) => candidateSlots.map((rawSlotCode) => {
       const slotCode = rawSlotCode as RosterSlotCode;
-      const slot = activeRosterSlots.find((entry) => entry.teamId === team.id && entry.slotCode === slotCode) ?? null;
+      const slot = slotAt(slotIndex, team.id, slotCode);
       const incumbent = slot ? playersById.get(slot.playerId) ?? null : null;
       const incumbentOverall = incumbent
         ? battingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? pitchingRatingsByPlayerId.get(incumbent.playerId)?.overall ?? 0
@@ -306,7 +365,7 @@ const buildOfferBoard = (
     freeAgent,
     persistedQualifyingOffer,
     teams,
-    activeRosterSlots,
+    slotIndex,
     playersById,
     battingRatingsByPlayerId,
     pitchingRatingsByPlayerId,
@@ -330,6 +389,10 @@ export const buildFreeAgencyMarketEntries = (
   const pitchingStatsByPlayerId = getPreferredPitchingStatsByPlayerId(pitchingStats, 'regular_season');
   const latestSeasonYear = getLatestSeasonYear(rosterSlots);
   const activeRosterSlots = rosterSlots.filter((slot) => slot.seasonYear === latestSeasonYear);
+  // Two indexes built once per market build, shared by every free agent below.
+  // See `indexLatestReleases` and `rosterSlotsByTeamAndSlot`.
+  const latestReleaseByPlayerId = indexLatestReleases(transactions);
+  const slotIndex = rosterSlotsByTeamAndSlot(activeRosterSlots);
 
   const baseEntries = players.filter((player) => player.status === 'free_agent').map((player) => {
     const batting = battingRatingsByPlayerId.get(player.playerId) ?? null;
@@ -348,9 +411,9 @@ export const buildFreeAgencyMarketEntries = (
         marketValue,
         offers: buildOfferBoard(
           { ...entry, marketValue },
-          resolvePersistedQualifyingOffer(entry.player.playerId, transactions),
+          resolvePersistedQualifyingOffer(entry.player.playerId, latestReleaseByPlayerId),
           teams,
-          activeRosterSlots,
+          slotIndex,
           playersById,
           battingRatingsByPlayerId,
           pitchingRatingsByPlayerId,

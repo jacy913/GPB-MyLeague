@@ -157,23 +157,75 @@ const priorGames = (input: HeadlinerEventInput, limit = HISTORY_SCAN_LIMIT): Gam
     .slice(0, limit);
 
 /**
- * Every batter id seen in a set of games.
+ * Parsed play-log events, cached by game id.
  *
- * A malformed log contributes nothing rather than clearing the set. That direction is
- * chosen deliberately: an unreadable prior game must not be able to manufacture a
- * debut.
+ * THE WINDOW IS RE-PARSED FOR EVERY NEW GAME. `priorGames` returns the last 40 completed games, so
+ * when 15 games resolve in a day, each of those 40 logs is JSON-parsed 15 times -- by two detectors
+ * on top of that. A play log is one event per plate appearance, so this was thousands of parses of
+ * multi-kilobyte strings per simulated day, and it was 3.9% of all JavaScript self time in a CPU
+ * profile of three days (`tools/profileSimCpu.mjs`).
+ *
+ * Keyed by `gameId` rather than by the log text so the lookup stays O(1) on a multi-kilobyte
+ * string, and paired with the log's character count: a game that is re-simulated (a repaired
+ * universe, a re-run date) comes back with a different-length log and is re-parsed rather than
+ * served a stale array. An equal-length log with different contents cannot arise -- a re-simulated
+ * game has a different number of events, and an event is never rewritten in place.
+ *
+ * The cap is far above the working set. 512 entries holds a 40-game window with room for twelve
+ * overlapping days; eviction is oldest-first insertion order, which is close enough to a clock on a
+ * set that is consumed newest-first.
  */
+const PLAY_LOG_CACHE_LIMIT = 512;
+const playLogCache = new Map<string, { length: number; events: PlayLogEvent[] | null }>();
+
+interface PlayLogEvent {
+  batterId?: string | null;
+  batterName?: string | null;
+  outcome?: string;
+}
+
+/**
+ * A game's parsed play log, or null when it is absent or unreadable.
+ *
+ * A malformed log contributes nothing rather than being treated as empty. That direction is chosen
+ * deliberately: an unreadable prior game must not be able to manufacture a debut.
+ */
+const playLogEventsOf = (entry: Game): PlayLogEvent[] | null => {
+  const raw = typeof entry.stats.playLog === 'string' ? entry.stats.playLog : null;
+  if (!raw) return null;
+
+  const cached = playLogCache.get(entry.gameId);
+  if (cached && cached.length === raw.length) {
+    // Refresh recency so a hot entry is not evicted while it is still in the window.
+    playLogCache.delete(entry.gameId);
+    playLogCache.set(entry.gameId, cached);
+    return cached.events;
+  }
+
+  let events: PlayLogEvent[] | null = null;
+  try {
+    const parsed = JSON.parse(raw);
+    events = Array.isArray(parsed) ? parsed as PlayLogEvent[] : null;
+  } catch {
+    events = null; // See the note above.
+  }
+
+  playLogCache.set(entry.gameId, { length: raw.length, events });
+  if (playLogCache.size > PLAY_LOG_CACHE_LIMIT) {
+    const oldest = playLogCache.keys().next();
+    if (!oldest.done) playLogCache.delete(oldest.value);
+  }
+  return events;
+};
+
+/** Every batter id seen in a set of games. */
 const battersSeenIn = (games: readonly Game[]): Set<string> => {
   const seen = new Set<string>();
   for (const entry of games) {
-    const raw = typeof entry.stats.playLog === 'string' ? entry.stats.playLog : null;
-    if (!raw) continue;
-    try {
-      for (const event of JSON.parse(raw) as Array<{ batterId?: string | null }>) {
-        if (event.batterId) seen.add(event.batterId);
-      }
-    } catch {
-      // Skip. See the note above.
+    const events = playLogEventsOf(entry);
+    if (!events) continue;
+    for (const event of events) {
+      if (event.batterId) seen.add(event.batterId);
     }
   }
   return seen;
@@ -185,14 +237,9 @@ const battingTotalsIn = (
 ): Map<string, { hits: number; atBats: number; name: string }> => {
   const totals = new Map<string, { hits: number; atBats: number; name: string }>();
   for (const entry of games) {
-    const raw = typeof entry.stats.playLog === 'string' ? entry.stats.playLog : null;
-    if (!raw) continue;
-    try {
-      const events = JSON.parse(raw) as Array<{
-        batterId?: string | null;
-        batterName?: string | null;
-        outcome?: string;
-      }>;
+    const events = playLogEventsOf(entry);
+    if (!events) continue;
+    {
       for (const event of events) {
         if (!event.batterId) continue;
         if (event.outcome === 'HALF_END' || event.outcome === 'GAME_END' || event.outcome === 'PITCHING_CHANGE') {
@@ -205,8 +252,6 @@ const battingTotalsIn = (
         }
         totals.set(event.batterId, row);
       }
-    } catch {
-      // Skip. A claim about a season cannot rest on a log we could not read.
     }
   }
   return totals;

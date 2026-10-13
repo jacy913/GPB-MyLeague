@@ -2644,6 +2644,121 @@ shape as the four existing awards, and `tsc` covers the prop plumbing.
 **Resolved later in the same session** — the full-season headless run below covers
 it: the Strikeout King card renders with its band and its footnote.
 
+## Performance pass: two measured hotspots and one silent data-loss bug
+
+Budget: 120 minutes, hard cap. Everything below is measured, and the two
+"optimisations" that a guess would have produced are recorded because they were
+the wrong answer.
+
+**START BY MEASURING, NOT BY GUESSING.** Two instruments, both committed:
+
+- `tools/profileSimCpu.mjs` — a CPU profile across N simulated days, reporting
+  self time per function and per file. This is what named the culprits.
+- A `PerformanceObserver` long-task probe plus an instrumented `localStorage`,
+  run in headless Chrome through `tools/cdp.mjs`.
+
+**THE OBVIOUS SUSPECT WAS NOT THE PROBLEM, AND SAYING SO EARLY SAVED THE BUDGET.**
+`JSON.stringify` was the first thing that looked expensive — 41,000 calls and
+**102 MB** serialised across five simulated days, on a path that writes a
+multi-megabyte league save every day. It is also **0.9% of wall clock**. An
+optimisation there would have bought nothing and cost a rewrite. The number that
+mattered was elsewhere: **33 long tasks totalling 6.9 seconds**, worst single task
+**873ms**, against a page that is 64% idle.
+
+### 1. `freeAgencyLogic.ts` — 9.2% of all self time, now 0.5%
+
+Two separate problems, and the first fix did **not** help, which is the useful
+part.
+
+The obvious one: `resolvePersistedQualifyingOffer` filtered the **entire**
+transaction log to find one player's releases, then copy-and-sorted the result to
+read its first element — once per free agent, and the log only grows. Indexed once
+per build (`indexLatestReleases`).
+
+**That fix moved the profile by nothing.** Re-profiling showed `freeAgencyLogic`
+still at 9.1%, and the top frames had moved *down* the file into
+`buildOfferBoard`. The index was never the cost. The real one was a line further
+down:
+
+```ts
+const slot = activeRosterSlots.find((e) => e.teamId === team.id && e.slotCode === slotCode) ?? null;
+```
+
+A linear scan of every roster slot in the league — ~800 rows for 32 clubs —
+repeated for every club × every compatible slot × every free agent. At 32 clubs,
+~5 slots and 24 free agents that is roughly **three million string comparisons per
+market build**, on the main thread, every simulated day. Now a `Map` keyed by
+`teamId + NUL + slotCode`, built once (`rosterSlotsByTeamAndSlot`).
+
+Result: `freeAgencyLogic` **9.2% → 0.5%**, and page idle **63.9% → 76%**.
+
+### 2. `headlinerEvents.ts` — 3.9%, now absent from the profile
+
+`battersSeenIn` and `battingTotalsIn` each `JSON.parse`d the play log of up to 40
+prior games. The window is re-parsed for **every new game**, so with 15 games a
+day each log was parsed 15 times, by two detectors on top of that. Now cached by
+`gameId` with the log's **character count** alongside it, so a re-simulated game
+under the same id re-parses instead of being served a stale array. The count is
+what makes that safe: a re-simulated game has a different number of events.
+
+Capped at 512 entries, oldest-first eviction — a 40-game window with room for
+twelve overlapping days.
+
+### 3. `saveSharePriceLedger` — a quota failure silently destroyed the market
+
+Not a speed problem, but it was throwing on every full-season run and it is worse.
+The function did `return false` from **inside** the localStorage catch, which sat
+above the IndexedDB write. So a localStorage quota error skipped the IndexedDB
+write entirely — and IndexedDB is the store a reload actually reads, since
+localStorage is consulted only when IndexedDB is empty. The warning read "The
+market will not survive a reload" and then, three lines below the `return`, the
+write that would have preserved it.
+
+Each store now gets its own outcome, and the ledger is serialized once instead of
+once per branch.
+
+### Every rewrite got a guard that was proven able to fail
+
+`tools/checkPerfHotspots.ts` — 18 assertions. An index or a cache is exactly the
+kind of change that gets faster and wrong, so:
+
+- the release index is compared against a **copy of the original filter-and-sort**
+  kept in the checker as an oracle, including out-of-order releases, non-release
+  transactions mixed in, and two releases on the same date;
+- the play-log cache is driven through `extractGameEvents` — the only public path
+  to it — asserting that a changed log re-parses and a malformed one stays
+  unreadable;
+- the roster-slot index asserts on **which clubs make an offer**, not on interest
+  values, because interest clamps at 99 and a vacancy saturates it.
+
+**Both cache guards were proven to fail before being trusted.** Removing the
+length check from the play-log cache failed the stale-read assertion; dropping
+`teamId` from the slot key failed three. A green test that cannot go red is
+decoration.
+
+**One fixture fought back and was right to.** The first slot-index test passed a
+player id on the roster slot without ever putting that player in `playersById`, so
+every club resolved a null incumbent and all three scored an identical clamped 99.
+The fixture was wrong, not the code — and an assertion that passes for the wrong
+reason is worse than one that fails.
+
+### Verified
+
+`checkPerfHotspots` 18/18, `checkOffseasonRecovery` 43/43, `checkSeasonAwards`
+68/68, `checkBoothMetrics` 30/30, `checkLockedMarkets` 34/34,
+`verifyHeadlinerPipeline` 27/27, `checkPowerRankings` 9/9, `checkPostseasonHeadliners`
+9/9, `checkHeadlinerCoverage` 8/8, `checkAwardEligibility` 7/7,
+`checkMarketAdoption` 5/5, `checkMarketPersistence` 3/3 — **261 assertions**,
+`tsc` and `vite build` clean, and a full season simulated end to end in headless
+Chrome with a clean console.
+
+**What I did not fix.** `PreviousDateScoreStrip`'s `measure` (0.8%) is a layout
+effect that runs on resize, not a loop, so it is left alone. React's dev-mode JSX
+runtime is ~4% of samples and disappears in a production build — worth knowing,
+not worth touching. Roughly 70% of samples are `(native)`, which is GC and layout
+under a development build; that is the next thing to measure, but it needs a
+production build to be worth doing and that was outside the budget.
+
 ## Season archive (History page): the honour list is now a solid club band
 
 The last screen still carrying the old tile treatment. Four changes, all on
