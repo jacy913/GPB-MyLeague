@@ -4,6 +4,7 @@ import type { GameParticipantBatter, GameParticipantPitcher, PlayLogEvent } from
 import { fmtAvg, fmtEra, fmtWhip } from '../../logic/statFormatting';
 import { Panel, RetroButton } from '../ui';
 import { CountTile } from './shared';
+import { Thermometer } from './Thermometer';
 
 export const PlayLog: React.FC<{
   logs: PlayLogEvent[];
@@ -157,12 +158,17 @@ export const GameClock: React.FC<{
   windowLabel: string;
   statusLabel: string;
   isBroadcasting: boolean;
-}> = ({ date, scheduledTime, simTime, windowLabel, statusLabel, isBroadcasting }) => (
+  /**
+   * The field-weather temperature in Fahrenheit, or null when the home club has no park profile.
+   * Absent is a real state, not a loading one -- a parkless game has no field to report weather for.
+   */
+  temperatureF?: number | null;
+}> = ({ date, scheduledTime, simTime, windowLabel, statusLabel, isBroadcasting, temperatureF }) => (
   <div className="flex flex-wrap items-start justify-between gap-3">
     <div className="min-w-0">
       <p className="t-caption text-[var(--color-ink-faint)]">{date}</p>
       <h1 className="t-h1 mt-1">{statusLabel}</h1>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
         <CountTile label="FIRST PITCH">
           <span className="flex items-center gap-1.5 t-stat-sm">
             <Clock3 className="h-3.5 w-3.5 text-[var(--color-gold)]" aria-hidden="true" />
@@ -171,6 +177,9 @@ export const GameClock: React.FC<{
         </CountTile>
         <CountTile label="SIM CLOCK"><span className="t-stat-sm">{simTime}</span></CountTile>
         <CountTile label="WINDOW"><span className="t-stat-sm">{windowLabel}</span></CountTile>
+        <CountTile label="FIELD WEATHER" className="sm:col-span-2">
+          {temperatureF == null ? <span className="t-stat-sm">—</span> : <Thermometer valueF={temperatureF} />}
+        </CountTile>
       </div>
     </div>
     <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] px-4 py-3 text-right">

@@ -4,6 +4,8 @@ import {
   SeasonHistoryAwardWinner,
   SeasonHistoryDivisionWinner,
   SeasonHistoryEntry,
+  SeasonHistoryStaffWinner,
+  SeasonHistoryTeamRecord,
   Team,
 } from '../types';
 import { Panel, RetroButton, TeamLogo } from './ui';
@@ -126,6 +128,31 @@ const DivisionWinnerTile: React.FC<{ winner: SeasonHistoryDivisionWinner; winner
   </Panel>
 );
 
+const StaffWinnerPanel: React.FC<{ winner: SeasonHistoryStaffWinner | null; team: Team | null }> = ({ winner, team }) => (
+  <Panel variant="sunken" className="p-3">
+    <p className="t-caption text-[var(--color-ink-faint)]">Staff of the Year</p>
+    {winner ? (
+      <div className="mt-2 flex items-center gap-3">
+        {team
+          ? <TeamLogo team={team} sizeClass="h-20 w-20" />
+          : <span className="h-20 w-20 border border-dashed border-[var(--color-chrome-lo)]" aria-hidden="true" />}
+        <div className="min-w-0">
+          <p className="t-h2 truncate">{winner.teamCity}</p>
+          <p className="t-caption truncate text-[var(--color-ink-dim)]">{winner.teamName}</p>
+          <p className="t-caption mt-1 text-[var(--color-platinum)]">
+            {winner.wins}-{winner.losses} | {winner.expectedWins.toFixed(1)} expected | {winner.winsAboveExpectation >= 0 ? '+' : ''}{winner.winsAboveExpectation.toFixed(1)} over expectation
+          </p>
+          <p className="t-caption text-[var(--color-ink-faint)]">
+            Roster {winner.rosterStrength.toFixed(1)} OVR | prior {winner.priorWins} wins
+          </p>
+        </div>
+      </div>
+    ) : (
+      <p className="mt-2 t-caption text-[var(--color-ink-faint)]">Not available in this archive</p>
+    )}
+  </Panel>
+);
+
 export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) => {
   const teamsById = useMemo(() => new Map<string, Team>(teams.map((team) => [team.id, team] as const)), [teams]);
   const orderedHistory = useMemo(
@@ -161,6 +188,12 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
   const battingMvpTeam = resolveTeamFromWinner(entry.battingMvp, teamsById);
   const pitchingMvpTeam = resolveTeamFromWinner(entry.pitchingMvp, teamsById);
   const worldSeriesMvpTeam = resolveTeamFromWinner(entry.worldSeriesMvp, teamsById);
+  const ultimateSluggerTeam = resolveTeamFromWinner(entry.ultimateSlugger ?? null, teamsById);
+  const battingKingTeam = resolveTeamFromWinner(entry.battingKing ?? null, teamsById);
+  const rookieOfTheYearTeam = resolveTeamFromWinner(entry.rookieOfTheYear ?? null, teamsById);
+  const staffOfTheYearTeam = entry.staffOfTheYear
+    ? (teamsById.get(entry.staffOfTheYear.teamId) ?? buildFallbackTeam(entry.staffOfTheYear.teamId, entry.staffOfTheYear.teamCity, entry.staffOfTheYear.teamName))
+    : null;
 
   return (
     <section className="space-y-4">
@@ -224,8 +257,26 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
         <Panel className="p-4 md:p-5">
           <div className="flex items-center gap-2">
             <Trophy className="h-4 w-4 text-[var(--color-platinum)]" aria-hidden="true" />
-            <h2 className="t-label">Division Winners</h2>
+            <h2 className="t-label">Team Honors</h2>
           </div>
+          {entry.leagueWinners && entry.leagueWinners.length > 0 && (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {entry.leagueWinners.map((winner: SeasonHistoryTeamRecord & { league: Team['league'] }) => (
+                <Panel key={`${entry.seasonYear}-league-${winner.league}`} variant="sunken" className="flex items-center gap-3 p-3">
+                  <TeamLogo
+                    team={teamsById.get(winner.teamId) ?? buildFallbackTeam(winner.teamId, winner.teamCity, winner.teamName)}
+                    sizeClass="h-16 w-16"
+                  />
+                  <div className="min-w-0">
+                    <p className="t-caption text-[var(--color-ink-faint)]">{winner.league} Champion</p>
+                    <p className="t-h3 truncate">{winner.teamCity}</p>
+                    <p className="t-caption text-[var(--color-platinum)]">{winner.wins}-{winner.losses}</p>
+                  </div>
+                </Panel>
+              ))}
+            </div>
+          )}
+          <p className="mt-4 t-caption text-[var(--color-ink-faint)]">Division Winners</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {entry.divisionWinners.map((winner) => (
               <DivisionWinnerTile
@@ -235,9 +286,16 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
               />
             ))}
           </div>
+          <div className="mt-3">
+            <StaffWinnerPanel winner={entry.staffOfTheYear ?? null} team={staffOfTheYearTeam} />
+          </div>
         </Panel>
       </div>
 
+      <Panel variant="sunken" className="p-3">
+        <h2 className="t-label">Player Awards</h2>
+        <p className="t-caption mt-1 text-[var(--color-ink-faint)]">Regular-season honors and postseason performance</p>
+      </Panel>
       <div className="grid gap-4 lg:grid-cols-3">
         <AwardTile
           title="Batting MVP"
@@ -246,6 +304,30 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
           winnerTeam={battingMvpTeam}
           imageSrc={mvpBeltImage}
           imageAlt="MVP belt"
+        />
+        <AwardTile
+          title="Ultimate Slugger"
+          subtitle="Regular Season"
+          winner={entry.ultimateSlugger ?? null}
+          winnerTeam={ultimateSluggerTeam}
+          imageSrc={mvpBeltImage}
+          imageAlt="Batting award belt"
+        />
+        <AwardTile
+          title="Batting King"
+          subtitle="Regular Season"
+          winner={entry.battingKing ?? null}
+          winnerTeam={battingKingTeam}
+          imageSrc={mvpBeltImage}
+          imageAlt="Batting award belt"
+        />
+        <AwardTile
+          title="Rookie of the Year"
+          subtitle="Regular Season · Batter and Pitcher field"
+          winner={entry.rookieOfTheYear ?? null}
+          winnerTeam={rookieOfTheYearTeam}
+          imageSrc={trophyImage}
+          imageAlt="Rookie of the Year trophy"
         />
         <AwardTile
           title="Pitching MVP"

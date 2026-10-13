@@ -29,6 +29,7 @@ import { ParkPanel } from './game/ParkPanel';
 import { parkProfile } from '../lib/analytics/parkProfile';
 import { attendanceFor, formatCrowd, stadiumCapacityFor } from '../lib/analytics/crowdSize';
 import { gameLineFor } from '../lib/analytics/boxScoreLine';
+import { formatTemperatureF, gameTemperatureF } from '../lib/gameTemperature';
 import { reconstructPlayerGameLines } from '../lib/playerProps';
 import { isPlayoffGame } from '../logic/playoffs';
 
@@ -296,6 +297,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const displayHomeErrors = displaySession.scoreboard.homeErrors;
   const scheduledTimeLabel = useMemo(() => getScheduledGameTimeLabel(game, games), [game, games]);
   const currentSimTimeLabel = useMemo(() => getCurrentSimTimeLabel(games, currentDate), [games, currentDate]);
+  /*
+    THE GAME-TIME TEMPERATURE, computed rather than stored.
+
+    It is a pure function of the home park, the date and the game id, so the same game reads the
+    same number whether it is pregame, finished, or a year old in the archive -- and a future
+    ranking bucketed on temperature reproduces itself instead of depending on a saved value.
+  */
+  const gameTempF = useMemo(
+    () => gameTemperatureF(game.homeTeam, game.date, game.gameId),
+    [game.homeTeam, game.date, game.gameId],
+  );
   const gameWindowStatus = useMemo(() => getGameWindowStatus(game, games, currentDate), [game, games, currentDate]);
   const statusLabel =
     displaySession.status === 'completed'
@@ -534,6 +546,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             windowLabel={gameWindowLabel}
             statusLabel={statusLabel}
             isBroadcasting={isBroadcasting}
+            temperatureF={gameTempF}
           />
 
           {activeSession.participants && (
@@ -663,7 +676,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               <p className="border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-3 py-2 t-caption text-[var(--color-ink-dim)]">
                 {isBroadcasting
                   ? `Broadcast finishing. ${visibleLogs.length}/${logs.length} plays on screen.`
-                  : `Game complete. Final score ${displayAwayRuns}-${displayHomeRuns}.`}
+                  : `Game complete. Final score ${displayAwayRuns}-${displayHomeRuns}.${gameTempF == null ? '' : ` Field weather ${formatTemperatureF(gameTempF)}.`}`}
               </p>
             )}
           </div>

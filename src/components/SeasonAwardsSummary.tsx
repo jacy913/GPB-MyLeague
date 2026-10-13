@@ -8,6 +8,7 @@ import type {
   SeasonHistoryAwardWinner,
   SeasonHistoryDivisionWinner,
   SeasonHistoryLeagueWinner,
+  SeasonHistoryStaffWinner,
   SeasonHistoryTeamRecord,
   Team,
 } from '../types';
@@ -74,6 +75,10 @@ export interface SeasonAwardsSummaryState {
   divisionWinners: SeasonHistoryDivisionWinner[];
   battingCandidates: SeasonHistoryAwardWinner[];
   pitchingCandidates: SeasonHistoryAwardWinner[];
+  ultimateSlugger: SeasonHistoryAwardWinner | null;
+  battingKing: SeasonHistoryAwardWinner | null;
+  rookieOfTheYear: SeasonHistoryAwardWinner | null;
+  staffOfTheYear: SeasonHistoryStaffWinner | null;
   worldSeriesCandidates: SeasonHistoryAwardWinner[];
   worldSeriesCompletedGames: number;
   worldSeriesStartDate: string;
@@ -261,6 +266,36 @@ export const SeasonAwardsSummary: React.FC<SeasonAwardsSummaryProps> = ({
           candidates={selection.pitchingCandidates}
           resolveTeam={resolveAwardCandidateTeam}
         />
+        <AwardResult
+          title="Ultimate Slugger"
+          eyebrow="Regular Season"
+          candidates={selection.ultimateSlugger ? [selection.ultimateSlugger] : []}
+          resolveTeam={resolveAwardCandidateTeam}
+        />
+        <AwardResult
+          title="Batting King"
+          eyebrow="Regular Season"
+          candidates={selection.battingKing ? [selection.battingKing] : []}
+          resolveTeam={resolveAwardCandidateTeam}
+        />
+        <AwardResult
+          title="Rookie of the Year"
+          eyebrow="Regular Season"
+          candidates={selection.rookieOfTheYear ? [selection.rookieOfTheYear] : []}
+          resolveTeam={resolveAwardCandidateTeam}
+        />
+        {selection.staffOfTheYear && (
+          <Panel variant="sunken" className="p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="t-label text-[var(--color-gold-hi)]">Staff of the Year</span>
+              <span className="t-caption text-[var(--color-ink-faint)]">Regular Season</span>
+            </div>
+            <p className="mt-2 t-h3">{selection.staffOfTheYear.teamCity} {selection.staffOfTheYear.teamName}</p>
+            <p className="mt-1 t-caption text-[var(--color-ink-dim)]">
+              {selection.staffOfTheYear.wins}-{selection.staffOfTheYear.losses} record | {selection.staffOfTheYear.expectedWins.toFixed(1)} expected wins | {selection.staffOfTheYear.winsAboveExpectation >= 0 ? '+' : ''}{selection.staffOfTheYear.winsAboveExpectation.toFixed(1)} over expectation
+            </p>
+          </Panel>
+        )}
         <AwardResult
           title="World Series MVP"
           eyebrow="World Series"

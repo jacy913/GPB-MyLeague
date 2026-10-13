@@ -1,5 +1,6 @@
 import { Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type SeasonAwardsSummaryState } from '../components/SeasonAwardsSummary';
+import { SEASON_AWARDS_VERSION } from '../lib/seasonAwards';
 import {
   Game,
   LeaguePlayerState,
@@ -7,6 +8,7 @@ import {
   SeasonHistoryDivisionWinner,
   SeasonHistoryEntry,
   SeasonHistoryLeagueWinner,
+  SeasonHistoryStaffWinner,
   SeasonHistoryTeamRecord,
   Team,
 } from '../types';
@@ -69,6 +71,11 @@ interface UseSeasonLifecycleArgs {
     seasonYear: number,
     limit?: number,
   ) => SeasonHistoryAwardWinner[];
+  computeUltimateSlugger: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
+  computeBattingKing: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
+  computeRookieOfTheYear: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
+  computeStaffOfTheYear: (teams: Team[], games: Game[], homeFieldAdvantage: number) => SeasonHistoryStaffWinner | null;
+  homeFieldAdvantage: number;
   computeWorldSeriesMvpCandidates: (
     teams: Team[],
     games: Game[],
@@ -119,6 +126,11 @@ export const useSeasonLifecycle = ({
   computeBattingMvpCandidates,
   computeLeagueChampionsSnapshot,
   computePitchingMvpCandidates,
+  computeUltimateSlugger,
+  computeBattingKing,
+  computeRookieOfTheYear,
+  computeStaffOfTheYear,
+  homeFieldAdvantage,
   computeWorldSeriesMvpCandidates,
   onOpenDraftView,
   onOpenFreeAgencyView,
@@ -201,6 +213,10 @@ export const useSeasonLifecycle = ({
       divisionWinners,
       battingCandidates,
       pitchingCandidates,
+      ultimateSlugger: computeUltimateSlugger(teams, playerState, seasonYear),
+      battingKing: computeBattingKing(teams, playerState, seasonYear),
+      rookieOfTheYear: computeRookieOfTheYear(teams, playerState, seasonYear),
+      staffOfTheYear: computeStaffOfTheYear(teams, games, homeFieldAdvantage),
       worldSeriesCandidates: worldSeriesBundle.candidates,
       worldSeriesCompletedGames: worldSeriesBundle.completedGames,
       worldSeriesStartDate: worldSeriesBundle.startDate,
@@ -211,9 +227,14 @@ export const useSeasonLifecycle = ({
     computeDivisionWinnersSnapshot,
     computeLeagueChampionsSnapshot,
     computePitchingMvpCandidates,
+    computeUltimateSlugger,
+    computeBattingKing,
+    computeRookieOfTheYear,
+    computeStaffOfTheYear,
     computeWorldSeriesMvpCandidates,
     currentDate,
     games,
+    homeFieldAdvantage,
     playerState,
     resolveSeasonYear,
     teams,
@@ -257,6 +278,11 @@ export const useSeasonLifecycle = ({
       battingMvp: pickWinner(selection.battingCandidates),
       pitchingMvp: pickWinner(selection.pitchingCandidates),
       worldSeriesMvp: pickWinner(selection.worldSeriesCandidates),
+      ultimateSlugger: selection.ultimateSlugger,
+      battingKing: selection.battingKing,
+      rookieOfTheYear: selection.rookieOfTheYear,
+      staffOfTheYear: selection.staffOfTheYear,
+      awardsVersion: SEASON_AWARDS_VERSION,
     };
 
     setSeasonHistory((current) => {
@@ -315,8 +341,37 @@ export const useSeasonLifecycle = ({
           battingMvp: existing.battingMvp ?? snapshot.battingMvp,
           pitchingMvp: existing.pitchingMvp ?? snapshot.pitchingMvp,
           worldSeriesMvp: existing.worldSeriesMvp ?? snapshot.worldSeriesMvp,
+          ultimateSlugger: existing.ultimateSlugger ?? snapshot.ultimateSlugger,
+          battingKing: existing.battingKing ?? snapshot.battingKing,
+          rookieOfTheYear: existing.rookieOfTheYear ?? snapshot.rookieOfTheYear,
+          staffOfTheYear: existing.staffOfTheYear ?? snapshot.staffOfTheYear,
+          awardsVersion: Math.max(existing.awardsVersion ?? 0, snapshot.awardsVersion ?? SEASON_AWARDS_VERSION),
         };
-        if (repaired === existing) {
+        /*
+         * REFERENCE EQUALITY IS CONTENT EQUALITY HERE, FIELD BY FIELD.
+         *
+         * `repaired` is built with `existing.X ?? snapshot.X` and `existing.X.length > 0 ? existing.X
+         * : snapshot.X`, so every field that did not need filling is carried over BY REFERENCE. That
+         * makes a plain object comparison useless (`repaired === existing` is false no matter what)
+         * while the per-field `===` below is exact: it is true iff the repair filled nothing.
+         *
+         * This mattered because the archive runs again on every reload of a completed season. Without
+         * it, a fully-repaired entry still took the repair branch and announced "awards repaired"
+         * every single load.
+         */
+        const repairedFilledNothing =
+          repaired.champion === existing.champion
+          && repaired.leagueWinners === existing.leagueWinners
+          && repaired.divisionWinners === existing.divisionWinners
+          && repaired.battingMvp === existing.battingMvp
+          && repaired.pitchingMvp === existing.pitchingMvp
+          && repaired.worldSeriesMvp === existing.worldSeriesMvp
+          && repaired.ultimateSlugger === existing.ultimateSlugger
+          && repaired.battingKing === existing.battingKing
+          && repaired.rookieOfTheYear === existing.rookieOfTheYear
+          && repaired.staffOfTheYear === existing.staffOfTheYear
+          && repaired.awardsVersion === existing.awardsVersion;
+        if (repairedFilledNothing) {
           return current;
         }
         const next = [...current];

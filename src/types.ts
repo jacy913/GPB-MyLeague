@@ -34,6 +34,16 @@ export type AppView =
   | 'power_rankings'
   | 'leaders'
   /**
+   * The eight booth boards: what the numbers do not say.
+   *
+   * A nav leaf between Leaders and Awards, because it is a ranked reading of the
+   * league like both of them -- under Leaders because it ranks, above Awards
+   * because it is not a season honour. Unlike the Leaders tables it does not claim
+   * to be complete, so it carries a byline: each board is one observer's cut at a
+   * question the box score only partly answers.
+   */
+  | 'booth_metrics'
+  /**
    * The visual half of the Leaders screen.
    *
    * A separate view rather than a third control inside `leaders`, because that screen
@@ -581,14 +591,28 @@ export interface SeasonHistoryAwardWinner {
   summary: string;
 }
 
+export interface SeasonHistoryStaffWinner extends SeasonHistoryTeamRecord {
+  expectedWins: number;
+  winsAboveExpectation: number;
+  rosterStrength: number;
+  priorWins: number;
+}
+
 export interface SeasonHistoryEntry {
   seasonYear: number;
   completedAt: string;
+  /** Version of the complete award set written for this season; absent on older archives. */
+  awardsVersion?: number;
   champion: SeasonHistoryTeamRecord | null;
   worldSeriesMvp: SeasonHistoryAwardWinner | null;
   battingMvp: SeasonHistoryAwardWinner | null;
   pitchingMvp: SeasonHistoryAwardWinner | null;
   divisionWinners: SeasonHistoryDivisionWinner[];
+  /** Added after the original archive format; absent values identify older saved seasons. */
+  ultimateSlugger?: SeasonHistoryAwardWinner | null;
+  battingKing?: SeasonHistoryAwardWinner | null;
+  rookieOfTheYear?: SeasonHistoryAwardWinner | null;
+  staffOfTheYear?: SeasonHistoryStaffWinner | null;
   /**
    * League champions, one per league, from the league championship SERIES.
    *

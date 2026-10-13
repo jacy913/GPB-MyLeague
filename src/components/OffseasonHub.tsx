@@ -51,7 +51,7 @@ interface OffseasonHubProps {
 }
 
 const steps: Array<{ key: OffseasonChecklistStage; title: string; description: string }> = [
-  { key: 'awards', title: 'Season Awards', description: 'Select Batting MVP, Pitching MVP, and World Series MVP.' },
+  { key: 'awards', title: 'Season Awards', description: 'Review the batting and pitching MVPs decided from the regular-season stats.' },
   { key: 'retirements', title: 'Player Retirements', description: 'Age the league, then see who played their last season.' },
   { key: 'draft_lottery', title: 'Draft Lottery', description: 'Lock the rookie draft order.' },
   { key: 'draft', title: 'Rookie Draft', description: 'Make picks manually or quick-sim the class.' },

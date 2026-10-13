@@ -231,10 +231,7 @@ const runSimulation = async (startPayload: SimulationWorkerStartPayload) => {
       });
 
       const result = await manager.run(stepTarget);
-      const complete = result.games.every((game) => game.status === 'completed');
-      const finalizedTeams = complete
-        ? result.teams.map((team) => ({ ...team, previousBaselineWins: team.wins }))
-        : result.teams;
+      const finalizedTeams = result.teams;
 
       working.teams = finalizedTeams;
       working.games = result.games;

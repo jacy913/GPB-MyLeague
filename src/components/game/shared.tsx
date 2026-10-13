@@ -138,8 +138,8 @@ export const SidePanel: React.FC<{
   </Panel>
 );
 
-export const CountTile: React.FC<{ label: string; children: React.ReactNode; accent?: boolean }> = ({ label, children, accent }) => (
-  <div className="border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] px-3 py-2">
+export const CountTile: React.FC<{ label: string; children: React.ReactNode; accent?: boolean; className?: string }> = ({ label, children, accent, className }) => (
+  <div className={`border border-[var(--color-chrome-lo)] bg-[var(--color-base-2)] px-3 py-2${className ? ` ${className}` : ''}`}>
     <p className="t-caption text-[var(--color-ink-faint)]">{label}</p>
     <div className="mt-1">{accent ? <StatValue size="sm" variant="accent">{children}</StatValue> : children}</div>
   </div>
