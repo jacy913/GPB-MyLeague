@@ -1,14 +1,19 @@
 import type {
   Game,
   LeaguePlayerState,
+  Player,
+  PlayerSeasonBatting,
   SeasonHistoryAwardWinner,
   SeasonHistoryStaffWinner,
   Team,
 } from '../types';
 import {
+  AWARD_FIELD_SIZE,
   buildAwardsForBoard,
+  type AwardCandidate,
   type AwardEntry,
   type AwardInputs,
+  type MvpComponent,
 } from './awardRace';
 import { getBattingRatingsAsOfSeason, getPitchingRatingsAsOfSeason } from '../logic/playerStats';
 import { isRegularSeasonGame } from '../logic/playoffs';
@@ -35,36 +40,342 @@ const getOnBasePercentage = (stat: LeaguePlayerState['battingStats'][number]): n
 const compareName = (left: { firstName: string; lastName: string; playerId: string }, right: { firstName: string; lastName: string; playerId: string }): number =>
   `${left.firstName} ${left.lastName}`.localeCompare(`${right.firstName} ${right.lastName}`) || left.playerId.localeCompare(right.playerId);
 
+/**
+ * THE SEASON-END AWARDS AS LIVE RACES.
+ *
+ * Each of these was a single winner computed at the end of the season, so the awards page could show
+ * two races and quietly imply that those two were the only ones. They are not: the season ends with
+ * six honours, and the other four were invisible for the whole season and then appeared.
+ *
+ * THE RANKED FIELD IS THE SOURCE OF TRUTH AND THE WINNER IS `[0]`. That direction is the whole point
+ * and it mirrors what `buildAwardsForBoard` already does for the MVP races. A manager watching the
+ * Ultimate Slugger race all September and seeing one player lead it has to be able to assume that
+ * player is the one the archive will name in October, and the only way to make that assumption safe
+ * is to make it structurally true: the archive reads `ranked[0]` off the same array the page renders.
+ * Re-deriving the winner with a second comparator is how those two drift apart, and the drift is
+ * invisible -- both halves look correct and they disagree.
+ */
+export type SeasonAwardBoard =
+  | 'ultimate_slugger'
+  | 'batting_king'
+  | 'strikeout_king'
+  | 'rookie_of_the_year';
+
+export interface SeasonAwardRaceSpec {
+  board: SeasonAwardBoard;
+  title: string;
+  /** What `AwardEntry.total` IS for this award -- its own primary metric, not model points. */
+  marginUnit: string;
+  /**
+   * The same metric as a plural NOUN, for the sentence on the card.
+   *
+   * Two fields because two grammars are needed. The unit labels the number in a column, where "HR"
+   * and "K" are correct abbreviations; the noun has to read inside a sentence, where "leads by 2
+   * home runs" works and "leads by 2 HR" does not, and where composing the noun from the unit
+   * produced the literal "are level on K K" the first time this was written.
+   */
+  marginNoun: string;
+  /** Printed under the leader's margin, because "leads by 3" means different units per award. */
+  marginDecimals: number;
+  /** The ordering, stated on the card, so the tie-breaks are not folklore. */
+  note: string;
+  /**
+   * The FIRST tie-break, named.
+   *
+   * These awards rank lexicographically, so the top two are routinely dead level on the primary
+   * metric and the race is decided underneath it. A panel that then prints "leads by 0 K" is stating
+   * the most interesting fact on it in a way that reads as a broken number, so the first tie-break is
+   * carried here to be named when the margin is level.
+   */
+  tieBreakLabel: string;
+}
+
+export const SEASON_AWARD_RACES: readonly SeasonAwardRaceSpec[] = [
+  {
+    board: 'ultimate_slugger',
+    title: 'Ultimate Slugger',
+    marginUnit: 'HR',
+    marginNoun: 'home runs',
+    marginDecimals: 0,
+    note: 'Most home runs. Ties go to the better slugging percentage, then to the name.',
+    tieBreakLabel: 'slugging',
+  },
+  {
+    board: 'batting_king',
+    title: 'Batting King',
+    marginUnit: 'AVG',
+    marginNoun: 'batting average',
+    marginDecimals: 3,
+    note: 'Highest batting average. Ties go to more hits, then to the better on-base percentage.',
+    tieBreakLabel: 'hits',
+  },
+  {
+    board: 'strikeout_king',
+    title: 'Strikeout King',
+    marginUnit: 'K',
+    marginNoun: 'strikeouts',
+    marginDecimals: 0,
+    note: 'Most strikeouts. Ties go to the better K/9, then the better strikeout-to-walk ratio.',
+    tieBreakLabel: 'K/9',
+  },
+  {
+    board: 'rookie_of_the_year',
+    title: 'Rookie of the Year',
+    marginUnit: 'z',
+    marginNoun: 'role score',
+    marginDecimals: 2,
+    note: 'Best role-standard score among first-year players, batters and pitchers in one race.',
+    tieBreakLabel: 'the alphabetical order of their names',
+  },
+];
+
+/**
+ * Season-scoped `AwardInputs`, so the archive and the page rank the SAME season.
+ *
+ * The MVP races already assume this: `getPreferred*StatsByPlayerId` scopes to the newest season, and
+ * the archive filters by `seasonYear`. Sharing one builder here means a new award cannot accidentally
+ * rank all seasons at once while its neighbours rank one.
+ */
+const awardInputsFor = (
+  teams: Team[],
+  playerState: LeaguePlayerState,
+  seasonYear: number,
+): AwardInputs => {
+  const teamsById = new Map(teams.map((team) => [team.id, team]));
+  const scoped = <T extends { seasonYear: number; seasonPhase: string }>(rows: T[]) =>
+    new Map(
+      rows
+        .filter((row) => row.seasonYear === seasonYear && row.seasonPhase === 'regular_season')
+        .map((row) => [((row as unknown as { playerId: string }).playerId), row] as const),
+    );
+  return {
+    players: playerState.players,
+    teamsById,
+    battingStats: scoped(playerState.battingStats),
+    pitchingStats: scoped(playerState.pitchingStats),
+    battingRatings: getBattingRatingsAsOfSeason(playerState.battingRatings, seasonYear),
+    pitchingRatings: getPitchingRatingsAsOfSeason(playerState.pitchingRatings, seasonYear),
+  };
+};
+
+/**
+ * `total` for these races is the award's own primary metric, and `components` are its ranking
+ * factors with a ZERO contribution.
+ *
+ * NOT a fabricated weighting. The MVP races sum weighted contributions because that is genuinely how
+ * their scores are built; these awards rank lexicographically -- home runs first, slugging only to
+ * break a tie -- so a weighted sum would be a DIFFERENT award that merely looks similar. Printing
+ * "+38.0 of the 38.0 points" beside a home-run chip would be a made-up number, so the contribution
+ * is zero and `ScoreBreakdown` shows the statistic alone when it sees one.
+ *
+ * The `total` is still meaningful: it is the number the award is won on, which is what makes "leads
+ * by 3" read as "leads by three home runs" rather than as an unexplained gap.
+ */
+const factor = (label: string, detail: string): MvpComponent => ({ label, detail, contribution: 0 });
+
+/** The eligibility gate every one of these shares: a real season's line, on a real club. */
+const qualifiedBatter = (player: Player, stat: PlayerSeasonBatting | undefined, team: Team | undefined) =>
+  player.playerType === 'batter' && stat && stat.atBats >= AWARD_MIN_BATTING_AT_BATS && team
+    ? { player, stat, team }
+    : null;
+
+export const rankUltimateSlugger = (
+  inputs: AwardInputs,
+  take: number = AWARD_FIELD_SIZE,
+): AwardEntry[] => {
+  const { players, teamsById, battingStats } = inputs;
+  const candidates = players.flatMap((player) => {
+    const stat = battingStats.get(player.playerId);
+    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
+    const ok = qualifiedBatter(player, stat, team);
+    return ok ? [{ player, stat: ok.stat, team: ok.team }] : [];
+  });
+
+  const ranked = candidates
+    .sort((left, right) =>
+      right.stat.homeRuns - left.stat.homeRuns ||
+      getSluggingPercentage(right.stat) - getSluggingPercentage(left.stat) ||
+      compareName(left.player, right.player))
+    .map<RankableCandidate>(({ player, stat, team }) => ({
+      playerId: player.playerId,
+      name: `${player.firstName} ${player.lastName}`,
+      team,
+      total: stat.homeRuns,
+      components: [
+        factor('HR', String(stat.homeRuns)),
+        factor('SLG', getSluggingPercentage(stat).toFixed(3)),
+        factor('AB', String(stat.atBats)),
+      ],
+    }));
+
+  return finalizeRace(ranked, take);
+};
+
+export const rankBattingKing = (
+  inputs: AwardInputs,
+  take: number = AWARD_FIELD_SIZE,
+): AwardEntry[] => {
+  const { players, teamsById, battingStats } = inputs;
+  const candidates = players.flatMap((player) => {
+    const stat = battingStats.get(player.playerId);
+    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
+    const ok = qualifiedBatter(player, stat, team);
+    return ok ? [{ player, stat: ok.stat, team: ok.team }] : [];
+  });
+
+  const ranked = candidates
+    .sort((left, right) =>
+      (right.stat.hits / right.stat.atBats) - (left.stat.hits / left.stat.atBats) ||
+      right.stat.hits - left.stat.hits ||
+      getOnBasePercentage(right.stat) - getOnBasePercentage(left.stat) ||
+      compareName(left.player, right.player))
+    .map<RankableCandidate>(({ player, stat, team }) => ({
+      playerId: player.playerId,
+      name: `${player.firstName} ${player.lastName}`,
+      team,
+      total: stat.hits / stat.atBats,
+      components: [
+        factor('AVG', (stat.hits / stat.atBats).toFixed(3)),
+        factor('H', String(stat.hits)),
+        factor('OBP', getOnBasePercentage(stat).toFixed(3)),
+      ],
+    }));
+
+  return finalizeRace(ranked, take);
+};
+
+export const rankStrikeoutKing = (
+  inputs: AwardInputs,
+  take: number = AWARD_FIELD_SIZE,
+): AwardEntry[] => {
+  const { players, teamsById, pitchingStats } = inputs;
+  const candidates = players.flatMap((player) => {
+    const stat = pitchingStats.get(player.playerId);
+    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
+    // No innings floor, by instruction. The `strikeouts > 0` half is what makes that safe: without
+    // it, a season in which nobody pitched still produces candidates and `candidates[0]` names somebody.
+    if (player.playerType !== 'pitcher' || !stat || !team || stat.strikeouts <= 0) return [];
+    return [{ player, stat, team }];
+  });
+
+  const ranked = candidates
+    .sort((left, right) =>
+      right.stat.strikeouts - left.stat.strikeouts ||
+      getStrikeoutsPerNine(right.stat) - getStrikeoutsPerNine(left.stat) ||
+      getStrikeoutWalkRatio(right.stat) - getStrikeoutWalkRatio(left.stat) ||
+      compareName(left.player, right.player))
+    .map<RankableCandidate>(({ player, stat, team }) => ({
+      playerId: player.playerId,
+      name: `${player.firstName} ${player.lastName}`,
+      team,
+      total: stat.strikeouts,
+      components: [
+        factor('K', String(stat.strikeouts)),
+        factor('K/9', getStrikeoutsPerNine(stat).toFixed(2)),
+        factor('BB', String(stat.walks)),
+      ],
+    }));
+
+  return finalizeRace(ranked, take);
+};
+
+export const rankRookieOfTheYear = (
+  inputs: AwardInputs,
+  take: number = AWARD_FIELD_SIZE,
+): AwardEntry[] => {
+  const { players, teamsById } = inputs;
+  const battingField = buildRoleAwardEntries('batting', inputs);
+  const pitchingField = buildRoleAwardEntries('pitching', inputs);
+  const battingZ = zScoresByPlayerId(battingField);
+  const pitchingZ = zScoresByPlayerId(pitchingField);
+  const entriesByPlayerId = new Map(
+    [...battingField, ...pitchingField].map((entry) => [entry.playerId, entry] as const),
+  );
+
+  const candidates = players.flatMap((player) => {
+    const isRookie = player.status !== 'retired' && player.yearsPro === 0 && player.draftRound !== null;
+    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
+    const entry = entriesByPlayerId.get(player.playerId);
+    if (!isRookie || !team || !entry) return [];
+    const zScore = (player.playerType === 'pitcher' ? pitchingZ : battingZ).get(player.playerId) ?? 0;
+    return [{ player, entry, team, zScore }];
+  });
+
+  const ranked = candidates
+    .sort((left, right) =>
+      right.zScore - left.zScore ||
+      left.entry.name.localeCompare(right.entry.name) ||
+      left.player.playerId.localeCompare(right.player.playerId))
+    .map<RankableCandidate>(({ player, entry, team, zScore }) => ({
+      playerId: player.playerId,
+      name: entry.name,
+      team,
+      total: zScore,
+      // The MVP components are kept because they are how the role score was built, and the z-score
+      // that actually decides the race is appended so the reader can see the number being compared.
+      components: [...entry.components, factor('ROLE z', zScore.toFixed(2))],
+    }));
+
+  return finalizeRace(ranked, take);
+};
+
+/**
+ * The four season-end races, keyed. One switch so a surface cannot name a board that has no builder.
+ */
+export const rankSeasonAwardRace = (
+  board: SeasonAwardBoard,
+  inputs: AwardInputs,
+  take: number = AWARD_FIELD_SIZE,
+): AwardEntry[] => {
+  if (board === 'ultimate_slugger') return rankUltimateSlugger(inputs, take);
+  if (board === 'batting_king') return rankBattingKing(inputs, take);
+  if (board === 'strikeout_king') return rankStrikeoutKing(inputs, take);
+  return rankRookieOfTheYear(inputs, take);
+};
+
+/**
+ * A candidate plus THE NUMBER THIS AWARD IS WON ON, which is not model points.
+ *
+ * Mirrors `buildAwards`' odds arithmetic so the two rank the same way, with one difference: the MVP
+ * races sum weighted contributions because a weighted sum is genuinely how their scores are built,
+ * whereas these awards rank lexicographically -- home runs first, slugging only to break a tie -- so a
+ * weighted sum would be a DIFFERENT award that merely looks similar. Printing "+38.0 of the 38.0
+ * points" beside a home-run chip would be a made-up number, so the contribution is zero and the
+ * breakdown shows the statistic alone when it sees one.
+ *
+ * `total` is still the honest number: it is the metric the award is won on, which is what makes "leads
+ * by 3" read as three home runs rather than as an unexplained gap.
+ */
+type RankableCandidate = AwardCandidate & { total: number };
+
+/** Odds over exactly the field returned, so a short field does not silently price over a hidden one. */
+const finalizeRace = (ranked: RankableCandidate[], take: number): AwardEntry[] => {
+  const trimmed = ranked.slice(0, Math.max(1, take));
+  const floored = trimmed.map((entry) => Math.max(0.1, entry.total));
+  const sum = floored.reduce((acc, value) => acc + value, 0);
+  return trimmed.map((entry, index) => ({
+    ...entry,
+    odds: sum > 0 ? Number(((floored[index] / sum) * 100).toFixed(1)) : 0,
+  }));
+};
+
 export const calculateUltimateSlugger = (
   teams: Team[],
   playerState: LeaguePlayerState,
   seasonYear: number,
 ): SeasonHistoryAwardWinner | null => {
-  const teamsById = new Map(teams.map((team) => [team.id, team]));
-  const statsByPlayerId = new Map(
-    playerState.battingStats
-      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season' && stat.atBats >= AWARD_MIN_BATTING_AT_BATS)
-      .map((stat) => [stat.playerId, stat] as const),
-  );
-  const candidates = playerState.players.flatMap((player) => {
-    const stat = statsByPlayerId.get(player.playerId);
-    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
-    return player.playerType === 'batter' && stat && team ? [{ player, stat, team }] : [];
-  });
-  const winner = candidates.sort((left, right) =>
-    right.stat.homeRuns - left.stat.homeRuns ||
-    getSluggingPercentage(right.stat) - getSluggingPercentage(left.stat) ||
-    compareName(left.player, right.player),
-  )[0];
-
-  if (!winner) return null;
+  const inputs = awardInputsFor(teams, playerState, seasonYear);
+  const winner = rankUltimateSlugger(inputs, 1)[0];
+  if (!winner || !winner.team) return null;
+  const stat = inputs.battingStats.get(winner.playerId);
+  if (!stat) return null;
   return {
-    playerId: winner.player.playerId,
-    playerName: `${winner.player.firstName} ${winner.player.lastName}`,
+    playerId: winner.playerId,
+    playerName: winner.name,
     teamId: winner.team.id,
     teamCity: winner.team.city,
     teamName: winner.team.name,
-    summary: `${winner.stat.homeRuns} HR | ${getSluggingPercentage(winner.stat).toFixed(3)} SLG | ${winner.stat.atBats} AB`,
+    summary: `${stat.homeRuns} HR | ${getSluggingPercentage(stat).toFixed(3)} SLG | ${stat.atBats} AB`,
   };
 };
 
@@ -73,32 +384,17 @@ export const calculateBattingKing = (
   playerState: LeaguePlayerState,
   seasonYear: number,
 ): SeasonHistoryAwardWinner | null => {
-  const teamsById = new Map(teams.map((team) => [team.id, team]));
-  const statsByPlayerId = new Map(
-    playerState.battingStats
-      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season' && stat.atBats >= AWARD_MIN_BATTING_AT_BATS)
-      .map((stat) => [stat.playerId, stat] as const),
-  );
-  const candidates = playerState.players.flatMap((player) => {
-    const stat = statsByPlayerId.get(player.playerId);
-    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
-    return player.playerType === 'batter' && stat && team ? [{ player, stat, team }] : [];
-  });
-  const winner = candidates.sort((left, right) =>
-    right.stat.hits / right.stat.atBats - left.stat.hits / left.stat.atBats ||
-    right.stat.hits - left.stat.hits ||
-    getOnBasePercentage(right.stat) - getOnBasePercentage(left.stat) ||
-    compareName(left.player, right.player),
-  )[0];
-
-  if (!winner) return null;
+  const inputs = awardInputsFor(teams, playerState, seasonYear);
+  const winner = rankBattingKing(inputs, 1)[0];
+  const stat = winner ? inputs.battingStats.get(winner.playerId) : undefined;
+  if (!winner || !winner.team || !stat) return null;
   return {
-    playerId: winner.player.playerId,
-    playerName: `${winner.player.firstName} ${winner.player.lastName}`,
+    playerId: winner.playerId,
+    playerName: winner.name,
     teamId: winner.team.id,
     teamCity: winner.team.city,
     teamName: winner.team.name,
-    summary: `${(winner.stat.hits / winner.stat.atBats).toFixed(3)} AVG | ${winner.stat.hits} H | ${getOnBasePercentage(winner.stat).toFixed(3)} OBP`,
+    summary: `${(stat.hits / stat.atBats).toFixed(3)} AVG | ${stat.hits} H | ${getOnBasePercentage(stat).toFixed(3)} OBP`,
   };
 };
 
@@ -160,34 +456,17 @@ export const calculateStrikeoutKing = (
   playerState: LeaguePlayerState,
   seasonYear: number,
 ): SeasonHistoryAwardWinner | null => {
-  const teamsById = new Map(teams.map((team) => [team.id, team]));
-  const statsByPlayerId = new Map(
-    playerState.pitchingStats
-      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
-      .map((stat) => [stat.playerId, stat] as const),
-  );
-  const candidates = playerState.players.flatMap((player) => {
-    const stat = statsByPlayerId.get(player.playerId);
-    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
-    return player.playerType === 'pitcher' && stat && team && stat.strikeouts > 0
-      ? [{ player, stat, team }]
-      : [];
-  });
-  const winner = candidates.sort((left, right) =>
-    right.stat.strikeouts - left.stat.strikeouts ||
-    getStrikeoutsPerNine(right.stat) - getStrikeoutsPerNine(left.stat) ||
-    getStrikeoutWalkRatio(right.stat) - getStrikeoutWalkRatio(left.stat) ||
-    compareName(left.player, right.player),
-  )[0];
-
-  if (!winner) return null;
+  const inputs = awardInputsFor(teams, playerState, seasonYear);
+  const winner = rankStrikeoutKing(inputs, 1)[0];
+  const stat = winner ? inputs.pitchingStats.get(winner.playerId) : undefined;
+  if (!winner || !winner.team || !stat) return null;
   return {
-    playerId: winner.player.playerId,
-    playerName: `${winner.player.firstName} ${winner.player.lastName}`,
+    playerId: winner.playerId,
+    playerName: winner.name,
     teamId: winner.team.id,
     teamCity: winner.team.city,
     teamName: winner.team.name,
-    summary: `${winner.stat.strikeouts} K | ${getStrikeoutsPerNine(winner.stat).toFixed(2)} K/9 | ${formatStrikeoutWalk(winner.stat)}`,
+    summary: `${stat.strikeouts} K | ${getStrikeoutsPerNine(stat).toFixed(2)} K/9 | ${formatStrikeoutWalk(stat)}`,
   };
 };
 
@@ -209,42 +488,19 @@ export const calculateRookieOfTheYear = (
   playerState: LeaguePlayerState,
   seasonYear: number,
 ): SeasonHistoryAwardWinner | null => {
-  const teamsById = new Map(teams.map((team) => [team.id, team]));
-  const battingStats = new Map(
-    playerState.battingStats
-      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
-      .map((stat) => [stat.playerId, stat] as const),
-  );
-  const pitchingStats = new Map(
-    playerState.pitchingStats
-      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
-      .map((stat) => [stat.playerId, stat] as const),
-  );
-  const battingRatings = getBattingRatingsAsOfSeason(playerState.battingRatings, seasonYear);
-  const pitchingRatings = getPitchingRatingsAsOfSeason(playerState.pitchingRatings, seasonYear);
-  const inputs: AwardInputs = { players: playerState.players, teamsById, battingStats, pitchingStats, battingRatings, pitchingRatings };
-  const battingField = buildRoleAwardEntries('batting', inputs);
-  const pitchingField = buildRoleAwardEntries('pitching', inputs);
-  const battingZ = zScoresByPlayerId(battingField);
-  const pitchingZ = zScoresByPlayerId(pitchingField);
-  const entriesByPlayerId = new Map([...battingField, ...pitchingField].map((entry) => [entry.playerId, entry] as const));
-
-  const candidates = playerState.players.flatMap((player) => {
-    const isRookie = player.status !== 'retired' && player.yearsPro === 0 && player.draftRound !== null;
-    if (!isRookie || !player.teamId || !teamsById.has(player.teamId)) return [];
-    const entry = entriesByPlayerId.get(player.playerId);
-    if (!entry) return [];
-    const role = player.playerType === 'batter' ? 'batting' : 'pitching';
-    const zScore = (role === 'batting' ? battingZ : pitchingZ).get(player.playerId) ?? 0;
-    return [{ player, entry, role, zScore }];
-  });
-
-  const winner = candidates.sort((left, right) =>
-    right.zScore - left.zScore ||
-    left.entry.name.localeCompare(right.entry.name) ||
-    left.player.playerId.localeCompare(right.player.playerId),
-  )[0];
-  if (!winner) return null;
+  const inputs = awardInputsFor(teams, playerState, seasonYear);
+  const winner = rankRookieOfTheYear(inputs, 1)[0];
+  const team = winner?.team ?? null;
+  const player = winner ? inputs.players.find((p) => p.playerId === winner.playerId) : undefined;
+  const isBatter = player?.playerType === 'batter';
+  const battingStat = isBatter ? inputs.battingStats.get(winner?.playerId ?? '') : undefined;
+  const pitchingStat = !isBatter ? inputs.pitchingStats.get(winner?.playerId ?? '') : undefined;
+  const roleSummary = battingStat
+    ? `${battingStat.avg.toFixed(3)} AVG | ${battingStat.homeRuns} HR | ${battingStat.rbi} RBI`
+    : pitchingStat
+      ? `${pitchingStat.era.toFixed(2)} ERA | ${pitchingStat.strikeouts} K | ${pitchingStat.inningsPitched.toFixed(1)} IP`
+      : '';
+  if (!winner || !team) return null;
 
   /*
    * Split by role BEFORE reading stats.
@@ -254,22 +510,13 @@ export const calculateRookieOfTheYear = (
    * with the shape. The role guard is what makes the runtime safe; handling each role in its own
    * branch is what makes the type provable rather than merely true.
    */
-  const team = teamsById.get(winner.player.teamId!);
-  const battingStat = winner.role === 'batting' ? battingStats.get(winner.player.playerId) : undefined;
-  const pitchingStat = winner.role === 'pitching' ? pitchingStats.get(winner.player.playerId) : undefined;
-  const roleSummary = battingStat
-    ? `${battingStat.avg.toFixed(3)} AVG | ${battingStat.homeRuns} HR | ${battingStat.rbi} RBI`
-    : pitchingStat
-      ? `${pitchingStat.era.toFixed(2)} ERA | ${pitchingStat.strikeouts} K | ${pitchingStat.inningsPitched.toFixed(1)} IP`
-      : '';
-
   return {
-    playerId: winner.player.playerId,
-    playerName: winner.entry.name,
-    teamId: team?.id ?? null,
-    teamCity: team?.city ?? null,
-    teamName: team?.name ?? null,
-    summary: `${winner.role === 'batting' ? 'Batter' : 'Pitcher'} | ${roleSummary} | ${winner.zScore.toFixed(2)} role SD`,
+    playerId: winner.playerId,
+    playerName: winner.name,
+    teamId: team.id,
+    teamCity: team.city,
+    teamName: team.name,
+    summary: `${isBatter ? 'Batter' : 'Pitcher'} | ${roleSummary} | ${winner.total.toFixed(2)} role SD`,
   };
 };
 

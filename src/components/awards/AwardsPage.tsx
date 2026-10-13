@@ -10,6 +10,7 @@ import {
 } from '../../types';
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId, getLatestBattingRatings, getLatestPitchingRatings } from '../../logic/playerStats';
 import { buildAwardsForBoard, type AwardEntry, type AwardInputs, type MvpBoard } from '../../lib/awardRace';
+import { rankSeasonAwardRace, SEASON_AWARD_RACES, type SeasonAwardBoard } from '../../lib/seasonAwards';
 import { AWARD_RACE_SPECS, buildAwardMarket } from '../../lib/mediaMarkets';
 import { formatAmerican, probabilityToAmerican } from '../../lib/markets';
 import mvpBeltImage from '../../assets/mvpbelt.png';
@@ -96,7 +97,18 @@ const ScoreBreakdown: React.FC<{ entry: AwardEntry }> = ({ entry }) => (
       <div
         key={component.label}
         className="flex min-w-0 items-baseline gap-1.5 border border-[var(--color-chrome-lo)] bg-[var(--color-sunken)] px-2 py-1"
-        title={`${component.label}: ${component.detail} — ${component.contribution.toFixed(1)} of the ${entry.total.toFixed(1)} points`}
+        title={
+          /*
+            THE CONTRIBUTION IS PRINTED ONLY WHEN THERE IS ONE.
+            A zero contribution means this chip is a RANKING FACTOR, not a term in a weighted sum --
+            the Ultimate Slugger ranks on home runs and then slugging, so "HR: 38 -- +0.0 of the 38.0
+            points" would be a fabricated number dressed as arithmetic. Those awards set the
+            contribution to zero deliberately, and this is where that decision becomes visible.
+          */
+          component.contribution === 0
+            ? `${component.label}: ${component.detail} (ranking factor -- these awards rank in order, they are not summed)`
+            : `${component.label}: ${component.detail} — ${component.contribution.toFixed(1)} of the ${entry.total.toFixed(1)} points`
+        }
       >
         <dt className="t-caption shrink-0 text-[var(--color-ink-faint)]">{component.label}</dt>
         <dd className="t-stat-sm shrink-0 text-[var(--color-ink)]">{component.detail}</dd>
@@ -122,7 +134,10 @@ const CandidateRow: React.FC<{
   rank: number;
   isExpanded: boolean;
   onToggle: () => void;
-}> = ({ entry, rank, isExpanded, onToggle }) => {
+  /** What `total` measures on THIS board, and how to print it. See `RacePanel`. */
+  totalLabel: string;
+  totalDecimals: number;
+}> = ({ entry, rank, isExpanded, onToggle, totalLabel, totalDecimals }) => {
   const isLeader = rank === 1;
   const price = entry.houseProbability === null
     ? '—'
@@ -205,8 +220,10 @@ const CandidateRow: React.FC<{
         </span>
 
         <span className="shrink-0 text-right">
-          <StatValue variant={isLeader ? 'accent' : 'default'}>{entry.total.toFixed(1)}</StatValue>
-          <span className="block t-caption text-[var(--color-ink-faint)]">POINTS</span>
+          <StatValue variant={isLeader ? 'accent' : 'default'}>
+            {entry.total.toFixed(totalDecimals)}
+          </StatValue>
+          <span className="block t-caption text-[var(--color-ink-faint)]">{totalLabel}</span>
         </span>
 
         {/*
@@ -332,16 +349,97 @@ const PrizeBanner: React.FC<{
  * why the old page felt cramped: each race got half the width, so every candidate row had to be thin,
  * and the scoring grid underneath had nowhere to go. One race per screen gives each row the full
  * measure, which is what lets the leader's numbers sit at a readable size rather than a squeezed one.
+ *
+ * IT NOW SERVES SIX RACES, not two, and that is why it takes a `RaceDescriptor` instead of a board
+ * key. The four season-end awards do not have a `MvpBoard`, do not have a market, and do not measure
+ * the same thing: `total` is MODEL POINTS for the MVP races and the award's own primary metric
+ * everywhere else. Printing "38.0 POINTS" beside a home-run leader, or "leads by 0.011 points"
+ * where the margin is an average, would be a confident wrong number on every row of the panel -- so
+ * the unit is carried on the descriptor and printed from it.
  */
-const RacePanel: React.FC<{
+interface RaceBase {
+  key: string;
+  title: string;
+  /** What `AwardEntry.total` IS on this board. */
+  totalLabel: string;
+  /** The same metric as a plural noun, for the sentence. "2 home runs", not "2 HR". */
+  totalNoun: string;
+  totalDecimals: number;
+  /** The ordering, stated on the card so the tie-breaks are not folklore. Null on the MVP races. */
+  note: string | null;
+  /**
+   * The FIRST tie-break, named so a level margin can say what decided the race.
+   *
+   * Null on the MVP races, which rank on a continuous weighted score and so are not level on their
+   * primary metric by construction.
+   */
+  tieBreakLabel: string | null;
+}
+
+/**
+ * A race, discriminated on whether MacroBet sells it.
+ *
+ * TWO NAMED INTERFACES rather than one shape with two optional fields, or a single
+ * `RaceBase & ({...} | {...})` intersection. The optional version let a `MvpBoard | undefined` reach
+ * `rankSeasonAwardRace`, and the intersection version would not narrow at all -- the compiler kept
+ * the whole union and rejected `race.seasonBoard`. A union of two interfaces discriminates on the
+ * literal `hasMarket` tag, which is the property that decides which builder runs and which unit is
+ * printed, so the compiler answers the only question that matters here.
+ */
+interface MarketRace extends RaceBase {
+  hasMarket: true;
   board: MvpBoard;
+}
+
+interface SeasonRace extends RaceBase {
+  hasMarket: false;
+  seasonBoard: SeasonAwardBoard;
+}
+
+type RaceEntry = MarketRace | SeasonRace;
+
+/**
+ * An explicit predicate, because implicit narrowing did not fire inside the `useMemo` closure --
+ * `race` stayed the whole union at the call site and `race.seasonBoard` was rejected. A predicate
+ * names the narrowing rather than hoping for it, and it is the one construct that works regardless of
+ * where the variable was declared.
+ */
+const isSeasonRace = (race: RaceEntry): race is SeasonRace => !race.hasMarket;
+
+type RaceKey = MvpBoard | SeasonAwardBoard;
+
+const RACES: readonly RaceEntry[] = [
+  {
+    key: 'batting', board: 'batting', hasMarket: true,
+    title: AWARD_RACE_SPECS.batting.title, totalLabel: 'POINTS', totalNoun: 'points',
+    totalDecimals: 1, note: null, tieBreakLabel: null,
+  },
+  {
+    key: 'pitching', board: 'pitching', hasMarket: true,
+    title: AWARD_RACE_SPECS.pitching.title, totalLabel: 'POINTS', totalNoun: 'points',
+    totalDecimals: 1, note: null, tieBreakLabel: null,
+  },
+  ...SEASON_AWARD_RACES.map((spec): RaceEntry => ({
+    key: spec.board,
+    seasonBoard: spec.board,
+    hasMarket: false,
+    title: spec.title,
+    totalLabel: spec.marginUnit,
+    totalNoun: spec.marginNoun,
+    totalDecimals: spec.marginDecimals,
+    note: spec.note,
+    tieBreakLabel: spec.tieBreakLabel,
+  })),
+];
+
+const RacePanel: React.FC<{
+  race: RaceEntry;
   entries: RacedEntry[];
-}> = ({ board, entries }) => {
+}> = ({ race, entries }) => {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () => new Set(entries.slice(0, EXPANDED_DEPTH).map((entry) => entry.playerId)),
   );
 
-  const spec = AWARD_RACE_SPECS[board];
   const leader = entries[0];
   const runnerUp = entries[1];
   const lead = leader && runnerUp ? leader.total - runnerUp.total : 0;
@@ -362,15 +460,21 @@ const RacePanel: React.FC<{
     <Panel className="overflow-hidden">
       <div className="chrome-bar flex items-center justify-between gap-3 px-4 py-2.5">
         <h2 className="t-h2">
-          {board === 'batting'
-            ? <Crown className="mr-2 inline h-5 w-5 text-[var(--color-gold)]" aria-hidden="true" />
-            : <Trophy className="mr-2 inline h-5 w-5 text-[var(--color-platinum)]" aria-hidden="true" />}
-          {spec.title}
+          {race.hasMarket
+            ? <Trophy className="mr-2 inline h-5 w-5 text-[var(--color-platinum)]" aria-hidden="true" />
+            : <Crown className="mr-2 inline h-5 w-5 text-[var(--color-gold)]" aria-hidden="true" />}
+          {race.title}
         </h2>
         <span className="t-caption text-[var(--color-ink-faint)]">
           {entries.length} {entries.length === 1 ? 'CANDIDATE' : 'CANDIDATES'}
         </span>
       </div>
+
+      {race.note && (
+        <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 text-[var(--color-ink-dim)] t-caption">
+          {race.note}
+        </p>
+      )}
 
       {entries.length === 0 ? (
         <p className="p-4 t-body text-[var(--color-ink-dim)]">
@@ -386,11 +490,37 @@ const RacePanel: React.FC<{
             previously buried in a caption under a panel header while the rows below it competed for
             attention with eight-cell scoring grids. It is the race; everything else on the screen is
             evidence for it.
+
+            The unit comes from the descriptor, so it reads "3 HOME RUNS" or "0.011 AVG" rather than
+            the unitless "3.0 points" that only ever made sense for a weighted score.
           */}
           {leader && runnerUp && (
+            /*
+              A LEAD OF ZERO IS NOT A BUG, AND SAYING "LEADS BY 0 K" SAYS IT AS IF IT WERE.
+
+              These four awards rank lexicographically, so the top two are frequently dead level on
+              the primary metric and the race is decided on the tie-break underneath it -- two
+              pitchers with the same strikeouts separated by K/9, two batters with the same home runs
+              separated by slugging. Printing the raw difference then gives "leads by 0 K", which a
+              reader takes for a broken number rather than for the most interesting thing on the
+              panel.
+
+              So a zero margin prints what actually decided it, naming the first tie-break from the
+              board's own spec rather than a generic word.
+            */
             <p className="border-b border-[var(--color-chrome-lo)] px-4 py-2 t-caption text-[var(--color-ink-dim)]">
-              {leader.name} leads {runnerUp.name} by{' '}
-              <StatValue size="sm" variant="accent">{lead.toFixed(1)}</StatValue> points
+              {lead === 0 && race.tieBreakLabel
+                ? <>
+                  {leader.name} and {runnerUp.name} are level on {race.totalNoun}
+                  {' '}— {race.tieBreakLabel} takes it
+                </>
+                : <>
+                  {leader.name} leads {runnerUp.name} by{' '}
+                  <StatValue size="sm" variant="accent">
+                    {lead.toFixed(race.totalDecimals)}
+                  </StatValue>{' '}
+                  {race.totalNoun}
+                </>}
             </p>
           )}
 
@@ -402,6 +532,8 @@ const RacePanel: React.FC<{
                 rank={index + 1}
                 isExpanded={expanded.has(entry.playerId)}
                 onToggle={() => toggle(entry.playerId)}
+                totalLabel={race.totalLabel}
+                totalDecimals={race.totalDecimals}
               />
             ))}
           </ol>
@@ -411,6 +543,17 @@ const RacePanel: React.FC<{
   );
 };
 
+/**
+ * EVERY RACE ON THE PAGE, in one table.
+ *
+ * The two MVP races come first because they are the ones with a market behind them and the ones the
+ * page was built for; the four season-end awards follow, in the order the season ends in.
+ *
+ * The season-end rows are declared from `SEASON_AWARD_RACES` rather than hand-written, so the title,
+ * the unit and the stated ordering have exactly one definition. A race that is added to that list
+ * and forgotten here is a season award that silently stays invisible all season, which is the exact
+ * failure this change was made to fix.
+ */
 export const AwardsPage: React.FC<AwardsPageProps> = ({
   teams,
   players,
@@ -421,9 +564,9 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
   onOpenBetting,
   onOpenStandings,
 }) => {
-  const [board, setBoard] = useState<MvpBoard>('batting');
+  const [board, setBoard] = useState<RaceKey>('batting');
 
-  const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team] as const)), [teams]);
 
   const awardInputs = useMemo<AwardInputs>(() => ({
     players,
@@ -457,19 +600,42 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
     does, with the real closure computed there from the archive.
   */
   const entries = useMemo<RacedEntry[]>(() => {
-    const spec = AWARD_RACE_SPECS[board];
-    const field = buildAwardsForBoard(board, awardInputs);
-    if (field.length === 0) return [];
-    const market = buildAwardMarket(spec.key, spec.title, field);
-    // Keyed by playerId, the same as the market outcomes, and the same reason: matching on a display
-    // name would silently drop a player whose club changed mid-season -- the one moment a race is
-    // most worth reading.
-    const priceBy = new Map(market.outcomes.map((outcome) => [outcome.key, outcome.consensusProbability]));
-    return field.map((entry) => ({
-      ...entry,
-      houseProbability: priceBy.get(entry.playerId) ?? null,
-    }));
+    const race = RACES.find((candidate) => candidate.key === board);
+    if (!race) return [];
+
+    /*
+      THE TWO KINDS OF RACE, AND WHY THEY BRANCH HERE.
+
+      The MVP races have a MacroBet market, so the field is priced from the full board and the price
+      is read off that build. The season-end races have NO market -- opening four new wagering markets
+      is a product decision that has not been made, and `checkAwardRacePrice` prices only what
+      `AWARD_RACE_SPECS` declares -- so their price column prints the dash `CandidateRow` already
+      renders for a null probability, which is the honest reading of "not on the board".
+
+      The season branch RETURNS and the market branch falls through. Both orders are the same at
+      runtime; this one puts the narrowing on the predicate above, which is what the compiler will
+      actually honour inside a `useMemo` closure.
+    */
+    if (isSeasonRace(race)) {
+      const field = rankSeasonAwardRace(race.seasonBoard, awardInputs);
+      return field.map((entry) => ({ ...entry, houseProbability: null }));
+    }
+
+    const spec = AWARD_RACE_SPECS[race.board];
+      const field = buildAwardsForBoard(race.board, awardInputs);
+      if (field.length === 0) return [];
+      const market = buildAwardMarket(spec.key, spec.title, field);
+      // Keyed by playerId, the same as the market outcomes, and the same reason: matching on a
+      // display name would silently drop a player whose club changed mid-season -- the one moment a
+      // race is most worth reading.
+      const priceBy = new Map(market.outcomes.map((outcome) => [outcome.key, outcome.consensusProbability]));
+      return field.map((entry) => ({
+        ...entry,
+        houseProbability: priceBy.get(entry.playerId) ?? null,
+      }));
   }, [awardInputs, board]);
+
+  const race = RACES.find((candidate) => candidate.key === board) ?? RACES[0];
 
   return (
     <section className="space-y-5">
@@ -481,9 +647,9 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
               Awards
             </h1>
             <p className="t-body mt-2 max-w-3xl text-[var(--color-ink-dim)]">
-              The season&apos;s most valuable players, and the arithmetic behind every score. Points
-              are the model&apos;s own; the price beside them is MacroBet&apos;s, read from the same
-              board the book is selling.
+              Six races for the season&apos;s honours. The two MVP races are scored in model
+              points and priced by MacroBet; the other four are won outright on a counting or
+              rate figure, so their margin is stated in that figure and they carry no price yet.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -491,11 +657,11 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
               aria-label="Award race"
               mode="fill"
               value={board}
-              onChange={(value) => setBoard(value as MvpBoard)}
-              options={[
-                { value: 'batting', label: AWARD_RACE_SPECS.batting.title },
-                { value: 'pitching', label: AWARD_RACE_SPECS.pitching.title },
-              ]}
+              onChange={(value) => setBoard(value as RaceKey)}
+              options={RACES.map((candidate) => ({
+                value: candidate.key,
+                label: candidate.title,
+              }))}
             />
             <RetroButton variant="ghost" size="sm" onClick={onOpenBetting}>
               <Receipt className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -517,9 +683,9 @@ export const AwardsPage: React.FC<AwardsPageProps> = ({
         simulated, and remounting on that would collapse a reader's open breakdowns under them
         mid-read -- while a stale id is harmless here anyway, because it simply matches no row.
       */}
-      <PrizeBanner title={AWARD_RACE_SPECS[board].title} leader={entries[0]} />
+      <PrizeBanner title={race.title} leader={entries[0]} />
 
-      <RacePanel key={board} board={board} entries={entries} />
+      <RacePanel key={board} race={race} entries={entries} />
 
       <p className="t-caption text-[var(--color-ink-faint)]">
         {/*

@@ -2759,6 +2759,87 @@ not worth touching. Roughly 70% of samples are `(native)`, which is GC and layou
 under a development build; that is the next thing to measure, but it needs a
 production build to be worth doing and that was outside the budget.
 
+## Awards page: all six races, and the archive reading the same array
+
+The Awards page showed two races — Batting MVP and Pitching MVP — while the season actually ends
+with six player honours. The other four were invisible for the whole season and then appeared in
+October, which is the exact failure this change fixes. All six are now live races on the page, in the
+same format: banded club rows, expandable arithmetic, leader's margin once above the field.
+
+### THE RANKED FIELD IS THE SOURCE OF TRUTH, AND THE WINNER IS `[0]`
+
+The load-bearing decision, and the reason this was not just "add four more tabs".
+
+A manager watching the Ultimate Slugger race in September and seeing one player lead it has to be
+able to assume that player is the one the archive records in October. The MVP races already guarantee
+that — `pickWinner` is `candidates[0]` off the same array the page renders. For the new four the
+ranking functions are now `rankUltimateSlugger`, `rankBattingKing`, `rankStrikeoutKing` and
+`rankRookieOfTheYear`, each returning the ranked `AwardEntry[]`, and every `calculate*` winner is
+literally `rank*(inputs, 1)[0]`. **The old comparators were deleted**, not wrapped.
+
+Both sides run on the same `AwardInputs` — the page builds it from `getPreferred*StatsByPlayerId`,
+the archive from a new `awardInputsFor(teams, playerState, seasonYear)` — which is the one place the
+two could still differ, since they are separate entry points.
+
+`checkSeasonAwards` asserts the agreement across both paths (73/73, up from 68). **That guard was
+proven able to fail**: making `calculateUltimateSlugger` take `[1]` instead of `[0]` produced 20
+failures across the suite before it was reverted.
+
+### THEY DO NOT HAVE A MARKET, AND THAT IS DELIBERATE
+
+Opening four new wagering markets is a product decision that has not been made, and
+`checkAwardRacePrice` prices only what `AWARD_RACE_SPECS` declares. So the season-end races render
+`CandidateRow`'s existing dash for a null house probability — the honest reading of "not on the
+board" — rather than a fabricated price. `RACES` is a discriminated union on `hasMarket` so the
+compiler enforces which builder runs for which kind. Say the word and markets can be added; the
+descriptor already carries the flag.
+
+### THE MARGIN IS STATED IN THE AWARD'S OWN UNIT
+
+`AwardEntry.total` is MODEL POINTS for the MVP races and the award's primary metric for the new
+four, so the panel prints from a descriptor: "leads by 2 home runs", "leads by 0.010 batting
+average". Two fields, because two grammars are needed — `marginUnit` labels the column ("HR") and
+`marginNoun` reads in a sentence ("home runs"). The first version composed the noun from the unit and
+printed the literal "are level on K K".
+
+**A LEVEL MARGIN IS NOT A BUG, AND SAYING "LEADS BY 0 K" SAYS IT AS IF IT WERE.** These awards rank
+lexicographically, so the top two are routinely dead level on the primary metric and the race is
+decided underneath it. The first browser run of this printed exactly "leads Ryuhei Yokoyama by 0 K" —
+a number that reads as broken rather than as the most interesting fact on the panel. Each spec now
+carries its first tie-break, and a zero margin prints it:
+
+> Norris Turner and Ryuhei Yokoyama are level on strikeouts — K/9 takes it
+
+### ZERO-WEIGHT CHIPS, AND WHY THAT IS NOT A LIE
+
+The breakdown chips show each award's ranking factors with `contribution: 0`. A weighted sum would be
+a **different award that merely looks similar** — the Ultimate Slugger is won on home runs with
+slugging only to break a tie, and inventing a weight for slugging changes who wins it. So
+`ScoreBreakdown` prints the contribution only when there is one, and otherwise says the chip is a
+ranking factor. Printing "+38.0 of the 38.0 points" beside a home-run chip would be a fabricated
+number dressed as arithmetic.
+
+`RacePanel` moved from a `MvpBoard` key to a descriptor, which is why six races share one component
+instead of two copies of it.
+
+### Verified in headless Chrome
+
+All six races visited and measured: 8 rows each, correct heading, correct unit label, and the margin
+read in the right unit — `14.2 points`, `2 home runs`, `0.010 batting average`, plus the
+`level on strikeouts` sentence on the tie. Rookie of the Year correctly shows the empty state on a
+league with no drafted first-years. Console clean.
+
+`checkSeasonAwards` 73/73, `checkPlayoffElimination` 62/62, `checkOffseasonRecovery` 43/43,
+`checkLockedMarkets` 34/34, `checkLockedRaces` 34/34, `checkBoothMetrics` 30/30,
+`checkPerfHotspots` 18/18, `checkPowerRankings` 9/9, `checkAwardEligibility` 7/7,
+`checkSeasonArchiveMvp` 4/4 — 314 assertions, `tsc` and `vite build` clean.
+
+**Note for whoever picks this up:** the discrimination on `hasMarket` had to be an explicit
+`isSeasonRace` predicate. Implicit narrowing did not fire through the `useMemo` closure — the
+compiler kept the whole union and rejected `race.seasonBoard` — and a plain
+`RaceBase & ({...} | {...})` intersection did not narrow either. Two named interfaces plus a
+predicate is the version that compiles.
+
 ## Season archive (History page): the honour list is now a solid club band
 
 The last screen still carrying the old tile treatment. Four changes, all on

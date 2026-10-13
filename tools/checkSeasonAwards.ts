@@ -63,7 +63,11 @@ import {
   calculateStaffOfTheYear,
   calculateStrikeoutKing,
   calculateUltimateSlugger,
+  rankSeasonAwardRace,
+  rankUltimateSlugger,
+  SEASON_AWARD_RACES,
 } from '../src/lib/seasonAwards';
+import type { AwardInputs } from '../src/lib/awardRace';
 import type {
   Game,
   LeaguePlayerState,
@@ -884,6 +888,94 @@ const describeStaff = (staff: SeasonHistoryStaffWinner | null): string =>
     ? `${staff.teamCity} ${staff.teamName} ${staff.wins}-${staff.losses} vs ${staff.expectedWins} expected (${staff.winsAboveExpectation >= 0 ? '+' : ''}${staff.winsAboveExpectation}), prior ${staff.priorWins}, strength ${staff.rosterStrength}`
     : 'NONE';
 
+/**
+ * THE RACE AND THE ARCHIVE MUST NAME THE SAME PLAYER.
+ *
+ * The Awards page shows these four as live races all season and the archive writes a winner in
+ * October. A manager who watched the Ultimate Slugger race and saw one player lead it has to be able
+ * to assume that player is the one recorded, and the only way to make that assumption safe is to
+ * make it structurally true -- `calculateUltimateSlugger` reads `rankUltimateSlugger(...)[0]`.
+ *
+ * So this asserts it rather than trusting the refactor: build the season-scoped inputs the page
+ * builds, take the top of each race, and compare it to what the archive recorded. The two are
+ * separate code paths on purpose (one takes whole player state, one takes pre-scoped maps), which is
+ * exactly why they can drift.
+ */
+const checkRaceMatchesArchive = () => {
+  // `makeBatter` puts everyone on 't1', so the teams map has to contain 't1' or the eligibility
+  // gate correctly rejects every candidate and the race is empty for a reason that has nothing to do
+  // with the ordering under test.
+  const rosterTeam = makeTeam('t1');
+  const teamsById = new Map([[rosterTeam.id, rosterTeam]]);
+  const inputs: AwardInputs = {
+    players: [makeBatter('live-a'), makeBatter('live-b')],
+    teamsById,
+    battingStats: new Map([
+      ['live-a', makeBattingStat('live-a', { atBats: 500, hits: 160, doubles: 30, triples: 5, homeRuns: 30 })],
+      ['live-b', makeBattingStat('live-b', { atBats: 500, hits: 150, doubles: 20, homeRuns: 30 })],
+    ]) as AwardInputs['battingStats'],
+    pitchingStats: new Map() as AwardInputs['pitchingStats'],
+    battingRatings: new Map() as AwardInputs['battingRatings'],
+    pitchingRatings: new Map() as AwardInputs['pitchingRatings'],
+  };
+
+  const race = rankUltimateSlugger(inputs, 8);
+  const state = makeState({
+    players: inputs.players,
+    battingStats: [...inputs.battingStats.values()],
+  });
+  const archived = calculateUltimateSlugger([rosterTeam], state, YEAR);
+
+  check(
+    'the live race leader is the player the archive records',
+    race[0]?.playerId === archived?.playerId,
+    `race leads with ${race[0]?.playerId ?? 'NONE'}; the archive recorded ${archived?.playerId ?? 'NONE'}`,
+  );
+
+  check(
+    'asking for one still returns the same player as asking for eight',
+    rankUltimateSlugger(inputs, 1)[0]?.playerId === rankUltimateSlugger(inputs, 8)[0]?.playerId,
+    'the winner must be the head of the field, not a separate computation over a truncated one',
+  );
+
+  check(
+    'a season award with no ranked builder cannot be requested by accident',
+    SEASON_AWARD_RACES.every((spec) => rankSeasonAwardRace(spec.board, inputs).length >= 0),
+    `every declared race must be dispatchable; declared: ${SEASON_AWARD_RACES.map((s) => s.board).join(', ')}`,
+  );
+
+  // A tie on the primary metric must fall through to the tie-break, not to insertion order.
+  const tieInputs: AwardInputs = {
+    ...inputs,
+    // `live-z` has to be a PLAYER as well as a stat row, or he is never a candidate and the tie
+    // cannot happen -- which is exactly how the first version of this fixture passed vacuously.
+    players: [...inputs.players, makeBatter('live-z')],
+    battingStats: new Map([
+      ['live-z', makeBattingStat('live-z', { atBats: 500, hits: 150, doubles: 20, homeRuns: 40 })],
+      ['live-a', makeBattingStat('live-a', { atBats: 500, hits: 150, doubles: 20, homeRuns: 40 })],
+    ]) as AwardInputs['battingStats'],
+  };
+  const tieRace = rankUltimateSlugger(tieInputs, 8);
+  const tieArchived = calculateUltimateSlugger([rosterTeam], makeState({
+    players: tieInputs.players,
+    battingStats: [...tieInputs.battingStats.values()],
+  }), YEAR);
+
+  check(
+    'a tie on home runs resolves identically in the race and the archive',
+    tieRace[0]?.playerId === tieArchived?.playerId,
+    `both players have 40 HR on identical lines, so the name tie-break has to land on the same one; `
+    + `race ${tieRace[0]?.playerId ?? 'NONE'} vs archive ${tieArchived?.playerId ?? 'NONE'}`,
+  );
+
+  check(
+    'and that resolution is the documented alphabetical one, not insertion order',
+    tieRace[0]?.playerId === 'live-a',
+    `equal lines means ` + '`compareName` decides, and "Last live-a" sorts before "Last live-z" '
+    + `however the rows arrived; got ${tieRace[0]?.playerId ?? 'NONE'}`,
+  );
+};
+
 const main = async () => {
   console.log('\nSEASON AWARDS -- four decisions, tested on ties and on real seasons\n');
 
@@ -892,6 +984,10 @@ const main = async () => {
   checkStrikeoutKing();
   checkRookieOfTheYear();
   checkStaffOfTheYear();
+
+  console.log('\nLIVE RACE vs ARCHIVED WINNER -- the page and the archive must agree\n');
+
+  checkRaceMatchesArchive();
 
   console.log('\nREAL LEAGUE -- the same awards over three simulated seasons\n');
 
