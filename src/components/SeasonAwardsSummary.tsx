@@ -78,6 +78,7 @@ export interface SeasonAwardsSummaryState {
   ultimateSlugger: SeasonHistoryAwardWinner | null;
   battingKing: SeasonHistoryAwardWinner | null;
   rookieOfTheYear: SeasonHistoryAwardWinner | null;
+  strikeoutKing: SeasonHistoryAwardWinner | null;
   staffOfTheYear: SeasonHistoryStaffWinner | null;
   worldSeriesCandidates: SeasonHistoryAwardWinner[];
   worldSeriesCompletedGames: number;
@@ -282,6 +283,13 @@ export const SeasonAwardsSummary: React.FC<SeasonAwardsSummaryProps> = ({
           title="Rookie of the Year"
           eyebrow="Regular Season"
           candidates={selection.rookieOfTheYear ? [selection.rookieOfTheYear] : []}
+          resolveTeam={resolveAwardCandidateTeam}
+        />
+        <AwardResult
+          title="Strikeout King"
+          eyebrow="Regular Season"
+          footnote="Most strikeouts. Ties go to the better K/9, then the better strikeout-to-walk ratio."
+          candidates={selection.strikeoutKing ? [selection.strikeoutKing] : []}
           resolveTeam={resolveAwardCandidateTeam}
         />
         {selection.staffOfTheYear && (

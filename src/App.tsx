@@ -43,6 +43,7 @@ import {
   calculateBattingKing,
   calculateRookieOfTheYear,
   calculateStaffOfTheYear,
+  calculateStrikeoutKing,
   calculateUltimateSlugger,
   SEASON_AWARDS_VERSION,
 } from './lib/seasonAwards';
@@ -1674,6 +1675,7 @@ const { resetWallet } = bettingSlip;
     computeUltimateSlugger: calculateUltimateSlugger,
     computeBattingKing: calculateBattingKing,
     computeRookieOfTheYear: calculateRookieOfTheYear,
+    computeStrikeoutKing: calculateStrikeoutKing,
     computeStaffOfTheYear: calculateStaffOfTheYear,
     homeFieldAdvantage: settings.homeFieldAdvantage,
     computeWorldSeriesMvpCandidates,

@@ -74,6 +74,7 @@ interface UseSeasonLifecycleArgs {
   computeUltimateSlugger: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
   computeBattingKing: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
   computeRookieOfTheYear: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
+  computeStrikeoutKing: (teams: Team[], playerState: LeaguePlayerState, seasonYear: number) => SeasonHistoryAwardWinner | null;
   computeStaffOfTheYear: (teams: Team[], games: Game[], homeFieldAdvantage: number) => SeasonHistoryStaffWinner | null;
   homeFieldAdvantage: number;
   computeWorldSeriesMvpCandidates: (
@@ -129,6 +130,7 @@ export const useSeasonLifecycle = ({
   computeUltimateSlugger,
   computeBattingKing,
   computeRookieOfTheYear,
+  computeStrikeoutKing,
   computeStaffOfTheYear,
   homeFieldAdvantage,
   computeWorldSeriesMvpCandidates,
@@ -216,6 +218,7 @@ export const useSeasonLifecycle = ({
       ultimateSlugger: computeUltimateSlugger(teams, playerState, seasonYear),
       battingKing: computeBattingKing(teams, playerState, seasonYear),
       rookieOfTheYear: computeRookieOfTheYear(teams, playerState, seasonYear),
+      strikeoutKing: computeStrikeoutKing(teams, playerState, seasonYear),
       staffOfTheYear: computeStaffOfTheYear(teams, games, homeFieldAdvantage),
       worldSeriesCandidates: worldSeriesBundle.candidates,
       worldSeriesCompletedGames: worldSeriesBundle.completedGames,
@@ -230,6 +233,7 @@ export const useSeasonLifecycle = ({
     computeUltimateSlugger,
     computeBattingKing,
     computeRookieOfTheYear,
+    computeStrikeoutKing,
     computeStaffOfTheYear,
     computeWorldSeriesMvpCandidates,
     currentDate,
@@ -281,6 +285,7 @@ export const useSeasonLifecycle = ({
       ultimateSlugger: selection.ultimateSlugger,
       battingKing: selection.battingKing,
       rookieOfTheYear: selection.rookieOfTheYear,
+      strikeoutKing: selection.strikeoutKing,
       staffOfTheYear: selection.staffOfTheYear,
       awardsVersion: SEASON_AWARDS_VERSION,
     };
@@ -344,6 +349,7 @@ export const useSeasonLifecycle = ({
           ultimateSlugger: existing.ultimateSlugger ?? snapshot.ultimateSlugger,
           battingKing: existing.battingKing ?? snapshot.battingKing,
           rookieOfTheYear: existing.rookieOfTheYear ?? snapshot.rookieOfTheYear,
+          strikeoutKing: existing.strikeoutKing ?? snapshot.strikeoutKing,
           staffOfTheYear: existing.staffOfTheYear ?? snapshot.staffOfTheYear,
           awardsVersion: Math.max(existing.awardsVersion ?? 0, snapshot.awardsVersion ?? SEASON_AWARDS_VERSION),
         };
@@ -369,6 +375,7 @@ export const useSeasonLifecycle = ({
           && repaired.ultimateSlugger === existing.ultimateSlugger
           && repaired.battingKing === existing.battingKing
           && repaired.rookieOfTheYear === existing.rookieOfTheYear
+          && repaired.strikeoutKing === existing.strikeoutKing
           && repaired.staffOfTheYear === existing.staffOfTheYear
           && repaired.awardsVersion === existing.awardsVersion;
         if (repairedFilledNothing) {

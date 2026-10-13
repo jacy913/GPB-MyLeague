@@ -612,6 +612,8 @@ export interface SeasonHistoryEntry {
   ultimateSlugger?: SeasonHistoryAwardWinner | null;
   battingKing?: SeasonHistoryAwardWinner | null;
   rookieOfTheYear?: SeasonHistoryAwardWinner | null;
+  /** Added at awardsVersion 2. Most strikeouts, then K/9, then K/BB. */
+  strikeoutKing?: SeasonHistoryAwardWinner | null;
   staffOfTheYear?: SeasonHistoryStaffWinner | null;
   /**
    * League champions, one per league, from the league championship SERIES.

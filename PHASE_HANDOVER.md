@@ -2583,6 +2583,64 @@ tiles. (The modal's labels read UPPERCASE in `innerText` because of CSS
 Betting markets for the four new awards remain **deferred** — the bets that exist
 still settle against the MVPs and the World Series MVP.
 
+## Strikeout King: a fifth season award, and the one award with no floor
+
+`calculateStrikeoutKing` in `src/lib/seasonAwards.ts` joins Ultimate Slugger,
+Batting King and Rookie of the Year. The order the user specified is the whole
+design: **most strikeouts, then the best K/9, then the best strikeout-to-walk
+ratio.**
+
+It is the only award here whose primary key is a raw COUNT. The MVP scores, the
+Batting King ranks on an exact average, and this one just counts — so the rates
+never decide anything, they only speak when two pitchers struck out the same
+number of batters. That is deliberate: a reliever at 13.5 K/9 and a starter with
+180 strikeouts are not close, and a rate-first award would hand the trophy to the
+reliever. The checker asserts exactly that ordering rather than assuming it.
+
+**There is no eligibility floor**, which is the user's explicit call and the
+opposite of every other award in the file. The consequence is handled rather than
+wished away: with no innings requirement, a season in which the league never took
+a strikeout would still have candidates and the final `compareName` would crown
+an alphabetical winner with zero K. So the candidate filter requires
+`strikeouts > 0`, and a season where nobody struck anybody out names **nobody**.
+That guard is not defensive padding — it is the only thing making the missing
+floor safe. A test asserts both halves: the zero-strikeout season is empty, *and*
+a five-start arm with 40 innings is not floored out.
+
+**ZERO WALKS IS THE BEST K/BB, NOT A MISSING ONE.** A pitcher who walked nobody
+cannot be beaten on that measure, so `getStrikeoutWalkRatio` returns `Infinity`
+and sorts above every finite ratio. That is the only infinite value in the file
+and it is used because it is the true ordering — a sign error here awards the
+crown to the pitcher who walked everybody. Two consequences are tested rather than
+hoped for: one walkless pitcher beats a finite ratio, and *two* walkless pitchers
+must fall through to the name, because `Infinity - Infinity` is `NaN` and `NaN` is
+falsy, so the comparator continues by accident-correct behaviour that is load-
+bearing enough to deserve a test. The card itself refuses the infinite value and
+prints `no walks`, matching the stance `LeadersHub.tsx` records for an unbounded
+BB/K — a card reading `∞ K/BB` states the arithmetic and not the fact.
+
+The team requirement is unchanged from every other award ("no club, no
+candidacy"), so a released pitcher cannot win it at 200 K.
+
+`SEASON_AWARDS_VERSION` went 1 → 2. `awardsSavedForCurrentOffseason` requires
+`awardsVersion >= SEASON_AWARDS_VERSION`, so an already-archived season is
+briefly "stale" until the repair pass runs — which it does, because
+`previousSeasonCompleteRef` starts at `false` and the archive re-runs on every
+reload of a completed season. The repair fills `strikeoutKing` from a recompute
+and bumps the version, so old archives gain the award instead of losing their
+awards-version check. A user with a version-1 archive sees the "awards repaired"
+notice **once**, exactly as they did for 0 → 1.
+
+`tools/checkSeasonAwards.ts` is 68/68, including three simulated seasons where the
+winner is cross-checked against the league's own raw strikeout high and the tie
+group is reported. `checkBoothMetrics` 30/30, `checkAwardEligibility` 7/7,
+`checkPowerRankings` 9/9, `tsc --noEmit` and `vite build` clean.
+
+Not verified in headless Chrome: rendering it needs a **completed** season in the
+browser, which is a full-season sim through the Simulation Desk. The logic is
+covered by three simulated seasons in the checker; the two JSX blocks are the same
+shape as the four existing awards, and `tsc` covers the prop plumbing.
+
 ## Booth Metrics: eight boards on what the numbers don't say
 
 `booth_metrics` is a LEAGUE leaf between Leaders and Awards, headed **"What The

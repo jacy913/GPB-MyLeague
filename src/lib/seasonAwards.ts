@@ -13,7 +13,7 @@ import {
 import { getBattingRatingsAsOfSeason, getPitchingRatingsAsOfSeason } from '../logic/playerStats';
 import { isRegularSeasonGame } from '../logic/playoffs';
 
-export const SEASON_AWARDS_VERSION = 1;
+export const SEASON_AWARDS_VERSION = 2;
 export const AWARD_MIN_BATTING_AT_BATS = 120;
 export const AWARD_MIN_PITCHER_STARTS = 8;
 export const AWARD_MIN_CLOSER_SAVES = 25;
@@ -99,6 +99,95 @@ export const calculateBattingKing = (
     teamCity: winner.team.city,
     teamName: winner.team.name,
     summary: `${(winner.stat.hits / winner.stat.atBats).toFixed(3)} AVG | ${winner.stat.hits} H | ${getOnBasePercentage(winner.stat).toFixed(3)} OBP`,
+  };
+};
+
+/**
+ * K/9, the first tie-break for the Strikeout King.
+ *
+ * Zero innings reads as zero rather than as a missing rate. The candidate filter has already
+ * required a strikeout, so anyone reaching this has thrown, and a stored 0-inning line with a
+ * strikeout on it is a fixture, not a season -- 0/0 is not a measurement worth preserving.
+ */
+const getStrikeoutsPerNine = (stat: LeaguePlayerState['pitchingStats'][number]): number =>
+  stat.inningsPitched > 0 ? (stat.strikeouts * 9) / stat.inningsPitched : 0;
+
+/**
+ * K/BB, the second tie-break for the Strikeout King.
+ *
+ * ZERO WALKS IS THE BEST POSSIBLE RATIO HERE, NOT AN UNDEFINED ONE. A pitcher who walked nobody
+ * cannot be beaten on this measure, so it returns Infinity and sorts above every finite ratio
+ * rather than being excluded from the comparison. That is the only infinite value this file uses,
+ * and it is used because it is the true ordering.
+ */
+const getStrikeoutWalkRatio = (stat: LeaguePlayerState['pitchingStats'][number]): number =>
+  stat.walks > 0 ? stat.strikeouts / stat.walks : Number.POSITIVE_INFINITY;
+
+/**
+ * K/BB for printing, which refuses the infinite value the comparator needs.
+ *
+ * The rest of the codebase's stance on this is recorded in `LeadersHub.tsx`: `0.00` and `Infinity`
+ * are each a fabricated measurement rather than an absent one, so both print as a dash. Here the
+ * ratio is genuinely unbounded, but a card reading "∞ K/BB" states the arithmetic and not the
+ * fact, and the fact is simply that he walked nobody.
+ */
+const formatStrikeoutWalk = (stat: LeaguePlayerState['pitchingStats'][number]): string =>
+  stat.walks > 0 ? `${(stat.strikeouts / stat.walks).toFixed(2)} K/BB` : 'no walks';
+
+/**
+ * STRIKEOUT KING -- the most strikeouts, then the best K/9, then the best K/BB, then the name.
+ *
+ * A raw COUNT as the primary key, deliberately, which is the opposite of every other award here:
+ * the MVP scores, the Batting King ranks on an exact average, and this one just counts. So the
+ * rate does not get to decide anything -- it is a tie-break, and it only ever speaks when two
+ * pitchers struck out the same number of batters. That is the point of the ordering: a reliever
+ * with a magnificent 14.0 K/9 and a starter with 190 strikeouts are not close, and an award that
+ * ranked on the rate would pick the reliever.
+ *
+ * THERE IS NO ELIGIBILITY FLOOR, which is unusual for an award in this file and is the caller's
+ * explicit instruction. The consequence is real and is handled rather than wished away: with no
+ * innings requirement, a season in which nobody pitched would still have candidates, and the
+ * final `compareName` would crown an alphabetical winner with zero strikeouts. So the candidate
+ * filter requires a strikeout, and a season where nobody struck anybody out names nobody. That
+ * guard is not defensive padding -- it is what makes the missing floor safe.
+ *
+ * The team requirement is the same one every other award here carries ("no club, no candidacy",
+ * see `buildBattingAwards`): the archived record has to be able to name a club, and a released
+ * pitcher is not a season's Strikeout King.
+ */
+export const calculateStrikeoutKing = (
+  teams: Team[],
+  playerState: LeaguePlayerState,
+  seasonYear: number,
+): SeasonHistoryAwardWinner | null => {
+  const teamsById = new Map(teams.map((team) => [team.id, team]));
+  const statsByPlayerId = new Map(
+    playerState.pitchingStats
+      .filter((stat) => stat.seasonYear === seasonYear && stat.seasonPhase === 'regular_season')
+      .map((stat) => [stat.playerId, stat] as const),
+  );
+  const candidates = playerState.players.flatMap((player) => {
+    const stat = statsByPlayerId.get(player.playerId);
+    const team = player.teamId ? teamsById.get(player.teamId) : undefined;
+    return player.playerType === 'pitcher' && stat && team && stat.strikeouts > 0
+      ? [{ player, stat, team }]
+      : [];
+  });
+  const winner = candidates.sort((left, right) =>
+    right.stat.strikeouts - left.stat.strikeouts ||
+    getStrikeoutsPerNine(right.stat) - getStrikeoutsPerNine(left.stat) ||
+    getStrikeoutWalkRatio(right.stat) - getStrikeoutWalkRatio(left.stat) ||
+    compareName(left.player, right.player),
+  )[0];
+
+  if (!winner) return null;
+  return {
+    playerId: winner.player.playerId,
+    playerName: `${winner.player.firstName} ${winner.player.lastName}`,
+    teamId: winner.team.id,
+    teamCity: winner.team.city,
+    teamName: winner.team.name,
+    summary: `${winner.stat.strikeouts} K | ${getStrikeoutsPerNine(winner.stat).toFixed(2)} K/9 | ${formatStrikeoutWalk(winner.stat)}`,
   };
 };
 

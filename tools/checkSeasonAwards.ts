@@ -61,6 +61,7 @@ import {
   calculateBattingKing,
   calculateRookieOfTheYear,
   calculateStaffOfTheYear,
+  calculateStrikeoutKing,
   calculateUltimateSlugger,
 } from '../src/lib/seasonAwards';
 import type {
@@ -417,6 +418,241 @@ const checkBattingKing = () => {
 };
 
 // ---------------------------------------------------------------------------------------------
+// STRIKEOUT KING -- a raw count first, then two rates, then the name
+// ---------------------------------------------------------------------------------------------
+
+/** Independent K/9 and K/BB, so the check does not borrow the implementation it is checking. */
+const strikeoutsPerNine = (stat: PlayerSeasonPitching): number =>
+  (stat.strikeouts * 9) / stat.inningsPitched;
+
+const checkStrikeoutKing = () => {
+  console.log('\nSTRIKEOUT KING\n');
+
+  /*
+   * The count beats the rate, which is the whole reason this award is ordered the way it is. A
+   * reliever at a stadium K/9 and a starter with a hundred more strikeouts are not close, and a
+   * rate-first award would hand it to the reliever.
+   */
+  const countBeatsRate = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('flashy'), makePitcher('volume')],
+      pitchingStats: [
+        makePitchingStat('flashy', { games: 8, gamesStarted: 0, inningsPitched: 8, strikeouts: 12, walks: 1 }),
+        makePitchingStat('volume', { games: 34, gamesStarted: 34, inningsPitched: 220, strikeouts: 180, walks: 60 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a raw count outranks a better rate',
+    countBeatsRate?.playerId === 'volume',
+    `the reliever is ${strikeoutsPerNine(makePitchingStat('flashy', { inningsPitched: 8, strikeouts: 12 })).toFixed(2)} K/9 `
+    + `against the starter's ${strikeoutsPerNine(makePitchingStat('volume', { inningsPitched: 220, strikeouts: 180 })).toFixed(2)}, `
+    + `and 180 K beats 12 K; winner ${countBeatsRate?.playerId ?? 'NONE'}`,
+  );
+
+  // A tie on strikeouts, so the higher K/9 decides.
+  const k9Tie = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('a'), makePitcher('b')],
+      pitchingStats: [
+        makePitchingStat('a', { games: 34, gamesStarted: 34, inningsPitched: 260, strikeouts: 200, walks: 40 }),
+        makePitchingStat('b', { games: 30, gamesStarted: 30, inningsPitched: 200, strikeouts: 200, walks: 40 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a tie on strikeouts goes to the better K/9',
+    k9Tie?.playerId === 'b',
+    `both struck out 200; a is ${strikeoutsPerNine(makePitchingStat('a', { inningsPitched: 260, strikeouts: 200 })).toFixed(2)} K/9 `
+    + `and b is ${strikeoutsPerNine(makePitchingStat('b', { inningsPitched: 200, strikeouts: 200 })).toFixed(2)}; winner ${k9Tie?.playerId ?? 'NONE'}`,
+  );
+
+  /*
+   * A tie on strikeouts AND on K/9, which needs different innings with a different walk count --
+   * so the K/BB tie-break is what is left and it has to be the thing that decides.
+   */
+  const kbbTie = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('walked'), makePitcher('control')],
+      pitchingStats: [
+        makePitchingStat('walked', { games: 30, gamesStarted: 30, inningsPitched: 200, strikeouts: 200, walks: 80 }),
+        makePitchingStat('control', { games: 24, gamesStarted: 24, inningsPitched: 160, strikeouts: 200, walks: 32 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a tie on strikeouts and K/9 goes to the better K/BB',
+    kbbTie?.playerId === 'control',
+    `both at ${strikeoutsPerNine(makePitchingStat('walked', { inningsPitched: 200, strikeouts: 200 })).toFixed(2)} K/9; `
+    + `K/BB is 2.50 against 6.25, so the better ratio must win; winner ${kbbTie?.playerId ?? 'NONE'}`,
+  );
+
+  /*
+   * ZERO WALKS IS THE BEST RATIO, NOT A MISSING ONE. This is the one comparison where the
+   * implementation is allowed to hold Infinity, so it is the one place a wrong sign would hide:
+   * a finite-vs-infinite subtraction that resolves the wrong way awards the crown to the pitcher
+   * who walked everybody, which is exactly backwards.
+   */
+  const noWalks = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('perfect'), makePitcher('streaky')],
+      pitchingStats: [
+        makePitchingStat('perfect', { games: 30, gamesStarted: 30, inningsPitched: 200, strikeouts: 200, walks: 0 }),
+        makePitchingStat('streaky', { games: 30, gamesStarted: 30, inningsPitched: 200, strikeouts: 200, walks: 60 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a pitcher who walked nobody wins the K/BB tie-break',
+    noWalks?.playerId === 'perfect',
+    `identical K and K/9; zero walks is an unbounded ratio and must sort above 3.33; winner ${noWalks?.playerId ?? 'NONE'}`,
+  );
+
+  /*
+   * TWO pitchers who both walked nobody cannot be separated by K/BB at all -- Infinity minus
+   * Infinity is NaN, and NaN is falsy. If the comparator did not fall through, this would throw or
+   * return a stable-but-wrong answer instead of reaching the name.
+   */
+  const bothWalkless = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [
+        makePitcher('z', { firstName: 'Zed', lastName: 'Zulu' }),
+        makePitcher('a', { firstName: 'Abe', lastName: 'Able' }),
+      ],
+      pitchingStats: [
+        makePitchingStat('z', { inningsPitched: 200, strikeouts: 200, walks: 0 }),
+        makePitchingStat('a', { inningsPitched: 200, strikeouts: 200, walks: 0 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'two walkless pitchers fall through to the name',
+    bothWalkless?.playerId === 'a',
+    `K/BB is Infinity on both sides, so the tie must resolve on the name and not on NaN; winner ${bothWalkless?.playerId ?? 'NONE'}`,
+  );
+
+  // Three identical rungs, so the name decides and the id is the last stable one.
+  const nameTie = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [
+        makePitcher('b', { firstName: 'Sam', lastName: 'Same' }),
+        makePitcher('a', { firstName: 'Sam', lastName: 'Same' }),
+      ],
+      pitchingStats: [
+        makePitchingStat('b', { inningsPitched: 180, strikeouts: 180, walks: 40 }),
+        makePitchingStat('a', { inningsPitched: 180, strikeouts: 180, walks: 40 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'and by player id when even the name is identical',
+    nameTie?.playerId === 'a',
+    `the last rung has to be total and stable or two runs of the archive can name different winners; got ${nameTie?.playerId ?? 'NONE'}`,
+  );
+
+  /*
+   * NO FLOOR, SO THE ZERO-STRIKEOUT GUARD IS THE ONLY THING STANDING BETWEEN THIS AND AN
+   * ALPHABETICAL WINNER. With no innings requirement, a season where the league never took a
+   * strikeout would otherwise hand the award to the first name alphabetically.
+   */
+  const nobodyStruck = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [
+        makePitcher('z', { firstName: 'Zed', lastName: 'Zulu' }),
+        makePitcher('a', { firstName: 'Abe', lastName: 'Able' }),
+      ],
+      pitchingStats: [
+        makePitchingStat('z', { inningsPitched: 200, games: 30, gamesStarted: 30, strikeouts: 0, walks: 20 }),
+        makePitchingStat('a', { inningsPitched: 200, games: 30, gamesStarted: 30, strikeouts: 0, walks: 20 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a season with no strikeouts at all names nobody',
+    nobodyStruck === null,
+    `zero K means there is no Strikeout King; got ${nobodyStruck ? nobodyStruck.playerName : 'null'}`,
+  );
+
+  /*
+   * NO FLOOR, SO A SHORT SEASON IS NOT EXCLUDED. That was the explicit instruction, and it is the
+   * opposite of every other award in this file, so the assertion has to be the opposite too: a
+   * five-start arm with 40 innings -- under the Pitching MVP's 8-start gate, and under any innings
+   * floor worth having -- takes the award on the count alone.
+   *
+   * Note what this does NOT claim: that a short season beats a long one. He wins because he struck
+   * out MORE batters, which is the whole point of a raw count. An earlier version of this fixture
+   * gave the short arm 9 K against a starter's 180 and expected him to win, which asserted that the
+   * award ignores the count entirely -- the exact opposite of what it does.
+   */
+  const noFloor = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('short'), makePitcher('long')],
+      pitchingStats: [
+        makePitchingStat('short', { games: 6, gamesStarted: 5, inningsPitched: 40, strikeouts: 190, walks: 40 }),
+        makePitchingStat('long', { games: 34, gamesStarted: 34, inningsPitched: 220, strikeouts: 180, walks: 60 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a five-start arm with 40 innings is not floored out',
+    noFloor?.playerId === 'short',
+    `40 IP and 190 K beats 220 IP and 180 K on the count alone, with nothing gating him out; winner ${noFloor?.playerId ?? 'NONE'}`,
+  );
+
+  // A released pitcher is not a season's Strikeout King, same as every other award.
+  const released = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('gone', { teamId: null }), makePitcher('here')],
+      pitchingStats: [
+        makePitchingStat('gone', { inningsPitched: 200, strikeouts: 200, walks: 20 }),
+        makePitchingStat('here', { inningsPitched: 200, strikeouts: 150, walks: 20 }),
+      ],
+    }),
+    YEAR,
+  );
+  check(
+    'a pitcher with no club cannot win it',
+    released?.playerId === 'here',
+    `200 K is irrelevant without a club to attach it to; winner ${released?.playerId ?? 'NONE'}`,
+  );
+
+  const empty = calculateStrikeoutKing([makeTeam('t1')], makeState({}), YEAR);
+  check('and an empty league names nobody', empty === null, `expected null, got ${empty ? empty.playerName : 'null'}`);
+
+  // The card states the count and both tie-break figures, and never prints an infinite ratio.
+  const carded = calculateStrikeoutKing(
+    [makeTeam('t1')],
+    makeState({
+      players: [makePitcher('a')],
+      pitchingStats: [makePitchingStat('a', { inningsPitched: 200, strikeouts: 200, walks: 0 })],
+    }),
+    YEAR,
+  );
+  check(
+    'the card prints the count and never an infinite ratio',
+    carded?.summary === '200 K | 9.00 K/9 | no walks',
+    `walkless winner must read as a fact rather than a number; got "${carded?.summary ?? 'null'}"`,
+  );
+};
+
+// ---------------------------------------------------------------------------------------------
 // ROOKIE OF THE YEAR -- eligibility, one race across roles, and the workload gate
 // ---------------------------------------------------------------------------------------------
 
@@ -653,6 +889,7 @@ const main = async () => {
 
   checkUltimateSlugger();
   checkBattingKing();
+  checkStrikeoutKing();
   checkRookieOfTheYear();
   checkStaffOfTheYear();
 
@@ -712,15 +949,17 @@ const main = async () => {
     const slugger = calculateUltimateSlugger(teams, state, year);
     const king = calculateBattingKing(teams, state, year);
     const rookie = calculateRookieOfTheYear(teams, state, year);
+    const strikeoutKing = calculateStrikeoutKing(teams, state, year);
     const staff = calculateStaffOfTheYear(teams, games, DEFAULT_SETTINGS.homeFieldAdvantage);
 
     const qualifiedRookies = state.players.filter((p) => isQualifiedRookie(p, state, year));
-    const resolved = Boolean(slugger && king && staff);
+    const resolved = Boolean(slugger && king && strikeoutKing && staff);
     allSeasonsResolved = allSeasonsResolved && resolved;
 
     console.log(`  season ${year}`);
     console.log(`      Slugger   ${describeAward(slugger)}`);
     console.log(`      King      ${describeAward(king)}`);
+    console.log(`      K King    ${describeAward(strikeoutKing)}`);
     console.log(`      Rookie    ${describeAward(rookie)}`);
     console.log(`      Staff     ${describeStaff(staff)}`);
     console.log(`      qualified rookies: ${qualifiedRookies.length}`);
@@ -748,6 +987,34 @@ const main = async () => {
       const bestAvg = Math.max(...leaders.map((s) => s.hits / s.atBats));
       const winnerStat = leaders.find((s) => s.playerId === king.playerId);
       check(`${year}: the King winner has the top average`, Boolean(winnerStat) && winnerStat!.hits / winnerStat!.atBats >= bestAvg, describeAward(king));
+    }
+
+    if (strikeoutKing) {
+      // Deliberately unfloored, so the whole league's pitchers are in scope here -- not a qualified
+      // subset as the batting awards use. The winner must be the league's raw strikeout leader.
+      const allPitchers = state.pitchingStats.filter(
+        (s) => s.seasonYear === year && s.seasonPhase === 'regular_season' && s.strikeouts > 0,
+      );
+      const mostStrikeouts = Math.max(...allPitchers.map((s) => s.strikeouts));
+      const winnerStat = allPitchers.find((s) => s.playerId === strikeoutKing.playerId);
+      check(
+        `${year}: the Strikeout King leads the league in raw strikeouts`,
+        Boolean(winnerStat) && winnerStat!.strikeouts === mostStrikeouts,
+        `${describeAward(strikeoutKing)}; league high ${mostStrikeouts}`,
+      );
+
+      /*
+       * And the tie-break is never load-bearing by accident: if nobody tied on the count, the K/9
+       * and K/BB rungs must not have moved the winner off the raw leader. Reported rather than
+       * asserted on a value, because whether a season happened to produce a tie is not a property
+       * this check can demand.
+       */
+      const tiedOnCount = allPitchers.filter((s) => s.strikeouts === mostStrikeouts);
+      check(
+        `${year}: and the winner is a legal resolution of the count tie (${tiedOnCount.length} tied)`,
+        tiedOnCount.length === 1 || tiedOnCount.some((s) => s.playerId === strikeoutKing.playerId),
+        `${tiedOnCount.length} pitcher(s) on ${mostStrikeouts} K; winner is ${strikeoutKing.playerName}`,
+      );
     }
 
     if (rookie) {

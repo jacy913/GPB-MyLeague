@@ -191,6 +191,7 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
   const ultimateSluggerTeam = resolveTeamFromWinner(entry.ultimateSlugger ?? null, teamsById);
   const battingKingTeam = resolveTeamFromWinner(entry.battingKing ?? null, teamsById);
   const rookieOfTheYearTeam = resolveTeamFromWinner(entry.rookieOfTheYear ?? null, teamsById);
+  const strikeoutKingTeam = resolveTeamFromWinner(entry.strikeoutKing ?? null, teamsById);
   const staffOfTheYearTeam = entry.staffOfTheYear
     ? (teamsById.get(entry.staffOfTheYear.teamId) ?? buildFallbackTeam(entry.staffOfTheYear.teamId, entry.staffOfTheYear.teamCity, entry.staffOfTheYear.teamName))
     : null;
@@ -328,6 +329,14 @@ export const HistoryHub: React.FC<HistoryHubProps> = ({ seasonHistory, teams }) 
           winnerTeam={rookieOfTheYearTeam}
           imageSrc={trophyImage}
           imageAlt="Rookie of the Year trophy"
+        />
+        <AwardTile
+          title="Strikeout King"
+          subtitle="Regular Season · Most strikeouts"
+          winner={entry.strikeoutKing ?? null}
+          winnerTeam={strikeoutKingTeam}
+          imageSrc={trophyImage}
+          imageAlt="Strikeout King trophy"
         />
         <AwardTile
           title="Pitching MVP"
