@@ -1,9 +1,10 @@
 import React from 'react';
-import { TeamLogo } from './ui';
+import { ClubBandRow } from './ui';
 import { Modal } from './ui/Modal';
 import { Panel } from './ui/Panel';
 import { RetroButton } from './ui/RetroButton';
 import { formatHeaderDate } from './SeasonCalendarStrip';
+import type { TeamId } from '../data/teamColors';
 import type {
   SeasonHistoryAwardWinner,
   SeasonHistoryDivisionWinner,
@@ -95,6 +96,13 @@ interface SeasonAwardsSummaryProps {
 }
 
 /**
+ * The award row's height, in px. Matches the Awards page because these rows hold the same three
+ * lines -- name, club, summary -- and the crest is cropped to the row, so a shorter row than the
+ * content would float the mark with a strip of club colour above and below it.
+ */
+const AWARD_TILE_ROW_H = 64;
+
+/**
  * One award: the winner, then the field behind them.
  *
  * The winner is pulled out of the list rather than marked in place, because "the top of this list"
@@ -146,24 +154,36 @@ const AwardResult: React.FC<{
             const candidateTeam = resolveTeam(candidate);
             const isWinner = index === 0;
 
+            /*
+             * The row wears the candidate's club band -- the same fill, leading edge and cropped
+             * crest as a Booth board, the standings tables and the dashboard Award Race, so an award
+             * winner reads the same as every other club row in the app.
+             *
+             * The leader used to be marked with a gold left border and a lifted background. The
+             * club's edge now owns that border, and club colour may never carry meaning, so the
+             * marker moved to the two places it still reads: the ordinal and the name, both gold.
+             * That is the dashboard Award Race's convention, and matching it is the point -- one
+             * rule for "who leads this board", not one per screen.
+             *
+             * The old `#1` prefix is gone rather than kept. The ordinal now carries the rank, so a
+             * second numeral in front of the name restates it, and this file already argues that a
+             * third signal for one fact is noise on a screen whose only job is to state a result.
+             *
+             * `name` is deliberately NOT passed to `ClubBandRow`. That prop exists for rows that
+             * DROP the visible name and keep it `sr-only`; these rows print the name, and passing it
+             * as well would announce every candidate twice.
+             */
             return (
-              <li
+              <ClubBandRow
                 key={`${title}-${candidate.playerId}`}
-                className={`flex items-center gap-3 border-l-[3px] px-2 py-2 ${
-                  isWinner
-                    ? 'border-l-[var(--color-gold)] bg-[var(--color-panel-2)]'
-                    : 'border-l-[var(--color-chrome-lo)]'
-                }`}
+                team={candidateTeam}
+                teamId={(candidateTeam?.id ?? null) as TeamId | null}
+                height={AWARD_TILE_ROW_H}
+                rank={index + 1}
+                rankClassName={isWinner ? 'text-[var(--color-gold)]' : undefined}
               >
-                {candidateTeam ? (
-                  <TeamLogo team={candidateTeam} sizeClass="h-14 w-14" />
-                ) : (
-                  <div className="h-14 w-14 shrink-0 border border-[var(--color-chrome-lo)] bg-[var(--color-panel-2)]" />
-                )}
-
                 <div className="min-w-0 flex-1">
-                  <p className="truncate t-h3">
-                    {isWinner && <span className="mr-1.5 text-[var(--color-gold-hi)]">#1</span>}
+                  <p className={`truncate t-h3 ${isWinner ? 'text-[var(--color-gold-hi)]' : ''}`}>
                     {candidate.playerName}
                   </p>
                   <p className="truncate text-[var(--color-ink-dim)] t-caption">
@@ -177,7 +197,7 @@ const AwardResult: React.FC<{
                     </p>
                   )}
                 </div>
-              </li>
+              </ClubBandRow>
             );
           })}
         </ol>
@@ -223,37 +243,16 @@ export const SeasonAwardsSummary: React.FC<SeasonAwardsSummaryProps> = ({
         </p>
 
         {/*
-          WHO ELSE WON, AND WHY IT MATTERS FOR A BET THAT LOST.
+          THE PLAYOFFS RECAP USED TO SIT HERE -- the league champions and the division winners,
+          "because a season summary that omits them reads as though only the awards happened."
 
-          The league champions are here because they are the other thing a futures bet was on, and
-          because a season summary that omits them reads as though only the awards happened.
+          Removed on the manager's instruction: this screen's job is the awards, and the champion
+          is already in the modal's own header bar ("Champion <city>"), so the recap was partly
+          saying the same thing twice and wholly saying a different thing than the screen is for.
+          Division and league champions are NOT lost -- HistoryHub still lists both, which is
+          where a manager looks for how a season's teams finished. This screen is where you look
+          for who won the awards.
         */}
-        {(selection.leagueChampions.length > 0 || selection.divisionWinners.length > 0) && (
-          <Panel variant="sunken" className="p-3">
-            <p className="t-label text-[var(--color-ink-faint)]">Playoffs</p>
-            <dl className="mt-2 grid gap-x-4 gap-y-1 md:grid-cols-2">
-              {selection.leagueChampions.map((winner) => (
-                <div key={`league-${winner.teamId}`} className="flex items-baseline justify-between gap-3">
-                  <dt className="truncate text-[var(--color-ink-dim)] t-caption">
-                    {winner.league} Champion
-                  </dt>
-                  <dd className="shrink-0 t-h3">{winner.teamCity}</dd>
-                </div>
-              ))}
-              {selection.divisionWinners.map((winner) => (
-                <div
-                  key={`division-${winner.league}-${winner.division}`}
-                  className="flex items-baseline justify-between gap-3"
-                >
-                  <dt className="truncate text-[var(--color-ink-dim)] t-caption">
-                    {winner.league} {winner.division}
-                  </dt>
-                  <dd className="shrink-0 t-h3">{winner.teamCity}</dd>
-                </div>
-              ))}
-            </dl>
-          </Panel>
-        )}
 
         <AwardResult
           title="Batting MVP"

@@ -256,10 +256,11 @@ If you want a taller row, raise `height`; do not pad around the crest.
 | Context | Height | Density |
 | --- | --- | --- |
 | Booth Metrics board | 72 | — (custom list) |
-| Awards race row | 64 | — (custom list) |
+| Awards race row — Awards page | 64 | `ClubBandRow` |
+| Season Awards modal card row | 64 | `ClubBandRow` |
 | Standings | 58 | `large` |
 | Power Rankings board | 52 | — (custom `<table>`) |
-| Award Race | 48 | — (custom list) |
+| Award Race | 48 | `ClubBandRow` |
 | Power Rankings strip | 44 | — (custom list) |
 | Division Snapshot | 34 | `dense` |
 
@@ -280,6 +281,7 @@ tuned against what it sits next to, not against the other.
 - `src/components/StandingsHub.tsx` — the standings tables
 - `src/components/leaders/PowerRankingsView.tsx` — the full board (hand-built `<table>`)
 - `src/components/awards/AwardsPage.tsx` — the award race (disclosure rows)
+- `src/components/SeasonAwardsSummary.tsx` — the season-end modal's award cards
 - `src/components/home/PowerRankingsStrip.tsx` — the dashboard's top five
 - `src/components/home/Panels.tsx` — the dashboard's Division Snapshot
 - `src/components/home/MvpRacePanel.tsx` — the dashboard's Award Race (the row wears the

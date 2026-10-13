@@ -2641,6 +2641,62 @@ browser, which is a full-season sim through the Simulation Desk. The logic is
 covered by three simulated seasons in the checker; the two JSX blocks are the same
 shape as the four existing awards, and `tsc` covers the prop plumbing.
 
+**Resolved later in the same session** — the full-season headless run below covers
+it: the Strikeout King card renders with its band and its footnote.
+
+## Season Awards modal: playoffs recap removed, award rows banded
+
+Two changes to `SeasonAwardsSummary.tsx`, the modal that opens at offseason.
+
+**1. The "Playoffs" recap panel is gone** — the league champions ("Prestige
+Champion", "Platinum Champion") and the six division winners, which sat between
+the intro paragraph and the first award card.
+
+It was there deliberately, and the comment said why: "they are the other thing a
+futures bet was on, and a season summary that omits them reads as though only the
+awards happened." The manager has overridden it, which is the right call for a
+screen whose entire job is the awards. Two things make the removal cheaper than it
+looks:
+
+- The **league champion is still on screen** — the modal's own header bar reads
+  `Champion <city>`, so the headline result was partly duplicated by the panel.
+- **Division and league champions are not lost.** `HistoryHub.tsx` still lists
+  both, which is where a manager looks for how a season's teams finished. This
+  screen is where you look for who won the awards.
+
+The data is untouched: `leagueChampions` and `divisionWinners` are still computed
+in `buildSeasonAwardsSummary` and still written to the archive. Only the panel is
+gone, so nothing about settlement or the archive record changed.
+
+**2. Every award row is banded at 64**, via `ClubBandRow` — the same fill, leading
+edge and cropped crest as a Booth board. 31 rows measured in the browser. This is
+a plain `<ol>` with no nested button, so `ClubBandRow` fits directly; unlike the
+Awards page, no escape hatch was needed.
+
+The leader marking moved as the standard requires. The row used to carry a gold
+left border and a lifted background; the club's edge owns that border now and club
+colour may never carry meaning, so the marker is the **gold ordinal and the gold
+name** — matching the dashboard Award Race and the Awards page, so "who leads this
+board" is one rule rather than one per screen. The old inline `#1` prefix was
+dropped rather than kept: the ordinal now carries the rank, and a second numeral in
+front of the name restates it. `name` is deliberately not passed to `ClubBandRow`
+— that prop exists for rows that drop the visible name, and these rows print it.
+
+Verified in headless Chrome through a **full season** run (Simulate → Full
+Season), which finally covers the gap noted above. 31 banded rows: row 65px,
+5px edge, crest window 64×93 `overflow:hidden`, mark drawn at 93px, `0px/0px`
+vertical padding, and a different fill per club. Cards render in order — Batting
+MVP, Pitching MVP, Ultimate Slugger, Batting King, Rookie of the Year, **Strikeout
+King**, World Series MVP — and the modal contains no surviving "Playoffs",
+"Prestige Champion" or "Platinum Champion" text.
+
+Two things visible in that run that are **not** regressions and should not be
+"fixed": **Rookie of the Year reads "No eligible candidates"** on a freshly
+generated league (no drafted first-year players yet — the checker covers this
+across three seasons and it is the correct empty state), and the console warns
+that the HXSE price ledger hit the **localStorage quota** after a full season in a
+throwaway profile.
+
 ## Booth Metrics: eight boards on what the numbers don't say
 
 `booth_metrics` is a LEAGUE leaf between Leaders and Awards, headed **"What The
