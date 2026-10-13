@@ -217,15 +217,20 @@ export const buildBattingAwards = (
 ): AwardEntry[] => buildAwards(players.flatMap((player): AwardCandidate[] => {
   const stat = battingStats.get(player.playerId);
   const rating = battingRatings.get(player.playerId);
-  if (!stat || !rating || stat.atBats < 120) return [];
+  if (!stat || stat.atBats < 120) return [];
   // Resolved before the candidate is built, and required. See the note above.
   const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
   if (!team) return [];
+  const components = battingMvpComponents(stat, rating?.overall ?? 75, getWinPct(team)).map((component) =>
+    component.label === 'OVR' && !rating
+      ? { ...component, detail: 'N/A (neutral 75)' }
+      : component,
+  );
   return [{
     playerId: player.playerId,
     name: `${player.firstName} ${player.lastName}`,
     team,
-    components: battingMvpComponents(stat, rating.overall, getWinPct(team)),
+    components,
   }];
 }), take);
 
@@ -262,16 +267,21 @@ export const buildPitchingAwards = (
 ): AwardEntry[] => buildAwards(players.flatMap((player): AwardCandidate[] => {
   const stat = pitchingStats.get(player.playerId);
   const rating = pitchingRatings.get(player.playerId);
-  if (!stat || !rating) return [];
+  if (!stat) return [];
   if (stat.gamesStarted < PITCHING_MVP_MIN_STARTS && stat.saves < PITCHING_MVP_MIN_SAVES) return [];
   // Same gate, same reason as the batting race: no club, no candidacy. See `buildBattingAwards`.
   const team = player.teamId ? teamsById.get(player.teamId) ?? null : null;
   if (!team) return [];
+  const components = pitchingMvpComponents(stat, rating?.overall ?? 75, getWinPct(team)).map((component) =>
+    component.label === 'OVR' && !rating
+      ? { ...component, detail: 'N/A (neutral 75)' }
+      : component,
+  );
   return [{
     playerId: player.playerId,
     name: `${player.firstName} ${player.lastName}`,
     team,
-    components: pitchingMvpComponents(stat, rating.overall, getWinPct(team)),
+    components,
   }];
 }), take);
 
