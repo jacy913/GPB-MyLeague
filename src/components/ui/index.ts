@@ -43,6 +43,11 @@ export { ViewBoundary } from './ViewBoundary';
  */
 export { HeadlinerPortrait, type HeadlinerPortraitProps } from './HeadlinerPortrait';
 export { TeamLogo, type TeamLogoProps } from './TeamLogo';
+export {
+  ClubBandRow, CroppedCrest, clubBandPalette,
+  CLUB_BAND_TINT, CLUB_BAND_EDGE_WIDTH, CLUB_BAND_CREST_OVERDRAW,
+  type ClubBandRowProps, type CroppedCrestProps, type ClubBandPalette, type ClubBandOptions,
+} from './ClubBand';
 export { OddsBar, type OddsBarProps } from './OddsBar';
 export { MatchupStrip, type MatchupStripProps } from './MatchupStrip';
 export { RatingRing, type RatingRingProps } from './RatingRing';

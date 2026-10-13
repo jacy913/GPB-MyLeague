@@ -1,4 +1,5 @@
 import React from 'react';
+import { CLUB_BAND_EDGE_WIDTH } from './ClubBand';
 
 export type StatTableDensity = 'default' | 'dense' | 'large';
 
@@ -46,6 +47,13 @@ export interface StatTableRow {
   cells: Record<string, React.ReactNode>;
   highlight?: boolean;
   className?: string;
+  /**
+   * The club band, for a table of clubs. `fill` replaces the zebra stripe for this
+   * row, and `edge` is drawn as the leading cell's left border -- the same fill and
+   * leading edge a Booth row wears. Colours come from `clubBandPalette`, so the
+   * table does not need to know how a club's colour is derived.
+   */
+  band?: { fill: string; edge?: string };
 }
 
 interface StatTableProps {
@@ -187,9 +195,12 @@ export const StatTable: React.FC<StatTableProps> = ({
                 }`}
                 style={{
                   height: rowHeight,
+                  // A club band replaces the zebra fill entirely: a row already wearing a club's
+                  // colour cannot also be wearing a stripe. Selection still wins, so a selected row
+                  // in a banded table stays obviously selected.
                   backgroundColor: selectedRowId === row.id
                     ? 'var(--color-panel-3)'
-                    : rowIndex % 2 === 1 ? 'rgba(11,17,32,0.5)' : 'transparent',
+                    : row.band?.fill ?? (rowIndex % 2 === 1 ? 'rgba(11,17,32,0.5)' : 'transparent'),
                 }}
                 onClick={onRowSelect ? () => onRowSelect(row.id) : undefined}
                 onKeyDown={onRowSelect ? (event) => {
@@ -203,11 +214,19 @@ export const StatTable: React.FC<StatTableProps> = ({
                 aria-pressed={onRowSelect ? selectedRowId === row.id : undefined}
                 aria-selected={onRowSelect ? selectedRowId === row.id : undefined}
               >
-                {columns.map((col) => (
+                {columns.map((col, colIndex) => (
                   <td
                     key={col.key}
                     className={getCellClass(col, row)}
-                    style={{ width: col.width ? `${col.width}` : undefined, minWidth: col.width ? `${col.width}` : undefined }}
+                    style={{
+                      width: col.width ? `${col.width}` : undefined,
+                      minWidth: col.width ? `${col.width}` : undefined,
+                      // The club's full-strength uniform as the row's leading edge, on the first
+                      // cell, where it cannot sit underneath a figure.
+                      borderLeft: colIndex === 0 && row.band?.edge
+                        ? `${CLUB_BAND_EDGE_WIDTH}px solid ${row.band.edge}`
+                        : undefined,
+                    }}
                   >
                     {row.cells[col.key]}
                   </td>

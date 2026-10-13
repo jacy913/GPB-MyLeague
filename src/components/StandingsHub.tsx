@@ -16,9 +16,10 @@ import {
 import { getPreferredBattingStatsByPlayerId, getPreferredPitchingStatsByPlayerId } from '../logic/playerStats';
 import { fmtDiff, fmtEra, fmtGb, fmtPct, fmtRecord, fmtWhip } from '../logic/statFormatting';
 import {
-  Panel, RetroButton, SegmentedControl, SkewedPanel, StatTable, StatValue, TeamLogo,
+  clubBandPalette, CroppedCrest, Panel, RetroButton, SegmentedControl, SkewedPanel, StatTable, StatValue,
   type StatTableColumn, type StatTableRow,
 } from './ui';
+import type { TeamId } from '../data/teamColors';
 
 type StandingsViewMode = 'league' | 'division';
 type StandingsRankKey = 'record' | 'win_pct' | 'run_diff' | 'runs_scored' | 'runs_allowed' | 'team_era' | 'team_rbi' | 'roster_strength' | 'team_whip';
@@ -116,6 +117,13 @@ const getMetricValue = (row: TeamStandingRow, rankKey: StandingsRankKey) => {
 const getGamesBack = (leader: TeamStandingRow, row: TeamStandingRow) =>
   fmtGb(((leader.team.wins - row.team.wins) + (row.team.losses - leader.team.losses)) / 2);
 
+/**
+ * The crest window, matching StatTable's `large` row height. It is duplicated from the table's own
+ * `ROW_HEIGHT.large` because the crest has to be cropped to the row it sits in, and the table does
+ * not expose that number. If the table's `large` height ever moves, this moves with it.
+ */
+const STANDINGS_ROW_H = 58;
+
 interface StandingsPanelProps {
   title: string;
   rows: TeamStandingRow[];
@@ -150,11 +158,15 @@ const StandingsPanel: React.FC<StandingsPanelProps> = ({ title, rows, rankKey, o
     const isDivisionWinner = divisionLeader?.team.id === row.team.id;
     return {
       id: row.team.id,
+      // The row wears the club's own colour, the same band a Booth row does. `clubBandPalette`
+      // resolves the fill and the leading edge for the panel this table is drawn on, so the table
+      // never re-derives a club's colour.
+      band: clubBandPalette(row.team.id as TeamId),
       cells: {
         team: (
           <button type="button" onClick={() => onSelectTeam(row.team.id)} className="flex w-full items-center gap-3 overflow-hidden text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-gold)]" aria-label={`Open ${row.team.city} ${row.team.name} roster`}>
             <span className="w-[3ch] shrink-0 text-right t-stat text-[var(--color-ink-faint)]">{index + 1}</span>
-            <TeamLogo team={row.team} sizeClass="h-10 w-10" />
+            <CroppedCrest team={row.team} height={STANDINGS_ROW_H} />
             <span className={`truncate t-stat ${isDivisionWinner ? 'text-[var(--color-gold-hi)]' : 'text-[var(--color-ink)]'}`}>
               {isDivisionWinner && <span className="mr-1.5 text-[var(--color-gold)]" aria-label="Division leader">◆</span>}
               {row.team.city} <span className="text-[var(--color-ink-dim)]">{row.team.name}</span>
